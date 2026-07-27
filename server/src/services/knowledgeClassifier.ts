@@ -1,0 +1,437 @@
+/**
+ * Knowledge-source classifier (Copilot Studio → Gemini Enterprise).
+ *
+ * The migration principle: **we migrate the source, not the learned index.**
+ * A Copilot agent never carries Microsoft's vector store into Gemini — instead
+ * each *knowledge source* is re-established on the Gemini side and re-indexed by
+ * Google. This module decides, per source, *how* that re-establishment happens.
+ *
+ * It is deliberately PURE (no I/O): given a source's `kind` + discovered
+ * references + optional uploaded-file metadata, it returns a migration strategy,
+ * a retrievability verdict, the concrete Gemini target, whether the tool can do
+ * it unattended, and human-readable caveats for the assessment report.
+ *
+ * Grounding (verified against current product docs):
+ *  - Vertex AI Search / Gemini document data stores ingest TXT, JSON, MD, PDF,
+ *    HTML, DOCX, PPTX, XLSX, XLSM — up to 200 MB/file, 100k files/import.
+ *  - Gemini Enterprise has NATIVE federated connectors for SharePoint Online and
+ *    OneDrive — so those "reconnect" rather than copy. BUT the connector only
+ *    enforces document ACLs if Workforce Identity Federation (Entra→Google
+ *    identity mapping) is configured — that is human setup, so NOT automatable.
+ *  - Dataverse tables / SQL / Graph / custom APIs are queries, not indexable
+ *    documents: they must be rebuilt as Gemini agent tools, never "indexed".
+ */
+
+/** How a source is re-established on the Gemini side. */
+export type KnowledgeStrategy =
+  | 'copy-and-index' // pull the bytes → GCS → ImportDocuments into a document data store
+  | 'recreate' // recreate the pointer (e.g. a website data store over the same URL)
+  | 'reconnect' // wire Gemini's native federated connector to the same source
+  | 'dataverse-snapshot' // export a reference table's rows → a structured data store (snapshot)
+  | 'rebuild-as-tool' // a live/structured source → rebuild as a Gemini agent tool/action
+  | 'manual-review'; // no automatic path; a human must decide
+
+/** Whether the source's actual content is fetchable by the tool. */
+export type KnowledgeRetrievability =
+  | 'bytes-in-dataverse' // author-uploaded file; content bytes fetchable from Dataverse
+  | 'reference-only' // a pointer (URL / site / path); no bytes stored locally
+  | 'connector-backed' // backed by a live connector/query/index; nothing stored to copy
+  | 'unknown'; // could not be determined from the config — verify before promising
+
+/** The concrete construct created on the Gemini Enterprise side. */
+export type GeminiTarget =
+  | 'document-data-store'
+  | 'website-data-store'
+  | 'structured-data-store'
+  | 'sharepoint-connector'
+  | 'onedrive-connector'
+  | 'gcs-import'
+  | 'agent-tool'
+  | 'none';
+
+/** For website sources: is the URL on a domain the org owns? */
+export type WebsiteOwnership = 'owned' | 'third-party' | 'unknown';
+
+export interface KnowledgeClassification {
+  strategy: KnowledgeStrategy;
+  retrievability: KnowledgeRetrievability;
+  geminiTarget: GeminiTarget;
+  /** True only when the tool can complete this migration with NO human setup. */
+  automatable: boolean;
+  /** Website ownership verdict (drives the recommendation, not a hard decision). */
+  ownership?: WebsiteOwnership;
+  /** Reasons / caveats surfaced in the fidelity report (never silently dropped). */
+  notes: string[];
+}
+
+export interface ClassifierInput {
+  /** The source's `kind` as read from the KnowledgeSourceConfiguration YAML. */
+  kind: string;
+  /** All references discovered in the config (URLs, site paths, entity names). */
+  references?: string[];
+  /** Present when the source is an author-uploaded file. */
+  file?: { name?: string; sizeBytes?: number };
+  /**
+   * Domains the customer org owns (e.g. the destination Workspace domain from
+   * the admin's gEmail). Used to tell an ownable website (verifiable → indexable)
+   * apart from a third-party site (not verifiable → Google Search grounding).
+   */
+  ownerDomains?: string[];
+}
+
+/** Well-known third-party domains — clearly not customer-owned. */
+const KNOWN_PUBLIC_DOMAINS = [
+  'microsoft.com', 'google.com', 'github.com', 'wikipedia.org', 'stackoverflow.com',
+  'amazon.com', 'apple.com', 'salesforce.com', 'office.com', 'youtube.com', 'medium.com',
+];
+
+/** Extract normalized hosts from reference URLs. */
+function hostsOf(references: string[] | undefined): string[] {
+  return (references ?? [])
+    .map((r) => {
+      try {
+        return new URL(r).host.toLowerCase().replace(/^www\./, '');
+      } catch {
+        return r.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '');
+      }
+    })
+    .filter(Boolean);
+}
+
+const hostUnder = (host: string, domain: string): boolean => host === domain || host.endsWith(`.${domain}`);
+
+/**
+ * Three-state website ownership — the basis for a *recommendation*, not a hard
+ * decision (the customer can override):
+ *   owned       → URL is on a domain the org owns (verifiable → indexable)
+ *   third-party → a well-known public site (not ownable → Google Search grounding)
+ *   unknown     → can't determine (no URL, or not owned yet not clearly public)
+ */
+export function websiteOwnership(
+  references: string[] | undefined,
+  ownerDomains: string[] | undefined,
+): WebsiteOwnership {
+  const hosts = hostsOf(references);
+  if (!hosts.length) return 'unknown';
+  const owners = (ownerDomains ?? []).map((d) => d.toLowerCase().replace(/^www\./, ''));
+  if (owners.length && hosts.some((h) => owners.some((d) => hostUnder(h, d)))) return 'owned';
+  if (hosts.some((h) => KNOWN_PUBLIC_DOMAINS.some((d) => hostUnder(h, d)))) return 'third-party';
+  return 'unknown';
+}
+
+// ── Gemini / Vertex AI Search ingestion limits (document data store) ──────────
+export const VERTEX_SUPPORTED_FORMATS = [
+  'txt', 'json', 'md', 'pdf', 'html', 'htm', 'docx', 'pptx', 'xlsx', 'xlsm',
+] as const;
+export const VERTEX_MAX_FILE_BYTES = 200 * 1024 * 1024; // 200 MB
+
+export interface FileCompatibility {
+  compatible: boolean;
+  format?: string;
+  /** Why an incompatible file can't be ingested as-is (for the report). */
+  reason?: string;
+}
+
+/** The format/size gate a file must clear to be ingested by a document data store. */
+export function checkFileCompatibility(
+  fileName?: string,
+  sizeBytes?: number,
+): FileCompatibility {
+  const format = fileName?.includes('.')
+    ? fileName.split('.').pop()!.toLowerCase()
+    : undefined;
+
+  if (typeof sizeBytes === 'number' && sizeBytes > VERTEX_MAX_FILE_BYTES) {
+    return {
+      compatible: false,
+      format,
+      reason: `file is ${(sizeBytes / 1024 / 1024).toFixed(0)} MB — exceeds the 200 MB document-ingest limit`,
+    };
+  }
+  if (!format) {
+    return { compatible: false, reason: 'no file extension — cannot confirm a supported format' };
+  }
+  if (!(VERTEX_SUPPORTED_FORMATS as readonly string[]).includes(format)) {
+    return {
+      compatible: false,
+      format,
+      reason: `.${format} is not an ingestible format (supported: ${VERTEX_SUPPORTED_FORMATS.join(', ')})`,
+    };
+  }
+  return { compatible: true, format };
+}
+
+/**
+ * Table/column name hints that suggest sensitive or transactional data that
+ * must NOT be flattened into a snapshot (row-level security would be lost).
+ * This is a conservative first-pass heuristic on names — the real gate is a
+ * human confirming the table carries no protected rows. Surfaced in the report.
+ */
+const SENSITIVE_HINTS = [
+  'customer', 'contact', 'account', 'order', 'invoice', 'payment', 'salary',
+  'employee', 'ssn', 'patient', 'lead', 'opportunity', 'email', 'phone',
+  'address', 'credit', 'bank', 'user', 'person', 'transaction', 'case', 'hr',
+];
+
+/** True when a table/reference name looks like sensitive or transactional data. */
+export function looksSensitive(names: string[]): boolean {
+  const hay = names.join(' ').toLowerCase();
+  return SENSITIVE_HINTS.some((h) => hay.includes(h));
+}
+
+/** Normalize a kind for matching: lowercase, letters only. */
+function norm(kind: string): string {
+  return (kind || '').toLowerCase().replace(/[^a-z]/g, '');
+}
+
+interface Rule {
+  /** Ordered match against the normalized kind. First match wins. */
+  test: (k: string) => boolean;
+  build: (input: ClassifierInput) => KnowledgeClassification;
+}
+
+// Rules are ORDER-SENSITIVE — the first match wins. Upload/file must precede
+// SharePoint, because "upload files > SharePoint" stores bytes in Dataverse
+// (a copy source), whereas a SharePoint *site* is a reference (a reconnect).
+const RULES: Rule[] = [
+  {
+    // Author-uploaded files — bytes live in Dataverse.
+    test: (k) => k.includes('fileupload') || k.includes('uploadedfile') || /(^|[^a-z])file([^a-z]|$)/.test(k) || k.includes('document'),
+    build: ({ file }) => {
+      const compat = checkFileCompatibility(file?.name, file?.sizeBytes);
+      const notes = [
+        'Author-uploaded file: bytes stored in Dataverse → copy to GCS → ImportDocuments into a document data store.',
+        'Gate: verify byte retrieval at migration time AND that the format/size is ingestible (below).',
+      ];
+      if (file?.name) {
+        notes.push(
+          compat.compatible
+            ? `Format check OK (.${compat.format}).`
+            : `Format check FAILED: ${compat.reason} — route to manual review.`,
+        );
+      }
+      return {
+        strategy: compat.compatible === false && !!file?.name ? 'manual-review' : 'copy-and-index',
+        retrievability: 'bytes-in-dataverse',
+        geminiTarget: compat.compatible === false && !!file?.name ? 'none' : 'document-data-store',
+        automatable: compat.compatible !== false || !file?.name,
+        notes,
+      };
+    },
+  },
+  {
+    // SharePoint site/library reference → Gemini native SharePoint connector.
+    test: (k) => k.includes('sharepoint'),
+    build: () => ({
+      strategy: 'reconnect',
+      retrievability: 'reference-only',
+      geminiTarget: 'sharepoint-connector',
+      automatable: false, // requires Workforce Identity Federation setup
+      notes: [
+        'SharePoint reference: wire Gemini\'s native SharePoint federated connector to the same site — do NOT copy files.',
+        'NOT unattended: document-level ACL trimming works only after Entra→Google identity mapping (Workforce Identity Federation) is configured. Skipping it over-exposes documents.',
+      ],
+    }),
+  },
+  {
+    test: (k) => k.includes('onedrive'),
+    build: () => ({
+      strategy: 'reconnect',
+      retrievability: 'reference-only',
+      geminiTarget: 'onedrive-connector',
+      automatable: false,
+      notes: [
+        'OneDrive reference: use Gemini\'s native OneDrive federated connector against the same account/paths.',
+        'NOT unattended: requires the same Workforce Identity Federation setup as SharePoint for ACL enforcement.',
+      ],
+    }),
+  },
+  {
+    // Public website / URL search source → recreate as a website data store.
+    test: (k) =>
+      k.includes('website') || k.includes('publicsite') || k.includes('publicweb') ||
+      k.includes('sitesearch') || k.includes('web') || k.includes('url'),
+    build: (input) => {
+      const { references } = input;
+      const ownership = websiteOwnership(references, input.ownerDomains);
+      const urlNote = references?.length ? `URL(s): ${references.slice(0, 5).join(', ')}` : 'No URL captured in config — verify the target URL first.';
+      // NOT unattended either way: advanced website indexing needs Google
+      // domain-ownership verification (verified empirically: unverified →
+      // indexingStatus=FAILED, 0 docs). Ownership drives the RECOMMENDATION.
+      const notesByOwnership: Record<WebsiteOwnership, string[]> = {
+        owned: [
+          'RECOMMENDED: create an advanced website data store (URL is on your organization\'s own domain).',
+          'MANUAL STEP: verify domain ownership in Google Search Console so it indexes — you own this domain, so you can.',
+        ],
+        'third-party': [
+          'RECOMMENDED: rely on the migrated agent\'s Google Search grounding (third-party public site — you can\'t verify ownership, so a data store would FAIL to index).',
+        ],
+        unknown: [
+          'RECOMMENDED: manual review — ownership could not be determined. You may own this domain (not in the discovered set) or it may be a partner site.',
+        ],
+      };
+      return {
+        strategy: 'recreate',
+        retrievability: 'reference-only',
+        geminiTarget: 'website-data-store',
+        automatable: false,
+        ownership,
+        notes: [...notesByOwnership[ownership], urlNote],
+      };
+    },
+  },
+  {
+    // Azure Blob Storage → copy bytes (needs blob credentials → not unattended).
+    test: (k) => k.includes('blob') || k.includes('azurestorage'),
+    build: () => ({
+      strategy: 'copy-and-index',
+      retrievability: 'connector-backed',
+      geminiTarget: 'gcs-import',
+      automatable: false,
+      notes: [
+        'Azure Blob: transfer objects to GCS → ImportDocuments. Feasible but needs the customer\'s blob credentials — not unattended.',
+      ],
+    }),
+  },
+  {
+    // Dataverse table. Two paths, chosen by data sensitivity:
+    //  - reference/catalog table  → snapshot rows into a structured data store (auto)
+    //  - sensitive/transactional  → rebuild as a live tool (manual; preserves RLS)
+    test: (k) => k.includes('dataverse'),
+    build: ({ references }) => {
+      if (looksSensitive(references ?? [])) {
+        return {
+          strategy: 'rebuild-as-tool',
+          retrievability: 'connector-backed',
+          geminiTarget: 'agent-tool',
+          automatable: false,
+          notes: [
+            `Dataverse table "${(references ?? [])[0] ?? ''}" looks sensitive/transactional — a snapshot would flatten row-level security.`,
+            'Rebuild as a live Gemini agent tool that queries the source at answer time (preserves access control and freshness).',
+          ],
+        };
+      }
+      return {
+        strategy: 'dataverse-snapshot',
+        retrievability: 'connector-backed',
+        geminiTarget: 'structured-data-store',
+        automatable: true,
+        notes: [
+          'Reference table: export rows to a Vertex AI Search STRUCTURED data store (Google\'s endorsed path for tabular data).',
+          'SNAPSHOT — data is point-in-time and can go stale; refresh on a schedule if the table changes. For always-live data, rebuild as a tool instead.',
+          'Before enabling: confirm the table carries no row-level-security-protected or PII rows (a snapshot flattens per-row access).',
+        ],
+      };
+    },
+  },
+  {
+    // SQL / database source → rebuild as a tool.
+    test: (k) => k.includes('sql') || k.includes('database'),
+    build: () => ({
+      strategy: 'rebuild-as-tool',
+      retrievability: 'connector-backed',
+      geminiTarget: 'agent-tool',
+      automatable: false,
+      notes: ['SQL/database source: rebuild the connection as a Gemini agent tool; a database cannot be "indexed" as knowledge.'],
+    }),
+  },
+  {
+    // Azure AI Search / existing index → the index itself can't be moved.
+    test: (k) => (k.includes('search') && (k.includes('ai') || k.includes('azure') || k.includes('cognitive'))),
+    build: () => ({
+      strategy: 'manual-review',
+      retrievability: 'connector-backed',
+      geminiTarget: 'none',
+      automatable: false,
+      notes: [
+        'Azure AI Search index: the prebuilt index cannot be migrated. Re-point at the underlying documents (copy-and-index) or rebuild as a retrieval tool — needs a human decision.',
+      ],
+    }),
+  },
+  {
+    // Microsoft Graph / enterprise connectors → need a Google-side equivalent.
+    test: (k) => k.includes('graph') || k.includes('enterprise') || k.includes('connector'),
+    build: () => ({
+      strategy: 'rebuild-as-tool',
+      retrievability: 'connector-backed',
+      geminiTarget: 'agent-tool',
+      automatable: false,
+      notes: ['Graph/enterprise connector: no direct equivalent. Rebuild the integration against the Google-side data source and re-author as a tool.'],
+    }),
+  },
+  {
+    // Custom API / OpenAPI / MCP tool used as knowledge → rebuild as a tool.
+    test: (k) => k.includes('api') || k.includes('openapi') || k.includes('mcp') || k.includes('custom') || k.includes('http'),
+    build: () => ({
+      strategy: 'rebuild-as-tool',
+      retrievability: 'connector-backed',
+      geminiTarget: 'agent-tool',
+      automatable: false,
+      notes: ['Custom API/tool source: recreate the tool definition, authentication, and parameters on the Gemini side.'],
+    }),
+  },
+];
+
+/**
+ * Classify a single knowledge source into a migration strategy.
+ * Unknown kinds fall through to `manual-review` with the raw kind preserved in
+ * the note — never silently assumed migratable.
+ */
+export function classifyKnowledgeSource(input: ClassifierInput): KnowledgeClassification {
+  const k = norm(input.kind);
+  for (const rule of RULES) {
+    if (rule.test(k)) return rule.build(input);
+  }
+  // Kind unrecognized — infer from the reference URL/path before giving up.
+  // (Real Copilot agents carry Dynamics-specific kind tokens our rules don't
+  // name; the reference is a reliable secondary signal.)
+  const inferred = inferFromReferences(input);
+  if (inferred) return inferred;
+
+  return {
+    strategy: 'manual-review',
+    retrievability: 'unknown',
+    geminiTarget: 'none',
+    automatable: false,
+    notes: [
+      `Unrecognized knowledge source kind "${input.kind}" with no usable reference — no automatic strategy. Raw config preserved for manual review.`,
+    ],
+  };
+}
+
+/** Infer a strategy from the reference when the kind token is unrecognized. */
+function inferFromReferences(input: ClassifierInput): KnowledgeClassification | null {
+  const refs = (input.references ?? []).map((r) => r.trim()).filter(Boolean);
+  const hay = refs.join(' ').toLowerCase();
+  if (!hay) return null;
+
+  if (/sharepoint\.com/.test(hay) && !/-my\.sharepoint\.com/.test(hay)) {
+    return {
+      strategy: 'reconnect', retrievability: 'reference-only', geminiTarget: 'sharepoint-connector', automatable: false,
+      notes: [
+        `Kind "${input.kind}" unrecognized; inferred SharePoint from the reference URL.`,
+        'Reconnect via Gemini\'s native SharePoint connector — requires identity federation for ACL enforcement.',
+      ],
+    };
+  }
+  if (/-my\.sharepoint\.com|onedrive/.test(hay)) {
+    return {
+      strategy: 'reconnect', retrievability: 'reference-only', geminiTarget: 'onedrive-connector', automatable: false,
+      notes: [`Kind "${input.kind}" unrecognized; inferred OneDrive from the reference URL.`, 'Reconnect via Gemini\'s native OneDrive connector — requires identity federation.'],
+    };
+  }
+  if (/https?:\/\//.test(hay)) {
+    const ownership = websiteOwnership(refs, input.ownerDomains);
+    const tail: Record<WebsiteOwnership, string> = {
+      owned: 'On your own domain → RECOMMEND a website data store; verify ownership in Search Console to index it.',
+      'third-party': 'Third-party site → RECOMMEND Google Search grounding (not indexable without ownership).',
+      unknown: 'Ownership undetermined → RECOMMEND manual review.',
+    };
+    return {
+      strategy: 'recreate', retrievability: 'reference-only', geminiTarget: 'website-data-store', automatable: false,
+      ownership,
+      notes: [`Kind "${input.kind}" unrecognized; inferred a website from: ${refs.slice(0, 3).join(', ')}.`, tail[ownership]],
+    };
+  }
+  return null;
+}

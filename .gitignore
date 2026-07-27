@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+
+# Never commit credentials
+*sa-key*.json
+*service-account*.json
+service_account.json
+secrets/
+migration_data/
+
+# Editor/build junk
+~$*
+*.tsbuildinfo
