@@ -1,0 +1,29 @@
+{
+  "$comment": "Suggested MCP servers for CloudFuze Studio Migrate. These are OPTIONAL and commented via _enabled flags — enable only what your workflow needs and provide credentials via environment variables, never inline. The repo evidences a need for: GitHub (PRs/issues), MongoDB (the csge database the app persists to), and filesystem access to the docs/ knowledge base. Web browsing during development is handled by gstack's /browse, so no browser MCP is configured here.",
+  "mcpServers": {
+    "github": {
+      "_enabled": false,
+      "_why": "Open/track PRs and issues for this repo. gstack /ship opens PRs; this MCP lets Claude read issue/PR context directly.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      }
+    },
+    "mongodb": {
+      "_enabled": false,
+      "_why": "Inspect the csge database (migrationRuns, migrationResults, stagedAgents, agentIRCache) while debugging a migration. Point at the CS_GE-owned instance on 27019. Use a READ-ONLY user in shared environments.",
+      "command": "npx",
+      "args": ["-y", "mongodb-mcp-server"],
+      "env": {
+        "MDB_MCP_CONNECTION_STRING": "${MONGO_HOST}/csge?authSource=admin"
+      }
+    },
+    "filesystem": {
+      "_enabled": false,
+      "_why": "Give Claude scoped read access to the docs/ knowledge base (specs, feasibility studies, edition/visibility findings) without scanning the whole tree.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./docs"]
+    }
+  }
+}

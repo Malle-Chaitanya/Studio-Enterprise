@@ -237,24 +237,9 @@ authRouter.get('/google/start', async (req, res) => {
   const popup = req.query.popup === '1';
   if (!(await getSession(session))) return void res.redirect(web('/?error=session_expired'));
 
-  // Service-account bypass — DEV ONLY, explicit opt-in (GOOGLE_AUTH_MODE=bypass).
-  // Connects via the SA impersonating a fixed admin against a fixed project,
-  // skipping browser OAuth (avoids the redirect_uri registration requirement).
-  // Default mode is 'oauth' — the real per-client path below.
-  if (config.GOOGLE_AUTH_MODE === 'bypass' && config.GOOGLE_IMPERSONATE_EMAIL && google.serviceAccountConfigured()) {
-    try {
-      const gEmail = config.GOOGLE_IMPERSONATE_EMAIL;
-      const geminiProject = config.GEMINI_PROJECT_FALLBACK ?? '';
-      const { saOk } = await verifySaReachable(geminiProject, gEmail);
-      await updateSession(session, { step: 'ready', gEmail, geminiProject, saOk });
-      logger.info({ gEmail, geminiProject, saOk }, 'Google connected via service-account bypass (dev mode)');
-      if (popup) return void popupResult(res, 'google-auth-success', { session });
-      return void res.redirect(web(`/home?session=${session}`));
-    } catch (err) {
-      logger.warn({ err }, 'Google SA bypass failed; falling back to browser OAuth');
-    }
-  }
-  // REAL per-client path: the client's own admin signs in via OAuth.
+  // The client's own admin signs in via OAuth. Their email + discovered Gemini
+  // project drive the run; privileged writes use CloudFuze's service account
+  // (Direct IAM or Domain-Wide Delegation), never a hardcoded impersonation.
   res.redirect(google.buildAuthUrl(putState({ msSessionId: session, popup })));
 });
 

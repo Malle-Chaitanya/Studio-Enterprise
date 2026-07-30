@@ -276,6 +276,9 @@ export interface MigrationResult {
   /** Uploaded knowledge files attached to the agent (agentFiles). */
   knowledgeFilesUploaded?: number;
   knowledgeFilesFailed?: number;
+  /** Dataverse reference-table rows snapshotted into a structured data store. */
+  knowledgeTableRowsIndexed?: number;
+  knowledgeTableRowsFailed?: number;
 }
 
 /** Server-sent progress event to the browser. */

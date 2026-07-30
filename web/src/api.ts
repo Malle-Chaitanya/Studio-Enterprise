@@ -107,15 +107,24 @@ export function agentJsonUrl(session: string, env: string, bot: AgentBrief): str
 export type KnowledgeHandling = 'skip' | 'appendix' | 'report-only';
 
 // ── Destination discovery (production project/engine picker) ─────────────────
-export interface DestProject { projectId: string; projectNumber: string; displayName: string }
+export interface DestProject {
+  projectId: string;
+  projectNumber: string;
+  displayName: string;
+  org?: string;
+  hasGeminiApp: boolean;
+}
 export interface DestEngine { id: string; displayName: string; solutionType?: string }
 export interface GeminiDest { project: string; engine: string; assistant: string }
 
-/** List the Google Cloud projects the connected admin can access. */
-export async function fetchProjects(session: string): Promise<{ projects: DestProject[]; manualEntry: boolean }> {
+/** List the Google Cloud projects the connected admin can access. `defaultProject`
+ *  is the discovered Gemini destination, used to pre-select the dropdown. */
+export async function fetchProjects(
+  session: string,
+): Promise<{ projects: DestProject[]; manualEntry: boolean; defaultProject?: string }> {
   const res = await fetch(`/api/destination/projects?session=${session}`);
   if (!res.ok) throw new Error('projects_failed');
-  return (await res.json()) as { projects: DestProject[]; manualEntry: boolean };
+  return (await res.json()) as { projects: DestProject[]; manualEntry: boolean; defaultProject?: string };
 }
 
 /** List the Gemini Enterprise engines (apps) in a chosen project. */
@@ -123,6 +132,43 @@ export async function fetchEngines(session: string, project: string): Promise<De
   const res = await fetch(`/api/destination/engines?session=${session}&project=${encodeURIComponent(project)}`);
   if (!res.ok) throw new Error('engines_failed');
   return ((await res.json()) as { engines: DestEngine[] }).engines;
+}
+
+// ── SharePoint connector setup (the customer's own Entra app credentials) ────
+export interface SharePointConnectorCreds {
+  clientId: string;
+  clientSecret: string;
+  tenantId: string;
+  instanceUri: string;
+}
+export interface SharePointConnectorStatus {
+  status?: 'pending' | 'done' | 'failed';
+  collectionId?: string;
+  error?: string;
+}
+
+/** Kick off Gemini's native SharePoint connector using the customer's own Entra
+ *  app credentials (never CloudFuze's) — starts a long-running operation. */
+export async function setUpSharePointConnector(
+  session: string,
+  creds: SharePointConnectorCreds,
+): Promise<{ started: boolean; collectionId: string; operationName?: string }> {
+  const res = await fetch('/api/destination/sharepoint-connector', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, ...creds }),
+  });
+  if (!res.ok) throw new Error('connector_setup_failed');
+  return (await res.json()) as { started: boolean; collectionId: string; operationName?: string };
+}
+
+/** Poll the connector-creation operation. `done` means Google finished
+ *  provisioning — it does not by itself confirm the connector is linked to a
+ *  searchable app (Google's docs describe that as a manual Console step). */
+export async function fetchSharePointConnectorStatus(session: string): Promise<SharePointConnectorStatus> {
+  const res = await fetch(`/api/destination/sharepoint-connector/status?session=${session}`);
+  if (!res.ok) throw new Error('connector_status_failed');
+  return (await res.json()) as SharePointConnectorStatus;
 }
 
 export async function planMigration(

@@ -28,20 +28,16 @@ const schema = z.object({
   GOOGLE_SA_KEY_FILE: z.string().optional(),
   GOOGLE_SA_KEY_JSON: z.string().optional(),
   GEMINI_PROJECT_FALLBACK: z.string().optional(),
-  // If set, "Connect Google" skips the browser OAuth and connects via the
-  // service account + Domain-Wide Delegation, impersonating this admin. This
-  // avoids the Google redirect_uri registration requirement for local/dev runs.
-  GOOGLE_IMPERSONATE_EMAIL: z.string().optional(),
   /**
-   * Google connect mode:
-   *   'oauth'  (default) — REAL per-client path: the client's admin signs in via
-   *            OAuth; their email + project drive the run; the SA impersonates
-   *            THAT admin (requires their DWD). This is how live clients work.
-   *   'bypass' — local/dev shortcut: connect via the SA impersonating
-   *            GOOGLE_IMPERSONATE_EMAIL against GEMINI_PROJECT_FALLBACK. No
-   *            browser OAuth / redirect-URI registration needed.
+   * Optional HARD allowlist limiting which accounts the service account may
+   * impersonate via Domain-Wide Delegation. Comma-separated; each entry is an
+   * exact email (`admin@acme.com`) or a domain (`acme.com` / `@acme.com`). When
+   * set, any impersonation target outside the list is refused (fail closed) — the
+   * primary guard against the SA's domain-wide power being turned on the wrong
+   * user. Leave empty for multi-tenant SaaS, where the target is still constrained
+   * at the call site to the session's OAuth-authenticated admin (never client input).
    */
-  GOOGLE_AUTH_MODE: z.enum(['oauth', 'bypass']).default('oauth'),
+  GOOGLE_DWD_ALLOWED_IMPERSONATORS: z.string().optional(),
 
   INSTRUCTION_LLM_PROVIDER: z.enum(['gemini', 'anthropic', '']).optional().default(''),
   INSTRUCTION_LLM_API_KEY: z.string().optional(),

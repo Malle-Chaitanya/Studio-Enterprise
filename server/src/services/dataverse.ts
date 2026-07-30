@@ -24,6 +24,24 @@ interface BotComponent {
   _parentbotid_value?: string;
   /** File name for Bot File Attachment (type 14) components. */
   filedata_name?: string | null;
+  /**
+   * Newer-schema structured config, present on SOME componenttype-14 rows
+   * that are NOT actual files — e.g. a "DataverseTableSearch" knowledge
+   * source authored in Copilot Studio's modern experience. JSON, "$kind"-
+   * tagged, distinct from the classic YAML `data` blob. See
+   * isEmbeddedConfigSource below — found empirically via a live test tenant,
+   * not from docs.
+   */
+  content?: string | null;
+  /**
+   * Native Dataverse `description` column on the component record itself —
+   * NOT part of the YAML `data` blob. For system topics this holds Microsoft's
+   * canned explanation; for the CustomGpt (type 15) component it holds the
+   * agent's real AUTHORED description from Copilot Studio's Overview panel.
+   * This is the current, authoritative source — the `bot` entity has no such
+   * column in every org (see extractAgent's description fallback chain).
+   */
+  description?: string | null;
   // ── provenance metadata (audit trail) ──
   createdon?: string | null;
   modifiedon?: string | null;
@@ -354,6 +372,51 @@ function parseGptMetadata(c: BotComponent): {
   };
 }
 
+/**
+ * Some componenttype 14 (BotFileAttachment) rows aren't real files — they
+ * carry a structured knowledge-source config in the `content` column (JSON,
+ * "$kind"-tagged — Copilot's newer authoring schema, distinct from the
+ * classic YAML `data` blob type-16 sources use in parseKnowledgeSource
+ * below). Confirmed on a live test tenant: a "Dataverse table search"
+ * knowledge source showed up exactly this way, with filedata/filedata_name
+ * both null — parseFileAttachment would otherwise try to fetch bytes that
+ * don't exist. Route these through the knowledge-source path instead.
+ */
+function isEmbeddedConfigSource(c: BotComponent): boolean {
+  return !c.filedata_name && Boolean(c.content) && /"\$kind"\s*:\s*"KnowledgeSourceComponent"/.test(c.content ?? '');
+}
+
+function parseEmbeddedConfigSource(c: BotComponent, ownerDomains?: string[]): KnowledgeSourceIR {
+  let doc: Record<string, unknown> | null = null;
+  try {
+    doc = JSON.parse(c.content ?? '{}') as Record<string, unknown>;
+  } catch {
+    /* keep null — falls through to Unknown/manual-review below */
+  }
+
+  // The data source entry's own "$kind" (e.g. "DataverseTableSearch") is the
+  // real classification signal — "KnowledgeSourceComponent" is just the
+  // wrapper every one of these rows shares.
+  const dataSources = (doc?.dataSources as { $kind?: string }[] | undefined) ?? [];
+  const kind = dataSources[0]?.$kind ?? 'Unknown';
+
+  const refs: string[] = [];
+  if (doc) collectStrings(doc, (k) => /url|site|siteurl|reference|entity|path|connection/i.test(k), refs);
+  const references = dedupe(refs);
+
+  const classification = classifyKnowledgeSource({ kind, references, ownerDomains });
+  return {
+    id: c.botcomponentid,
+    name: c.name,
+    kind,
+    reference: references[0],
+    references,
+    classification,
+    metadata: buildKnowledgeMetadata(c),
+    raw: doc ?? c.content ?? undefined,
+  };
+}
+
 function parseKnowledgeSource(c: BotComponent, ownerDomains?: string[]): KnowledgeSourceIR {
   const doc = tryParseYaml(c.data);
   const kind = (doc?.kind as string) ?? (doc?.knowledgeSourceType as string) ?? 'Unknown';
@@ -425,6 +488,20 @@ function parseFileAttachment(c: BotComponent): KnowledgeSourceIR {
 }
 
 /**
+ * Pull the classic-experience authored description out of a bot's raw
+ * `configuration` JSON blob (settings["default-2.1.0"].content.description).
+ * The version key varies by experience, so scan any settings entry for a
+ * content.description rather than pinning one version.
+ */
+function parseConfigDescription(configuration?: string): string {
+  const cfg = configuration ? (JSON.parse(configuration) as Record<string, unknown>) : null;
+  const settings = (cfg?.settings ?? {}) as Record<string, { content?: { description?: string } }>;
+  const content = settings['default-2.1.0']?.content
+    ?? Object.values(settings).find((s) => s?.content?.description)?.content;
+  return content?.description ? String(content.description).trim() : '';
+}
+
+/**
  * Extract one agent into a complete AgentIR. Pulls all components for the bot
  * in a single query, then partitions by type.
  */
@@ -437,7 +514,7 @@ export async function extractAgent(
   const json = await dvGet<{ value: BotComponent[] }>(
     url,
     token,
-    'botcomponents?$select=name,data,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode' +
+    'botcomponents?$select=name,data,content,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode,description' +
       `&$filter=statecode eq 0 and _parentbotid_value eq ${bot.botid}&$top=1000`,
   );
   const components = json.value ?? [];
@@ -447,14 +524,29 @@ export async function extractAgent(
   // real description; for Microsoft prebuilt/managed agents it's empty (the
   // description is template-defined and not exposed via the Dataverse API).
   let configDescription = '';
+  // The NEW Copilot Studio experience stores the Overview "Description" on the
+  // bot record's own `description` column (not in configuration/GptComponentMetadata),
+  // so we read it too — otherwise authored descriptions from new-experience agents
+  // are silently dropped.
+  let botDescription = '';
   try {
-    const b = await dvGet<{ configuration?: string }>(url, token, `bots(${bot.botid})?$select=configuration`);
-    const cfg = b.configuration ? (JSON.parse(b.configuration) as Record<string, unknown>) : null;
-    const settings = (cfg?.settings ?? {}) as Record<string, { content?: { description?: string } }>;
-    const content = settings['default-2.1.0']?.content;
-    if (content?.description) configDescription = String(content.description).trim();
-  } catch {
-    /* non-fatal — fall back to instruction-derived description */
+    const b = await dvGet<{ configuration?: string; description?: string }>(
+      url, token, `bots(${bot.botid})?$select=configuration,description`,
+    );
+    if (b.description) botDescription = String(b.description).trim();
+    configDescription = parseConfigDescription(b.configuration);
+  } catch (e) {
+    // The combined select can fail on Dataverse orgs/solution versions where the
+    // bot-level `description` column isn't selectable — don't let that also cost
+    // us the classic-experience description, which lives in `configuration` alone
+    // and has always been selectable. Retry with just that field before giving up.
+    logger.warn(`bots($select=configuration,description) failed for "${bot.name}" (non-fatal, retrying configuration-only): ${(e as Error).message}`);
+    try {
+      const b = await dvGet<{ configuration?: string }>(url, token, `bots(${bot.botid})?$select=configuration`);
+      configDescription = parseConfigDescription(b.configuration);
+    } catch (e2) {
+      logger.warn(`configuration-only fallback also failed for "${bot.name}": ${(e2 as Error).message}`);
+    }
   }
 
   // Agent-level source provenance (report/audit only — NOT migrated to Gemini).
@@ -491,9 +583,14 @@ export async function extractAgent(
 
   const topics = topicComps.map(parseTopic);
   // Knowledge = configured sources (type 16) + author-uploaded files (type 14).
+  // A minority of type-14 rows are actually embedded structured configs, not
+  // files (see isEmbeddedConfigSource) — route those through the
+  // knowledge-source path instead of the file-fetch path.
   const knowledgeSources = [
     ...ksComps.map((c) => parseKnowledgeSource(c, opts?.ownerDomains)),
-    ...fileComps.map(parseFileAttachment),
+    ...fileComps.map((c) =>
+      isEmbeddedConfigSource(c) ? parseEmbeddedConfigSource(c, opts?.ownerDomains) : parseFileAttachment(c),
+    ),
   ];
 
   // Derive starter prompts from custom topics when the agent didn't define any.
@@ -526,13 +623,20 @@ export async function extractAgent(
     }
   }
 
-  // Use ONLY the agent's AUTHORED description:
-  //   1. bot.configuration.content.description (author-written), else
-  //   2. GptComponentMetadata.description, else
+  // Use ONLY the agent's AUTHORED description, from wherever the experience stores it:
+  //   1. The CustomGpt botcomponent's own NATIVE `description` column (current
+  //      Copilot Studio: this is what the Overview panel's "Description" field
+  //      actually writes to — confirmed live; it's a real column on
+  //      `botcomponent` even on orgs where `bot` has no `description` column
+  //      at all), else
+  //   2. bot.configuration.content.description (classic experience), else
+  //   3. GptComponentMetadata YAML `data.description` (legacy/rare shape), else
+  //   4. bot.description column (older orgs that DO expose it there), else
   //   empty. We deliberately do NOT derive a description from the instructions'
   //   first line, topics, or AI Builder prompts — if the source has no
   //   description, the destination gets none (product decision).
-  const description = configDescription || gpt.description || '';
+  const gptComponentDescription = (gptComp?.description ?? '').trim();
+  const description = gptComponentDescription || configDescription || gpt.description || botDescription || '';
 
   // "Thin" = nothing meaningful to carry over: no instructions, no readable
   // topic content, AND no resolvable AI Builder prompt.

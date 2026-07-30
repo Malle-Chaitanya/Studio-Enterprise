@@ -45,6 +45,22 @@ export interface Session {
   plan?: ResolvedPlan;
   // linkage during OAuth handshakes
   msSessionId?: string;
+  /**
+   * SharePoint Online connector setup (the `reconnect` knowledge strategy).
+   * These are the CUSTOMER's own Entra app identifiers — never CloudFuze's
+   * multi-tenant app (see services/geminiConnector.ts for why). The client
+   * secret itself is NOT retained here after the create call — only enough to
+   * track/poll the one in-flight or completed connector-creation operation.
+   */
+  sharepointConnector?: {
+    clientId: string;
+    tenantId: string;
+    instanceUri: string;
+    collectionId: string;
+    operationName?: string;
+    status?: 'pending' | 'done' | 'failed';
+    error?: string;
+  };
 }
 
 /** Used until real login is wired; every session/run is scoped to this. */

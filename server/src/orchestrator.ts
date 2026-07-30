@@ -1,4 +1,3 @@
-import { config } from './config.js';
 import { clientCredsToken } from './auth/microsoft.js';
 import { getSaToken, serviceAccountEmail } from './auth/google.js';
 import { logger } from './logger.js';
@@ -7,6 +6,7 @@ import { buildOrganizationProfile } from './services/organizationProfile.js';
 import { createAgent, defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent } from './services/gemini.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
+import { migrateDataverseSnapshot } from './services/knowledgeDataStoreExecutor.js';
 import { planTopicsMigration } from './services/topicsMigration.js';
 import { verifyAgent } from './services/verify.js';
 import { preflightQuota, nextQuotaResetUtc } from './services/quota.js';
@@ -204,23 +204,17 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
     try {
       // The client grants OUR service account access one of two ways. Use
       // whichever they set up: DIRECT (SA added to their project IAM) or
-      // IMPERSONATION (SA authorized in their Domain-Wide Delegation). Dev bypass
-      // impersonates a fixed configured admin.
-      if (config.GOOGLE_AUTH_MODE === 'bypass') {
-        saToken = await getSaToken(config.GOOGLE_IMPERSONATE_EMAIL || gEmail || undefined);
-        emitLog('ok', `Service account token acquired (bypass, as ${config.GOOGLE_IMPERSONATE_EMAIL || gEmail})`);
+      // IMPERSONATION (SA authorized in their Domain-Wide Delegation).
+      const direct = await getSaToken(); // SA's own identity (client granted IAM)
+      if (project && (await projectReachable(project, direct))) {
+        saToken = direct;
+        emitLog('ok', `Using CloudFuze service account (granted IAM on project ${project})`);
+      } else if (gEmail) {
+        saToken = await getSaToken(gEmail); // impersonate client admin (DWD)
+        if (project && !(await projectReachable(project, saToken))) throw new Error('reachable-check-failed');
+        emitLog('ok', `Using CloudFuze service account impersonating ${gEmail} (Domain-Wide Delegation)`);
       } else {
-        const direct = await getSaToken(); // SA's own identity (client granted IAM)
-        if (project && (await projectReachable(project, direct))) {
-          saToken = direct;
-          emitLog('ok', `Using CloudFuze service account (granted IAM on project ${project})`);
-        } else if (gEmail) {
-          saToken = await getSaToken(gEmail); // impersonate client admin (DWD)
-          if (project && !(await projectReachable(project, saToken))) throw new Error('reachable-check-failed');
-          emitLog('ok', `Using CloudFuze service account impersonating ${gEmail} (Domain-Wide Delegation)`);
-        } else {
-          throw new Error('no-access');
-        }
+        throw new Error('no-access');
       }
       // Client-agnostic: discover the project's actual engine instead of assuming
       // a hardcoded name, so the destination is correct for any client project.
@@ -491,13 +485,50 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             emitLog('warn', `    knowledge file migration error: ${(e as Error).message}`);
           }
         }
-        const nonFile = ks.filter((k) => k.kind !== 'FileUpload' && k.classification?.automatable);
-        if (nonFile.length) {
-          emitLog(
-            'warn',
-            `    ${nonFile.length} non-file knowledge source(s) NOT migrated (data-store path not yet wired): ` +
-              nonFile.map((k) => `${k.name}→${k.classification?.strategy}`).join(', '),
-          );
+        // Dataverse reference tables → structured data store (wired below).
+        // Everything else non-file (websites, connectors, sensitive tables,
+        // manual-review) has no automatic path yet — reported honestly.
+        const nonFile = ks.filter((k) => k.kind !== 'FileUpload');
+        const dvSnapshots = nonFile.filter((k) => k.classification?.strategy === 'dataverse-snapshot');
+        const stillUnwired = nonFile.filter((k) => k.classification?.strategy !== 'dataverse-snapshot');
+
+        for (const src of dvSnapshots) {
+          try {
+            const dvToken = await tokenFor(row.envUrl);
+            const snap = await migrateDataverseSnapshot(dest, saToken, dvToken, row.envUrl, create.agentId, src);
+            result.knowledgeTableRowsIndexed = (result.knowledgeTableRowsIndexed ?? 0) + snap.succeeded;
+            result.knowledgeTableRowsFailed = (result.knowledgeTableRowsFailed ?? 0) + snap.failed;
+            emitLog(
+              snap.error || snap.failed ? 'warn' : 'ok',
+              `    Dataverse snapshot "${src.name}": ${snap.succeeded}/${snap.attempted} row(s) indexed` +
+                (snap.failed ? `, ${snap.failed} failed` : '') +
+                (snap.error ? ` — ${snap.error}` : ''),
+            );
+          } catch (e) {
+            emitLog('warn', `    Dataverse snapshot "${src.name}" error: ${(e as Error).message}`);
+          }
+        }
+        if (stillUnwired.length) {
+          const sp = session.sharepointConnector;
+          const spSources = stillUnwired.filter((k) => k.classification?.geminiTarget === 'sharepoint-connector');
+          const other = stillUnwired.filter((k) => k.classification?.geminiTarget !== 'sharepoint-connector');
+          if (spSources.length) {
+            emitLog(
+              sp?.status === 'done' ? 'warn' : 'warn',
+              sp
+                ? `    ${spSources.length} SharePoint source(s): connector "${sp.collectionId}" is ${sp.status ?? 'pending'}` +
+                  ' — Google\'s setup still requires a manual Cloud Console step (link the data store to an app) before agents can search it.'
+                : `    ${spSources.length} SharePoint source(s) NOT migrated — no connector configured for this session yet ` +
+                  '(POST /api/destination/sharepoint-connector with the customer\'s own Entra app credentials).',
+            );
+          }
+          if (other.length) {
+            emitLog(
+              'warn',
+              `    ${other.length} knowledge source(s) NOT migrated (needs a connector or manual step): ` +
+                other.map((k) => `${k.name}→${k.classification?.strategy ?? 'unclassified'}`).join(', '),
+            );
+          }
         }
 
         result.deployed = await publishAgent(dest, saToken, create.agentId);

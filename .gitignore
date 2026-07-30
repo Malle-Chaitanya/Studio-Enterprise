@@ -15,3 +15,7 @@ migration_data/
 # Editor/build junk
 ~$*
 *.tsbuildinfo
+
+# Claude Code — personal overrides & local settings (never commit)
+CLAUDE.local.md
+.claude/settings.local.json

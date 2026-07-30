@@ -1,0 +1,34 @@
+{
+  "$comment": "Project-wide Claude Code settings for CloudFuze Studio Migrate. Personal overrides go in settings.local.json (git-ignored). These permissions favor read/typecheck/build/git-status operations and BLOCK anything that would touch secrets or production credentials.",
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/ChaitanyaMalle/CS_GE/**)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run build)",
+      "Bash(npm run dev)",
+      "Bash(npm install)",
+      "Bash(cd server && npm run typecheck)",
+      "Bash(cd web && npm run typecheck)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(npx tsc --noEmit)"
+    ],
+    "deny": [
+      "Read(./server/.env)",
+      "Read(./service_account.json)",
+      "Read(./**/*sa-key*.json)",
+      "Read(./**/service-account*.json)",
+      "Read(./secrets/**)",
+      "Edit(./server/.env)",
+      "Edit(./service_account.json)",
+      "Write(./service_account.json)",
+      "Bash(git push:*)",
+      "Bash(rm -rf:*)"
+    ]
+  },
+  "$editingBoundaries": {
+    "note": "Do not edit generated/build output (server/dist, web/dist), lockfiles unless intentionally bumping deps, or any credential file. Diagnostic scripts (server/src/_diag_*, _test_*, _demo_*, _poc_*) are throwaway spikes — do not treat them as app code or refactor them."
+  }
+}
