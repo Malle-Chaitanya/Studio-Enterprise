@@ -11,6 +11,7 @@ export function renderReport(orgName: string, results: MigrationResult[]): strin
   lines.push(`**Agents processed:** ${results.length}  `);
   lines.push(`**Succeeded:** ${ok.length}  `);
   lines.push(`**Deployed:** ${results.filter((r) => r.deployed).length}  `);
+  lines.push(`**Left as Draft (source was Draft):** ${results.filter((r) => r.draftPreserved).length}  `);
   lines.push(`**Shared:** ${results.filter((r) => r.shared).length}  `);
   lines.push(`**Verified:** ${results.filter((r) => r.verified).length}  `);
   lines.push(`**Failed:** ${failed.length}`);
@@ -32,7 +33,7 @@ export function renderReport(orgName: string, results: MigrationResult[]): strin
   }
 
   const needsReview = results.flatMap((r) =>
-    r.fidelity.filter((f) => f.status === 'needs-review' || f.status === 'partial').map((f) => ({ agent: r.name, f })),
+    r.fidelity.filter((f) => f.status === 'needs-review' || f.status === 'partial' || f.status === 'lost').map((f) => ({ agent: r.name, f })),
   );
   if (needsReview.length) {
     lines.push('## Needs human review');
@@ -47,7 +48,7 @@ export function renderReport(orgName: string, results: MigrationResult[]): strin
 function statusLine(r: MigrationResult): string {
   const parts: string[] = [];
   parts.push(r.created || r.geminiAgentId ? 'created ✓' : 'not created ✗');
-  parts.push(r.deployed ? 'deployed ✓' : 'not deployed');
+  parts.push(r.deployed ? 'deployed ✓' : r.draftPreserved ? 'left as Draft (source Draft)' : 'not deployed');
   parts.push(r.shared ? 'shared ✓' : 'not shared');
   if (r.verified !== undefined) parts.push(r.verified ? 'verified ✓' : 'verify failed');
   return parts.join(' · ');

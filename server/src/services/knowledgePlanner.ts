@@ -5,7 +5,6 @@
  * source should be re-established; this planner turns a whole agent's classified
  * sources into a concrete, executable plan:
  *   - folds all copy-and-index uploaded files into ONE document data store,
- *   - folds all website URLs into ONE website data store,
  *   - emits one action per reconnect / rebuild / manual-review source,
  *   - assigns valid Discovery Engine resource ids,
  *   - separates the automatable actions from the ones needing human setup.
@@ -13,6 +12,7 @@
  * PURE (no I/O): the executor (thin Discovery Engine client) consumes this plan.
  * Keeping planning pure means it is fully testable without live credentials.
  */
+import { createHash } from 'node:crypto';
 import type { KnowledgeSourceIR } from '../types.js';
 import type { KnowledgeStrategy, GeminiTarget } from './knowledgeClassifier.js';
 
@@ -40,8 +40,6 @@ export interface KnowledgeMigrationAction {
   files?: PlannedFile[];
   /** Ordered manual steps an operator must perform (non-automatable actions). */
   manualSteps?: string[];
-  /** Website ownership verdict (owned / third-party / unknown), when applicable. */
-  ownership?: string;
   /** Caveats / provenance carried from classification. */
   notes: string[];
 }
@@ -68,6 +66,25 @@ export function sanitizeDataStoreId(raw: string): string {
   return id.length > 63 ? id.slice(0, 63).replace(/-$/, '') : id;
 }
 
+/**
+ * Collection id for a native connector, keyed by the FULL site URL — not
+ * naive prefix truncation. Two different SharePoint sources sharing a long
+ * common prefix (e.g. two files under the same deeply-nested site) would
+ * otherwise truncate to the IDENTICAL id (`sanitizeDataStoreId` keeps only
+ * the first 63 chars), silently colliding their connectors onto the same
+ * Google Collection — confirmed live: two IT Help Desk knowledge sources
+ * ("Rollbar.docx", "BAMBOO HR.docx") produced the same truncated prefix.
+ * A short hash of the exact site URL guarantees uniqueness and stays
+ * deterministic (same site → same id, so re-running setup is still
+ * idempotent), and leaves headroom under 63 chars for whatever suffix
+ * Google's API appends internally per entity (e.g. observed `_file`).
+ */
+export function connectorCollectionId(orgLabel: string, siteUrl: string): string {
+  const hash = createHash('sha1').update(siteUrl).digest('hex').slice(0, 12);
+  const base = sanitizeDataStoreId(orgLabel).slice(0, 30);
+  return sanitizeDataStoreId(`${base}-sp-${hash}`);
+}
+
 /** Short, stable slug from the agent id for resource naming. */
 function agentSlug(agentSourceId: string): string {
   return sanitizeDataStoreId(agentSourceId).slice(0, 20);
@@ -86,8 +103,7 @@ export function planKnowledgeMigration(
   const actions: KnowledgeMigrationAction[] = [];
 
   const uploads = sources.filter((s) => s.classification?.strategy === 'copy-and-index' && s.classification?.geminiTarget === 'document-data-store');
-  const websites = sources.filter((s) => s.classification?.strategy === 'recreate' && s.classification?.geminiTarget === 'website-data-store');
-  const grouped = new Set([...uploads, ...websites].map((s) => s.id));
+  const grouped = new Set(uploads.map((s) => s.id));
 
   // 1. All ingestible uploaded files → ONE document data store for the agent.
   if (uploads.length) {
@@ -111,26 +127,7 @@ export function planKnowledgeMigration(
     });
   }
 
-  // 2. All website sources → ONE website data store (URLs merged).
-  if (websites.length) {
-    const urls = dedupe(websites.flatMap((s) => s.references ?? (s.reference ? [s.reference] : [])));
-    actions.push({
-      sourceIds: websites.map((s) => s.id),
-      strategy: 'recreate',
-      geminiTarget: 'website-data-store',
-      // Honors classification: website auto-create is possible but indexing
-      // needs domain verification, so it is NOT unattended.
-      automatable: urls.length > 0 && websites.some((s) => s.classification?.automatable),
-      displayName: `Website (${urls.length} URL${urls.length > 1 ? 's' : ''})`,
-      dataStoreId: sanitizeDataStoreId(`${slug}-web`),
-      ownership: websites[0]?.classification?.ownership,
-      references: urls,
-      manualSteps: urls.length ? undefined : ['No URL captured in the source config — supply the target URL before creating the website data store.'],
-      notes: ['Recreate as a website data store; Gemini re-crawls the URL(s).'],
-    });
-  }
-
-  // 3. Everything else → one action per source (snapshot / reconnect / rebuild / manual).
+  // 2. Everything else → one action per source (snapshot / reconnect / rebuild / manual).
   for (const s of sources) {
     if (grouped.has(s.id)) continue;
     const c = s.classification;
@@ -189,8 +186,4 @@ function manualStepsFor(strategy: KnowledgeStrategy, s: KnowledgeSourceIR): stri
     default:
       return undefined;
   }
-}
-
-function dedupe(arr: string[]): string[] {
-  return [...new Set(arr.map((s) => s.trim()).filter(Boolean))];
 }

@@ -97,20 +97,30 @@ export interface KnowledgeSourceMetadata {
   isManaged?: boolean;
   /** Human-readable status ('active' | 'inactive'), from statuscode. */
   status?: string;
+  /** Raw systemuser id who last modified this component (unresolved — see
+   *  services/dataverse.ts resolveSystemUserEmail). Used to scope a
+   *  SharePoint/OneDrive search to the person who added the source. */
+  modifiedByUserId?: string;
 }
 
 /**
  * Agent-level SOURCE metadata (provenance). Preserved for the migration
- * report / audit trail — NOT migrated into Gemini, which has its own lifecycle
- * metadata (createTime/updateTime/state). Mirrors the Copilot "Agents" list
- * columns: Type, Owner, Last modified, Protection status, etc.
+ * report / audit trail. Mirrors the Copilot "Agents" list columns: Type,
+ * Owner, Last modified, Protection status, etc. Most fields here are NOT
+ * migrated into Gemini, which has its own lifecycle metadata
+ * (createTime/updateTime/state) — the one exception is `lastPublished`,
+ * which the orchestrator reads to decide whether to publish the migrated
+ * Gemini agent (see orchestrator.ts insert phase): a source agent that was
+ * never published in Copilot Studio (Draft) stays a Draft in Gemini too,
+ * instead of every migrated agent being force-published.
  */
 export interface AgentSourceMetadata {
   type?: string; // e.g. "Agent"
   ownerId?: string; // systemuser/team id (name needs an expand — best-effort)
   createdOn?: string; // ISO
   modifiedOn?: string; // ISO  → Copilot "Last modified"
-  lastPublished?: string; // ISO or undefined ("Never") — best-effort
+  /** ISO, or undefined if the source agent was never published (still Draft). Drives publish gating — see interface doc. */
+  lastPublished?: string;
   isManaged?: boolean; // part of a managed solution
   protected?: boolean; // Copilot "Protection status: Protected" (≈ managed)
   status?: string; // 'active' | 'inactive'
@@ -234,12 +244,6 @@ export interface ResolvedPlan {
   destination: DestinationOptions;
   /** Dry run: extract + map + assess, but do NOT create/deploy/share in Gemini. */
   dryRun?: boolean;
-  /**
-   * How to handle knowledge sources Gemini can't import (websites, etc.).
-   * Default 'report-only' (no instruction change); 'appendix' adds a separated
-   * "Migrated Knowledge References" block; 'skip' omits them. Customer choice.
-   */
-  knowledgeHandling?: 'skip' | 'appendix' | 'report-only';
 }
 
 /** Result of mapping one AgentIR to a Gemini agent definition. */
@@ -268,6 +272,8 @@ export interface MigrationResult {
   geminiAgentId?: string;
   created: boolean;
   deployed: boolean;
+  /** True when `deployed` is false BECAUSE the source agent was a Draft in Copilot Studio (intentional, not a failure). */
+  draftPreserved?: boolean;
   shared: boolean;
   verified?: boolean;
   verifySample?: string;
@@ -279,6 +285,26 @@ export interface MigrationResult {
   /** Dataverse reference-table rows snapshotted into a structured data store. */
   knowledgeTableRowsIndexed?: number;
   knowledgeTableRowsFailed?: number;
+  /**
+   * SharePoint/OneDrive "upload and sync" sources (FederatedStructuredSearchSource
+   * — no auto-discoverable URL, see .claude/memory/decisions.md) that a
+   * filename search found candidates for. NOT auto-attached — a person
+   * reviews these and calls POST /api/migrate/knowledge-source-confirm with
+   * the correct one. Empty candidates means the search found nothing.
+   */
+  knowledgeSourceCandidates?: {
+    sourceName: string;
+    scopedToUser?: string | null;
+    candidates: {
+      driveId: string;
+      itemId: string;
+      name: string;
+      sizeBytes?: number;
+      webUrl?: string;
+      lastModifiedDateTime?: string;
+      parentContext?: string;
+    }[];
+  }[];
 }
 
 /** Server-sent progress event to the browser. */

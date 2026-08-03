@@ -1,5 +1,5 @@
 {
-  "$comment": "Project-wide Claude Code settings for CloudFuze Studio Migrate. Personal overrides go in settings.local.json (git-ignored). These permissions favor read/typecheck/build/git-status operations and BLOCK anything that would touch secrets or production credentials.",
+  "$comment": "Project-wide Claude Code settings for CloudFuze Studio Migrate. Personal overrides go in settings.local.json (git-ignored). These permissions favor read/typecheck/build/git-status operations and BLOCK anything that would touch secrets or production credentials. Normal pushes to non-default branches (e.g. business) are allowed; force pushes and any push to main/master remain blocked.",
   "permissions": {
     "allow": [
       "Read(//c/Users/ChaitanyaMalle/CS_GE/**)",
@@ -13,7 +13,9 @@
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git branch:*)",
-      "Bash(npx tsc --noEmit)"
+      "Bash(npx tsc --noEmit)",
+      "Bash(git push origin business)",
+      "Bash(git push origin HEAD)"
     ],
     "deny": [
       "Read(./server/.env)",
@@ -24,11 +26,17 @@
       "Edit(./server/.env)",
       "Edit(./service_account.json)",
       "Write(./service_account.json)",
-      "Bash(git push:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git push origin main:*)",
+      "Bash(git push origin master:*)",
+      "Bash(git push:* main)",
+      "Bash(git push:* master)",
       "Bash(rm -rf:*)"
     ]
   },
   "$editingBoundaries": {
-    "note": "Do not edit generated/build output (server/dist, web/dist), lockfiles unless intentionally bumping deps, or any credential file. Diagnostic scripts (server/src/_diag_*, _test_*, _demo_*, _poc_*) are throwaway spikes — do not treat them as app code or refactor them."
+    "note": "Do not edit generated/build output (server/dist, web/dist), lockfiles unless intentionally bumping deps, or any credential file. Diagnostic scripts (server/src/spikes/_diag_*, _test_*, _demo_*, _poc_*) are throwaway spikes — do not treat them as app code or refactor them."
   }
 }

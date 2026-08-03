@@ -44,8 +44,8 @@ Project-specific coding conventions. gstack `/review` reads these rules.
 
 ## Diagnostic scripts
 
-`server/src/_diag_*.ts`, `_test_*.ts`, `_demo_*.ts`, `_poc_*.ts`, `_probe_*.ts`,
+`server/src/spikes/_diag_*.ts`, `_test_*.ts`, `_demo_*.ts`, `_poc_*.ts`, `_probe_*.ts`,
 `_spike_*.ts`, `_dump_*.ts`, `_prep_*.ts`, `_register_*.ts`, `_del_*.ts` are throwaway
-spikes run via `tsx`. They are **not** app code: exempt from the strictness above, not
+spikes, all collected under `server/src/spikes/`, run via `tsx`. They are **not** app code: exempt from the strictness above, not
 imported by `server.ts`, and should not be refactored or "cleaned up" as part of feature
 work.

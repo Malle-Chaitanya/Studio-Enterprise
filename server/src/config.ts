@@ -29,6 +29,14 @@ const schema = z.object({
   GOOGLE_SA_KEY_JSON: z.string().optional(),
   GEMINI_PROJECT_FALLBACK: z.string().optional(),
   /**
+   * CloudFuze's OWN GCP project (never a customer's) where per-tenant Entra
+   * app credentials are stored in Secret Manager — see services/secretManager.ts
+   * and .claude/memory/decisions.md (2026-08-03). When unset, connector setup
+   * simply skips the reuse-across-sites optimization and always asks the admin
+   * for credentials (graceful degrade, not a hard failure).
+   */
+  CLOUDFUZE_GCP_PROJECT: z.string().optional(),
+  /**
    * Optional HARD allowlist limiting which accounts the service account may
    * impersonate via Domain-Wide Delegation. Comma-separated; each entry is an
    * exact email (`admin@acme.com`) or a domain (`acme.com` / `@acme.com`). When

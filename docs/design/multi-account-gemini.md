@@ -242,7 +242,6 @@ export interface ResolvedPlan {
   destination: DestinationOptions;
   targetAccount?: PlanTargetAccount;   // NEW — bound at plan time
   dryRun?: boolean;
-  knowledgeHandling?: 'skip' | 'appendix' | 'report-only';
 }
 ```
 

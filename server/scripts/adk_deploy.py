@@ -13,6 +13,13 @@ ADK_STAGING_BUCKET); it is auto-created if missing.
     python adk_deploy.py --project P --location us-central1 \
         --spec '{"name":"...","displayName":"...","instruction":"...","model":"gemini-2.5-flash","tools":["googleSearch"]}' \
         --staging-bucket gs://my-bucket
+
+If spec.vertexAiSearchDataStore is set (a public-website knowledge source, grounded
+via a Discovery Engine PUBLIC_WEBSITE data store — see adkDeployer.ts
+createWebsiteGroundingDataStore), VertexAiSearchTool is wired as the agent's ONLY
+tool. ADK (pre-1.16) only allows VertexAiSearchTool alone on an agent — it cannot
+be combined with google_search or any other tool — so `tools` is ignored whenever
+vertexAiSearchDataStore is present.
 """
 import argparse
 import json
@@ -67,10 +74,16 @@ def main():
     except Exception as e:  # noqa: BLE001
         emit({"error": f"staging bucket setup failed ({bucket}): {e}"}); return
 
-    # Build tools from the spec.
+    # Build tools from the spec. VertexAiSearchTool (website-grounding path) must
+    # be the ONLY tool on the agent — ADK (pre-1.16) rejects mixing it with
+    # google_search or any other tool, so it takes priority over spec["tools"].
     tools = []
+    vertex_ai_search_data_store = spec.get("vertexAiSearchDataStore")
     try:
-        if "googleSearch" in (spec.get("tools") or []):
+        if vertex_ai_search_data_store:
+            from google.adk.tools import VertexAiSearchTool
+            tools.append(VertexAiSearchTool(data_store_id=vertex_ai_search_data_store))
+        elif "googleSearch" in (spec.get("tools") or []):
             from google.adk.tools import google_search
             tools.append(google_search)
     except Exception as e:  # noqa: BLE001

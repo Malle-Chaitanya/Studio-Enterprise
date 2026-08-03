@@ -34,9 +34,8 @@ are inferred from the repo state at scaffold time — 2026-07-28 — and marked 
 ## Next phases (indicative)
 
 1. Add a `vitest` unit suite for `mapper` / `topicCompiler` / `knowledgeClassifier` / `scope`.
-2. Broaden knowledge-source coverage (websites → data store vs. Search grounding).
-3. Flows/workflows migration (Phase 2 of the product).
-4. Harden multi-tenant operational tooling (per-tenant run history UI).
+2. Flows/workflows migration (Phase 2 of the product).
+3. Harden multi-tenant operational tooling (per-tenant run history UI).
 
 ## How to verify the current build quickly
 

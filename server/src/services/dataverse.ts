@@ -16,6 +16,14 @@ import type { AgentIR, AgentSourceMetadata, KnowledgeSourceIR, KnowledgeSourceMe
 
 const API = (url: string, path: string) => `${url}/api/data/v9.2/${path}`;
 
+/**
+ * Environments (keyed by Dataverse org url) where `bots?$select=configuration,description`
+ * is known to 400. Set the first time extractAgent sees it fail; read on every
+ * subsequent bot in the same run to skip the doomed combined attempt. See
+ * `extractAgent`'s comment for why this is a per-environment property.
+ */
+const combinedSelectUnsupported = new Map<string, boolean>();
+
 interface BotComponent {
   botcomponentid: string;
   name: string;
@@ -47,6 +55,12 @@ interface BotComponent {
   modifiedon?: string | null;
   ismanaged?: boolean | null;
   statuscode?: number | null;
+  /** Lookup to the systemuser who last modified this component — captured
+   *  raw (not resolved to an email) here; resolving it costs a Dataverse
+   *  call, so it's deferred until actually needed (scoping a OneDrive search
+   *  to the person who added a SharePoint/OneDrive copy-mode source). See
+   *  resolveSystemUserEmail below. */
+  _modifiedby_value?: string | null;
 }
 
 /** Build the provenance metadata block for a knowledge component. */
@@ -57,7 +71,27 @@ function buildKnowledgeMetadata(c: BotComponent): KnowledgeSourceMetadata {
     modifiedOn: c.modifiedon ?? undefined,
     isManaged: c.ismanaged ?? undefined,
     status: c.statuscode == null ? undefined : c.statuscode === 1 ? 'active' : 'inactive',
+    modifiedByUserId: c._modifiedby_value ?? undefined,
   };
+}
+
+/**
+ * Resolve a systemuser id to their email — used on demand to scope a
+ * SharePoint/OneDrive search to the specific person who added a knowledge
+ * source (see graphSearch.ts), never resolved eagerly for every source
+ * during extraction (most sources never need it).
+ */
+export async function resolveSystemUserEmail(url: string, token: string, userId: string): Promise<string | null> {
+  try {
+    const user = await dvGet<{ internalemailaddress?: string }>(
+      url,
+      token,
+      `systemusers(${userId})?$select=internalemailaddress`,
+    );
+    return user.internalemailaddress ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function dvGet<T>(url: string, token: string, path: string): Promise<T> {
@@ -65,7 +99,18 @@ async function dvGet<T>(url: string, token: string, path: string): Promise<T> {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
   });
   if (!res.ok) {
-    throw new Error(`Dataverse GET ${path} failed (${res.status})`);
+    // Surface Dataverse's own OData error message (e.g. "Could not find a
+    // property named 'description' on type...") instead of a bare status
+    // code — a bare "(400)" gives no way to tell a bad $select from a real
+    // outage without re-running the request by hand.
+    let detail = '';
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      detail = body?.error?.message ?? '';
+    } catch {
+      /* body wasn't JSON (or already consumed) — fall back to bare status */
+    }
+    throw new Error(`Dataverse GET ${path} failed (${res.status})${detail ? `: ${detail}` : ''}`);
   }
   return (await res.json()) as T;
 }
@@ -386,7 +431,7 @@ function isEmbeddedConfigSource(c: BotComponent): boolean {
   return !c.filedata_name && Boolean(c.content) && /"\$kind"\s*:\s*"KnowledgeSourceComponent"/.test(c.content ?? '');
 }
 
-function parseEmbeddedConfigSource(c: BotComponent, ownerDomains?: string[]): KnowledgeSourceIR {
+function parseEmbeddedConfigSource(c: BotComponent): KnowledgeSourceIR {
   let doc: Record<string, unknown> | null = null;
   try {
     doc = JSON.parse(c.content ?? '{}') as Record<string, unknown>;
@@ -404,7 +449,7 @@ function parseEmbeddedConfigSource(c: BotComponent, ownerDomains?: string[]): Kn
   if (doc) collectStrings(doc, (k) => /url|site|siteurl|reference|entity|path|connection/i.test(k), refs);
   const references = dedupe(refs);
 
-  const classification = classifyKnowledgeSource({ kind, references, ownerDomains });
+  const classification = classifyKnowledgeSource({ kind, references });
   return {
     id: c.botcomponentid,
     name: c.name,
@@ -417,13 +462,25 @@ function parseEmbeddedConfigSource(c: BotComponent, ownerDomains?: string[]): Kn
   };
 }
 
-function parseKnowledgeSource(c: BotComponent, ownerDomains?: string[]): KnowledgeSourceIR {
+function parseKnowledgeSource(c: BotComponent): KnowledgeSourceIR {
   const doc = tryParseYaml(c.data);
-  const kind = (doc?.kind as string) ?? (doc?.knowledgeSourceType as string) ?? 'Unknown';
+  // The real distinguishing type lives at `source.kind` — the top-level
+  // `kind` is ALWAYS the literal string "KnowledgeSourceConfiguration" for
+  // every knowledge source in this schema (website, SharePoint, Dataverse,
+  // all of them), confirmed against live tenant data. Reading top-level
+  // `kind` alone (the prior behavior) meant every classic-schema source fell
+  // through classification's kind-based rules entirely, relying only on the
+  // reference-URL inference fallback to guess a strategy.
+  const source = doc?.source as { kind?: string } | undefined;
+  const kind = source?.kind ?? (doc?.kind as string) ?? (doc?.knowledgeSourceType as string) ?? 'Unknown';
 
-  // All references (URLs, site paths, entity names) — not just the first.
+  // All references (URLs, site paths, entity/skill names) — not just the
+  // first. "skill" added after finding Dataverse/federated sources identify
+  // themselves via `skillConfiguration: <name>` rather than a URL — captured
+  // here for visibility even though what a skillConfiguration name resolves
+  // to is not yet verified (see knowledgeClassifier.ts notes for this gap).
   const refs: string[] = [];
-  if (doc) collectStrings(doc, (k) => /url|site|siteurl|reference|entity|path|connection/i.test(k), refs);
+  if (doc) collectStrings(doc, (k) => /url|site|siteurl|reference|entity|path|connection|skill/i.test(k), refs);
   const references = dedupe(refs);
 
   // Author's description of what this source is for ("...answer questions about
@@ -443,10 +500,10 @@ function parseKnowledgeSource(c: BotComponent, ownerDomains?: string[]): Knowled
     const sizeStr: string[] = [];
     collectStrings(doc, (k) => /size|bytes|filesize|length/i.test(k), sizeStr);
     const sizeBytes = sizeStr.map((s) => Number(s)).find((n) => Number.isFinite(n) && n > 0);
-    if (fileName || sizeBytes) file = { name: fileName, sizeBytes };
+    if (fileName || sizeBytes) file = { name: fileName ? normalizeFileName(fileName) : fileName, sizeBytes };
   }
 
-  const classification = classifyKnowledgeSource({ kind, references, file, ownerDomains });
+  const classification = classifyKnowledgeSource({ kind, references, file });
 
   // Reflect the file-compat gate back onto the file record for the report.
   if (file?.name) {
@@ -474,13 +531,31 @@ function parseKnowledgeSource(c: BotComponent, ownerDomains?: string[]): Knowled
 }
 
 /**
+ * Dataverse sometimes stores a file's display name already percent-encoded
+ * (e.g. "Foo%20Bar.pdf" for the real name "Foo Bar.pdf") — a quirk of how the
+ * source system persisted it, not something we control. Decode it back to the
+ * real literal name here, ONCE, at extraction time, so nothing downstream
+ * (the compat gate, idempotency-by-filename, MIME lookup, the actual upload)
+ * re-encodes an already-encoded name into a corrupted double-encoded one.
+ * Confirmed live: an unfixed name produced "%20" → "%2520" on upload.
+ */
+function normalizeFileName(name: string): string {
+  try {
+    const decoded = decodeURIComponent(name);
+    return decoded !== name ? decoded : name;
+  } catch {
+    return name; // not validly percent-encoded — treat as a literal name that happens to contain '%'
+  }
+}
+
+/**
  * Parse a Bot File Attachment (componenttype 14) — an author-uploaded knowledge
  * file. The bytes live in the `filedata` File column (fetched separately at
  * migration time via …/filedata/$value); here we capture the name so the
  * classifier can apply Gemini's format/size ingest gate.
  */
 function parseFileAttachment(c: BotComponent): KnowledgeSourceIR {
-  const fileName = (c.filedata_name || c.name || 'file').trim();
+  const fileName = normalizeFileName((c.filedata_name || c.name || 'file').trim());
   const compat = checkFileCompatibility(fileName);
   const file = { name: fileName, format: compat.format, compatible: compat.compatible, incompatReason: compat.reason };
   const classification = classifyKnowledgeSource({ kind: 'FileUpload', file: { name: fileName } });
@@ -509,12 +584,11 @@ export async function extractAgent(
   url: string,
   token: string,
   bot: BotSummary,
-  opts?: { ownerDomains?: string[] },
 ): Promise<AgentIR> {
   const json = await dvGet<{ value: BotComponent[] }>(
     url,
     token,
-    'botcomponents?$select=name,data,content,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode,description' +
+    'botcomponents?$select=name,data,content,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode,description,_modifiedby_value' +
       `&$filter=statecode eq 0 and _parentbotid_value eq ${bot.botid}&$top=1000`,
   );
   const components = json.value ?? [];
@@ -529,33 +603,60 @@ export async function extractAgent(
   // so we read it too — otherwise authored descriptions from new-experience agents
   // are silently dropped.
   let botDescription = '';
-  try {
-    const b = await dvGet<{ configuration?: string; description?: string }>(
-      url, token, `bots(${bot.botid})?$select=configuration,description`,
-    );
-    if (b.description) botDescription = String(b.description).trim();
-    configDescription = parseConfigDescription(b.configuration);
-  } catch (e) {
-    // The combined select can fail on Dataverse orgs/solution versions where the
-    // bot-level `description` column isn't selectable — don't let that also cost
-    // us the classic-experience description, which lives in `configuration` alone
-    // and has always been selectable. Retry with just that field before giving up.
-    logger.warn(`bots($select=configuration,description) failed for "${bot.name}" (non-fatal, retrying configuration-only): ${(e as Error).message}`);
+  let gotCombined = false;
+  // Some Dataverse orgs/solution versions reject the combined
+  // `$select=configuration,description` with a 400 even though each column is
+  // selectable alone (the OData validator rejects the whole select list when
+  // one field it doesn't recognize is in it). That's a schema-level property
+  // of the environment, not of any one bot, so once we've seen it fail once
+  // we stop retrying the combined form and stop re-warning for every
+  // remaining agent in this run.
+  if (!combinedSelectUnsupported.get(url)) {
     try {
-      const b = await dvGet<{ configuration?: string }>(url, token, `bots(${bot.botid})?$select=configuration`);
+      const b = await dvGet<{ configuration?: string; description?: string }>(
+        url, token, `bots(${bot.botid})?$select=configuration,description`,
+      );
+      if (b.description) botDescription = String(b.description).trim();
       configDescription = parseConfigDescription(b.configuration);
-    } catch (e2) {
-      logger.warn(`configuration-only fallback also failed for "${bot.name}": ${(e2 as Error).message}`);
+      gotCombined = true;
+    } catch (e) {
+      combinedSelectUnsupported.set(url, true);
+      logger.warn(`bots($select=configuration,description) unsupported on this Dataverse environment — falling back to separate selects for the rest of this run: ${(e as Error).message}`);
+    }
+  }
+  if (!gotCombined) {
+    // Fetch configuration and description independently (in parallel) so a
+    // column that isn't selectable for one doesn't also cost us the other —
+    // dropping either one silently would lose an authored description
+    // (classic experience lives in `configuration`, new experience in
+    // `description`), which the lossless-extraction principle doesn't allow.
+    const [confResult, descResult] = await Promise.allSettled([
+      dvGet<{ configuration?: string }>(url, token, `bots(${bot.botid})?$select=configuration`),
+      dvGet<{ description?: string }>(url, token, `bots(${bot.botid})?$select=description`),
+    ]);
+    if (confResult.status === 'fulfilled') {
+      configDescription = parseConfigDescription(confResult.value.configuration);
+    } else {
+      logger.warn(`configuration-only fetch failed for "${bot.name}": ${(confResult.reason as Error)?.message ?? confResult.reason}`);
+    }
+    if (descResult.status === 'fulfilled') {
+      if (descResult.value.description) botDescription = String(descResult.value.description).trim();
+    } else {
+      logger.warn(`description-only fetch failed for "${bot.name}": ${(descResult.reason as Error)?.message ?? descResult.reason}`);
     }
   }
 
   // Agent-level source provenance (report/audit only — NOT migrated to Gemini).
   // Best-effort: standard solution-aware columns; degrades to undefined on error.
+  // `publishedon` is null for a bot that has never been published in Copilot
+  // Studio (still a Draft) — the orchestrator uses this to decide whether the
+  // migrated Gemini agent should be published too or left as a draft, so the
+  // destination mirrors the source's publish state instead of always publishing.
   let sourceMetadata: AgentSourceMetadata | undefined;
   try {
     const b = await dvGet<Record<string, unknown>>(
       url, token,
-      `bots(${bot.botid})?$select=createdon,modifiedon,ismanaged,statecode,schemaname,_ownerid_value`,
+      `bots(${bot.botid})?$select=createdon,modifiedon,ismanaged,statecode,schemaname,_ownerid_value,publishedon`,
     );
     const managed = Boolean(b.ismanaged);
     sourceMetadata = {
@@ -563,6 +664,7 @@ export async function extractAgent(
       ownerId: (b['_ownerid_value'] as string) ?? undefined,
       createdOn: (b.createdon as string) ?? undefined,
       modifiedOn: (b.modifiedon as string) ?? undefined,
+      lastPublished: (b.publishedon as string) ?? undefined,
       isManaged: managed,
       protected: managed, // Copilot "Protected" ≈ part of a managed solution
       status: b.statecode === 0 ? 'active' : b.statecode === 1 ? 'inactive' : undefined,
@@ -587,9 +689,9 @@ export async function extractAgent(
   // files (see isEmbeddedConfigSource) — route those through the
   // knowledge-source path instead of the file-fetch path.
   const knowledgeSources = [
-    ...ksComps.map((c) => parseKnowledgeSource(c, opts?.ownerDomains)),
+    ...ksComps.map((c) => parseKnowledgeSource(c)),
     ...fileComps.map((c) =>
-      isEmbeddedConfigSource(c) ? parseEmbeddedConfigSource(c, opts?.ownerDomains) : parseFileAttachment(c),
+      isEmbeddedConfigSource(c) ? parseEmbeddedConfigSource(c) : parseFileAttachment(c),
     ),
   ];
 
@@ -653,10 +755,12 @@ export async function extractAgent(
     const nonFileDetail = nonFile.length
       ? ` Non-file sources are classified with a recommendation but NOT auto-created this run: ${nonFile.map((k) => `${k.name}→${k.classification?.strategy}`).join(', ')}.`
       : '';
-    // Accurate wording: uploaded FILES migrate to the agent (agentFiles);
-    // data-store sources (websites/Dataverse) are recommended, not yet executed.
+    // This note describes the PLAN at extraction time, before the insert phase
+    // has run — it is not a claim that the upload succeeded. The actual
+    // per-file outcome (including any failure reason) is reported separately,
+    // as a `knowledge:<filename>` fidelity entry, once insert actually runs.
     unmapped.push(
-      `${knowledgeSources.length} knowledge source(s): ${fileCount} uploaded file(s) migrate to the agent's Knowledge automatically.` +
+      `${knowledgeSources.length} knowledge source(s): ${fileCount} uploaded file(s) will be uploaded and attached automatically during the insert phase (see the "knowledge:<filename>" entries below for the actual per-file result).` +
         nonFileDetail,
     );
   }

@@ -41,7 +41,6 @@ export type KnowledgeRetrievability =
 /** The concrete construct created on the Gemini Enterprise side. */
 export type GeminiTarget =
   | 'document-data-store'
-  | 'website-data-store'
   | 'structured-data-store'
   | 'sharepoint-connector'
   | 'onedrive-connector'
@@ -49,17 +48,12 @@ export type GeminiTarget =
   | 'agent-tool'
   | 'none';
 
-/** For website sources: is the URL on a domain the org owns? */
-export type WebsiteOwnership = 'owned' | 'third-party' | 'unknown';
-
 export interface KnowledgeClassification {
   strategy: KnowledgeStrategy;
   retrievability: KnowledgeRetrievability;
   geminiTarget: GeminiTarget;
   /** True only when the tool can complete this migration with NO human setup. */
   automatable: boolean;
-  /** Website ownership verdict (drives the recommendation, not a hard decision). */
-  ownership?: WebsiteOwnership;
   /** Reasons / caveats surfaced in the fidelity report (never silently dropped). */
   notes: string[];
 }
@@ -71,52 +65,6 @@ export interface ClassifierInput {
   references?: string[];
   /** Present when the source is an author-uploaded file. */
   file?: { name?: string; sizeBytes?: number };
-  /**
-   * Domains the customer org owns (e.g. the destination Workspace domain from
-   * the admin's gEmail). Used to tell an ownable website (verifiable → indexable)
-   * apart from a third-party site (not verifiable → Google Search grounding).
-   */
-  ownerDomains?: string[];
-}
-
-/** Well-known third-party domains — clearly not customer-owned. */
-const KNOWN_PUBLIC_DOMAINS = [
-  'microsoft.com', 'google.com', 'github.com', 'wikipedia.org', 'stackoverflow.com',
-  'amazon.com', 'apple.com', 'salesforce.com', 'office.com', 'youtube.com', 'medium.com',
-];
-
-/** Extract normalized hosts from reference URLs. */
-function hostsOf(references: string[] | undefined): string[] {
-  return (references ?? [])
-    .map((r) => {
-      try {
-        return new URL(r).host.toLowerCase().replace(/^www\./, '');
-      } catch {
-        return r.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '');
-      }
-    })
-    .filter(Boolean);
-}
-
-const hostUnder = (host: string, domain: string): boolean => host === domain || host.endsWith(`.${domain}`);
-
-/**
- * Three-state website ownership — the basis for a *recommendation*, not a hard
- * decision (the customer can override):
- *   owned       → URL is on a domain the org owns (verifiable → indexable)
- *   third-party → a well-known public site (not ownable → Google Search grounding)
- *   unknown     → can't determine (no URL, or not owned yet not clearly public)
- */
-export function websiteOwnership(
-  references: string[] | undefined,
-  ownerDomains: string[] | undefined,
-): WebsiteOwnership {
-  const hosts = hostsOf(references);
-  if (!hosts.length) return 'unknown';
-  const owners = (ownerDomains ?? []).map((d) => d.toLowerCase().replace(/^www\./, ''));
-  if (owners.length && hosts.some((h) => owners.some((d) => hostUnder(h, d)))) return 'owned';
-  if (hosts.some((h) => KNOWN_PUBLIC_DOMAINS.some((d) => hostUnder(h, d)))) return 'third-party';
-  return 'unknown';
 }
 
 // ── Gemini / Vertex AI Search ingestion limits (document data store) ──────────
@@ -184,6 +132,17 @@ function norm(kind: string): string {
   return (kind || '').toLowerCase().replace(/[^a-z]/g, '');
 }
 
+/**
+ * Whether a knowledge source's raw `kind` is Copilot's public-website type
+ * (`PublicSiteSearchSource`). Exported so callers outside the classifier
+ * (adkDeployer.ts's needsAdkDeployment) can recognize the same source type
+ * without duplicating/drifting from the RULES match below.
+ */
+export function isPublicWebsiteKind(kind: string): boolean {
+  const k = norm(kind);
+  return k.includes('publicsitesearch') || k.includes('publicwebsite');
+}
+
 interface Rule {
   /** Ordered match against the normalized kind. First match wins. */
   test: (k: string) => boolean;
@@ -220,6 +179,36 @@ const RULES: Rule[] = [
     },
   },
   {
+    // Public website search (Copilot's "PublicSiteSearchSource"). Confirmed live shape:
+    //   { kind: "KnowledgeSourceConfiguration", source: { kind: "PublicSiteSearchSource", site: "<url>" } }
+    // See docs/knowledge-sources-migration-playbook.md §4.1 (decision 2026-07-30,
+    // re-confirmed live 2026-07-31): "You can't connect website data stores to your
+    // Gemini Enterprise search and assistant apps." (Google, About apps and data
+    // stores) — a PUBLIC_WEBSITE data store can be CREATED but never ATTACHED to a
+    // low-code app/engine (proven via a live attach attempt, 400 FAILED_PRECONDITION).
+    //
+    // A genuine automatic path DOES exist via a different destination surface: ADK's
+    // VertexAiSearchTool grounds a custom-deployed agent on the data store directly,
+    // bypassing the attach step entirely (see adkDeployer.ts createWebsiteGroundingDataStore
+    // + publishAgentToGallery). BUT that path is the opt-in, billable "publish to
+    // gallery" upgrade — orchestrator.ts does not call it for the default low-code
+    // migration run. So for the default path this is still `manual-review`; automatable
+    // only becomes honest once a caller actually routes this source through
+    // publishAgentToGallery(..., { websiteSource: source }).
+    test: (k) => isPublicWebsiteKind(k),
+    build: ({ references }) => ({
+      strategy: 'manual-review',
+      retrievability: 'reference-only',
+      geminiTarget: 'none',
+      automatable: false,
+      notes: [
+        `Public website${references?.[0] ? ` (${references[0]})` : ''}: the default (low-code) Gemini Enterprise app cannot connect website data stores (Google-documented limitation, confirmed live) — no automatic path in the default migration.`,
+        'A real automated option exists via the opt-in "publish to gallery" ADK path (adkDeployer.ts) — it deploys a custom agent grounded on this exact URL via VertexAiSearchTool. Not yet wired into the default run; requires choosing that upgrade per agent.',
+        'Fallback manual option: append the URL into the agent\'s instructions as plain text — NOT grounded search, just a visible mention.',
+      ],
+    }),
+  },
+  {
     // SharePoint site/library reference → Gemini native SharePoint connector.
     test: (k) => k.includes('sharepoint'),
     build: () => ({
@@ -245,40 +234,6 @@ const RULES: Rule[] = [
         'NOT unattended: requires the same Workforce Identity Federation setup as SharePoint for ACL enforcement.',
       ],
     }),
-  },
-  {
-    // Public website / URL search source → recreate as a website data store.
-    test: (k) =>
-      k.includes('website') || k.includes('publicsite') || k.includes('publicweb') ||
-      k.includes('sitesearch') || k.includes('web') || k.includes('url'),
-    build: (input) => {
-      const { references } = input;
-      const ownership = websiteOwnership(references, input.ownerDomains);
-      const urlNote = references?.length ? `URL(s): ${references.slice(0, 5).join(', ')}` : 'No URL captured in config — verify the target URL first.';
-      // NOT unattended either way: advanced website indexing needs Google
-      // domain-ownership verification (verified empirically: unverified →
-      // indexingStatus=FAILED, 0 docs). Ownership drives the RECOMMENDATION.
-      const notesByOwnership: Record<WebsiteOwnership, string[]> = {
-        owned: [
-          'RECOMMENDED: create an advanced website data store (URL is on your organization\'s own domain).',
-          'MANUAL STEP: verify domain ownership in Google Search Console so it indexes — you own this domain, so you can.',
-        ],
-        'third-party': [
-          'RECOMMENDED: rely on the migrated agent\'s Google Search grounding (third-party public site — you can\'t verify ownership, so a data store would FAIL to index).',
-        ],
-        unknown: [
-          'RECOMMENDED: manual review — ownership could not be determined. You may own this domain (not in the discovered set) or it may be a partner site.',
-        ],
-      };
-      return {
-        strategy: 'recreate',
-        retrievability: 'reference-only',
-        geminiTarget: 'website-data-store',
-        automatable: false,
-        ownership,
-        notes: [...notesByOwnership[ownership], urlNote],
-      };
-    },
   },
   {
     // Azure Blob Storage → copy bytes (needs blob credentials → not unattended).
@@ -388,14 +343,15 @@ export function classifyKnowledgeSource(input: ClassifierInput): KnowledgeClassi
   const inferred = inferFromReferences(input);
   if (inferred) return inferred;
 
+  const refs = (input.references ?? []).filter(Boolean);
   return {
     strategy: 'manual-review',
-    retrievability: 'unknown',
+    retrievability: refs.length ? 'reference-only' : 'unknown',
     geminiTarget: 'none',
     automatable: false,
-    notes: [
-      `Unrecognized knowledge source kind "${input.kind}" with no usable reference — no automatic strategy. Raw config preserved for manual review.`,
-    ],
+    notes: refs.length
+      ? [`Unrecognized knowledge source kind "${input.kind}" (reference: ${refs.slice(0, 3).join(', ')}) — no automatic migration strategy. Raw config preserved for manual review.`]
+      : [`Unrecognized knowledge source kind "${input.kind}" with no usable reference — no automatic strategy. Raw config preserved for manual review.`],
   };
 }
 
@@ -418,19 +374,6 @@ function inferFromReferences(input: ClassifierInput): KnowledgeClassification | 
     return {
       strategy: 'reconnect', retrievability: 'reference-only', geminiTarget: 'onedrive-connector', automatable: false,
       notes: [`Kind "${input.kind}" unrecognized; inferred OneDrive from the reference URL.`, 'Reconnect via Gemini\'s native OneDrive connector — requires identity federation.'],
-    };
-  }
-  if (/https?:\/\//.test(hay)) {
-    const ownership = websiteOwnership(refs, input.ownerDomains);
-    const tail: Record<WebsiteOwnership, string> = {
-      owned: 'On your own domain → RECOMMEND a website data store; verify ownership in Search Console to index it.',
-      'third-party': 'Third-party site → RECOMMEND Google Search grounding (not indexable without ownership).',
-      unknown: 'Ownership undetermined → RECOMMEND manual review.',
-    };
-    return {
-      strategy: 'recreate', retrievability: 'reference-only', geminiTarget: 'website-data-store', automatable: false,
-      ownership,
-      notes: [`Kind "${input.kind}" unrecognized; inferred a website from: ${refs.slice(0, 3).join(', ')}.`, tail[ownership]],
     };
   }
   return null;

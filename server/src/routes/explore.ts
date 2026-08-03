@@ -3,8 +3,8 @@ import { clientCredsToken } from '../auth/microsoft.js';
 import { logger } from '../logger.js';
 import { extractAgent, inventory, listBots } from '../services/dataverse.js';
 import { assessAgent } from '../services/assess.js';
-import { buildOrganizationProfile } from '../services/organizationProfile.js';
 import { getSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
+import { mapPoolCollect } from '../concurrency.js';
 import {
   cacheEnvironments,
   getCachedEnvironments,
@@ -98,8 +98,7 @@ exploreRouter.get('/agent', async (req, res) => {
 
   try {
     const token = await clientCredsToken(session.tenantId ?? '', env);
-    const profile = await buildOrganizationProfile(session, new Date().toISOString());
-    const ir = await extractAgent(env, token, { botid: botId, name }, { ownerDomains: profile.ownedDomains });
+    const ir = await extractAgent(env, token, { botid: botId, name });
 
     if ((req.query.format as string) === 'json') {
       res
@@ -112,5 +111,64 @@ exploreRouter.get('/agent', async (req, res) => {
     res.json({ assessment: assessAgent(ir) });
   } catch (err) {
     res.status(502).json({ error: 'assessment_failed', detail: (err as Error).message });
+  }
+});
+
+export interface ConnectorNeeded {
+  siteUrl: string;
+  kind: 'sharepoint-connector' | 'onedrive-connector';
+  agentNames: string[];
+}
+
+/**
+ * GET /api/explore/connectors-needed?session=…&env=…
+ * Scans EVERY agent in one environment and returns ONE deduplicated list of
+ * sites that need a native connector, each with every agent that references
+ * it. Built so an admin never has to open agents one at a time just to find
+ * out which SharePoint/OneDrive sites need setting up — this is the "batch"
+ * view instead of a per-agent drill-down (see .claude/memory/decisions.md).
+ * Bounded concurrency (mapPoolCollect) — never an unbounded fan-out at
+ * Dataverse, per this project's code-style rule.
+ */
+exploreRouter.get('/connectors-needed', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const env = req.query.env as string;
+  if (!env) return void res.status(400).json({ error: 'env_required' });
+
+  try {
+    const token = await clientCredsToken(session.tenantId ?? '', env);
+    const bots = await listBots(env, token);
+
+    const perAgent = await mapPoolCollect(bots, 5, async (bot) => {
+      try {
+        const ir = await extractAgent(env, token, bot);
+        return { name: bot.name, actions: assessAgent(ir).knowledge?.actions ?? [] };
+      } catch (err) {
+        logger.debug({ err, bot: bot.name }, 'connectors-needed: agent extract failed');
+        return { name: bot.name, actions: [] };
+      }
+    });
+
+    const bySite = new Map<string, { siteUrl: string; kind: ConnectorNeeded['kind']; agentNames: Set<string> }>();
+    for (const { name, actions } of perAgent) {
+      for (const a of actions) {
+        if (a.target !== 'sharepoint-connector' && a.target !== 'onedrive-connector') continue;
+        const siteUrl = a.references?.[0];
+        if (!siteUrl) continue;
+        const key = `${a.target}::${siteUrl}`;
+        if (!bySite.has(key)) bySite.set(key, { siteUrl, kind: a.target, agentNames: new Set() });
+        bySite.get(key)!.agentNames.add(name);
+      }
+    }
+
+    const connectors: ConnectorNeeded[] = [...bySite.values()].map((c) => ({
+      siteUrl: c.siteUrl,
+      kind: c.kind,
+      agentNames: [...c.agentNames],
+    }));
+    res.json({ connectors });
+  } catch (err) {
+    res.status(502).json({ error: 'connectors_needed_failed', detail: (err as Error).message });
   }
 });

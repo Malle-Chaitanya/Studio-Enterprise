@@ -37,10 +37,10 @@ export interface KnowledgeAction {
   strategy: KnowledgeStrategy;
   target: GeminiTarget;
   disposition: KnowledgeDisposition;
-  /** Website ownership verdict (owned / third-party / unknown), when applicable. */
-  ownership?: string;
   /** Plain-English explanation shown under the title. */
   detail: string;
+  /** URLs/site paths this action operates over (reconnect targets: the site to configure a connector for). */
+  references?: string[];
   /** Number of source files folded into this action (document target only). */
   fileCount?: number;
   /** Files that fail Gemini's format/size ingest gate (surfaced as warnings). */
@@ -210,10 +210,6 @@ function detailOf(a: KnowledgeMigrationAction): string {
       return a.geminiTarget === 'document-data-store'
         ? `${a.files?.length ?? 0} file(s) uploaded to the agent's Knowledge (agentFiles) and indexed by Gemini.`
         : 'Objects transferred to Google Cloud Storage and imported — needs source credentials.';
-    case 'recreate':
-      if (a.ownership === 'owned') return `Own-domain website → create a website data store; verify domain ownership in Search Console to index it.`;
-      if (a.ownership === 'third-party') return `Third-party website → rely on the agent's Google Search grounding (can't verify ownership to index).`;
-      return `Website ownership undetermined → manual review recommended (you may own this domain, or it may be a partner site).`;
     case 'reconnect':
       return `Reconnected via Gemini's native connector — requires identity-federation setup for access control.`;
     case 'dataverse-snapshot':
@@ -233,8 +229,8 @@ export function buildKnowledgeAssessment(ir: AgentIR): KnowledgeAssessment {
     strategy: a.strategy,
     target: a.geminiTarget,
     disposition: dispositionOf(a),
-    ownership: a.ownership,
     detail: detailOf(a),
+    references: a.references,
     fileCount: a.files?.length,
     incompatibleFiles: a.files?.filter((f) => f.format && !/^(txt|json|md|pdf|html|htm|docx|pptx|xlsx|xlsm)$/.test(f.format)).map((f) => f.name ?? 'file'),
   }));

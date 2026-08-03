@@ -100,7 +100,7 @@ See [.claude/rules/](.claude/rules/) for the full rule set.
 | [web/src/pages/](web/src/pages/) | React screens: Connect → ChoosePair → SelectMap → SelectData → Migrate |
 | [web/src/api.ts](web/src/api.ts) | Typed fetch wrappers for the backend |
 | [docs/](docs/) | Specs, feasibility studies, Gemini edition/visibility findings, support tickets |
-| `server/src/_diag_*.ts`, `_test_*.ts` | Throwaway diagnostic spikes (run via `tsx`) — NOT app code |
+| [server/src/spikes/](server/src/spikes/) | Throwaway diagnostic spikes (`_diag_*.ts`, `_test_*.ts`, etc., run via `tsx`) — NOT app code |
 
 ## Memory Files
 

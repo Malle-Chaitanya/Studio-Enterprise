@@ -108,6 +108,9 @@ function buildCreateBody(agent: MappedAgent) {
 export interface CreateOutcome {
   created: boolean;
   agentId?: string;
+  /** PRIVATE | ENABLED — low-code agents can come back PRIVATE and never move
+   *  (see adkDeployer.ts); callers use this to decide whether to fall back. */
+  state?: string;
   alreadyExists?: boolean;
   error?: string;
 }
@@ -126,9 +129,9 @@ export async function createAgent(
   );
 
   if (res.ok) {
-    const json = (await res.json()) as { name?: string };
+    const json = (await res.json()) as { name?: string; state?: string };
     const agentId = json.name?.split('/').pop();
-    return { created: true, agentId };
+    return { created: true, agentId, state: json.state };
   }
   const text = await res.text();
   if (text.includes('already exists')) return { created: false, alreadyExists: true };

@@ -10,9 +10,9 @@ and [.claude/rules/testing-standard.md](../rules/testing-standard.md).
    these):
    ```bash
    cd server
-   npx tsx src/_test_pipeline.ts     # extract→map→create
-   npx tsx src/_test_migrate.ts      # migration path
-   npx tsx src/_diag_<thing>.ts <args>   # targeted inspection
+   npx tsx src/spikes/_test_pipeline.ts     # extract→map→create
+   npx tsx src/spikes/_test_migrate.ts      # migration path
+   npx tsx src/spikes/_diag_<thing>.ts <args>   # targeted inspection
    ```
 3. **CS_GE assertions** (the regressions that actually happen):
    - **Idempotency** — run the same scope twice; assert no duplicate agents/`agentFiles`.

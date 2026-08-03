@@ -11,20 +11,20 @@ setup. See [.claude/rules/testing-standard.md](../../rules/testing-standard.md).
 
 ## The spike harness
 
-`server/src/_test_*.ts` and `_diag_*.ts` are standalone scripts run with `tsx` that hit real
-Dataverse/Gemini against a test tenant. They are integration probes, not isolated units.
+`server/src/spikes/_test_*.ts` and `_diag_*.ts` are standalone scripts run with `tsx` that hit
+real Dataverse/Gemini against a test tenant. They are integration probes, not isolated units.
 
 ```bash
 cd server
-npx tsx src/_test_pipeline.ts      # end-to-end extract→map→create
-npx tsx src/_test_migrate.ts       # migration path
-npx tsx src/_test_snapshot.ts      # Dataverse snapshot
-npx tsx src/_diag_agent_raw.ts <args>   # inspect a single agent's raw Dataverse payload
+npx tsx src/spikes/_test_pipeline.ts      # end-to-end extract→map→create
+npx tsx src/spikes/_test_migrate.ts       # migration path
+npx tsx src/spikes/_test_snapshot.ts      # Dataverse snapshot
+npx tsx src/spikes/_diag_agent_raw.ts <args>   # inspect a single agent's raw Dataverse payload
 ```
 
 When adding a probe, follow the naming: `_test_<thing>.ts` for a scenario, `_diag_<thing>.ts`
-for an inspection. They import from `./services/*` and `./config.js`, read creds from `.env`,
-and are never imported by `server.ts`.
+for an inspection. Put new probes in `server/src/spikes/`. They import from `../services/*`
+and `../config.js`, read creds from `.env`, and are never imported by `server.ts`.
 
 ## In-pipeline verification
 

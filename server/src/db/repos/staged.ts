@@ -107,6 +107,7 @@ export interface StagedAgent {
   };
   geminiAgentId?: string;
   deployed?: boolean;
+  draftPreserved?: boolean;
   shared?: boolean;
   verified?: boolean;
   verifySample?: string;

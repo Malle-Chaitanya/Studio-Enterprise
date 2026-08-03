@@ -13,10 +13,10 @@ test the pipeline. Read
 
 ## What you produce
 
-- **Diagnostic/integration spikes** in `server/src/` following the naming convention:
+- **Diagnostic/integration spikes** in `server/src/spikes/` following the naming convention:
   `_test_<scenario>.ts` for a flow, `_diag_<thing>.ts` for an inspection. Run via
-  `cd server && npx tsx src/_test_<x>.ts`. They read creds from `.env`, import `./services/*`,
-  and are never imported by `server.ts`.
+  `cd server && npx tsx src/spikes/_test_<x>.ts`. They read creds from `.env`, import
+  `../services/*`, and are never imported by `server.ts`.
 - **Unit tests** *if/when* a runner is added — prefer `vitest`, co-located `*.test.ts`, mocking
   the `services/*` boundary. Start with the pure transforms: `mapper`, `topicCompiler`,
   `knowledgeClassifier`, `scope`.

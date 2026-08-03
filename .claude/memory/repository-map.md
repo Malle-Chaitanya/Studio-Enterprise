@@ -72,8 +72,8 @@ File-by-file guide so Claude can navigate without scanning. Read this before gre
 ### Scripts & spikes
 | Path | Role |
 |------|------|
-| `scripts/adk_deploy.py` | Python ADK agent deploy helper |
-| `src/_diag_*.ts`, `_test_*.ts`, `_demo_*.ts`, `_poc_*.ts`, `_probe_*.ts`, `_spike_*.ts` | **Throwaway** diagnostic/integration spikes run via `tsx`. NOT app code — exempt from rules |
+| `scripts/adk_deploy.py` | Python ADK agent deploy helper (top-level `server/scripts/`, unrelated to `src/spikes/`) |
+| `src/spikes/_diag_*.ts`, `_test_*.ts`, `_demo_*.ts`, `_poc_*.ts`, `_probe_*.ts`, `_spike_*.ts` | **Throwaway** diagnostic/integration spikes run via `tsx`, all collected under `server/src/spikes/`. NOT app code — exempt from rules |
 
 ## `web/` — React + Vite front-end
 

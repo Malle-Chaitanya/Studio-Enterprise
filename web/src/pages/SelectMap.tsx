@@ -139,6 +139,20 @@ export function SelectMap() {
         <strong>Gemini Enterprise project &amp; app</strong> (discovered from your connected account).
         You’ll pick the agents next.
       </p>
+      <p className="lead" style={{ marginTop: -8, marginBottom: 4 }}>
+        Have SharePoint/OneDrive knowledge sources?{' '}
+        <button className="dlink" style={{ padding: 0 }} onClick={() => navigate(`/connectors?session=${session}`)}>
+          See every connector that needs setup →
+        </button>{' '}
+        — one flat list across all agents, no drilling in one at a time.
+      </p>
+      <p className="lead" style={{ marginTop: 0, marginBottom: 16 }}>
+        Or{' '}
+        <button className="dlink" style={{ padding: 0 }} onClick={() => navigate(`/explore?session=${session}`)}>
+          assess agents individually →
+        </button>{' '}
+        for a detailed, per-agent compatibility breakdown.
+      </p>
 
       {error && <div className="error">{error}</div>}
       {loading && <p className="lead">Discovering environments &amp; Gemini projects…</p>}

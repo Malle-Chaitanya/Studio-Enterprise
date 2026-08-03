@@ -134,14 +134,14 @@ Create a dedicated SA **inside `the-dispatch-0vzc3`** and use direct IAM:
 3. Free the full slots (that's the quota error):
    ```bash
    cd server
-   npx tsx src/_diag_agents.ts 860501065102                    # list what's using quota
-   npx tsx src/_diag_agents.ts 860501065102 delete-matching "test"
-   npx tsx src/_diag_agents.ts 860501065102 delete <agentId>   # or one at a time
+   npx tsx src/spikes/_diag_agents.ts 860501065102                    # list what's using quota
+   npx tsx src/spikes/_diag_agents.ts 860501065102 delete-matching "test"
+   npx tsx src/spikes/_diag_agents.ts 860501065102 delete <agentId>   # or one at a time
    ```
 4. Live 1-agent migration → creates as the SA on zara's real subscription.
 
-### Cleanup helper reference (`src/_diag_agents.ts`)
-- `npx tsx src/_diag_agents.ts <project>` — list agents occupying quota (read-only)
+### Cleanup helper reference (`src/spikes/_diag_agents.ts`)
+- `npx tsx src/spikes/_diag_agents.ts <project>` — list agents occupying quota (read-only)
 - `... <project> delete <agentId>` — delete one, free a slot
 - `... <project> delete-matching "<substr>"` — delete all whose displayName contains substr
 - Identity: uses `GOOGLE_SA_KEY_FILE`; impersonates `GOOGLE_IMPERSONATE_EMAIL` or last
@@ -169,7 +169,7 @@ direct IAM, production auth). Steps:
 4. Verify:
    ```bash
    cd server
-   npx tsx src/_diag_project.ts studio-enterprise-migration   # expect: 1 engine(s)
+   npx tsx src/spikes/_diag_project.ts studio-enterprise-migration   # expect: 1 engine(s)
    ```
 5. Run a live 1-agent migration → creates as the SA (direct IAM), on the trial's fresh
    quota. Clean production-style run.

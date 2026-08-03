@@ -122,22 +122,7 @@ async function refineWithLlm(instruction: string, ir: AgentIR): Promise<string> 
   return instruction;
 }
 
-/**
- * How knowledge sources Gemini can't import are handled (customer choice).
- * Generalized beyond websites: applies to ANY unsupported source (websites
- * today; SharePoint/Dataverse/SQL/APIs as they're added) — the UI and rule are
- * the same, so new unsupported types need no redesign.
- */
-export type UnsupportedKnowledgeHandling = 'skip' | 'appendix' | 'report-only';
-
 export interface MapOptions {
-  /**
-   * What to do with knowledge sources that can't be imported into Gemini
-   * Knowledge. Default 'report-only' — preserved in the IR + report but the
-   * runtime instruction is untouched. 'appendix' opts IN to a clearly-separated
-   * "Migrated Knowledge References" block; 'skip' omits them.
-   */
-  unsupportedKnowledgeHandling?: UnsupportedKnowledgeHandling;
   /**
    * Compiled topics plan (from `planTopicsMigration`). When provided, its
    * capabilities are folded into the instruction as a "## Conversation
@@ -148,53 +133,9 @@ export interface MapOptions {
   topicsPlan?: TopicsMigrationPlan;
 }
 
-/**
- * Build a clearly-SEPARATED "Additional Knowledge References" appendix for
- * knowledge the original agent used but Gemini can't import — specifically
- * URL-backed sources (documentation websites) the migrated agent can still
- * consult via its Google Search grounding.
- *
- * Audience = the MODEL: this is AI-usable knowledge (name + URL + purpose +
- * a behavioral cue to prefer them), NOT migration audit. The *why-it-wasn't-
- * imported* detail belongs in the migration report (admin audience), never here
- * — audit text in the prompt is noise that degrades behavior. Returns '' when
- * there are no URL-backed references to preserve.
- */
-export function buildKnowledgeReferencesAppendix(ir: AgentIR): string {
-  const sources = ir.knowledgeSources.filter(
-    (k) => k.kind !== 'FileUpload' && (k.references ?? [k.reference]).some((r) => r && /^https?:\/\//i.test(r)),
-  );
-  if (!sources.length) return '';
-  const items = sources.map((k) => {
-    const url = (k.references ?? []).find((r) => /^https?:\/\//i.test(r)) ?? k.reference!;
-    const purpose = k.description?.replace(/\s+/g, ' ').trim();
-    return purpose ? `- ${k.name} (${url}) — ${purpose}` : `- ${k.name} (${url})`;
-  });
-  return (
-    '\n\n---\n## Additional Knowledge References\n' +
-    'The original agent used the following documentation to answer user questions. ' +
-    'Treat these as authoritative references and prefer information from them when ' +
-    'answering related questions.\n\n' +
-    items.join('\n')
-  );
-}
-
 export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAgent> {
   const { instruction, notes } = synthesizeInstruction(ir);
   let refined = await refineWithLlm(instruction, ir);
-
-  const handling: UnsupportedKnowledgeHandling = opts?.unsupportedKnowledgeHandling ?? 'report-only';
-  if (handling === 'appendix') {
-    const appendix = buildKnowledgeReferencesAppendix(ir);
-    if (appendix) {
-      refined += appendix;
-      notes.push({
-        component: 'knowledge-appendix',
-        status: 'partial',
-        detail: 'Non-file knowledge sources appended to the instruction as a separated "Migrated Knowledge References" annotation (customer-selected).',
-      });
-    }
-  }
 
   // ── Topics: fold compiled capabilities into followable procedures ──────────
   if (opts?.topicsPlan) {

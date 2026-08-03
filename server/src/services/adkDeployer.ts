@@ -2,7 +2,10 @@ import { spawn } from 'node:child_process';
 import { assistantBase } from './gemini.js';
 import { geminiWriteLimiter } from './rateLimiter.js';
 import { logger } from '../logger.js';
-import type { AgentIR, GeminiDestination } from '../types.js';
+import { createDataStore, addTargetSite, dataStoreResourcePath } from './geminiDataStore.js';
+import { sanitizeDataStoreId } from './knowledgePlanner.js';
+import { isPublicWebsiteKind } from './knowledgeClassifier.js';
+import type { AgentIR, GeminiDestination, KnowledgeSourceIR } from '../types.js';
 
 /**
  * ADK / Agent-Runtime deploy path — the "publish to gallery" upgrade.
@@ -36,6 +39,48 @@ export interface AdkSpec {
   model: string; // GA model — NOT a preview id (preview + global-location hack fails to start)
   instruction: string; // the migrated instruction, verbatim
   tools: string[]; // e.g. ['googleSearch']
+  /**
+   * Full Discovery Engine resource path of a PUBLIC_WEBSITE data store, when the
+   * migrated agent has a public-website knowledge source. Wired as ADK's
+   * VertexAiSearchTool — this is the ONLY tool-based way to ground on a website
+   * data store, since Gemini Enterprise apps/engines refuse to attach one
+   * (docs/knowledge-sources-migration-playbook.md §4.1). ADK currently allows
+   * VertexAiSearchTool ONLY as the sole tool on an agent (pre-1.16 limitation),
+   * so when this is set, `tools` above is ignored by adk_deploy.py.
+   */
+  vertexAiSearchDataStore?: string;
+}
+
+/**
+ * Whether an agent should be created via the ADK path instead of the default
+ * low-code path.
+ *
+ * ── TEMPORARILY DISABLED (Business-edition-only testing phase) ─────────────
+ * This tool is currently scoped to Business-edition Gemini Enterprise projects
+ * only. The Standard/Plus edition differentiation that used to live on
+ * `GeminiDestination`/`Session` — and the resulting "edition needs ADK for
+ * gallery visibility" trigger this function used to check — has been removed.
+ * The other, edition-independent trigger this function used to also check
+ * (a public-website knowledge source — no Gemini Enterprise app/engine can
+ * attach a website data store; ADK's VertexAiSearchTool was the only working
+ * path, see docs/knowledge-sources-migration-playbook.md §4.1) is dead here
+ * too, forced off along with it.
+ *
+ * Restore from git history when Standard/Plus + website-grounding comes back
+ * into scope — search history for `needsAdkDeployment` prior to this change.
+ */
+export function needsAdkDeployment(_dest: GeminiDestination, _ir: AgentIR): boolean {
+  return false;
+}
+
+/** True if any of the agent's knowledge sources is a public website (Copilot's PublicSiteSearchSource). */
+export function hasWebsiteKnowledgeSource(ir: AgentIR): boolean {
+  return ir.knowledgeSources.some((k) => isPublicWebsiteKind(k.kind));
+}
+
+/** The first public-website knowledge source on the agent, if any — the one to ground an ADK deployment on. */
+export function firstWebsiteSource(ir: AgentIR): KnowledgeSourceIR | undefined {
+  return ir.knowledgeSources.find((k) => isPublicWebsiteKind(k.kind));
 }
 
 /** Sanitize a display name into a valid ADK agent identifier. */
@@ -48,13 +93,17 @@ function sanitize(name: string): string {
  * carried VERBATIM (same fidelity as the low-code path); web browsing maps to
  * the googleSearch tool. Uses a GA model by default.
  */
-export function buildAdkSpec(ir: AgentIR, opts?: { model?: string; instruction?: string }): AdkSpec {
+export function buildAdkSpec(
+  ir: AgentIR,
+  opts?: { model?: string; instruction?: string; vertexAiSearchDataStore?: string },
+): AdkSpec {
   const tools: string[] = [];
   if (ir.capabilities?.webBrowsing) tools.push('googleSearch');
   // Fidelity is being brought up in STAGES (behavior must not silently change):
   //   Stage 1 (now):  name + description + the REAL migrated instruction only.
   //   Stage 2 (next): fold in topic procedures (pass the enriched instruction via opts.instruction).
-  //   Stage 3 (later): knowledge sources (data stores / files) + non-search tools.
+  //   Stage 3 (started): public-website knowledge sources, via VertexAiSearchTool
+  //   (opts.vertexAiSearchDataStore) — other knowledge/non-search tools still pending.
   return {
     name: sanitize(ir.name),
     displayName: ir.name,                                              // Stage 1 ✓
@@ -62,7 +111,47 @@ export function buildAdkSpec(ir: AgentIR, opts?: { model?: string; instruction?:
     model: opts?.model || 'gemini-2.5-flash',
     instruction: opts?.instruction ?? ir.instructions ?? '',          // Stage 1 ✓ (real instruction; opts.instruction = Stage 2 enriched)
     tools,                                                            // only googleSearch for now (Stage 3 adds the rest)
+    vertexAiSearchDataStore: opts?.vertexAiSearchDataStore,
   };
+}
+
+/**
+ * Create (idempotently) the BASIC-tier PUBLIC_WEBSITE data store that grounds a
+ * migrated agent's public-website knowledge source via ADK's VertexAiSearchTool.
+ * Deliberately basic, not advanced: advanced indexing needs Search Console
+ * domain-ownership verification we don't control for a customer's site, and
+ * VertexAiSearchTool doesn't require it — see geminiDataStore.ts createDataStore.
+ *
+ * Returns the full resource path buildAdkSpec/adk_deploy.py needs. Never
+ * attaches to an engine — that path is proven broken for websites (see
+ * docs/knowledge-sources-migration-playbook.md §4.1); ADK grounds on the data
+ * store directly at inference time instead.
+ */
+export async function createWebsiteGroundingDataStore(
+  project: string,
+  saToken: string,
+  agentSourceId: string,
+  source: KnowledgeSourceIR,
+): Promise<{ ok: boolean; resourcePath?: string; error?: string }> {
+  const url = (source.references?.[0] ?? source.reference ?? '').trim();
+  if (!url) return { ok: false, error: 'no URL captured for this source' };
+
+  const dataStoreId = sanitizeDataStoreId(`${agentSourceId}-web-${source.id}`);
+  const create = await createDataStore(project, saToken, {
+    dataStoreId,
+    displayName: `${source.name} (ADK website grounding — ${agentSourceId})`,
+    kind: 'website',
+    advanced: false,
+  });
+  if (!create.created && !create.alreadyExists) return { ok: false, error: create.error };
+
+  const pattern = `${url.replace(/^https?:\/\//, '').replace(/\/$/, '')}/*`;
+  const site = await addTargetSite(project, saToken, dataStoreId, pattern);
+  if (!site.ok && !/already exists|ALREADY_EXISTS/i.test(site.error ?? '')) {
+    return { ok: false, error: site.error };
+  }
+
+  return { ok: true, resourcePath: dataStoreResourcePath(project, dataStoreId) };
 }
 
 export interface DeployResult {
@@ -160,10 +249,26 @@ export async function publishAgentToGallery(
   dest: GeminiDestination,
   saToken: string,
   ir: AgentIR,
-  opts?: { location?: string; model?: string; instruction?: string; stagingBucket?: string },
+  opts?: {
+    location?: string;
+    model?: string;
+    instruction?: string;
+    stagingBucket?: string;
+    /** A public-website knowledge source to ground this agent on via VertexAiSearchTool. */
+    websiteSource?: KnowledgeSourceIR;
+  },
 ): Promise<{ ok: boolean; agentId?: string; reasoningEngine?: string; state?: string; error?: string }> {
   const location = opts?.location || process.env.ADK_LOCATION || 'us-central1';
-  const spec = buildAdkSpec(ir, { model: opts?.model, instruction: opts?.instruction });
+  const agentSourceId = sanitize(ir.name);
+
+  let vertexAiSearchDataStore: string | undefined;
+  if (opts?.websiteSource) {
+    const grounding = await createWebsiteGroundingDataStore(dest.project, saToken, agentSourceId, opts.websiteSource);
+    if (!grounding.ok) return { ok: false, error: `website grounding data store: ${grounding.error}` };
+    vertexAiSearchDataStore = grounding.resourcePath;
+  }
+
+  const spec = buildAdkSpec(ir, { model: opts?.model, instruction: opts?.instruction, vertexAiSearchDataStore });
   logger.info({ agent: ir.name, location }, 'adk: deploying reasoning engine');
   const dep = await deployReasoningEngine(dest.project, location, spec, { stagingBucket: opts?.stagingBucket });
   if (!dep.ok || !dep.reasoningEngine) return { ok: false, error: `deploy: ${dep.error}` };

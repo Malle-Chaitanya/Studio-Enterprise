@@ -10,10 +10,10 @@ how to test until (and after) a runner is added.
   [server/src/services/verify.ts](../../server/src/services/verify.ts), which smoke-tests each
   migrated Gemini agent and records the result on `MigrationResult.verified`.
 - Ad-hoc and integration testing uses the `_test_*.ts` / `_diag_*.ts` spike scripts in
-  `server/src/`, run with `tsx`, e.g.:
+  `server/src/spikes/`, run with `tsx`, e.g.:
   ```bash
-  cd server && npx tsx src/_test_pipeline.ts
-  cd server && npx tsx src/_test_migrate.ts
+  cd server && npx tsx src/spikes/_test_pipeline.ts
+  cd server && npx tsx src/spikes/_test_migrate.ts
   ```
   These exercise real Dataverse/Gemini calls against a test tenant — they are integration
   probes, not isolated unit tests.
