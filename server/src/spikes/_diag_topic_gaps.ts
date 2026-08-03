@@ -7,14 +7,14 @@
  *
  * READ-ONLY. Same source as the corpus spike (agentIRCache).
  *
- *   npx tsx src/_diag_topic_gaps.ts
+ *   npx tsx src/spikes/_diag_topic_gaps.ts
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import { config } from './config.js';
-import { parseTopicGraph } from './services/topicGraph.js';
-import type { AgentIR } from './types.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import { config } from '../config.js';
+import { parseTopicGraph } from '../services/topicGraph.js';
+import type { AgentIR } from '../types.js';
 
 async function main(): Promise<void> {
   await connectMongo();

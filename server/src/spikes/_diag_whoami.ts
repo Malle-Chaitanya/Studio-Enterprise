@@ -1,7 +1,7 @@
 /** Print which identity our SA token actually belongs to (SA vs impersonated user)
  *  + its scopes, so we know exactly who needs the Dialogflow role. */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 async function main() {
   const token = await getSaToken(process.env.GOOGLE_IMPERSONATE_EMAIL || undefined);

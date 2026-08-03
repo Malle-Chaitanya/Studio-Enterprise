@@ -2,9 +2,9 @@
  *  RESOURCE_EXHAUSTED errors usually include a `details` array (QuotaFailure /
  *  ErrorInfo / Help) that names the exact quota metric, the limit value, and a
  *  help link. This is the hard evidence of what limit we're hitting.
- *   npx tsx src/_diag_quota_error.ts <project> <engineId> <reasoningEngine> */
+ *   npx tsx src/spikes/_diag_quota_error.ts <project> <engineId> <reasoningEngine> */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, REASONING] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents`;

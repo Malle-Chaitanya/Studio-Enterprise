@@ -1,8 +1,8 @@
 /** Test the official agents.patch (edit) API: can we update displayName /
  *  description on an existing agent? (No create-quota consumed — it's an update.)
- *   npx tsx src/_diag_patch_agent.ts <project> <engineId> <agentId> <newDisplayName> <newDescription> */
+ *   npx tsx src/spikes/_diag_patch_agent.ts <project> <engineId> <agentId> <newDisplayName> <newDescription> */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, AGENT, NAME, DESC] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents/${AGENT}`;

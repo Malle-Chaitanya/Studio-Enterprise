@@ -1,8 +1,8 @@
 /** Query the authoritative Cloud Quotas API for the agent-related quotas +
  *  their actual limit values, to find what "Agent creation quota exceeded" maps to.
- *   npx tsx src/_diag_cloudquotas.ts <project> */
+ *   npx tsx src/spikes/_diag_cloudquotas.ts <project> */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT] = process.argv.slice(2);
 const SERVICES = ['discoveryengine.googleapis.com', 'agentregistry.googleapis.com', 'aiplatform.googleapis.com'];

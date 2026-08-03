@@ -4,16 +4,16 @@
  * The true test of the compiler: run it over the tenant's actual topics and read
  * the procedures it produces. READ-ONLY (agentIRCache).
  *
- *   npx tsx src/_diag_compile_topics.ts                 # all non-system topics
- *   npx tsx src/_diag_compile_topics.ts "compete"       # filter by agent/topic name
+ *   npx tsx src/spikes/_diag_compile_topics.ts                 # all non-system topics
+ *   npx tsx src/spikes/_diag_compile_topics.ts "compete"       # filter by agent/topic name
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import { config } from './config.js';
-import { parseTopicGraph } from './services/topicGraph.js';
-import { compileTopic, type CompiledTopic } from './services/topicCompiler.js';
-import type { AgentIR } from './types.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import { config } from '../config.js';
+import { parseTopicGraph } from '../services/topicGraph.js';
+import { compileTopic, type CompiledTopic } from '../services/topicCompiler.js';
+import type { AgentIR } from '../types.js';
 
 const FILTER = (process.argv[2] || '').toLowerCase();
 

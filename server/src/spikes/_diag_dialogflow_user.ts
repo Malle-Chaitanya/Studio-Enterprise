@@ -5,7 +5,7 @@
  *
  *  It grabs the token from the ACTIVE gcloud user account (no copy-paste). Run
  *  `gcloud auth login` as zara first, then:
- *    npx tsx src/_diag_dialogflow_user.ts <project> [location] [account-email]
+ *    npx tsx src/spikes/_diag_dialogflow_user.ts <project> [location] [account-email]
  */
 import 'dotenv/config';
 import { execFile } from 'node:child_process';

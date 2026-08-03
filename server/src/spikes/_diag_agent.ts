@@ -1,13 +1,13 @@
 /**
  * Diagnostic: dump the RAW Dataverse data for one agent so we can see exactly
  * what the source contains vs. what our extractor keeps.
- *   npx tsx src/_diag_agent.ts <sessionId> "<agent name substring>"
+ *   npx tsx src/spikes/_diag_agent.ts <sessionId> "<agent name substring>"
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { clientCredsToken } from './auth/microsoft.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { clientCredsToken } from '../auth/microsoft.js';
 
 const SESSION_ID = process.argv[2];
 const NAME_MATCH = (process.argv[3] || '').toLowerCase();

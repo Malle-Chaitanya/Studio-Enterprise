@@ -1,6 +1,6 @@
 /** Check whether the Dialogflow API (and related) are ENABLED on the project. */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT] = process.argv.slice(2);
 const SERVICES = ['dialogflow.googleapis.com', 'discoveryengine.googleapis.com', 'aiplatform.googleapis.com'];

@@ -1,4 +1,4 @@
-import { nextQuotaResetUtc, currentQuotaDayStartUtc, preflightQuota } from './services/quota.js';
+import { nextQuotaResetUtc, currentQuotaDayStartUtc, preflightQuota } from '../services/quota.js';
 const t = (iso: string) => new Date(iso);
 async function main() {
   console.log('=== reset math ===');

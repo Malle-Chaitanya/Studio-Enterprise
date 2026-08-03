@@ -1,7 +1,7 @@
 /** Delete engine agents by id (no mongo).
- *   npx tsx src/_del_agents.ts <project> <engineId> <id1> [id2 ...] */
+ *   npx tsx src/spikes/_del_agents.ts <project> <engineId> <id1> [id2 ...] */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, ...IDS] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents`;

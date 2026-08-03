@@ -1,20 +1,27 @@
 /**
- * Read-only scan for test candidates for the two newly-wired knowledge paths:
- *   1. Dataverse reference-table snapshot (migrateDataverseSnapshot)
- *   2. SharePoint/OneDrive copy-mode files (rides the existing FileUpload path)
+ * Read-only scan for test candidates for two knowledge paths:
+ *   1. Dataverse reference-table snapshot (migrateDataverseSnapshot) — wired.
+ *   2. Plain "Bot File Attachment" uploads (componenttype 14) — wired via
+ *      attachKnowledgeFiles. NOTE: this does NOT cover SharePoint/OneDrive
+ *      "upload and sync" copy-mode sources — those are a different,
+ *      unresolvable componenttype-16 shape (kind="FederatedStructuredSearchSource",
+ *      an opaque skillConfiguration reference, no bytes in Dataverse). See
+ *      _diag_verify_dv_extraction.ts / _diag_raw_ks16.ts for the proof; an
+ *      earlier version of this file's comments incorrectly assumed those
+ *      sources rode this same FileUpload path — they don't.
  *
- *   npx tsx src/_diag_knowledge_candidates.ts [sessionId]
+ *   npx tsx src/spikes/_diag_knowledge_candidates.ts [sessionId]
  *
  * If sessionId is omitted, the most recently created session is used.
  * Touches Copilot Studio READ-ONLY — creates/changes nothing.
  */
 import 'dotenv/config';
 import { parse as parseYaml } from 'yaml';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { clientCredsToken } from './auth/microsoft.js';
-import { classifyKnowledgeSource } from './services/knowledgeClassifier.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { clientCredsToken } from '../auth/microsoft.js';
+import { classifyKnowledgeSource } from '../services/knowledgeClassifier.js';
 
 const SESSION_ID = process.argv[2];
 
@@ -82,9 +89,14 @@ async function main() {
         continue;
       }
 
-      // Candidate 1: any Bot File Attachment (type 14) — proves the
-      // FileUpload path, which is also what SharePoint/OneDrive copy-mode
-      // files ride (Copilot copies those bytes into the same column).
+      // Candidate 1: any Bot File Attachment (type 14) — proves the plain
+      // FileUpload path (manual "upload from device" uploads only).
+      // CORRECTED: SharePoint/OneDrive "upload and sync" copy-mode sources do
+      // NOT ride this path — confirmed via _diag_verify_dv_extraction.ts and
+      // _diag_raw_ks16.ts against real data (vv.docx, daily_queries.txt on
+      // "CS_GE Knowledge Test Agent"). Those are componenttype-16 records
+      // with kind="FederatedStructuredSearchSource" and an opaque
+      // `skillConfiguration` reference — no bytes in Dataverse to find.
       const fileComps = comps.filter((c) => Number(c.componenttype) === 14);
       if (fileComps.length) {
         fileAttachmentCandidates += fileComps.length;
@@ -120,7 +132,7 @@ async function main() {
   }
 
   console.log(`\n--- summary ---`);
-  console.log(`file-attachment candidates (proves copy-mode path): ${fileAttachmentCandidates}`);
+  console.log(`file-attachment candidates (plain manual uploads only — NOT SharePoint/OneDrive copy-mode, see header): ${fileAttachmentCandidates}`);
   console.log(`dataverse-snapshot candidates: ${dvSnapshotCandidates}`);
   if (!fileAttachmentCandidates && !dvSnapshotCandidates) {
     console.log('No candidates found in this tenant — you may need to add a test knowledge source in Copilot Studio first.');

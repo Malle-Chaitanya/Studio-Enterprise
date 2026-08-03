@@ -1,8 +1,8 @@
 /** Fetch one agent's full JSON with NO mongo dependency (token via SA key +
  *  GOOGLE_IMPERSONATE_EMAIL). Shows every real field the agent object has.
- *   npx tsx src/_diag_agent_raw.ts <project> <engineId> <agentId> */
+ *   npx tsx src/spikes/_diag_agent_raw.ts <project> <engineId> <agentId> */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, AGENT] = process.argv.slice(2);
 const HOST = 'https://discoveryengine.googleapis.com/v1alpha';

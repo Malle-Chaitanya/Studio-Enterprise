@@ -3,9 +3,9 @@
  *
  * Asserts the service account can only ever be asked to impersonate a VALID
  * target, and — when an allowlist is configured — only accounts on it. Pure
- * function, no network. Run: `cd server && npx tsx src/_test_impersonation_guard.ts`
+ * function, no network. Run: `cd server && npx tsx src/spikes/_test_impersonation_guard.ts`
  */
-import { impersonationAllowed, parseImpersonationAllowlist } from './auth/google.js';
+import { impersonationAllowed, parseImpersonationAllowlist } from '../auth/google.js';
 
 let pass = 0;
 let fail = 0;

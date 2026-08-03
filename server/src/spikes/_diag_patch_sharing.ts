@@ -1,7 +1,7 @@
 /** Test whether PATCHing sharingConfig.scope changes state or gallery visibility.
- *  No mongo. npx tsx src/_diag_patch_sharing.ts <project> <engineId> <agentId> */
+ *  No mongo. npx tsx src/spikes/_diag_patch_sharing.ts <project> <engineId> <agentId> */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, AGENT] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents/${AGENT}`;

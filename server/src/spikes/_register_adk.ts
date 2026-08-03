@@ -1,10 +1,10 @@
 /** Register a deployed reasoning engine into the engine with the REAL migrated
  *  name + description (from the spec file), using the tool's registerAdkAgent().
- *   npx tsx src/_register_adk.ts <project> <engineId> <reasoningEngine> <specFile> [cid] */
+ *   npx tsx src/spikes/_register_adk.ts <project> <engineId> <reasoningEngine> <specFile> [cid] */
 import 'dotenv/config';
 import { readFileSync } from 'node:fs';
-import { getSaToken } from './auth/google.js';
-import { registerAdkAgent } from './services/adkDeployer.js';
+import { getSaToken } from '../auth/google.js';
+import { registerAdkAgent } from '../services/adkDeployer.js';
 
 const [PROJECT, ENGINE, REASONING, SPEC, CID] = process.argv.slice(2);
 

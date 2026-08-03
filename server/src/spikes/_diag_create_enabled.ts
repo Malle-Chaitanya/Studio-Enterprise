@@ -1,11 +1,11 @@
 /** Test: create an agent with state:ENABLED at creation time (state is immutable
  *  post-create). If it sticks, that's how to make Standard agents gallery-visible.
- *   npx tsx src/_diag_create_enabled.ts <project> <engineId> */
+ *   npx tsx src/spikes/_diag_create_enabled.ts <project> <engineId> */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents`;

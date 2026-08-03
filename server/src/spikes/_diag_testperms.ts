@@ -2,7 +2,7 @@
  *  right now (after the grant)? testIamPermissions returns only the ones the
  *  caller actually holds. */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT] = process.argv.slice(2);
 

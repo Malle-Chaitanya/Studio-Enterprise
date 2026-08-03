@@ -2,9 +2,9 @@
  *  the REST API, with a migrated instruction. Then the human verifies in the
  *  console whether an API-created playbook is EDITABLE (the make-or-break test
  *  vs Discovery Engine's Preview/Delete lock).
- *   npx tsx src/_diag_dialogflow_spike.ts <project> [location] */
+ *   npx tsx src/spikes/_diag_dialogflow_spike.ts <project> [location] */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, LOCATION = 'global'] = process.argv.slice(2);
 // Global uses the base host; regional uses {region}-dialogflow...

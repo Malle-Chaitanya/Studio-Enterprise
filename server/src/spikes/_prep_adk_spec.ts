@@ -1,11 +1,11 @@
 /** Pull a migrated low-code agent's real content and write an ADK spec file
  *  (for scripts/adk_deploy.py). Proves fidelity carries into the ADK path.
- *   npx tsx src/_prep_adk_spec.ts <project> <engineId> <agentId> <outFile> */
+ *   npx tsx src/spikes/_prep_adk_spec.ts <project> <engineId> <agentId> <outFile> */
 import 'dotenv/config';
 import { writeFileSync } from 'node:fs';
-import { getSaToken } from './auth/google.js';
-import { buildAdkSpec } from './services/adkDeployer.js';
-import type { AgentIR } from './types.js';
+import { getSaToken } from '../auth/google.js';
+import { buildAdkSpec } from '../services/adkDeployer.js';
+import type { AgentIR } from '../types.js';
 
 const [PROJECT, ENGINE, AGENT, OUT] = process.argv.slice(2);
 

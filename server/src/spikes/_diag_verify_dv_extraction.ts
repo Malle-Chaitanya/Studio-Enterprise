@@ -4,16 +4,16 @@
  * knowledgearticle" source was being silently misclassified as a broken
  * file) and print its resulting knowledgeSources + classification.
  *
- *   npx tsx src/_diag_verify_dv_extraction.ts ["name substring"] [sessionId]
+ *   npx tsx src/spikes/_diag_verify_dv_extraction.ts ["name substring"] [sessionId]
  *
  * Touches Copilot Studio READ-ONLY — creates/changes nothing.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { clientCredsToken } from './auth/microsoft.js';
-import { listBots, extractAgent } from './services/dataverse.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { clientCredsToken } from '../auth/microsoft.js';
+import { listBots, extractAgent } from '../services/dataverse.js';
 
 const NAME_MATCH = (process.argv[2] || 'transformation precanned').toLowerCase();
 const SESSION_ID = process.argv[3];

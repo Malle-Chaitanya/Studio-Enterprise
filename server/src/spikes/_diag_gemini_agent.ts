@@ -3,7 +3,7 @@
  * Discovery Engine so we can see the EXACT field where knowledge / data stores
  * attach to a low-code agent — the one piece the public docs don't spell out.
  *
- *   npx tsx src/_diag_gemini_agent.ts ["agent name substring"]
+ *   npx tsx src/spikes/_diag_gemini_agent.ts ["agent name substring"]
  *
  * HOW TO USE to unblock Fix #3:
  *   1. In the Gemini Enterprise UI, open the migrated agent and manually add a
@@ -15,11 +15,11 @@
  * Uses the most recent session's Google service-account token. READ-ONLY.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
-import { assistantBase, defaultDestination } from './services/gemini.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
+import { assistantBase, defaultDestination } from '../services/gemini.js';
 
 const NAME_MATCH = (process.argv[2] || '').toLowerCase();
 

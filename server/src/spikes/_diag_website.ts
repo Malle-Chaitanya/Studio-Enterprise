@@ -3,19 +3,19 @@
  *   create PUBLIC_WEBSITE data store → add the URL as a target site →
  *   attach the store to engine.dataStoreIds.
  *
- *   npx tsx src/_diag_website.ts "https://learn.microsoft.com/en-us/dynamics365"
+ *   npx tsx src/spikes/_diag_website.ts "https://learn.microsoft.com/en-us/dynamics365"
  *
  * Creates a clearly-named test store (cf-web-test) so it's easy to identify and
  * remove. Reports each step. If all three succeed, the website path works and I
  * wire it into the migration (deriving the store id/URL from the source).
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
-import { defaultDestination } from './services/gemini.js';
-import { createDataStore, addTargetSite, attachDataStoreToEngine } from './services/geminiDataStore.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
+import { defaultDestination } from '../services/gemini.js';
+import { createDataStore, addTargetSite, attachDataStoreToEngine } from '../services/geminiDataStore.js';
 
 const URL_ARG = process.argv[2] || 'https://learn.microsoft.com/en-us/dynamics365';
 

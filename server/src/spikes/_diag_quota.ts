@@ -4,19 +4,19 @@
  * Retry-After / quota-metric hints. Creates a throwaway agent; deletes it if it
  * somehow succeeds. READ-ONLY in effect on failure.
  *
- *   npx tsx src/_diag_quota.ts <projectNumber>
+ *   npx tsx src/spikes/_diag_quota.ts <projectNumber>
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
-import { resolveDestination, assistantBase } from './services/gemini.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
+import { resolveDestination, assistantBase } from '../services/gemini.js';
 
 const PROJECT = process.argv[2];
 
 async function main() {
-  if (!PROJECT) throw new Error('usage: npx tsx src/_diag_quota.ts <projectNumber>');
+  if (!PROJECT) throw new Error('usage: npx tsx src/spikes/_diag_quota.ts <projectNumber>');
   await connectMongo();
   const s = (await getDb().collection('migrationSessions').find({}).sort({ $natural: -1 }).limit(1).next()) as Session | null;
   const impersonate = process.env.GOOGLE_IMPERSONATE_EMAIL || s?.gEmail || undefined;

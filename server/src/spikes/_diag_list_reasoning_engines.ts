@@ -1,8 +1,8 @@
 /** List Vertex AI Agent Runtime reasoning engines (the deployed ADK agents) so we
  *  can get the exact resource path for registration.
- *   npx tsx src/_diag_list_reasoning_engines.ts <project> <location> */
+ *   npx tsx src/spikes/_diag_list_reasoning_engines.ts <project> <location> */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, LOCATION = 'us-west1'] = process.argv.slice(2);
 

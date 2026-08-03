@@ -3,18 +3,18 @@
  * botcomponent type we're not discovering) and (2) the REAL `kind` token of each
  * knowledge source, so we can fix discovery + classification against real data.
  *
- *   npx tsx src/_diag_knowledge.ts ["agent name substring"] [sessionId]
+ *   npx tsx src/spikes/_diag_knowledge.ts ["agent name substring"] [sessionId]
  *
  * If sessionId is omitted, the most recently created session is used.
  * Touches Copilot Studio READ-ONLY — creates/changes nothing.
  */
 import 'dotenv/config';
 import { parse as parseYaml } from 'yaml';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { clientCredsToken } from './auth/microsoft.js';
-import { classifyKnowledgeSource } from './services/knowledgeClassifier.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { clientCredsToken } from '../auth/microsoft.js';
+import { classifyKnowledgeSource } from '../services/knowledgeClassifier.js';
 
 const NAME_MATCH = (process.argv[2] || 'service operations').toLowerCase();
 const SESSION_ID = process.argv[3];

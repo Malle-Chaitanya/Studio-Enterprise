@@ -6,15 +6,15 @@
  * uploaded" — or confirm that no such signal exists, which is the claim
  * this diagnostic is checking.
  *
- *   npx tsx src/_diag_file_origin.ts ["name substring"] [sessionId]
+ *   npx tsx src/spikes/_diag_file_origin.ts ["name substring"] [sessionId]
  *
  * Touches Copilot Studio READ-ONLY — creates/changes nothing.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { clientCredsToken } from './auth/microsoft.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { clientCredsToken } from '../auth/microsoft.js';
 
 const NAME_FILTER = (process.argv[2] || '').toLowerCase();
 const SESSION_ID = process.argv[3];

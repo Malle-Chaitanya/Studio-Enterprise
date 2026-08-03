@@ -1,8 +1,8 @@
 /** Dump the raw type-15 (GptComponentMetadata) data + search for the description. */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import { clientCredsToken } from './auth/microsoft.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import { clientCredsToken } from '../auth/microsoft.js';
 
 const [ENV, BOTID] = process.argv.slice(2);
 

@@ -1,10 +1,10 @@
 /**
  * Unit tests for Backend B (services/topicsMigration.ts). No DB, no I/O —
- * synthetic AgentIR only:  npx tsx src/_test_topics_migration.ts
+ * synthetic AgentIR only:  npx tsx src/spikes/_test_topics_migration.ts
  */
-import { planTopicsMigration } from './services/topicsMigration.js';
-import type { AgentIR, TopicIR } from './types.js';
-import type { DialogNode, TopicGraph } from './services/topicGraph.js';
+import { planTopicsMigration } from '../services/topicsMigration.js';
+import type { AgentIR, TopicIR } from '../types.js';
+import type { DialogNode, TopicGraph } from '../services/topicGraph.js';
 
 let pass = 0;
 let fail = 0;

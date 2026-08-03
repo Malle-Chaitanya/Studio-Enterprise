@@ -2,7 +2,7 @@
  * Probe several candidate agent-file upload shapes to find the one Discovery
  * Engine actually accepts (the previous attempt 404'd — wrong path/method).
  *
- *   npx tsx src/_diag_upload_probe.ts "service operations"
+ *   npx tsx src/spikes/_diag_upload_probe.ts "service operations"
  *
  * Prints the HTTP status + short response for each candidate. We're looking for
  * the one that is NOT "404 Could not find handler" — a 200 (works) or even a
@@ -10,12 +10,12 @@
  * READ-ONLY-ish: at most it uploads a tiny probe .txt if a candidate succeeds.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
-import { assistantBase, defaultDestination } from './services/gemini.js';
-import { agentResourcePath } from './services/geminiAgentFiles.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
+import { assistantBase, defaultDestination } from '../services/gemini.js';
+import { agentResourcePath } from '../services/geminiAgentFiles.js';
 
 const NAME_MATCH = (process.argv[2] || '').toLowerCase();
 const HOST = 'https://discoveryengine.googleapis.com';

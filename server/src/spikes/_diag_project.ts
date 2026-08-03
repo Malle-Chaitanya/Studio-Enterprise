@@ -4,21 +4,21 @@
  * one shot: (a) can the SA even access this project, (b) what engine ids exist,
  * (c) their type + attached data stores.
  *
- *   npx tsx src/_diag_project.ts <projectNumber>   e.g. 396677554383
+ *   npx tsx src/spikes/_diag_project.ts <projectNumber>   e.g. 396677554383
  *
  * READ-ONLY.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
 
 const HOST = 'https://discoveryengine.googleapis.com/v1alpha';
 const PROJECT = process.argv[2];
 
 async function main() {
-  if (!PROJECT) throw new Error('usage: npx tsx src/_diag_project.ts <projectNumber>');
+  if (!PROJECT) throw new Error('usage: npx tsx src/spikes/_diag_project.ts <projectNumber>');
   await connectMongo();
   const s = (await getDb().collection('migrationSessions').find({}).sort({ $natural: -1 }).limit(1).next()) as Session | null;
   const impersonate = s?.gEmail;

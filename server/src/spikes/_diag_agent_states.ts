@@ -3,10 +3,10 @@
  * Mints an SA token (DWD-impersonating the given admin), lists engines, then lists
  * each engine's agents and prints their raw state + sharingConfig — hard evidence,
  * no inference.
- *   cd server && npx tsx src/_diag_agent_states.ts [project] [impersonateEmail] [assistant]
+ *   cd server && npx tsx src/spikes/_diag_agent_states.ts [project] [impersonateEmail] [assistant]
  * defaults: project=521161651560  email=mia@cloudfuze.com  assistant=default_assistant
  */
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const project = process.argv[2] || '521161651560';
 const email = process.argv[3] || 'mia@cloudfuze.com';

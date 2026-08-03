@@ -2,18 +2,18 @@
  * Look up a GCP project's display name + ID from its number, using the current
  * service account (Cloud Resource Manager). READ-ONLY.
  *
- *   npx tsx src/_diag_projname.ts <projectNumber>   e.g. 860501065102
+ *   npx tsx src/spikes/_diag_projname.ts <projectNumber>   e.g. 860501065102
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
 
 const PROJECT = process.argv[2];
 
 async function main() {
-  if (!PROJECT) throw new Error('usage: npx tsx src/_diag_projname.ts <projectNumber>');
+  if (!PROJECT) throw new Error('usage: npx tsx src/spikes/_diag_projname.ts <projectNumber>');
   await connectMongo();
   const s = (await getDb().collection('migrationSessions').find({}).sort({ $natural: -1 }).limit(1).next()) as Session | null;
   const saToken = await getSaToken(s?.gEmail || undefined);

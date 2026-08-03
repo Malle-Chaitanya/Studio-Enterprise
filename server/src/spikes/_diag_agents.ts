@@ -4,9 +4,9 @@
  * subscription is fine, the per-project agent SLOTS are just full — and to free
  * slots by deleting throwaway/test agents so a live run can create again.
  *
- *   npx tsx src/_diag_agents.ts <projectNumber>                 # list
- *   npx tsx src/_diag_agents.ts <projectNumber> delete <id>     # delete one
- *   npx tsx src/_diag_agents.ts <projectNumber> delete-matching "test"   # delete all whose displayName contains "test"
+ *   npx tsx src/spikes/_diag_agents.ts <projectNumber>                 # list
+ *   npx tsx src/spikes/_diag_agents.ts <projectNumber> delete <id>     # delete one
+ *   npx tsx src/spikes/_diag_agents.ts <projectNumber> delete-matching "test"   # delete all whose displayName contains "test"
  *
  * Identity: uses GOOGLE_SA_KEY_FILE. Impersonates GOOGLE_IMPERSONATE_EMAIL if
  * set, else the last session's gEmail, else the SA directly. So point .env at
@@ -16,11 +16,11 @@
  * `delete`/`delete-matching` when you mean it; `list` (default) is read-only.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
-import { resolveDestination, assistantBase } from './services/gemini.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
+import { resolveDestination, assistantBase } from '../services/gemini.js';
 
 const PROJECT = process.argv[2];
 const ACTION = (process.argv[3] || 'list').toLowerCase(); // list | delete | delete-matching
@@ -60,7 +60,7 @@ async function deleteAgent(base: string, token: string, id: string): Promise<boo
 }
 
 async function main() {
-  if (!PROJECT) throw new Error('usage: npx tsx src/_diag_agents.ts <projectNumber> [list|delete <id>|delete-matching <substr>]');
+  if (!PROJECT) throw new Error('usage: npx tsx src/spikes/_diag_agents.ts <projectNumber> [list|delete <id>|delete-matching <substr>]');
   await connectMongo();
   const s = (await getDb().collection('migrationSessions').find({}).sort({ $natural: -1 }).limit(1).next()) as Session | null;
   const impersonate = process.env.GOOGLE_IMPERSONATE_EMAIL || s?.gEmail || undefined;

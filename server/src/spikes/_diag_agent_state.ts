@@ -1,10 +1,10 @@
 /** Inspect a migrated agent's state / sharing / owner to see why it may not show
- *  in a user's "Your agents" UI.  npx tsx src/_diag_agent_state.ts <project> <engineId> <agentId> */
+ *  in a user's "Your agents" UI.  npx tsx src/spikes/_diag_agent_state.ts <project> <engineId> <agentId> */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, AGENT] = process.argv.slice(2);
 const HOST = 'https://discoveryengine.googleapis.com/v1alpha';

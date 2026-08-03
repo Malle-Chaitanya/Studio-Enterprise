@@ -3,18 +3,18 @@
  * Attachment bytes from Dataverse (exactly what we upload to Gemini) and prints
  * size, SHA-256, and a text preview — so you can confirm it's complete/intact.
  *
- *   npx tsx src/_diag_file_content.ts ["agent name substring"] [previewChars]
+ *   npx tsx src/spikes/_diag_file_content.ts ["agent name substring"] [previewChars]
  *
  * READ-ONLY. We upload these exact bytes to the agent, so what you see here is
  * what the agent received (Gemini doesn't expose stored content for re-download).
  */
 import 'dotenv/config';
 import { createHash } from 'node:crypto';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { clientCredsToken } from './auth/microsoft.js';
-import { fetchFileAttachmentBytes } from './services/dataverse.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { clientCredsToken } from '../auth/microsoft.js';
+import { fetchFileAttachmentBytes } from '../services/dataverse.js';
 
 const NAME_MATCH = (process.argv[2] || 'service operations').toLowerCase();
 const PREVIEW = Number(process.argv[3] || 1200);

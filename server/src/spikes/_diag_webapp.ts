@@ -3,16 +3,16 @@
  * deep-link the client straight to where their migrated agents actually appear
  * (instead of the generic business.gemini.google home / marketplace gallery).
  *
- *   npx tsx src/_diag_webapp.ts <projectNumber>
+ *   npx tsx src/spikes/_diag_webapp.ts <projectNumber>
  *
  * READ-ONLY. Probes the widgetConfigs collection under the engine.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
-import { resolveDestination } from './services/gemini.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
+import { resolveDestination } from '../services/gemini.js';
 
 const HOST = 'https://discoveryengine.googleapis.com/v1alpha';
 const PROJECT = process.argv[2];
@@ -28,7 +28,7 @@ async function tryGet(url: string, token: string) {
 }
 
 async function main() {
-  if (!PROJECT) throw new Error('usage: npx tsx src/_diag_webapp.ts <projectNumber>');
+  if (!PROJECT) throw new Error('usage: npx tsx src/spikes/_diag_webapp.ts <projectNumber>');
   await connectMongo();
   const s = (await getDb().collection('migrationSessions').find({}).sort({ $natural: -1 }).limit(1).next()) as Session | null;
   const token = await getSaToken(process.env.GOOGLE_IMPERSONATE_EMAIL || s?.gEmail || undefined);

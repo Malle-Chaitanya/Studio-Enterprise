@@ -1,10 +1,10 @@
 /** Dump an engine's full config to find how it maps to the web app (cid / widget).
- *   npx tsx src/_diag_engine_detail.ts <project> <engineId>  */
+ *   npx tsx src/spikes/_diag_engine_detail.ts <project> <engineId>  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
 
 const PROJECT = process.argv[2];
 const ENGINE = process.argv[3];

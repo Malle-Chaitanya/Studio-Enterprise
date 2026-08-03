@@ -1,7 +1,7 @@
 /** Check for IAM v2 DENY policies on the project — a deny overrides any allow
  *  (even Owner), which would explain why the SA is refused dialogflow.agents.create. */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT] = process.argv.slice(2);
 

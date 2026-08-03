@@ -1,7 +1,7 @@
 /**
  * DEMO — 5 production-shaped topics, source → destination, through the REAL
  * pipeline (parseTopicGraph → planTopicsMigration → state threading →
- * topicsEmit). Run: cd server && npx tsx src/_demo_topics_e2e.ts
+ * topicsEmit). Run: cd server && npx tsx src/spikes/_demo_topics_e2e.ts
  *
  * Agent: "Contoso IT Service Desk". Topics span the whole spectrum:
  *   1. Thank you        — QA / echo                (full)
@@ -10,10 +10,10 @@
  *   4. Create Incident   — transactional + a DEAD variable ref (unresolved)
  *   5. Help Menu         — orchestration (calls topics)
  */
-import { parseTopicGraph } from './services/topicGraph.js';
-import { planTopicsMigration } from './services/topicsMigration.js';
-import { buildProceduresInstruction, buildConnectedAgentArtifact } from './services/topicsEmit.js';
-import type { AgentIR, TopicIR } from './types.js';
+import { parseTopicGraph } from '../services/topicGraph.js';
+import { planTopicsMigration } from '../services/topicsMigration.js';
+import { buildProceduresInstruction, buildConnectedAgentArtifact } from '../services/topicsEmit.js';
+import type { AgentIR, TopicIR } from '../types.js';
 
 // ── Source: real-shaped AdaptiveDialog YAML per topic ────────────────────────
 

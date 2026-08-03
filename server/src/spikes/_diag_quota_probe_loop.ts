@@ -12,10 +12,10 @@
  *  the probe agents does NOT restore it (the quota is cumulative per day), so real
  *  migrations on the project are blocked until the next reset (~midnight PT).
  *
- *    npx tsx src/_diag_quota_probe_loop.ts <project> <engineId> [maxAttempts]
+ *    npx tsx src/spikes/_diag_quota_probe_loop.ts <project> <engineId> [maxAttempts]
  */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, MAX_ARG] = process.argv.slice(2);
 const MAX = Number(MAX_ARG) || 150; // safety cap so we never loop forever

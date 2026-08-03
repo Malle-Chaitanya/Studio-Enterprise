@@ -1,10 +1,10 @@
 /** Dump the FULL instruction text stored on a deployed agent (no truncation) so
  *  fidelity can be verified. Writes the complete text to <outFile> and prints
  *  length + first/last 400 chars as proof it's complete.
- *   npx tsx src/_dump_instruction.ts <project> <engineId> <agentId> <outFile> */
+ *   npx tsx src/spikes/_dump_instruction.ts <project> <engineId> <agentId> <outFile> */
 import 'dotenv/config';
 import { writeFileSync } from 'node:fs';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, AGENT, OUT] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents/${AGENT}`;

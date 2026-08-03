@@ -1,8 +1,8 @@
 /** Print the latest session's Google/destination fields, to see why live is blocked. */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
 
 async function main() {
   await connectMongo();

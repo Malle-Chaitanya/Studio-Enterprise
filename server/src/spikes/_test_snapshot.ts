@@ -1,8 +1,8 @@
 /**
  * Fixture test for the Dataverse-snapshot transform.
- * Run: cd server && npx tsx src/_test_snapshot.ts
+ * Run: cd server && npx tsx src/spikes/_test_snapshot.ts
  */
-import { rowsToStructuredDocs, toJsonl, findDuplicateIds } from './services/dataverseSnapshot.js';
+import { rowsToStructuredDocs, toJsonl, findDuplicateIds } from '../services/dataverseSnapshot.js';
 
 let passed = 0;
 let failed = 0;

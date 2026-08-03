@@ -10,17 +10,17 @@
  * each topic from its behavior graph, and prints a distribution. No Dataverse,
  * no Gemini, no writes.
  *
- *   npx tsx src/_spike_topic_corpus.ts
+ *   npx tsx src/spikes/_spike_topic_corpus.ts
  *
  * The classifier below (classifyTopic) is written as a PURE function on purpose:
  * it is the seed of the Layer-2 TopicProfile analysis, not throwaway spike code.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import { config } from './config.js';
-import { parseTopicGraph, type TopicGraph, type NodeKind } from './services/topicGraph.js';
-import type { AgentIR, TopicIR } from './types.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import { config } from '../config.js';
+import { parseTopicGraph, type TopicGraph, type NodeKind } from '../services/topicGraph.js';
+import type { AgentIR, TopicIR } from '../types.js';
 
 // ── Classification model ────────────────────────────────────────────────────
 

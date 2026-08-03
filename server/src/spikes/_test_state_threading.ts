@@ -1,9 +1,9 @@
 /**
  * Unit tests for state threading (services/stateThreading.ts). No DB, no I/O —
- * synthetic graphs only:  npx tsx src/_test_state_threading.ts
+ * synthetic graphs only:  npx tsx src/spikes/_test_state_threading.ts
  */
-import { analyzeState } from './services/stateThreading.js';
-import type { DialogNode, TopicGraph } from './services/topicGraph.js';
+import { analyzeState } from '../services/stateThreading.js';
+import type { DialogNode, TopicGraph } from '../services/topicGraph.js';
 
 let pass = 0;
 let fail = 0;

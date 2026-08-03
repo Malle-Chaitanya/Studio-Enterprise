@@ -1,12 +1,12 @@
 /** Create an agent with state:ENABLED and LEAVE it in place (no auto-delete) so
  *  we can check whether (a) ENABLED sticks at creation and (b) it then lists in
  *  the Standard gallery. Prints the returned state + a direct agent link.
- *   npx tsx src/_diag_create_enabled_keep.ts <project> <engineId> [cid] */
+ *   npx tsx src/spikes/_diag_create_enabled_keep.ts <project> <engineId> [cid] */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, CID] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents`;
@@ -48,7 +48,7 @@ async function main() {
   console.log(`state after publish = ${cj.state}`);
 
   if (CID) console.log(`\nDirect link:\n  https://vertexaisearch.cloud.google.com/home/cid/${CID}/r/agent/${id}`);
-  console.log(`\n(Agent LEFT in place. To remove later: npx tsx src/_diag_agents.ts ${PROJECT} delete ${id})`);
+  console.log(`\n(Agent LEFT in place. To remove later: npx tsx src/spikes/_diag_agents.ts ${PROJECT} delete ${id})`);
   process.exit(0);
 }
 main().catch((e) => { console.error('FAILED:', e.message); process.exit(1); });

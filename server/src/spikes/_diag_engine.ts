@@ -3,16 +3,16 @@
  * Reveals how websites/data stores attach (engine.dataStoreIds vs. per-agent),
  * so we can wire the website-knowledge path correctly instead of guessing.
  *
- *   npx tsx src/_diag_engine.ts
+ *   npx tsx src/spikes/_diag_engine.ts
  *
  * READ-ONLY — creates/changes nothing.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
-import { defaultDestination } from './services/gemini.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
+import { defaultDestination } from '../services/gemini.js';
 
 const HOST = 'https://discoveryengine.googleapis.com';
 

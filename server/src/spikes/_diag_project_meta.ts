@@ -1,9 +1,9 @@
 /**
  * Throwaway diag: print a project's metadata (createTime, parent, lifecycleState)
  * using the session's stored OAuth token.
- *   cd server && npx tsx src/_diag_project_meta.ts <sessionId> <projectId>
+ *   cd server && npx tsx src/spikes/_diag_project_meta.ts <sessionId> <projectId>
  */
-import { getSession } from './sessionStore.js';
+import { getSession } from '../sessionStore.js';
 
 const sessionId = process.argv[2] || 'DqtePTQXNY0akgptTxm_CS5Pzw8';
 const projectId = process.argv[3] || 'sonorous-lightning-t224x';

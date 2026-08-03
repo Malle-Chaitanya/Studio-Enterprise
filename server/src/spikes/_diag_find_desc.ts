@@ -1,10 +1,10 @@
 /** Find WHERE the description is stored — raw-search the full bot record + every
  *  component for the known description text.
- *   npx tsx src/_diag_find_desc.ts <envUrl> <botId> */
+ *   npx tsx src/spikes/_diag_find_desc.ts <envUrl> <botId> */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import { clientCredsToken } from './auth/microsoft.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import { clientCredsToken } from '../auth/microsoft.js';
 
 const [ENV, BOTID] = process.argv.slice(2);
 const NEEDLE = /cloudfuze migration|leave policy|helper/i;

@@ -3,16 +3,16 @@
  * (vs. just created/attached). Answers "is the data really preserved?" — reads
  * the target site's indexing + domain-verification status.
  *
- *   npx tsx src/_diag_website_status.ts [dataStoreId]   (default: cf-web-adv)
+ *   npx tsx src/spikes/_diag_website_status.ts [dataStoreId]   (default: cf-web-adv)
  *
  * READ-ONLY.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
-import { defaultDestination } from './services/gemini.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
+import { defaultDestination } from '../services/gemini.js';
 
 const HOST = 'https://discoveryengine.googleapis.com/v1alpha';
 const DS = process.argv[2] || 'cf-web-adv';

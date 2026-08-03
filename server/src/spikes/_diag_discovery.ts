@@ -4,13 +4,13 @@
  * us the correct body field names (the probe showed the endpoint exists but our
  * field names were wrong).
  *
- *   npx tsx src/_diag_discovery.ts
+ *   npx tsx src/spikes/_diag_discovery.ts
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
 
 const DISCOVERY = 'https://discoveryengine.googleapis.com/$discovery/rest?version=v1alpha';
 

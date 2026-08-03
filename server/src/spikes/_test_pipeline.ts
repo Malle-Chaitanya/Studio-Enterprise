@@ -1,16 +1,16 @@
 /**
  * Drives the REAL two-phase orchestrator and inspects the DB staging.
- *   npx tsx src/_test_pipeline.ts <sessionId> dry    # 5 agents, dry run (stage only)
- *   npx tsx src/_test_pipeline.ts <sessionId> live   # 1 agent, extract→stage→insert
+ *   npx tsx src/spikes/_test_pipeline.ts <sessionId> dry    # 5 agents, dry run (stage only)
+ *   npx tsx src/spikes/_test_pipeline.ts <sessionId> live   # 1 agent, extract→stage→insert
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { clientCredsToken } from './auth/microsoft.js';
-import { listBots } from './services/dataverse.js';
-import { runMigration } from './orchestrator.js';
-import type { ResolvedPlan } from './types.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { clientCredsToken } from '../auth/microsoft.js';
+import { listBots } from '../services/dataverse.js';
+import { runMigration } from '../orchestrator.js';
+import type { ResolvedPlan } from '../types.js';
 
 const SESSION_ID = process.argv[2];
 const MODE = process.argv[3] === 'live' ? 'live' : 'dry';

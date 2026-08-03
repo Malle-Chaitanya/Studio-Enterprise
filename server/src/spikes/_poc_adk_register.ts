@@ -3,10 +3,10 @@
  *  — the gallery-critical step of the ADK path. Points at an already-deployed
  *  reasoning engine (the deploy step is separate, Python-side).
  *
- *  npx tsx src/_poc_adk_register.ts <project> <engineId> <reasoningEngineResource> <displayName> [delete]
+ *  npx tsx src/spikes/_poc_adk_register.ts <project> <engineId> <reasoningEngineResource> <displayName> [delete]
  */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, REASONING, DISPLAY = 'POC ADK Agent', ACTION] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents`;

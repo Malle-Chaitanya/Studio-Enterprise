@@ -2,7 +2,7 @@
  *  bindings and whether any is CONDITIONAL (which would explain an Owner being
  *  denied dialogflow.agents.create). */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT] = process.argv.slice(2);
 const SA = 'studio-enterprise-migration@studio-enterprise-migration.iam.gserviceaccount.com';

@@ -1,9 +1,9 @@
 /** List the engine's Discovery Engine agents (no mongo). Confirms whether an
  *  Agent-Studio/ADK agent ("Manual Test Agent") lives in the SAME engine as the
  *  migrated low-code agents, or a different system.
- *   npx tsx src/_diag_list_engine_agents.ts <project> <engineId> */
+ *   npx tsx src/spikes/_diag_list_engine_agents.ts <project> <engineId> */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents`;

@@ -1,23 +1,23 @@
 /**
  * End-to-end migration test harness (run manually, not part of the app).
  *
- *   npx tsx src/_test_migrate.ts <sessionId>          # dry run only (no writes)
- *   npx tsx src/_test_migrate.ts <sessionId> --live   # + create ONE real agent
+ *   npx tsx src/spikes/_test_migrate.ts <sessionId>          # dry run only (no writes)
+ *   npx tsx src/spikes/_test_migrate.ts <sessionId> --live   # + create ONE real agent
  *
  * Proves the full pipeline against the REAL Copilot Studio + Gemini APIs:
  *   extract → map   (dry run)
  *   → create → publish → share → verify   (--live)
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { clientCredsToken } from './auth/microsoft.js';
-import { getSaToken } from './auth/google.js';
-import { extractAgent, listBots } from './services/dataverse.js';
-import { mapAgent } from './services/mapper.js';
-import { createAgent, defaultDestination, publishAgent, shareAgent, engineReachable } from './services/gemini.js';
-import { verifyAgent } from './services/verify.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { clientCredsToken } from '../auth/microsoft.js';
+import { getSaToken } from '../auth/google.js';
+import { extractAgent, listBots } from '../services/dataverse.js';
+import { mapAgent } from '../services/mapper.js';
+import { createAgent, defaultDestination, publishAgent, shareAgent, engineReachable } from '../services/gemini.js';
+import { verifyAgent } from '../services/verify.js';
 
 const SESSION_ID = process.argv[2];
 const LIVE = process.argv.includes('--live');
@@ -25,7 +25,7 @@ const LIVE = process.argv.includes('--live');
 function line(s = '─') { console.log(s.repeat(70)); }
 
 async function main() {
-  if (!SESSION_ID) throw new Error('usage: tsx src/_test_migrate.ts <sessionId> [--live]');
+  if (!SESSION_ID) throw new Error('usage: tsx src/spikes/_test_migrate.ts <sessionId> [--live]');
   await connectMongo();
   // Read the raw session doc directly (bypass the 1h TTL check — this is a test).
   const s = (await getDb().collection('migrationSessions').findOne({ _id: SESSION_ID as never })) as Session | null;

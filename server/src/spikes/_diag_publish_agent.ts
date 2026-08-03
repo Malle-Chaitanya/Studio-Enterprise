@@ -1,12 +1,12 @@
 /** Experiment: try to promote a PRIVATE agent to ENABLED (gallery-visible) on
  *  Standard, via PATCH state, then a few candidate publish/enable endpoints.
  *  Prints each result (errors reveal valid enum values / correct method).
- *   npx tsx src/_diag_publish_agent.ts <project> <engineId> <agentId> */
+ *   npx tsx src/spikes/_diag_publish_agent.ts <project> <engineId> <agentId> */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, AGENT] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents/${AGENT}`;

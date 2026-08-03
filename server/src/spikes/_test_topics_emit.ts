@@ -1,11 +1,11 @@
 /**
  * Unit tests for topics EMIT (services/topicsEmit.ts). No DB, no I/O:
- *   npx tsx src/_test_topics_emit.ts
+ *   npx tsx src/spikes/_test_topics_emit.ts
  */
-import { planTopicsMigration } from './services/topicsMigration.js';
-import { buildProceduresInstruction, buildConnectedAgentArtifact, renderCapability } from './services/topicsEmit.js';
-import type { DialogNode, TopicGraph } from './services/topicGraph.js';
-import type { AgentIR, TopicIR } from './types.js';
+import { planTopicsMigration } from '../services/topicsMigration.js';
+import { buildProceduresInstruction, buildConnectedAgentArtifact, renderCapability } from '../services/topicsEmit.js';
+import type { DialogNode, TopicGraph } from '../services/topicGraph.js';
+import type { AgentIR, TopicIR } from '../types.js';
 
 let pass = 0;
 let fail = 0;

@@ -1,9 +1,9 @@
 /**
  * Unit tests for Backend A (services/topicCompiler.ts). No DB, no I/O —
- * synthetic graphs only, so it runs anywhere:  npx tsx src/_test_topic_compiler.ts
+ * synthetic graphs only, so it runs anywhere:  npx tsx src/spikes/_test_topic_compiler.ts
  */
-import { compileTopic, humanizeExpr } from './services/topicCompiler.js';
-import type { DialogNode, TopicGraph } from './services/topicGraph.js';
+import { compileTopic, humanizeExpr } from '../services/topicCompiler.js';
+import type { DialogNode, TopicGraph } from '../services/topicGraph.js';
 
 let pass = 0;
 let fail = 0;

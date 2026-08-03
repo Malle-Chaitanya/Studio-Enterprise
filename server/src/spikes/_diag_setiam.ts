@@ -1,8 +1,8 @@
 /** Test Gemini's claim: does :setIamPolicy flip an agent PRIVATE -> ENABLED?
  *  No mongo. Token via SA key + GOOGLE_IMPERSONATE_EMAIL.
- *   npx tsx src/_diag_setiam.ts <project> <engineId> <agentId> */
+ *   npx tsx src/spikes/_diag_setiam.ts <project> <engineId> <agentId> */
 import 'dotenv/config';
-import { getSaToken } from './auth/google.js';
+import { getSaToken } from '../auth/google.js';
 
 const [PROJECT, ENGINE, AGENT] = process.argv.slice(2);
 const BASE = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines/${ENGINE}/assistants/default_assistant/agents/${AGENT}`;

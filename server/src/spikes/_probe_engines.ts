@@ -2,13 +2,13 @@
  * Probe: what "destinations" does Gemini Enterprise actually expose for a
  * project, and can we list them via API? Determines feasibility of the
  * "discover destinations + create per environment" UX.
- *   npx tsx src/_probe_engines.ts <sessionId>
+ *   npx tsx src/spikes/_probe_engines.ts <sessionId>
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
 
 const SESSION_ID = process.argv[2];
 const LOC = 'global';

@@ -3,7 +3,7 @@
  * confirm from public docs). Uploads a tiny in-memory text file to an EXISTING
  * migrated agent, then GETs the agent to see whether it landed in agentFiles[].
  *
- *   npx tsx src/_diag_upload_file.ts "service operations"
+ *   npx tsx src/spikes/_diag_upload_file.ts "service operations"
  *
  * If it prints an uploaded file resource and/or the file shows up under
  * lowCodeAgentDefinition.agentFiles, the upload shape is correct and I can wire
@@ -11,12 +11,12 @@
  * exactly how to correct the request.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
-import { assistantBase, defaultDestination } from './services/gemini.js';
-import { uploadAgentFile, getAgent, updateAgentFiles, readAgentFiles, type AgentFile } from './services/geminiAgentFiles.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
+import { assistantBase, defaultDestination } from '../services/gemini.js';
+import { uploadAgentFile, getAgent, updateAgentFiles, readAgentFiles, type AgentFile } from '../services/geminiAgentFiles.js';
 
 const NAME_MATCH = (process.argv[2] || '').toLowerCase();
 

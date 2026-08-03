@@ -1,6 +1,6 @@
 /**
  * Fixture test for the knowledge-source classifier.
- * Run: cd server && npx tsx src/_test_knowledge.ts
+ * Run: cd server && npx tsx src/spikes/_test_knowledge.ts
  *
  * Proves the discovery+classifier step WITHOUT a live Dataverse connection —
  * fixtures mirror the shapes real KnowledgeSourceConfiguration payloads take.
@@ -10,7 +10,7 @@ import {
   checkFileCompatibility,
   type ClassifierInput,
   type KnowledgeStrategy,
-} from './services/knowledgeClassifier.js';
+} from '../services/knowledgeClassifier.js';
 
 interface Case {
   label: string;
@@ -57,9 +57,9 @@ const cases: Case[] = [
     expectAutomatable: false,
   },
   {
-    label: 'Public website search (needs domain verification → not unattended)',
+    label: 'Public website search — no automatic strategy (removed), manual review',
     input: { kind: 'PublicSiteSearch', references: ['https://company.com/help'] },
-    expectStrategy: 'recreate',
+    expectStrategy: 'manual-review',
     expectAutomatable: false,
   },
   {
@@ -111,9 +111,9 @@ const cases: Case[] = [
     expectAutomatable: false,
   },
   {
-    label: 'Unknown kind BUT website URL ref (real dynamics365 case) → recreate, needs verification',
+    label: 'Unknown kind BUT website URL ref (real dynamics365 case) → manual review, reference preserved',
     input: { kind: 'AdvancedKnowledge', references: ['https://learn.microsoft.com/en-us/dynamics365'] },
-    expectStrategy: 'recreate',
+    expectStrategy: 'manual-review',
     expectAutomatable: false,
   },
   {
@@ -154,36 +154,6 @@ for (const g of gate) {
   if (ok) passed++;
   else failed++;
   rows.push(`${ok ? 'PASS' : 'FAIL'}  gate ${g.f} (${g.s}B) → compatible=${r.compatible}${r.reason ? ` (${r.reason})` : ''}`);
-}
-
-// ── Owner-domain heuristic: same strategy, different guidance ────────────────
-const ownerCases = [
-  { label: 'third-party site → Google Search grounding note', cls: classifyKnowledgeSource({ kind: 'PublicSiteSearch', references: ['https://learn.microsoft.com/dynamics365'], ownerDomains: ['storefuze.com'] }), wantOwned: false },
-  { label: 'own domain → verify-ownership note', cls: classifyKnowledgeSource({ kind: 'PublicSiteSearch', references: ['https://storefuze.com/help'], ownerDomains: ['storefuze.com'] }), wantOwned: true },
-  { label: 'own SUBdomain → verify-ownership note', cls: classifyKnowledgeSource({ kind: 'PublicSiteSearch', references: ['https://docs.storefuze.com/x'], ownerDomains: ['storefuze.com'] }), wantOwned: true },
-];
-for (const { label, cls, wantOwned } of ownerCases) {
-  const note = cls.notes.join(' ');
-  const isOwnedNote = /own domain|verify domain ownership/i.test(note);
-  const ok = cls.strategy === 'recreate' && isOwnedNote === wantOwned;
-  if (ok) passed++;
-  else failed++;
-  rows.push(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  ← ${note.slice(0, 90)}`}`);
-}
-
-// ── Three-state ownership verdict ───────────────────────────────────────────
-const ownershipCases: { label: string; kind: string; refs: string[]; owners: string[]; want: string }[] = [
-  { label: 'own domain → owned', kind: 'PublicSiteSearch', refs: ['https://storefuze.com/help'], owners: ['storefuze.com'], want: 'owned' },
-  { label: 'known public site → third-party', kind: 'PublicSiteSearch', refs: ['https://learn.microsoft.com/x'], owners: ['storefuze.com'], want: 'third-party' },
-  { label: 'unrecognized domain → unknown', kind: 'PublicSiteSearch', refs: ['https://partner.acme-corp.io/x'], owners: ['storefuze.com'], want: 'unknown' },
-  { label: 'no owner domains discovered → unknown', kind: 'PublicSiteSearch', refs: ['https://storefuze.com/help'], owners: [], want: 'unknown' },
-];
-for (const c of ownershipCases) {
-  const cls = classifyKnowledgeSource({ kind: c.kind, references: c.refs, ownerDomains: c.owners });
-  const ok = cls.ownership === c.want;
-  if (ok) passed++;
-  else failed++;
-  rows.push(`${ok ? 'PASS' : 'FAIL'}  ownership: ${c.label}${ok ? '' : `  ← got ${cls.ownership}`}`);
 }
 
 console.log(rows.join('\n'));

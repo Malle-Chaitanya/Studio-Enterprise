@@ -4,19 +4,19 @@
  * (resets) or absolute (needs an increase request) quota. Tells us if the
  * "Agent creation quota exceeded" is self-serve-raisable or a hard tier cap.
  *
- *   npx tsx src/_diag_quota_metrics.ts <projectNumber>
+ *   npx tsx src/spikes/_diag_quota_metrics.ts <projectNumber>
  * READ-ONLY.
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import type { Session } from './sessionStore.js';
-import { getSaToken } from './auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import type { Session } from '../sessionStore.js';
+import { getSaToken } from '../auth/google.js';
 
 const PROJECT = process.argv[2];
 
 async function main() {
-  if (!PROJECT) throw new Error('usage: npx tsx src/_diag_quota_metrics.ts <projectNumber>');
+  if (!PROJECT) throw new Error('usage: npx tsx src/spikes/_diag_quota_metrics.ts <projectNumber>');
   await connectMongo();
   const s = (await getDb().collection('migrationSessions').find({}).sort({ $natural: -1 }).limit(1).next()) as Session | null;
   const impersonate = process.env.GOOGLE_IMPERSONATE_EMAIL || s?.gEmail || undefined;

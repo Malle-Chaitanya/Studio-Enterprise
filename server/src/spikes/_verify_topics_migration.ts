@@ -2,14 +2,14 @@
  * VERIFICATION — run planTopicsMigration over the REAL cached AgentIR corpus and
  * assert it maps every topic into a connected agent without loss. READ-ONLY.
  *
- *   npx tsx src/_verify_topics_migration.ts
+ *   npx tsx src/spikes/_verify_topics_migration.ts
  */
 import 'dotenv/config';
-import { connectMongo } from './db/mongo.js';
-import { getDb } from './db/core.js';
-import { config } from './config.js';
-import { planTopicsMigration } from './services/topicsMigration.js';
-import type { AgentIR } from './types.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+import { config } from '../config.js';
+import { planTopicsMigration } from '../services/topicsMigration.js';
+import type { AgentIR } from '../types.js';
 
 let problems = 0;
 const flag = (msg: string) => { problems++; console.log(`  ✗ ${msg}`); };
