@@ -278,17 +278,24 @@ workflowsRouter.get('/scan', async (req, res) => {
 
 // ── GET /api/workflows/list ───────────────────────────────────────────────────
 
+// GET /api/workflows/list — two modes:
+//   ?env=<url>  → list Power Automate flows from Dataverse (flows-branch usage)
+//   (no env)    → return empty workflows list (WorkflowsPage usage, GCP Cloud Workflows not wired yet)
 workflowsRouter.get('/list', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
 
-  const env = req.query.env as string;
-  if (!env) return void res.status(400).json({ error: 'env_required' });
+  const env = req.query.env as string | undefined;
+
+  // WorkflowsPage calls without ?env — return empty list until Cloud Workflows is wired
+  if (!env) {
+    return void res.json({ workflows: [] });
+  }
 
   try {
     const token = await clientCredsToken(session.tenantId ?? '', env);
     const flows = await listFlows(env, token);
-    res.json({ flows });
+    res.json({ flows, workflows: flows });
   } catch (err) {
     res.status(502).json({ error: 'list_failed', detail: (err as Error).message });
   }

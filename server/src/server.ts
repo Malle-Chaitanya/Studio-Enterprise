@@ -46,6 +46,28 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// Sign out — clears the cf_user_email on the client side; server is stateless for this.
+app.post('/api/logout', (_req, res) => {
+  res.json({ ok: true });
+});
+
+// Agent chat stub — returns a helpful message until the Gemini/Dialogflow agent is wired.
+app.post('/api/agent/chat', (req, res) => {
+  const { text } = req.body as { text?: string };
+  const lower = (text ?? '').toLowerCase();
+  let reply = 'I\'m the CloudFuze migration assistant. Connect your Microsoft and Google accounts to get started.';
+  if (lower.includes('start') || lower.includes('migrat')) {
+    reply = 'To start a migration: connect both clouds (Step 1), map your environments (Step 2), then select agents or flows to migrate (Step 3).';
+  } else if (lower.includes('status')) {
+    reply = 'Check the migration progress in the Migrate step. Each agent shows created, deployed, and verified status.';
+  } else if (lower.includes('flow') || lower.includes('topic')) {
+    reply = 'In the Select step, switch to the Flows tab to pick individual conversation topics from your Copilot Studio agents.';
+  } else if (lower.includes('help') || lower.includes('what')) {
+    reply = 'I can help you migrate AI agents from Microsoft Copilot Studio to Google Gemini Enterprise. Start by connecting both clouds.';
+  }
+  res.json({ text: reply, quickReplies: ['How do I start?', 'What gets migrated?', 'Check status'] });
+});
+
 app.use('/api/auth', authRouter);
 app.use('/api/explore', exploreRouter);
 app.use('/api/destination', destinationRouter);
