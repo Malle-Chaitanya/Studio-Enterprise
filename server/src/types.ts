@@ -181,6 +181,111 @@ export interface AgentRef {
   name: string;
 }
 
+// ── Flow IR ──────────────────────────────────────────────────────────────────
+// Normalized, platform-neutral representation of one Power Automate flow.
+// Built by flowExtractor; consumed by flowMapper (rule-based) and Hermas
+// (agent-based) to produce Cloud Workflow YAML.
+
+/** How the flow is triggered. */
+export type FlowTriggerType = 'Recurrence' | 'Webhook' | 'HttpRequest' | 'Manual' | 'Unknown';
+
+/** One named input parameter for a Manual trigger ("Manually trigger a flow"). */
+export interface FlowTriggerInput {
+  type: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface FlowTrigger {
+  type: FlowTriggerType;
+  /** Raw Power Automate trigger kind (e.g. "OpenApiConnectionWebhook"). */
+  rawType: string;
+  /** Dataverse entity name for Webhook triggers (e.g. "leads", "opportunities"). */
+  entity?: string;
+  /** Create / Update / Delete for Webhook triggers. */
+  message?: string;
+  /** Column filter for Webhook triggers (only fire when this field changes). */
+  filterExpression?: string;
+  /** Recurrence interval in minutes (Recurrence triggers). */
+  recurrenceMinutes?: number;
+  /** Raw recurrence frequency + interval from PA definition. */
+  recurrenceRaw?: { frequency: string; interval: number };
+  /** Named input parameters for Manual ("Manually trigger a flow") triggers. */
+  inputs?: Record<string, FlowTriggerInput>;
+}
+
+export interface FlowAction {
+  name: string;
+  /** Raw Power Automate action type (e.g. "OpenApiConnection", "If", "Foreach"). */
+  type: string;
+  /** Connector API name (e.g. "shared_commondataserviceforapps"). */
+  connector?: string;
+  /** The specific operation within the connector (e.g. "GetItem", "UpdateRecord"). */
+  operationId?: string;
+  /** Custom Dataverse action name when operationId is "PerformUnboundAction". */
+  actionName?: string;
+  /** Dataverse entity this action reads/writes. */
+  entity?: string;
+  /** Raw inputs from the PA flow definition — preserved for Hermas. */
+  rawInputs?: Record<string, unknown>;
+}
+
+/** Connector used by the flow (from connectionReferences). */
+export interface FlowConnector {
+  /** Reference display name (e.g. "Dataverse", "Microsoft Copilot Studio for Sales"). */
+  displayName: string;
+  /** API name (e.g. "shared_commondataserviceforapps", "shared_microsoftcopilotstudio"). */
+  apiName: string;
+  /** True when we have a rule-based mapper for this connector. */
+  known: boolean;
+}
+
+/**
+ * Confidence score breakdown — explains why a flow scored as it did.
+ * Surfaces in the UI so the customer understands what needs review.
+ */
+export interface FlowConfidenceBreakdown {
+  /** 0–100 overall score. ≥80 = rule-based; 50–79 = hybrid; <50 = Hermas. */
+  score: number;
+  /** Connectors we have no rule-based mapper for. */
+  unknownConnectors: string[];
+  /** Action types we cannot deterministically translate. */
+  unknownActions: string[];
+  /** Questions we need the customer to answer before migrating. */
+  gaps: FlowGap[];
+  /** Which migration path this flow takes. */
+  strategy: 'rule-based' | 'hybrid' | 'hermas' | 'unsupported';
+}
+
+/** A gap = one piece of information Hermas cannot determine — must ask the customer. */
+export interface FlowGap {
+  id: string;
+  question: string;
+  options?: string[];
+  defaultOption?: string;
+}
+
+/**
+ * FlowIR — Intermediate Representation of one Power Automate flow.
+ * The single source of truth the migration pipeline works from.
+ * Everything the mapper + Hermas could possibly need is captured here.
+ */
+export interface FlowIR {
+  /** Dataverse workflowid. */
+  sourceId: string;
+  name: string;
+  /** 0 = active, 1 = inactive. */
+  statecode: number;
+  trigger: FlowTrigger;
+  actions: FlowAction[];
+  connectors: FlowConnector[];
+  confidence: FlowConfidenceBreakdown;
+  /** Full raw clientdata JSON — sent to Hermas for unknown flows. */
+  rawDefinition: Record<string, unknown>;
+  /** Fields we extracted but have no mapping for yet. */
+  unmapped: string[];
+}
+
 /**
  * Migration scope — the flexible boundary the whole tool is built around.
  * The pipeline below the scope is scope-agnostic: resolveScope() expands any

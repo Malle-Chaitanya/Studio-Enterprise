@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+*.env
+*.key
+*.json.bak
+src/**/*.test.ts
+src/_test_*.ts

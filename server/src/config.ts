@@ -46,6 +46,11 @@ const schema = z.object({
   INSTRUCTION_LLM_PROVIDER: z.enum(['gemini', 'anthropic', '']).optional().default(''),
   INSTRUCTION_LLM_API_KEY: z.string().optional(),
   INSTRUCTION_LLM_MODEL: z.string().optional(),
+
+  // ── Hermas workflow migration agent ───────────────────────────────────────
+  // URL of the Hermas Cloud Run service. Local dev: http://localhost:8001
+  // Production: https://hermas-xxxx-uc.a.run.app (set after deploying)
+  HERMAS_URL: z.string().default('http://localhost:8001'),
 });
 
 const parsed = schema.safeParse(process.env);

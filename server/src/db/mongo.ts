@@ -110,5 +110,35 @@ async function ensureCollections(): Promise<void> {
     logger.info('Seeded 2 default app users');
   }
 
-  logger.info('All 9 collections verified with indexes (multi-tenant scoped)');
+  // ── Workflow migration collections ──────────────────────────────────────────
+
+  // 10. workflowFlows — one doc per PA flow per customer+env.
+  //     Stores full IR + raw definition + migration status + all attempts.
+  await ensure('workflowFlows');
+  await db.collection('workflowFlows').createIndex(
+    { appUserId: 1, envUrl: 1, sourceId: 1 },
+    { unique: true },
+  );
+  await db.collection('workflowFlows').createIndex({ appUserId: 1, status: 1 });
+  await db.collection('workflowFlows').createIndex({ appUserId: 1, envUrl: 1, strategy: 1 });
+
+  // 11. workflowMigrations — one doc per customer+env migration session.
+  //     Tracks overall progress, resumable across sessions.
+  await ensure('workflowMigrations');
+  await db.collection('workflowMigrations').createIndex(
+    { appUserId: 1, envUrl: 1 },
+    { unique: true },
+  );
+
+  // 12. workflowAttempts — full attempt log per flow (every mapper/Hermas try).
+  //     Separate from workflowFlows to keep the main doc lean.
+  await ensure('workflowAttempts');
+  await db.collection('workflowAttempts').createIndex({ appUserId: 1, flowId: 1, attemptedAt: -1 });
+
+  // 13. workflowGcpTokens — OAuth tokens per org for Cloud Workflows deployment.
+  //     One doc per org; orgId is unique. Token is auto-refreshed on read.
+  await ensure('workflowGcpTokens');
+  await db.collection('workflowGcpTokens').createIndex({ orgId: 1 }, { unique: true });
+
+  logger.info('All 13 collections verified with indexes (multi-tenant scoped)');
 }

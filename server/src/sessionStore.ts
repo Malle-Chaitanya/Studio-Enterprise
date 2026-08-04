@@ -43,6 +43,8 @@ export interface Session {
   saReason?: string;
   // resolved migration plan (set by POST /api/migrate/plan)
   plan?: ResolvedPlan;
+  // customer answers to workflow gap questions: env → flowId → gapId → answer
+  workflowAnswers?: Record<string, Record<string, Record<string, string>>>;
   // linkage during OAuth handshakes
   msSessionId?: string;
 }

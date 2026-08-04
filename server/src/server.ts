@@ -8,6 +8,9 @@ import { authRouter, legacyAuthRouter } from './routes/auth.js';
 import { destinationRouter } from './routes/destination.js';
 import { exploreRouter } from './routes/explore.js';
 import { migrateRouter } from './routes/migrate.js';
+import { workflowsRouter } from './routes/workflows.js';
+import { workflowAuthRouter, workflowGoogleCallback } from './routes/workflowAuth.js';
+import { mcpRouter } from './routes/mcp.js';
 
 const app = express();
 
@@ -27,6 +30,11 @@ app.use('/api/auth', authRouter);
 app.use('/api/explore', exploreRouter);
 app.use('/api/destination', destinationRouter);
 app.use('/api/migrate', migrateRouter);
+app.use('/api/workflows', workflowsRouter);
+app.use('/mcp', mcpRouter);
+app.use('/api/workflow', workflowAuthRouter);
+// Workflow-specific Google OAuth callback (state prefix: "workflow:")
+app.get('/callback/workflow/google', workflowGoogleCallback);
 // Legacy redirect-URI aliases (/callback/microsoft, /callback/google).
 app.use('/', legacyAuthRouter);
 
