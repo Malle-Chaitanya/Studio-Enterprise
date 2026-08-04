@@ -4,7 +4,7 @@ import { connectViaPopup, disconnectPlatform, fetchAgents, fetchEnvironments, fe
 import { avatarColor, Chevron, GeminiIcon, IcoTrash, MsIcon } from '../icons.tsx';
 import type { AgentBrief, EnvironmentInfo, SessionSummary } from '../types.ts';
 
-/** A connect/summary card in the "All Platforms" tab. */
+/** A connect/summary card in the "All Clouds" tab. */
 function PlatformCard({
   role,
   name,
@@ -25,15 +25,15 @@ function PlatformCard({
   onConnect: () => void;
 }) {
   return (
-    <div className={`pcard ${tint} ${connected ? 'on' : ''}`}>
-      <div className="pcard-icon">{icon}</div>
-      <div className="pcard-role">{role}</div>
-      <div className="pcard-name">{name}</div>
-      <div className="pcard-status">
+    <div className={`cloud-card ${tint} ${connected ? 'on' : ''}`}>
+      <div className="cloud-card-icon">{icon}</div>
+      <div className="cloud-card-role">{role}</div>
+      <div className="cloud-card-name">{name}</div>
+      <div className={`cloud-card-status ${connected ? 'connected' : ''}`}>
         {connected ? `✓ ${detail || '1 account connected'}` : '0 accounts connected'}
       </div>
       <button
-        className="pcard-btn"
+        className="cloud-card-btn"
         onClick={onConnect}
         disabled={disabled}
         style={disabled ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
@@ -132,28 +132,27 @@ export function Home() {
 
   return (
     <div className="card wide">
-      <h2>Connect Platforms</h2>
+      <h2>Connect Clouds</h2>
       <p className="lead">
-        Connect the source and destination with admin credentials. Connect once — stored encrypted
-        and reused across migrations.
+        Connect source and destination cloud accounts with admin credentials.
       </p>
 
       {/* Tabs */}
       <div className="ptabs">
         <div className={`ptab ${tab === 'all' ? 'on' : ''}`} onClick={() => setTab('all')}>
-          All Platforms
+          All Clouds
         </div>
         <div className={`ptab ${tab === 'manage' ? 'on' : ''}`} onClick={() => setTab('manage')}>
-          Manage Platforms {(srcConnected || tgtConnected) && <span style={{ color: '#16a34a' }}>✓</span>}
+          Manage Clouds {(srcConnected || tgtConnected) && <span style={{ color: '#16a34a' }}>✓</span>}
         </div>
       </div>
 
       {tab === 'all' && (
         <>
           <p className="lead" style={{ marginBottom: 18 }}>
-            Click a platform to add and connect an account. You can add multiple accounts per platform.
+            Click a cloud to add and connect an account. You can add multiple accounts per cloud.
           </p>
-          <div className="platform-cards">
+          <div className="cloud-cards">
             <PlatformCard
               role="Source"
               name="Copilot Studio"
@@ -185,18 +184,23 @@ export function Home() {
               (no target needed for a dry run).
             </p>
           )}
+          {!srcConnected && (
+            <p className="lead" style={{ marginTop: 14, color: '#b45309' }}>
+              Connect <strong>Copilot Studio</strong> (source) to proceed.
+            </p>
+          )}
         </>
       )}
 
       {tab === 'manage' && (
         <>
-          <p className="lead" style={{ marginBottom: 16 }}>Manage your connected platform accounts.</p>
+          <p className="lead" style={{ marginBottom: 16 }}>Manage your connected cloud accounts.</p>
           {!srcConnected && !tgtConnected ? (
-            <div className="infobox">No platforms connected yet. Use the <strong>All Platforms</strong> tab to connect.</div>
+            <div className="infobox">No clouds connected yet. Use the <strong>All Clouds</strong> tab to connect.</div>
           ) : (
             <div className="mtable">
               <div className="mrow mhead">
-                <div>Platform</div>
+                <div>Cloud</div>
                 <div>Account</div>
                 <div>Status</div>
                 <div style={{ textAlign: 'center' }}>Action</div>
@@ -313,19 +317,11 @@ export function Home() {
         </>
       )}
 
-      {!srcConnected && (
-        <div className="warn-banner">
-          <span className="warn-ico">⚠</span>
-          Connect <strong>Copilot Studio</strong> (source) to proceed.
-        </div>
-      )}
-
       <div className="wizard-actions">
-        <button className="wbtn" onClick={() => navigate('/')}>← Back</button>
         <button
-          className="wbtn primary"
+          className="cloud-continue-btn"
           disabled={!srcConnected}
-          onClick={() => navigate(`/pair?session=${session}`)}
+          onClick={() => navigate(`/map?session=${session}`)}
         >
           Continue →
         </button>

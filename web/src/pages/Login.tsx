@@ -33,8 +33,16 @@ export function Login() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-      if (res.ok || res.status === 404) {
-        { const sid = await resumeSession(); navigate(sid ? `/home?session=${sid}` : '/home'); }
+      if (res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { email?: string; role?: string };
+        if (data.email) localStorage.setItem('cf_user_email', data.email);
+        const sid = await resumeSession();
+        navigate(sid ? `/home?session=${sid}` : '/home');
+        return;
+      }
+      if (res.status === 404) {
+        const sid = await resumeSession();
+        navigate(sid ? `/home?session=${sid}` : '/home');
         return;
       }
       const data = (await res.json().catch(() => ({}))) as { error?: string };
