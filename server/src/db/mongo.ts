@@ -140,7 +140,6 @@ async function ensureCollections(): Promise<void> {
     logger.info('Seeded 2 default app users');
   }
 
-<<<<<<< HEAD
   // ── Workflow migration collections ──────────────────────────────────────────
 
   // 10. workflowFlows — one doc per PA flow per customer+env.

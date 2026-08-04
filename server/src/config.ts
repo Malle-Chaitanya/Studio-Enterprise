@@ -17,12 +17,12 @@ const schema = z.object({
   MONGO_HOST: z.string().default('mongodb://localhost:27017'),
   CSGE_DB: z.string().default('csge'),
 
-  MS_CLIENT_ID: z.string().min(1, 'MS_CLIENT_ID is required'),
-  MS_CLIENT_SECRET: z.string().min(1, 'MS_CLIENT_SECRET is required'),
+  MS_CLIENT_ID: z.string().default(''),
+  MS_CLIENT_SECRET: z.string().default(''),
   MS_REDIRECT_URI: z.string().default('http://localhost:8080/callback/microsoft'),
 
-  GOOGLE_CLIENT_ID: z.string().min(1, 'GOOGLE_CLIENT_ID is required'),
-  GOOGLE_CLIENT_SECRET: z.string().min(1, 'GOOGLE_CLIENT_SECRET is required'),
+  GOOGLE_CLIENT_ID: z.string().default(''),
+  GOOGLE_CLIENT_SECRET: z.string().default(''),
   GOOGLE_REDIRECT_URI: z.string().default('http://localhost:8080/callback/google'),
 
   GOOGLE_SA_KEY_FILE: z.string().optional(),

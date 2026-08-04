@@ -1,9 +1,11 @@
 import cors from 'cors';
 import express from 'express';
+import bcrypt from 'bcryptjs';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { serviceAccountConfigured } from './auth/google.js';
 import { connectMongo } from './db/mongo.js';
+import { getDb, isDbConnected } from './db/core.js';
 import { authRouter, legacyAuthRouter } from './routes/auth.js';
 import { destinationRouter } from './routes/destination.js';
 import { exploreRouter } from './routes/explore.js';
@@ -24,6 +26,24 @@ app.get('/api/health', (_req, res) => {
     phase: 'agents',
     serviceAccount: serviceAccountConfigured(),
   });
+});
+
+// Username/password login against seeded appUsers collection.
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body as { email?: string; password?: string };
+    if (!email || !password) return void res.status(400).json({ error: 'Email and password required.' });
+    if (!isDbConnected()) return void res.status(503).json({ error: 'Database unavailable.' });
+    const db = getDb();
+    const user = await db.collection('appUsers').findOne({ email: email.toLowerCase().trim() });
+    if (!user) return void res.status(401).json({ error: 'Invalid email or password.' });
+    const ok = await bcrypt.compare(password, user.password as string);
+    if (!ok) return void res.status(401).json({ error: 'Invalid email or password.' });
+    res.json({ ok: true, email: user.email, role: user.role });
+  } catch (err) {
+    logger.error({ err }, 'POST /api/login error');
+    res.status(500).json({ error: 'Server error.' });
+  }
 });
 
 app.use('/api/auth', authRouter);
