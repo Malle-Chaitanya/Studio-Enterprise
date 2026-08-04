@@ -1,3 +1,12 @@
+export interface WorkflowInfo {
+  name: string;
+  state: 'ACTIVE' | 'DISABLED' | 'DEPLOYING' | 'UNKNOWN' | string;
+  description?: string;
+  region?: string;
+  updateTime?: string;
+  project?: string;
+}
+
 export interface SessionSummary {
   step: string;
   orgName?: string;

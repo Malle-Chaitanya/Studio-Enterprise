@@ -5,6 +5,7 @@ import type {
   MigrationScope,
   PlanPreview,
   SessionSummary,
+  WorkflowInfo,
 } from './types.ts';
 
 export async function fetchSession(id: string): Promise<SessionSummary> {
@@ -280,6 +281,52 @@ export async function confirmKnowledgeSource(
   const json = (await res.json()) as KnowledgeSourceResult & { detail?: string; error?: string };
   if (!res.ok) throw new Error(json.detail ?? json.error ?? 'knowledge_source_confirm_failed');
   return json;
+}
+
+// ── Workflows ─────────────────────────────────────────────────────────────────
+
+/** List Cloud Workflows in the connected GCP project. */
+export async function fetchWorkflows(session: string): Promise<WorkflowInfo[]> {
+  const res = await fetch(`/api/workflows/list?session=${session}`);
+  if (!res.ok) throw new Error('workflows_list_failed');
+  return ((await res.json()) as { workflows: WorkflowInfo[] }).workflows;
+}
+
+/** Execute a Cloud Workflow by name and wait for the result. */
+export async function executeWorkflow(
+  session: string,
+  workflow: string,
+  region: string,
+  args: Record<string, unknown>,
+): Promise<{ result: unknown; state: string }> {
+  const res = await fetch('/api/workflows/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, workflow, region, args }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}) as { error?: string });
+    throw new Error(body.error ?? 'workflow_execute_failed');
+  }
+  return (await res.json()) as { result: unknown; state: string };
+}
+
+// ── Agent chat ────────────────────────────────────────────────────────────────
+
+export interface AgentReply {
+  text: string;
+  quickReplies?: string[];
+}
+
+/** Send a message to the Gemini/Dialogflow migration agent. */
+export async function sendAgentMessage(session: string, text: string): Promise<AgentReply> {
+  const res = await fetch('/api/agent/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, text }),
+  });
+  if (!res.ok) throw new Error('agent_chat_failed');
+  return (await res.json()) as AgentReply;
 }
 
 export async function planMigration(
