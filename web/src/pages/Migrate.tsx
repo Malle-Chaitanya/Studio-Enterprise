@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { fetchSession, migrateStreamUrl, planMigration, type GeminiDest, type KnowledgeHandling } from '../api.ts';
+import { fetchSession, migrateStreamUrl, planMigration, type GeminiDest } from '../api.ts';
 import type {
   MigrationResult,
   MigrationScope,
@@ -32,10 +32,6 @@ export function Migrate() {
   const [dest, setDest] = useState<Record<string, GeminiDest>>({});
   const [dryRun, setDryRun] = useState(true);
   const [prefixWithEnv, setPrefixWithEnv] = useState(false);
-  // Unsupported knowledge is always preserved as AI-usable references (best
-  // fidelity). The chooser was removed from the UI — this is the fixed behavior;
-  // migration reasons still go to the report.
-  const knowledgeHandling: KnowledgeHandling = 'appendix';
 
   const [started, setStarted] = useState(false);
   const [ranDry, setRanDry] = useState(true);
@@ -98,7 +94,7 @@ export function Migrate() {
       units: units.map((u) => ({ env: u.env, botIds: u.botIds })),
     };
     setBusy(true);
-    const p = await planMigration(session, scope, { prefixWithEnv, environmentMap: dest }, dry, knowledgeHandling).catch(() => null);
+    const p = await planMigration(session, scope, { prefixWithEnv, environmentMap: dest }, dry).catch(() => null);
     setBusy(false);
     if (!p) {
       setStatus('Could not build the migration plan.');
@@ -293,23 +289,11 @@ function AgentCard({ r, dry }: { r: MigrationResult; dry: boolean }) {
       {realError && <div className="fidelity" style={{ color: 'var(--fail)' }}>{realError}</div>}
       {r.verifySample && <div className="fidelity">“{r.verifySample}”</div>}
       {r.fidelity.length > 0 && (
-        <>
-          <div className="chips" style={{ marginTop: 8 }}>
-            {auto > 0 && <span className="tag supported">{auto} auto</span>}
-            {adapt > 0 && <span className="tag partial">{adapt} adapt</span>}
-            {review > 0 && <span className="tag manual">{review} needs review</span>}
-          </div>
-          <details className="fiddet">
-            <summary>Details</summary>
-            <ul className="fidelity">
-              {r.fidelity.map((f, i) => (
-                <li key={i}>
-                  [{f.status}] <strong>{f.component}</strong> — {f.detail}
-                </li>
-              ))}
-            </ul>
-          </details>
-        </>
+        <div className="chips" style={{ marginTop: 8 }}>
+          {auto > 0 && <span className="tag supported">{auto} auto</span>}
+          {adapt > 0 && <span className="tag partial">{adapt} adapt</span>}
+          {review > 0 && <span className="tag manual">{review} needs review</span>}
+        </div>
       )}
     </div>
   );

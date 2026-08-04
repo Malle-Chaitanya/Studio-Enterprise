@@ -6,6 +6,7 @@ import {
   fetchAssessment,
   fetchEnvironments,
 } from '../api.ts';
+import { ConnectorSetup } from '../components/ConnectorSetup.tsx';
 import type {
   AgentAssessment,
   AgentBrief,
@@ -31,7 +32,6 @@ const KDISPO: Record<KnowledgeDisposition, { label: string; tag: Compatibility }
 
 function ksIcon(target: string): string {
   if (target === 'document-data-store') return '📄';
-  if (target === 'website-data-store') return '🌐';
   if (target === 'structured-data-store') return '🗃️';
   if (target === 'sharepoint-connector') return '🔗';
   if (target === 'onedrive-connector') return '☁️';
@@ -41,7 +41,7 @@ function ksIcon(target: string): string {
 }
 
 /** Client-facing knowledge dry run: what migrates automatically vs. needs work. */
-function KnowledgePanel({ k }: { k: KnowledgeAssessment }) {
+function KnowledgePanel({ k, session }: { k: KnowledgeAssessment; session: string }) {
   if (!k.total) {
     return (
       <div className="kspanel">
@@ -69,16 +69,14 @@ function KnowledgePanel({ k }: { k: KnowledgeAssessment }) {
             <div className="kscard-top">
               <span className="ksicon">{ksIcon(a.target)}</span>
               <span className="kstitle">{a.title}</span>
-              {a.ownership && a.strategy === 'recreate' && (
-                <span className={`tag ${a.ownership === 'owned' ? 'supported' : a.ownership === 'third-party' ? 'none' : 'partial'}`}>
-                  {a.ownership === 'owned' ? 'Own domain' : a.ownership === 'third-party' ? '3rd-party' : 'Ownership?'}
-                </span>
-              )}
               <span className={`tag ${KDISPO[a.disposition].tag}`}>{KDISPO[a.disposition].label}</span>
             </div>
             <p className="ksdetail">{a.detail}</p>
             {a.incompatibleFiles && a.incompatibleFiles.length > 0 && (
               <p className="kswarn">⚠ Unsupported format: {a.incompatibleFiles.join(', ')}</p>
+            )}
+            {a.target === 'sharepoint-connector' && a.references?.[0] && (
+              <ConnectorSetup session={session} siteUrl={a.references[0]} />
             )}
           </div>
         ))}
@@ -202,7 +200,7 @@ export function Explore() {
                 <span className="chip fail">Manual {assessment.summary.manual}</span>
               </div>
 
-              {assessment.knowledge && <KnowledgePanel k={assessment.knowledge} />}
+              {assessment.knowledge && <KnowledgePanel k={assessment.knowledge} session={session} />}
 
               {assessment.dependencies.length > 0 && (
                 <div className="infobox">

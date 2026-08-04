@@ -15,3 +15,13 @@ migration_data/
 # Editor/build junk
 ~$*
 *.tsbuildinfo
+
+# Claude Code — personal overrides & local settings (never commit)
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/launch.json
+
+# Local reference dumps & local-only test artifacts (not app code)
+discovery_v1alpha.json
+server/adk_local_test/
+*.docx

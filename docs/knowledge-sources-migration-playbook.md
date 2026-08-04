@@ -81,6 +81,15 @@ Target kinds:
 
 ### 4.1 Website data stores CANNOT connect to a Gemini Enterprise agent ❌ (proven)
 
+> **DECISION (2026-07-30): public-website handling removed from the tool.** The
+> instructions-appendix workaround below, the website-ownership check, and the
+> website-data-store classification/planning path were all removed. A public
+> website knowledge source now falls through to `manual-review` like any other
+> unhandled kind — the URL reference is still preserved losslessly on the
+> `AgentIR` and surfaced in the report, but nothing is auto-created and nothing
+> is written into the agent's instructions. This section is kept for historical
+> context on why the workaround existed in the first place.
+
 > **"You can't connect website data stores to your Gemini Enterprise search and assistant apps."**
 > — Google, *About apps and data stores* (verified twice; no exceptions listed)
 
@@ -151,7 +160,7 @@ The agent answers from the **extracted text**, and points back to the **original
 | Copilot source | Strategy | Gemini target | Auto? | Terminal state | Key caveat |
 |---|---|---|---|---|---|
 | Uploaded document/PDF | copy-and-index | document data store / agent files | ✅ | Migrated | Must pass format+size gate; skip incompatible |
-| Public website | recreate / append-to-instructions | website data store *(see §4.1)* | ❌ | Migrated w/ caveats | Can't attach to assistant app; needs domain verify for indexing |
+| Public website | manual-review *(handling removed, see §4.1)* | none | ❌ | Reported | No auto-strategy; URL reference preserved, needs a human decision |
 | SharePoint (site/library) | reconnect | SharePoint connector | ❌ (1 OAuth) | Migrated after setup | Needs Entra OAuth + identity federation |
 | OneDrive files/folders | reconnect | OneDrive connector | ❌ (1 OAuth) | Migrated after setup | Same identity federation need |
 | SharePoint/OneDrive files (copy mode) | copy-and-index (Way B) | document data store | ❌ (1 OAuth) | Migrated after setup | Copies bytes; carry permissions separately |
@@ -182,8 +191,8 @@ The agent answers from the **extracted text**, and points back to the **original
 
 **🟡 Built as functions but NOT wired into the live flow (only used in a diagnostic):**
 - Document **data store** path: `createDataStore('document')` + `importDocumentsFromGcs` (GCS → ImportDocuments, `dataSchema: 'content'`, `reconciliationMode: 'INCREMENTAL'`).
-- **Website** data store path: `createDataStore('website', createAdvancedSiteSearch=true)` + `addTargetSite` + `attachDataStoreToEngine` (exercised only in `_diag_website.ts`).
 - **Structured** path: `importStructuredInline` (inline `structData`, capped 100 docs/request → must chunk).
+- **Website** data store executor (`createDataStore('website', ...)` + `addTargetSite` + `attachDataStoreToEngine` in `geminiDataStore.ts`) is now fully orphaned, not just unwired — the classifier/planner never produce a `website-data-store` target anymore (see the 2026-07-30 decision above), so nothing calls it except the standalone `_diag_website.ts` / `_diag_website_status.ts` spikes. Left in place; not deleted as part of this change.
 - The orchestrator explicitly logs for non-file sources: *"data-store path not yet wired."*
 
 **❌ NOT built at all (only planned as manual checklists):**
@@ -195,8 +204,8 @@ The agent answers from the **extracted text**, and points back to the **original
 **Classifier facts (`knowledgeClassifier.ts`):**
 - Rule order matters: uploaded-file rule runs BEFORE SharePoint (so "upload files > SharePoint" = copy, not reconnect).
 - SharePoint & OneDrive → `strategy: 'reconnect'`, `automatable: false` (correct cautious call — needs identity federation).
-- Website → `automatable: false`; ownership (owned / third-party / unknown) drives the *recommendation*.
 - Falls back to inferring strategy from the reference URL when the `kind` token is unknown; truly unknown → `manual-review`.
+- Public websites are no longer a special case — they fall through to the same unrecognized-kind `manual-review` path as any other kind the classifier doesn't name, with the reference preserved in the note.
 
 ---
 
@@ -229,7 +238,7 @@ customer is keeping Microsoft and wants always-live, no-duplication.
 | Copy SharePoint/OneDrive files into Google (Way B) | ✅ Possible to build |
 | Reconnect SharePoint/OneDrive live (Way A) | ✅ Possible to build |
 | Migrate Dataverse tables (reference) as structured snapshot | ✅ Possible |
-| Attach a **website** data store to a Gemini **assistant** app | ❌ Not possible (Google blocks it) — use instructions workaround / verify engine surface |
+| Attach a **website** data store to a Gemini **assistant** app | ❌ Not possible (Google blocks it). Tool no longer attempts a workaround for this — reported as manual-review (decision 2026-07-30) |
 | Fully automatic, zero-human, for connectors | ❌ Not possible (OAuth needs an admin) |
 | Migrate encrypted / sensitivity-labelled files | ❌ Not possible (unreadable) |
 | Migrate agent-level knowledge behaviours (official-source, etc.) | ❌ Not possible (no Gemini equivalent) → report |
@@ -243,8 +252,7 @@ customer is keeping Microsoft and wants always-live, no-duplication.
 1. **GCP project + IAM** (service account, Discovery Engine Editor role) — one-time.
 2. **OAuth app registration in Microsoft Entra ID** per connector — one-time, batch them all up front.
 3. **Workforce Identity Federation** (Entra→Google) if per-user permission trimming is required.
-4. **Google Search Console domain verification** if using an (owned-domain) website data store.
-5. **Human confirmation** that a Dataverse table has no protected/PII rows before snapshotting.
+4. **Human confirmation** that a Dataverse table has no protected/PII rows before snapshotting.
 
 Design them as a **pre-flight readiness step** so the migration itself feels hands-off after approval,
 and make the pipeline **resumable** (a source waiting on OAuth pauses, doesn't fail).

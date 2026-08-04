@@ -178,7 +178,11 @@ export function Home() {
           {srcConnected && !tgtConnected && (
             <p className="lead" style={{ marginTop: 14 }}>
               Source connected. Connect <strong>Gemini Enterprise</strong> to enable live migration,
-              or explore &amp; assess now (no target needed for a dry run).
+              or{' '}
+              <button className="dlink" style={{ padding: 0 }} onClick={() => navigate(`/explore?session=${session}`)}>
+                explore &amp; assess now
+              </button>{' '}
+              (no target needed for a dry run).
             </p>
           )}
         </>

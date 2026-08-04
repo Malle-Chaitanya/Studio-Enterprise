@@ -167,3 +167,67 @@ export async function setupMsCredentials(
   logger.info({ projectId }, 'setupMsCredentials done');
   return { secretIds: { ...SECRET_IDS } };
 }
+
+// ── Entra credential helpers (CloudFuze-project-scoped) ───────────────────────
+// Store Entra app secrets in CloudFuze's OWN GCP project (CLOUDFUZE_GCP_PROJECT),
+// not the customer's. Plaintext is never written to Mongo; only the versioned
+// secret resource name is (db/repos/entraAppCredentials.ts).
+
+export interface PutSecretResult {
+  ok: boolean;
+  versionName?: string;
+  error?: string;
+}
+
+export async function putEntraSecret(
+  project: string,
+  saToken: string,
+  secretId: string,
+  plaintext: string,
+): Promise<PutSecretResult> {
+  const createRes = await fetch(`${SM_BASE}/projects/${project}/secrets?secretId=${encodeURIComponent(secretId)}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ replication: { automatic: {} } }),
+  });
+  if (!createRes.ok) {
+    const text = await createRes.text().catch(() => '');
+    if (createRes.status !== 409 && !text.includes('already exists')) {
+      logger.warn({ status: createRes.status, secretId }, 'Secret Manager: create secret failed');
+      return { ok: false, error: `${createRes.status}: ${text.slice(0, 200)}` };
+    }
+  }
+  const versionRes = await fetch(`${SM_BASE}/projects/${project}/secrets/${secretId}:addVersion`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ payload: { data: Buffer.from(plaintext, 'utf8').toString('base64') } }),
+  });
+  if (!versionRes.ok) {
+    const text = await versionRes.text().catch(() => '');
+    logger.warn({ status: versionRes.status, secretId }, 'Secret Manager: add version failed');
+    return { ok: false, error: `${versionRes.status}: ${text.slice(0, 200)}` };
+  }
+  const json = (await versionRes.json()) as { name?: string };
+  if (!json.name) return { ok: false, error: 'addVersion succeeded but returned no version name' };
+  return { ok: true, versionName: json.name };
+}
+
+export interface GetSecretResult {
+  ok: boolean;
+  plaintext?: string;
+  error?: string;
+}
+
+export async function getEntraSecret(saToken: string, versionName: string): Promise<GetSecretResult> {
+  const res = await fetch(`${SM_BASE}/${versionName}:access`, {
+    headers: { Authorization: `Bearer ${saToken}` },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    logger.warn({ status: res.status }, 'Secret Manager: access version failed');
+    return { ok: false, error: `${res.status}: ${text.slice(0, 200)}` };
+  }
+  const json = (await res.json()) as { payload?: { data?: string } };
+  if (!json.payload?.data) return { ok: false, error: 'access succeeded but returned no payload' };
+  return { ok: true, plaintext: Buffer.from(json.payload.data, 'base64').toString('utf8') };
+}

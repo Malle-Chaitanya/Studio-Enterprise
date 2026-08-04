@@ -104,18 +104,25 @@ export function agentJsonUrl(session: string, env: string, bot: AgentBrief): str
   return `/api/explore/agent?session=${session}&env=${encodeURIComponent(env)}&botId=${bot.botid}&name=${encodeURIComponent(bot.name)}&format=json`;
 }
 
-export type KnowledgeHandling = 'skip' | 'appendix' | 'report-only';
-
 // ── Destination discovery (production project/engine picker) ─────────────────
-export interface DestProject { projectId: string; projectNumber: string; displayName: string }
+export interface DestProject {
+  projectId: string;
+  projectNumber: string;
+  displayName: string;
+  org?: string;
+  hasGeminiApp: boolean;
+}
 export interface DestEngine { id: string; displayName: string; solutionType?: string }
 export interface GeminiDest { project: string; engine: string; assistant: string }
 
-/** List the Google Cloud projects the connected admin can access. */
-export async function fetchProjects(session: string): Promise<{ projects: DestProject[]; manualEntry: boolean }> {
+/** List the Google Cloud projects the connected admin can access. `defaultProject`
+ *  is the discovered Gemini destination, used to pre-select the dropdown. */
+export async function fetchProjects(
+  session: string,
+): Promise<{ projects: DestProject[]; manualEntry: boolean; defaultProject?: string }> {
   const res = await fetch(`/api/destination/projects?session=${session}`);
   if (!res.ok) throw new Error('projects_failed');
-  return (await res.json()) as { projects: DestProject[]; manualEntry: boolean };
+  return (await res.json()) as { projects: DestProject[]; manualEntry: boolean; defaultProject?: string };
 }
 
 /** List the Gemini Enterprise engines (apps) in a chosen project. */
@@ -123,6 +130,156 @@ export async function fetchEngines(session: string, project: string): Promise<De
   const res = await fetch(`/api/destination/engines?session=${session}&project=${encodeURIComponent(project)}`);
   if (!res.ok) throw new Error('engines_failed');
   return ((await res.json()) as { engines: DestEngine[] }).engines;
+}
+
+// ── SharePoint connector setup (the customer's own Entra app credentials) ────
+// One connector per SITE, not per session — a migration can touch several
+// distinct SharePoint sites. Credentials are optional on the request: if the
+// tenant was already onboarded, CloudFuze reuses the stored Secret Manager
+// reference and the admin doesn't have to re-enter anything (see
+// .claude/memory/decisions.md, 2026-08-03).
+export interface SharePointConnectorCreds {
+  siteUrl: string;
+  tenantId: string;
+  clientId?: string;
+  clientSecret?: string;
+}
+export interface SharePointConnectorStatus {
+  status?: 'pending' | 'done' | 'failed';
+  collectionId?: string;
+  dataStoreIds?: string[];
+  error?: string;
+  /** The status CHECK ITSELF failed (not a real "still provisioning") — a
+   *  distinct signal so a genuine problem never hides behind an endless,
+   *  indistinguishable "still provisioning" message. */
+  checkError?: string;
+}
+export interface KnowledgeConnectorSummary {
+  kind: 'sharepoint' | 'onedrive';
+  siteUrl: string;
+  collectionId: string;
+  tenantId: string;
+  status: 'pending' | 'done' | 'failed';
+  error?: string;
+  dataStoreIds?: string[];
+}
+
+/** Kick off Gemini's native SharePoint connector for one site, using the
+ *  customer's own Entra app credentials (never CloudFuze's) — starts a
+ *  long-running operation. */
+export async function setUpSharePointConnector(
+  session: string,
+  creds: SharePointConnectorCreds,
+): Promise<{ started: boolean; collectionId: string; operationName?: string }> {
+  const res = await fetch('/api/destination/sharepoint-connector', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, ...creds }),
+  });
+  if (!res.ok) {
+    // Surface the backend's real reason (e.g. "connector_credentials_required",
+    // or Google's own error text via `detail`) — never collapse every failure
+    // into one indistinguishable generic message, or a real cause is invisible.
+    const body = await res.json().catch(() => ({}) as { error?: string; detail?: string });
+    throw new Error(body.detail || body.error || 'connector_setup_failed');
+  }
+  return (await res.json()) as { started: boolean; collectionId: string; operationName?: string };
+}
+
+/** Poll one site's connector-creation operation. `done` means Google finished
+ *  provisioning — the orchestrator's insert phase does the actual attach step
+ *  and records the real fidelity outcome. */
+export async function fetchSharePointConnectorStatus(session: string, siteUrl: string): Promise<SharePointConnectorStatus> {
+  const res = await fetch(`/api/destination/sharepoint-connector/status?session=${session}&siteUrl=${encodeURIComponent(siteUrl)}`);
+  if (!res.ok) throw new Error('connector_status_failed');
+  return (await res.json()) as SharePointConnectorStatus;
+}
+
+/** Forget our tracking row for one site's connector so the next setup starts
+ *  fresh — for re-testing, or after a customer rotates their Entra secret.
+ *  Does NOT delete anything on Google's side. */
+export async function removeSharePointConnector(session: string, siteUrl: string): Promise<void> {
+  const res = await fetch(`/api/destination/sharepoint-connector?session=${session}&siteUrl=${encodeURIComponent(siteUrl)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('connector_remove_failed');
+}
+
+/** Every knowledge connector configured for this customer across every site —
+ *  powers a batch "N connectors need authorization" view instead of
+ *  discovering them one at a time. */
+export async function fetchKnowledgeConnectors(session: string): Promise<KnowledgeConnectorSummary[]> {
+  const res = await fetch(`/api/destination/connectors?session=${session}`);
+  if (!res.ok) throw new Error('connectors_failed');
+  return ((await res.json()) as { connectors: KnowledgeConnectorSummary[] }).connectors;
+}
+
+/** One site that needs a connector, and every agent (in one environment) that references it. */
+export interface ConnectorNeeded {
+  siteUrl: string;
+  kind: 'sharepoint-connector' | 'onedrive-connector';
+  agentNames: string[];
+}
+
+/** Scans every agent in one environment and returns a single deduplicated list
+ *  of sites needing a connector — the batch view, no per-agent drill-down. */
+export async function fetchConnectorsNeeded(session: string, env: string): Promise<ConnectorNeeded[]> {
+  const res = await fetch(`/api/explore/connectors-needed?session=${session}&env=${encodeURIComponent(env)}`);
+  if (!res.ok) throw new Error('connectors_needed_failed');
+  return ((await res.json()) as { connectors: ConnectorNeeded[] }).connectors;
+}
+
+// ── SharePoint/OneDrive knowledge source: search-and-confirm ────────────────
+export interface KnowledgeCandidate {
+  driveId: string;
+  itemId: string;
+  name: string;
+  sizeBytes?: number;
+  webUrl?: string;
+  lastModifiedDateTime?: string;
+  parentContext?: string;
+}
+export interface KnowledgeSourceResult {
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  dataStoreId?: string;
+  error?: string;
+}
+
+/** Search for candidate files matching a knowledge source's filename, scoped
+ *  to the person who added it (OneDrive) and/or known SharePoint sites —
+ *  never a tenant-wide sweep. Returns candidates only; nothing is migrated
+ *  until one is confirmed via confirmKnowledgeSource(). */
+export async function findKnowledgeCandidates(
+  session: string,
+  filename: string,
+  opts?: { envUrl?: string; modifiedByUserId?: string; sharePointSiteIds?: string[] },
+): Promise<{ candidates: KnowledgeCandidate[]; scopedToUser: string | null }> {
+  const res = await fetch('/api/migrate/knowledge-candidates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, filename, ...opts }),
+  });
+  if (!res.ok) throw new Error('knowledge_candidates_failed');
+  return (await res.json()) as { candidates: KnowledgeCandidate[]; scopedToUser: string | null };
+}
+
+/** Confirm a candidate (or a manually-identified drive item) as the real
+ *  source and migrate it into the agent's knowledge for real. */
+export async function confirmKnowledgeSource(
+  session: string,
+  agentId: string,
+  candidate: Pick<KnowledgeCandidate, 'driveId' | 'itemId' | 'name'>,
+): Promise<KnowledgeSourceResult> {
+  const res = await fetch('/api/migrate/knowledge-source-confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, agentId, ...candidate }),
+  });
+  const json = (await res.json()) as KnowledgeSourceResult & { detail?: string; error?: string };
+  if (!res.ok) throw new Error(json.detail ?? json.error ?? 'knowledge_source_confirm_failed');
+  return json;
 }
 
 export async function planMigration(
@@ -134,12 +291,11 @@ export async function planMigration(
     environmentMap?: Record<string, GeminiDest>;
   },
   dryRun: boolean,
-  knowledgeHandling: KnowledgeHandling = 'report-only',
 ): Promise<PlanPreview> {
   const res = await fetch('/api/migrate/plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session, scope, destination, dryRun, knowledgeHandling }),
+    body: JSON.stringify({ session, scope, destination, dryRun }),
   });
   if (!res.ok) throw new Error('plan_failed');
   return (await res.json()) as PlanPreview;

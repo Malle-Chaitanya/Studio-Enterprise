@@ -62,6 +62,13 @@ This affects both `lowCodeAgentDefinition` and `adkAgentDefinition` agent creati
 - Deleting agents does **not** free the quota — it appears cumulative within a period.
 - The "View quota usage" dashboard does not list an agent-creation quota (it shows usage
   quotas like text-answer-generation only).
+- **NOT the `agentregistry.googleapis.com/global_agents` quota.** Verified in the Console
+  Quotas page on 2026-07-27: that quota sits at **0 / 100 (0% usage, Adjustable: Yes)** —
+  yet agent creation still returns RESOURCE_EXHAUSTED. It is also a **different API**: our
+  create call goes to `discoveryengine.googleapis.com` (POST
+  `.../assistants/default_assistant/agents`), NOT `agentregistry`. So the blocking quota is
+  a separate, undocumented **Discovery Engine** counter that is not exposed anywhere in the
+  Console Quotas list.
 
 **Our questions**
 1. What is the exact **agent-creation quota** (limit value) for Gemini Enterprise Standard
@@ -85,6 +92,32 @@ migration). We already pace writes (bounded concurrency + exponential backoff ho
 gating factor for completing a customer's migration in one pass.
 
 ---
+
+## Live diagnostic evidence (2026-07-27) — DEFINITIVE
+Ran a create-until-429 probe loop (`_diag_quota_probe_loop.ts`) plus a single-create probe,
+low-code, impersonating zara@storefuze.com, on `studio-enterprise-migration` /
+`gemini-enterprise-17847887_1784788734248`:
+
+1. **The throwing API is `discoveryengine.googleapis.com`** (`agents.create`, POST
+   `.../assistants/default_assistant/agents`, v1alpha) — NOT `agentregistry`.
+2. **The daily allowance is tiny** — only ~1–2 creations succeeded before the 429; consistent
+   with a total of roughly **~7 creations/day**. This is a **per-day counter** that resets
+   ~midnight PT (an earlier same-day create succeeded, then the reset window refilled it).
+3. **The 429 error is BARE — Google does NOT name the quota.** Full response body:
+   ```json
+   { "error": { "code": 429, "message": "Agent creation quota exceeded.", "status": "RESOURCE_EXHAUSTED" } }
+   ```
+   There is **no `details[]`** (no QuotaFailure / ErrorInfo / Help) — so there is **no metric
+   name, no limit value, and no help link**. The customer cannot self-identify this quota.
+4. **Deleting agents does NOT free it** — the probe agent was deleted, the quota stayed spent
+   (cumulative per day, not a live "slots in use" count).
+5. **Not in the Console Quotas page** — the only agents quota shown is
+   `agentregistry.googleapis.com/global_agents` (0 / 100, Adjustable: Yes), a **different API**
+   that our code never calls.
+
+**Net:** the blocker is an **undocumented, unnamed, per-day agent-creation quota on Discovery
+Engine (~7/day)** that is invisible in the Console, unnamed in the API error, and not freed by
+deletion. This is the crux of the ticket: Google must name it and raise it.
 
 ## After you hear back — record the answer here
 - Actual limit: _____   • Reset: _____   • Seat-scaled? _____   • Monitor metric: _____

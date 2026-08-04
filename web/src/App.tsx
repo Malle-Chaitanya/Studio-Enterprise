@@ -1,6 +1,7 @@
 import { Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ChoosePair } from './pages/ChoosePair.tsx';
 import { Connect } from './pages/Connect.tsx';
+import { Connectors } from './pages/Connectors.tsx';
 import { Explore } from './pages/Explore.tsx';
 import { Home } from './pages/Home.tsx';
 import { Login } from './pages/Login.tsx';
@@ -37,7 +38,7 @@ function AppHeader() {
 const STEPS = [
   { label: 'Connect Platforms', paths: ['/home', '/connect'] },
   { label: 'Choose Pair', paths: ['/pair'] },
-  { label: 'Select & Map', paths: ['/map', '/explore'] },
+  { label: 'Select & Map', paths: ['/map', '/explore', '/connectors'] },
   { label: 'Select Data', paths: ['/select-data'] },
   { label: 'Dry Run', paths: [] as string[] },
   { label: 'Live Migration', paths: ['/migrate'] },
@@ -88,6 +89,7 @@ export function App() {
         <Route path="/map" element={<SelectMap />} />
         <Route path="/connect" element={<Connect />} />
         <Route path="/explore" element={<Explore />} />
+        <Route path="/connectors" element={<Connectors />} />
         <Route path="/migrate" element={<Migrate />} />
       </Route>
     </Routes>

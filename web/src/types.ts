@@ -67,8 +67,9 @@ export interface KnowledgeAction {
   strategy: string;
   target: string;
   disposition: KnowledgeDisposition;
-  ownership?: 'owned' | 'third-party' | 'unknown' | string;
   detail: string;
+  /** URLs/site paths this action operates over (reconnect targets: the site to configure a connector for). */
+  references?: string[];
   fileCount?: number;
   incompatibleFiles?: string[];
 }

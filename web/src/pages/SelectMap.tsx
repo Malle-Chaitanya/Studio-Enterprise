@@ -26,31 +26,41 @@ export function SelectMap() {
   const [sel, setSel] = useState<Record<string, { project: string; engine: string }>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Default view shows only projects that already have a Gemini app (valid
+  // destinations); the toggle reveals every accessible project.
+  const [showAllProjects, setShowAllProjects] = useState(false);
 
   useEffect(() => {
     if (!session) return;
     (async () => {
       const [list, proj] = await Promise.all([
         fetchEnvironments(session).catch(() => [] as EnvironmentInfo[]),
-        fetchProjects(session).catch(() => ({ projects: [] as DestProject[], manualEntry: true })),
+        fetchProjects(session).catch(() => ({ projects: [] as DestProject[], manualEntry: true, defaultProject: '' })),
       ]);
       const acc = list.filter((e) => e.accessible);
       setEnvs(acc);
       setProjects(proj.projects);
       setManualEntry(proj.manualEntry || proj.projects.length === 0);
 
-      const first = proj.projects[0]?.projectNumber ?? '';
+      // Pre-select the discovered Gemini destination so the common case is
+      // "confirm", not "hunt": prefer the server's defaultProject, else the first
+      // Gemini-capable project, else the first project.
+      const defaultProj =
+        proj.defaultProject ||
+        proj.projects.find((p) => p.hasGeminiApp)?.projectNumber ||
+        proj.projects[0]?.projectNumber ||
+        '';
       // Default: include environments that actually have agents; default each to
-      // the first discovered project.
+      // the discovered project.
       const inc = new Set<string>();
       const init: Record<string, { project: string; engine: string }> = {};
       for (const e of acc) {
-        init[e.url] = { project: first, engine: '' };
+        init[e.url] = { project: defaultProj, engine: '' };
         if ((e.bots ?? 0) > 0) inc.add(e.url);
       }
       setIncluded(inc);
       setSel(init);
-      if (first) await loadEngines(first);
+      if (defaultProj) await loadEngines(defaultProj);
       setLoading(false);
     })().catch(() => {
       setError('Could not load environments/projects. Make sure both platforms are connected.');
@@ -87,6 +97,18 @@ export function SelectMap() {
   const chosen = envs.filter((e) => included.has(e.url));
   const ready = chosen.length > 0 && chosen.every((e) => sel[e.url]?.project && sel[e.url]?.engine);
 
+  // Only projects with a Gemini app are valid destinations. Show just those by
+  // default; if none were detected, fall back to showing all so the user is never
+  // stuck with an empty list. Always keep an already-selected project visible.
+  const geminiCount = projects.filter((p) => p.hasGeminiApp).length;
+  const noGemini = geminiCount === 0;
+  const selectedProjNums = new Set(Object.values(sel).map((v) => v.project).filter(Boolean));
+  const optionProjects =
+    showAllProjects || noGemini
+      ? projects
+      : projects.filter((p) => p.hasGeminiApp || selectedProjNums.has(p.projectNumber));
+  const hiddenCount = projects.length - geminiCount;
+
   const cont = () => {
     const environmentMap: Record<string, GeminiDest> = {};
     const envList: { env: string; name: string }[] = [];
@@ -100,11 +122,13 @@ export function SelectMap() {
   };
 
   const projLabel = (p: DestProject) => {
-    // The injected "connected" fallback entry has displayName already containing
-    // the id — don't append it again (avoids "x (connected) (x)").
-    if (!p.displayName || p.displayName === p.projectNumber) return p.projectNumber;
-    if (p.displayName.includes(p.projectNumber)) return p.displayName;
-    return `${p.displayName} (${p.projectNumber})`;
+    // The injected "connected" fallback entry already reads "<id> (connected)".
+    if (p.displayName.includes('(connected)')) return p.displayName;
+    // Show the real name the customer gave the project, with projectId + org for
+    // context: "CloudFuze-Ent2 (cloudfuze-ent2 · cloudfuze.com)".
+    const name = p.displayName || p.projectId || p.projectNumber;
+    const ctx = [p.projectId !== name ? p.projectId : '', p.org].filter(Boolean).join(' · ');
+    return ctx ? `${name} (${ctx})` : name;
   };
 
   return (
@@ -115,6 +139,20 @@ export function SelectMap() {
         <strong>Gemini Enterprise project &amp; app</strong> (discovered from your connected account).
         You’ll pick the agents next.
       </p>
+      <p className="lead" style={{ marginTop: -8, marginBottom: 4 }}>
+        Have SharePoint/OneDrive knowledge sources?{' '}
+        <button className="dlink" style={{ padding: 0 }} onClick={() => navigate(`/connectors?session=${session}`)}>
+          See every connector that needs setup →
+        </button>{' '}
+        — one flat list across all agents, no drilling in one at a time.
+      </p>
+      <p className="lead" style={{ marginTop: 0, marginBottom: 16 }}>
+        Or{' '}
+        <button className="dlink" style={{ padding: 0 }} onClick={() => navigate(`/explore?session=${session}`)}>
+          assess agents individually →
+        </button>{' '}
+        for a detailed, per-agent compatibility breakdown.
+      </p>
 
       {error && <div className="error">{error}</div>}
       {loading && <p className="lead">Discovering environments &amp; Gemini projects…</p>}
@@ -123,6 +161,23 @@ export function SelectMap() {
 
       {!loading && envs.length > 0 && (
         <>
+          {!manualEntry && !noGemini && hiddenCount > 0 && (
+            <label className="lead" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={showAllProjects}
+                onChange={(ev) => setShowAllProjects(ev.target.checked)}
+              />
+              Show all projects ({hiddenCount} without a Gemini app hidden)
+            </label>
+          )}
+          {!manualEntry && noGemini && (
+            <p className="lead" style={{ marginBottom: 12 }}>
+              No projects with a Gemini app were detected — showing all projects. Pick the project
+              that hosts your Gemini Enterprise app.
+            </p>
+          )}
+
           <div className="map-head">
             <span><MsIcon s={20} /> Source environment</span>
             <span />
@@ -156,7 +211,7 @@ export function SelectMap() {
                   ) : (
                     <select className="map-input" value={cur.project} disabled={!on} onChange={(ev) => onProject(e.url, ev.target.value)}>
                       <option value="" disabled>Select project…</option>
-                      {projects.map((p) => (
+                      {optionProjects.map((p) => (
                         <option key={p.projectNumber} value={p.projectNumber}>{projLabel(p)}</option>
                       ))}
                     </select>

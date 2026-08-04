@@ -47,6 +47,11 @@ export interface Session {
   workflowAnswers?: Record<string, Record<string, Record<string, string>>>;
   // linkage during OAuth handshakes
   msSessionId?: string;
+  // NOTE: SharePoint/OneDrive connector setup state moved to the
+  // knowledgeConnectors Mongo collection (db/repos/knowledgeConnectors.ts) —
+  // per (appUserId, kind, siteUrl), not a session-wide singleton, since a
+  // migration can touch several distinct SharePoint sites. See
+  // .claude/memory/decisions.md (2026-08-03).
 }
 
 /** Used until real login is wired; every session/run is scoped to this. */

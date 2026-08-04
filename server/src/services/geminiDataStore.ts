@@ -65,7 +65,7 @@ export interface CreateDataStoreResult {
 export async function createDataStore(
   project: string,
   saToken: string,
-  opts: { dataStoreId: string; displayName: string; kind: DataStoreKind; uris?: string[] },
+  opts: { dataStoreId: string; displayName: string; kind: DataStoreKind; uris?: string[]; advanced?: boolean },
 ): Promise<CreateDataStoreResult> {
   const bodyByKind: Record<DataStoreKind, Record<string, unknown>> = {
     website: {
@@ -91,11 +91,15 @@ export async function createDataStore(
   };
   const body = bodyByKind[opts.kind];
 
-  // Engines only link ADVANCED website data stores (basic site search is
-  // rejected), so request advanced indexing when creating a website store.
+  // NOTE: neither tier can be attached to a Gemini Enterprise app/engine
+  // (docs/knowledge-sources-migration-playbook.md §4.1 — Google-documented,
+  // proven live). Advanced indexing also requires Search Console domain
+  // ownership verification we don't control for a customer's site, so the ADK/
+  // VertexAiSearchTool grounding path (adkDeployer.ts) deliberately requests
+  // BASIC (advanced=false) — sufficient for that tool and needs no verification.
   const query =
     `dataStoreId=${encodeURIComponent(opts.dataStoreId)}` +
-    (opts.kind === 'website' ? '&createAdvancedSiteSearch=true' : '');
+    (opts.kind === 'website' && opts.advanced !== false ? '&createAdvancedSiteSearch=true' : '');
 
   const res = await withBackoff(() =>
     fetch(`${collectionBase(project)}/dataStores?${query}`, {
@@ -133,6 +137,11 @@ export async function addTargetSite(
   );
   if (!res.ok) return { ok: false, error: `${res.status}: ${(await res.text()).slice(0, 200)}` };
   return { ok: true };
+}
+
+/** Full Discovery Engine resource path a data store is referenced by (e.g. ADK's VertexAiSearchTool). */
+export function dataStoreResourcePath(project: string, dataStoreId: string): string {
+  return `projects/${project}/locations/global/collections/default_collection/dataStores/${dataStoreId}`;
 }
 
 /**

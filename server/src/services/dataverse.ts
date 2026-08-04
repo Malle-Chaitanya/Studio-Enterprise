@@ -16,6 +16,14 @@ import type { AgentIR, AgentSourceMetadata, KnowledgeSourceIR, KnowledgeSourceMe
 
 const API = (url: string, path: string) => `${url}/api/data/v9.2/${path}`;
 
+/**
+ * Environments (keyed by Dataverse org url) where `bots?$select=configuration,description`
+ * is known to 400. Set the first time extractAgent sees it fail; read on every
+ * subsequent bot in the same run to skip the doomed combined attempt. See
+ * `extractAgent`'s comment for why this is a per-environment property.
+ */
+const combinedSelectUnsupported = new Map<string, boolean>();
+
 interface BotComponent {
   botcomponentid: string;
   name: string;
@@ -24,11 +32,35 @@ interface BotComponent {
   _parentbotid_value?: string;
   /** File name for Bot File Attachment (type 14) components. */
   filedata_name?: string | null;
+  /**
+   * Newer-schema structured config, present on SOME componenttype-14 rows
+   * that are NOT actual files — e.g. a "DataverseTableSearch" knowledge
+   * source authored in Copilot Studio's modern experience. JSON, "$kind"-
+   * tagged, distinct from the classic YAML `data` blob. See
+   * isEmbeddedConfigSource below — found empirically via a live test tenant,
+   * not from docs.
+   */
+  content?: string | null;
+  /**
+   * Native Dataverse `description` column on the component record itself —
+   * NOT part of the YAML `data` blob. For system topics this holds Microsoft's
+   * canned explanation; for the CustomGpt (type 15) component it holds the
+   * agent's real AUTHORED description from Copilot Studio's Overview panel.
+   * This is the current, authoritative source — the `bot` entity has no such
+   * column in every org (see extractAgent's description fallback chain).
+   */
+  description?: string | null;
   // ── provenance metadata (audit trail) ──
   createdon?: string | null;
   modifiedon?: string | null;
   ismanaged?: boolean | null;
   statuscode?: number | null;
+  /** Lookup to the systemuser who last modified this component — captured
+   *  raw (not resolved to an email) here; resolving it costs a Dataverse
+   *  call, so it's deferred until actually needed (scoping a OneDrive search
+   *  to the person who added a SharePoint/OneDrive copy-mode source). See
+   *  resolveSystemUserEmail below. */
+  _modifiedby_value?: string | null;
 }
 
 /** Build the provenance metadata block for a knowledge component. */
@@ -39,7 +71,27 @@ function buildKnowledgeMetadata(c: BotComponent): KnowledgeSourceMetadata {
     modifiedOn: c.modifiedon ?? undefined,
     isManaged: c.ismanaged ?? undefined,
     status: c.statuscode == null ? undefined : c.statuscode === 1 ? 'active' : 'inactive',
+    modifiedByUserId: c._modifiedby_value ?? undefined,
   };
+}
+
+/**
+ * Resolve a systemuser id to their email — used on demand to scope a
+ * SharePoint/OneDrive search to the specific person who added a knowledge
+ * source (see graphSearch.ts), never resolved eagerly for every source
+ * during extraction (most sources never need it).
+ */
+export async function resolveSystemUserEmail(url: string, token: string, userId: string): Promise<string | null> {
+  try {
+    const user = await dvGet<{ internalemailaddress?: string }>(
+      url,
+      token,
+      `systemusers(${userId})?$select=internalemailaddress`,
+    );
+    return user.internalemailaddress ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function dvGet<T>(url: string, token: string, path: string): Promise<T> {
@@ -47,7 +99,18 @@ async function dvGet<T>(url: string, token: string, path: string): Promise<T> {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
   });
   if (!res.ok) {
-    throw new Error(`Dataverse GET ${path} failed (${res.status})`);
+    // Surface Dataverse's own OData error message (e.g. "Could not find a
+    // property named 'description' on type...") instead of a bare status
+    // code — a bare "(400)" gives no way to tell a bad $select from a real
+    // outage without re-running the request by hand.
+    let detail = '';
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      detail = body?.error?.message ?? '';
+    } catch {
+      /* body wasn't JSON (or already consumed) — fall back to bare status */
+    }
+    throw new Error(`Dataverse GET ${path} failed (${res.status})${detail ? `: ${detail}` : ''}`);
   }
   return (await res.json()) as T;
 }
@@ -354,13 +417,70 @@ function parseGptMetadata(c: BotComponent): {
   };
 }
 
-function parseKnowledgeSource(c: BotComponent, ownerDomains?: string[]): KnowledgeSourceIR {
-  const doc = tryParseYaml(c.data);
-  const kind = (doc?.kind as string) ?? (doc?.knowledgeSourceType as string) ?? 'Unknown';
+/**
+ * Some componenttype 14 (BotFileAttachment) rows aren't real files — they
+ * carry a structured knowledge-source config in the `content` column (JSON,
+ * "$kind"-tagged — Copilot's newer authoring schema, distinct from the
+ * classic YAML `data` blob type-16 sources use in parseKnowledgeSource
+ * below). Confirmed on a live test tenant: a "Dataverse table search"
+ * knowledge source showed up exactly this way, with filedata/filedata_name
+ * both null — parseFileAttachment would otherwise try to fetch bytes that
+ * don't exist. Route these through the knowledge-source path instead.
+ */
+function isEmbeddedConfigSource(c: BotComponent): boolean {
+  return !c.filedata_name && Boolean(c.content) && /"\$kind"\s*:\s*"KnowledgeSourceComponent"/.test(c.content ?? '');
+}
 
-  // All references (URLs, site paths, entity names) — not just the first.
+function parseEmbeddedConfigSource(c: BotComponent): KnowledgeSourceIR {
+  let doc: Record<string, unknown> | null = null;
+  try {
+    doc = JSON.parse(c.content ?? '{}') as Record<string, unknown>;
+  } catch {
+    /* keep null — falls through to Unknown/manual-review below */
+  }
+
+  // The data source entry's own "$kind" (e.g. "DataverseTableSearch") is the
+  // real classification signal — "KnowledgeSourceComponent" is just the
+  // wrapper every one of these rows shares.
+  const dataSources = (doc?.dataSources as { $kind?: string }[] | undefined) ?? [];
+  const kind = dataSources[0]?.$kind ?? 'Unknown';
+
   const refs: string[] = [];
   if (doc) collectStrings(doc, (k) => /url|site|siteurl|reference|entity|path|connection/i.test(k), refs);
+  const references = dedupe(refs);
+
+  const classification = classifyKnowledgeSource({ kind, references });
+  return {
+    id: c.botcomponentid,
+    name: c.name,
+    kind,
+    reference: references[0],
+    references,
+    classification,
+    metadata: buildKnowledgeMetadata(c),
+    raw: doc ?? c.content ?? undefined,
+  };
+}
+
+function parseKnowledgeSource(c: BotComponent): KnowledgeSourceIR {
+  const doc = tryParseYaml(c.data);
+  // The real distinguishing type lives at `source.kind` — the top-level
+  // `kind` is ALWAYS the literal string "KnowledgeSourceConfiguration" for
+  // every knowledge source in this schema (website, SharePoint, Dataverse,
+  // all of them), confirmed against live tenant data. Reading top-level
+  // `kind` alone (the prior behavior) meant every classic-schema source fell
+  // through classification's kind-based rules entirely, relying only on the
+  // reference-URL inference fallback to guess a strategy.
+  const source = doc?.source as { kind?: string } | undefined;
+  const kind = source?.kind ?? (doc?.kind as string) ?? (doc?.knowledgeSourceType as string) ?? 'Unknown';
+
+  // All references (URLs, site paths, entity/skill names) — not just the
+  // first. "skill" added after finding Dataverse/federated sources identify
+  // themselves via `skillConfiguration: <name>` rather than a URL — captured
+  // here for visibility even though what a skillConfiguration name resolves
+  // to is not yet verified (see knowledgeClassifier.ts notes for this gap).
+  const refs: string[] = [];
+  if (doc) collectStrings(doc, (k) => /url|site|siteurl|reference|entity|path|connection|skill/i.test(k), refs);
   const references = dedupe(refs);
 
   // Author's description of what this source is for ("...answer questions about
@@ -380,10 +500,10 @@ function parseKnowledgeSource(c: BotComponent, ownerDomains?: string[]): Knowled
     const sizeStr: string[] = [];
     collectStrings(doc, (k) => /size|bytes|filesize|length/i.test(k), sizeStr);
     const sizeBytes = sizeStr.map((s) => Number(s)).find((n) => Number.isFinite(n) && n > 0);
-    if (fileName || sizeBytes) file = { name: fileName, sizeBytes };
+    if (fileName || sizeBytes) file = { name: fileName ? normalizeFileName(fileName) : fileName, sizeBytes };
   }
 
-  const classification = classifyKnowledgeSource({ kind, references, file, ownerDomains });
+  const classification = classifyKnowledgeSource({ kind, references, file });
 
   // Reflect the file-compat gate back onto the file record for the report.
   if (file?.name) {
@@ -411,17 +531,49 @@ function parseKnowledgeSource(c: BotComponent, ownerDomains?: string[]): Knowled
 }
 
 /**
+ * Dataverse sometimes stores a file's display name already percent-encoded
+ * (e.g. "Foo%20Bar.pdf" for the real name "Foo Bar.pdf") — a quirk of how the
+ * source system persisted it, not something we control. Decode it back to the
+ * real literal name here, ONCE, at extraction time, so nothing downstream
+ * (the compat gate, idempotency-by-filename, MIME lookup, the actual upload)
+ * re-encodes an already-encoded name into a corrupted double-encoded one.
+ * Confirmed live: an unfixed name produced "%20" → "%2520" on upload.
+ */
+function normalizeFileName(name: string): string {
+  try {
+    const decoded = decodeURIComponent(name);
+    return decoded !== name ? decoded : name;
+  } catch {
+    return name; // not validly percent-encoded — treat as a literal name that happens to contain '%'
+  }
+}
+
+/**
  * Parse a Bot File Attachment (componenttype 14) — an author-uploaded knowledge
  * file. The bytes live in the `filedata` File column (fetched separately at
  * migration time via …/filedata/$value); here we capture the name so the
  * classifier can apply Gemini's format/size ingest gate.
  */
 function parseFileAttachment(c: BotComponent): KnowledgeSourceIR {
-  const fileName = (c.filedata_name || c.name || 'file').trim();
+  const fileName = normalizeFileName((c.filedata_name || c.name || 'file').trim());
   const compat = checkFileCompatibility(fileName);
   const file = { name: fileName, format: compat.format, compatible: compat.compatible, incompatReason: compat.reason };
   const classification = classifyKnowledgeSource({ kind: 'FileUpload', file: { name: fileName } });
   return { id: c.botcomponentid, name: fileName, kind: 'FileUpload', file, classification, metadata: buildKnowledgeMetadata(c) };
+}
+
+/**
+ * Pull the classic-experience authored description out of a bot's raw
+ * `configuration` JSON blob (settings["default-2.1.0"].content.description).
+ * The version key varies by experience, so scan any settings entry for a
+ * content.description rather than pinning one version.
+ */
+function parseConfigDescription(configuration?: string): string {
+  const cfg = configuration ? (JSON.parse(configuration) as Record<string, unknown>) : null;
+  const settings = (cfg?.settings ?? {}) as Record<string, { content?: { description?: string } }>;
+  const content = settings['default-2.1.0']?.content
+    ?? Object.values(settings).find((s) => s?.content?.description)?.content;
+  return content?.description ? String(content.description).trim() : '';
 }
 
 /**
@@ -432,12 +584,11 @@ export async function extractAgent(
   url: string,
   token: string,
   bot: BotSummary,
-  opts?: { ownerDomains?: string[] },
 ): Promise<AgentIR> {
   const json = await dvGet<{ value: BotComponent[] }>(
     url,
     token,
-    'botcomponents?$select=name,data,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode' +
+    'botcomponents?$select=name,data,content,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode,description,_modifiedby_value' +
       `&$filter=statecode eq 0 and _parentbotid_value eq ${bot.botid}&$top=1000`,
   );
   const components = json.value ?? [];
@@ -447,23 +598,65 @@ export async function extractAgent(
   // real description; for Microsoft prebuilt/managed agents it's empty (the
   // description is template-defined and not exposed via the Dataverse API).
   let configDescription = '';
-  try {
-    const b = await dvGet<{ configuration?: string }>(url, token, `bots(${bot.botid})?$select=configuration`);
-    const cfg = b.configuration ? (JSON.parse(b.configuration) as Record<string, unknown>) : null;
-    const settings = (cfg?.settings ?? {}) as Record<string, { content?: { description?: string } }>;
-    const content = settings['default-2.1.0']?.content;
-    if (content?.description) configDescription = String(content.description).trim();
-  } catch {
-    /* non-fatal — fall back to instruction-derived description */
+  // The NEW Copilot Studio experience stores the Overview "Description" on the
+  // bot record's own `description` column (not in configuration/GptComponentMetadata),
+  // so we read it too — otherwise authored descriptions from new-experience agents
+  // are silently dropped.
+  let botDescription = '';
+  let gotCombined = false;
+  // Some Dataverse orgs/solution versions reject the combined
+  // `$select=configuration,description` with a 400 even though each column is
+  // selectable alone (the OData validator rejects the whole select list when
+  // one field it doesn't recognize is in it). That's a schema-level property
+  // of the environment, not of any one bot, so once we've seen it fail once
+  // we stop retrying the combined form and stop re-warning for every
+  // remaining agent in this run.
+  if (!combinedSelectUnsupported.get(url)) {
+    try {
+      const b = await dvGet<{ configuration?: string; description?: string }>(
+        url, token, `bots(${bot.botid})?$select=configuration,description`,
+      );
+      if (b.description) botDescription = String(b.description).trim();
+      configDescription = parseConfigDescription(b.configuration);
+      gotCombined = true;
+    } catch (e) {
+      combinedSelectUnsupported.set(url, true);
+      logger.warn(`bots($select=configuration,description) unsupported on this Dataverse environment — falling back to separate selects for the rest of this run: ${(e as Error).message}`);
+    }
+  }
+  if (!gotCombined) {
+    // Fetch configuration and description independently (in parallel) so a
+    // column that isn't selectable for one doesn't also cost us the other —
+    // dropping either one silently would lose an authored description
+    // (classic experience lives in `configuration`, new experience in
+    // `description`), which the lossless-extraction principle doesn't allow.
+    const [confResult, descResult] = await Promise.allSettled([
+      dvGet<{ configuration?: string }>(url, token, `bots(${bot.botid})?$select=configuration`),
+      dvGet<{ description?: string }>(url, token, `bots(${bot.botid})?$select=description`),
+    ]);
+    if (confResult.status === 'fulfilled') {
+      configDescription = parseConfigDescription(confResult.value.configuration);
+    } else {
+      logger.warn(`configuration-only fetch failed for "${bot.name}": ${(confResult.reason as Error)?.message ?? confResult.reason}`);
+    }
+    if (descResult.status === 'fulfilled') {
+      if (descResult.value.description) botDescription = String(descResult.value.description).trim();
+    } else {
+      logger.warn(`description-only fetch failed for "${bot.name}": ${(descResult.reason as Error)?.message ?? descResult.reason}`);
+    }
   }
 
   // Agent-level source provenance (report/audit only — NOT migrated to Gemini).
   // Best-effort: standard solution-aware columns; degrades to undefined on error.
+  // `publishedon` is null for a bot that has never been published in Copilot
+  // Studio (still a Draft) — the orchestrator uses this to decide whether the
+  // migrated Gemini agent should be published too or left as a draft, so the
+  // destination mirrors the source's publish state instead of always publishing.
   let sourceMetadata: AgentSourceMetadata | undefined;
   try {
     const b = await dvGet<Record<string, unknown>>(
       url, token,
-      `bots(${bot.botid})?$select=createdon,modifiedon,ismanaged,statecode,schemaname,_ownerid_value`,
+      `bots(${bot.botid})?$select=createdon,modifiedon,ismanaged,statecode,schemaname,_ownerid_value,publishedon`,
     );
     const managed = Boolean(b.ismanaged);
     sourceMetadata = {
@@ -471,6 +664,7 @@ export async function extractAgent(
       ownerId: (b['_ownerid_value'] as string) ?? undefined,
       createdOn: (b.createdon as string) ?? undefined,
       modifiedOn: (b.modifiedon as string) ?? undefined,
+      lastPublished: (b.publishedon as string) ?? undefined,
       isManaged: managed,
       protected: managed, // Copilot "Protected" ≈ part of a managed solution
       status: b.statecode === 0 ? 'active' : b.statecode === 1 ? 'inactive' : undefined,
@@ -491,9 +685,14 @@ export async function extractAgent(
 
   const topics = topicComps.map(parseTopic);
   // Knowledge = configured sources (type 16) + author-uploaded files (type 14).
+  // A minority of type-14 rows are actually embedded structured configs, not
+  // files (see isEmbeddedConfigSource) — route those through the
+  // knowledge-source path instead of the file-fetch path.
   const knowledgeSources = [
-    ...ksComps.map((c) => parseKnowledgeSource(c, opts?.ownerDomains)),
-    ...fileComps.map(parseFileAttachment),
+    ...ksComps.map((c) => parseKnowledgeSource(c)),
+    ...fileComps.map((c) =>
+      isEmbeddedConfigSource(c) ? parseEmbeddedConfigSource(c) : parseFileAttachment(c),
+    ),
   ];
 
   // Derive starter prompts from custom topics when the agent didn't define any.
@@ -526,13 +725,20 @@ export async function extractAgent(
     }
   }
 
-  // Use ONLY the agent's AUTHORED description:
-  //   1. bot.configuration.content.description (author-written), else
-  //   2. GptComponentMetadata.description, else
+  // Use ONLY the agent's AUTHORED description, from wherever the experience stores it:
+  //   1. The CustomGpt botcomponent's own NATIVE `description` column (current
+  //      Copilot Studio: this is what the Overview panel's "Description" field
+  //      actually writes to — confirmed live; it's a real column on
+  //      `botcomponent` even on orgs where `bot` has no `description` column
+  //      at all), else
+  //   2. bot.configuration.content.description (classic experience), else
+  //   3. GptComponentMetadata YAML `data.description` (legacy/rare shape), else
+  //   4. bot.description column (older orgs that DO expose it there), else
   //   empty. We deliberately do NOT derive a description from the instructions'
   //   first line, topics, or AI Builder prompts — if the source has no
   //   description, the destination gets none (product decision).
-  const description = configDescription || gpt.description || '';
+  const gptComponentDescription = (gptComp?.description ?? '').trim();
+  const description = gptComponentDescription || configDescription || gpt.description || botDescription || '';
 
   // "Thin" = nothing meaningful to carry over: no instructions, no readable
   // topic content, AND no resolvable AI Builder prompt.
@@ -549,10 +755,12 @@ export async function extractAgent(
     const nonFileDetail = nonFile.length
       ? ` Non-file sources are classified with a recommendation but NOT auto-created this run: ${nonFile.map((k) => `${k.name}→${k.classification?.strategy}`).join(', ')}.`
       : '';
-    // Accurate wording: uploaded FILES migrate to the agent (agentFiles);
-    // data-store sources (websites/Dataverse) are recommended, not yet executed.
+    // This note describes the PLAN at extraction time, before the insert phase
+    // has run — it is not a claim that the upload succeeded. The actual
+    // per-file outcome (including any failure reason) is reported separately,
+    // as a `knowledge:<filename>` fidelity entry, once insert actually runs.
     unmapped.push(
-      `${knowledgeSources.length} knowledge source(s): ${fileCount} uploaded file(s) migrate to the agent's Knowledge automatically.` +
+      `${knowledgeSources.length} knowledge source(s): ${fileCount} uploaded file(s) will be uploaded and attached automatically during the insert phase (see the "knowledge:<filename>" entries below for the actual per-file result).` +
         nonFileDetail,
     );
   }

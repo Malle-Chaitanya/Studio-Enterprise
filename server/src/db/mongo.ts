@@ -99,6 +99,36 @@ async function ensureCollections(): Promise<void> {
   await db.collection('stagedAgents').createIndex({ runId: 1, sourceId: 1 }, { unique: true });
   await db.collection('stagedAgents').createIndex({ runId: 1, status: 1 });
 
+  // 10. adkDeployments — tracks already-deployed ADK Reasoning Engines so a
+  //     re-run reuses them instead of deploying a second, billable one (Vertex
+  //     AI's Reasoning Engine create API has no name-based dedup of its own).
+  await ensure('adkDeployments');
+  await db.collection('adkDeployments').createIndex(
+    { appUserId: 1, envUrl: 1, sourceId: 1, project: 1, engine: 1 },
+    { unique: true },
+  );
+
+  // 11. knowledgeConnectors — per (customer, connector kind, site) SharePoint/
+  //     OneDrive native-connector setup state. Replaces the old session-scoped
+  //     `sharepointConnector` singleton, which could only track one site per
+  //     whole migration session.
+  await ensure('knowledgeConnectors');
+  await db.collection('knowledgeConnectors').createIndex(
+    { appUserId: 1, kind: 1, siteUrl: 1 },
+    { unique: true },
+  );
+
+  // 12. entraAppCredentials — per (customer, Microsoft tenant) reference to a
+  //     Secret Manager-stored Entra app credential, so a NEW site under an
+  //     already-onboarded tenant can auto-provision a connector without asking
+  //     the admin again. Never stores the plaintext secret (see
+  //     services/secretManager.ts and .claude/memory/decisions.md, 2026-08-03).
+  await ensure('entraAppCredentials');
+  await db.collection('entraAppCredentials').createIndex(
+    { appUserId: 1, tenantId: 1 },
+    { unique: true },
+  );
+
   // Seed default app users if empty (parity with GEM_CO).
   const userCount = await db.collection('appUsers').countDocuments();
   if (userCount === 0) {
@@ -110,6 +140,7 @@ async function ensureCollections(): Promise<void> {
     logger.info('Seeded 2 default app users');
   }
 
+<<<<<<< HEAD
   // ── Workflow migration collections ──────────────────────────────────────────
 
   // 10. workflowFlows — one doc per PA flow per customer+env.
