@@ -100,7 +100,7 @@ export async function executeTool(
           id: email,
           email,
         }));
-        const suggested = suggestMappings(principals, profile.ownedDomains, existing);
+        const suggested = suggestMappings(principals, profile.ownedDomains, existing, profile.google.verifiedUserEmails);
         const users = { ...(existing.users ?? {}), ...suggested.users };
         for (const [src, dest] of Object.entries(clientMap)) {
           if (dest) users[src.toLowerCase()] = dest.toLowerCase();

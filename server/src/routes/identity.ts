@@ -149,7 +149,7 @@ identityRouter.post('/suggest', async (req, res) => {
   const profile = await buildOrganizationProfile(session, new Date().toISOString());
   const existing = await getIdentityMap(appUserId, tenantId);
   const principals = (Array.isArray(req.body?.principals) ? req.body.principals : []) as PrincipalRef[];
-  const suggested = suggestMappings(principals, profile.ownedDomains, existing);
+  const suggested = suggestMappings(principals, profile.ownedDomains, existing, profile.google.verifiedUserEmails);
   res.json({
     ownedDomains: profile.ownedDomains,
     suggested,

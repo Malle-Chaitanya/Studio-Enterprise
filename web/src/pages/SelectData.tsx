@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { fetchAgents, fetchEnvironments, fetchIdentityMap } from '../api.ts';
+import { fetchAgents, fetchEnvironments } from '../api.ts';
 import { useWizardOptional } from '../context/WizardContext.tsx';
 import { avatarColor } from '../icons.tsx';
 import type { AgentBrief, EnvironmentInfo } from '../types.ts';
@@ -27,7 +27,6 @@ export function SelectData() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
-  const [mappedEmails, setMappedEmails] = useState<string[]>([]);
 
   useEffect(() => {
     if (!session) return;
@@ -60,12 +59,6 @@ export function SelectData() {
       }
       setAgentsByEnv(map);
       setSelected(sel);
-      try {
-        const idMap = await fetchIdentityMap(session);
-        setMappedEmails(Object.keys(idMap.users ?? {}).filter((k) => idMap.users[k]));
-      } catch {
-        /* optional */
-      }
       setLoading(false);
     })();
   }, [session, wizard?.toolEpoch]);
@@ -85,6 +78,21 @@ export function SelectData() {
     [selected],
   );
 
+  // The filter's own options: the REAL, distinct owners of the fetched
+  // agents (Dataverse's ownerid, resolved to email/display name) — not an
+  // unrelated list from the Map Users identity map.
+  const owners = useMemo(() => {
+    const byEmail = new Map<string, string>(); // email -> display name
+    for (const agents of Object.values(agentsByEnv)) {
+      for (const a of agents) {
+        if (a.ownerEmail && !byEmail.has(a.ownerEmail)) {
+          byEmail.set(a.ownerEmail, a.ownerDisplayName || a.ownerEmail);
+        }
+      }
+    }
+    return [...byEmail.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [agentsByEnv]);
+
   const cont = () => {
     const payload = envs
       .map((e) => ({ env: e.url, name: e.name, botIds: [...(selected[e.url] ?? [])] }))
@@ -100,9 +108,8 @@ export function SelectData() {
       return false;
     }
     if (ownerFilter) {
-      const oe = (a.ownerEmail || '').toLowerCase();
-      if (ownerFilter === '__unmapped__') return !oe || !mappedEmails.includes(oe);
-      return oe === ownerFilter.toLowerCase();
+      if (ownerFilter === '__no_owner__') return !a.ownerEmail;
+      return (a.ownerEmail || '').toLowerCase() === ownerFilter.toLowerCase();
     }
     return true;
   };
@@ -135,13 +142,13 @@ export function SelectData() {
           style={{ maxWidth: 260 }}
           value={ownerFilter}
           onChange={(e) => setOwnerFilter(e.target.value)}
-          aria-label="Filter by mapped owner"
+          aria-label="Filter by agent owner"
         >
-          <option value="">All owners</option>
-          <option value="__unmapped__">Unmapped / unknown owner</option>
-          {mappedEmails.map((e) => (
-            <option key={e} value={e}>
-              Mapped: {e}
+          <option value="">All owners ({owners.length})</option>
+          <option value="__no_owner__">No owner recorded</option>
+          {owners.map(([email, name]) => (
+            <option key={email} value={email}>
+              {name} ({email})
             </option>
           ))}
         </select>

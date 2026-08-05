@@ -1,4 +1,4 @@
-import { Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Outlet, Route, Routes, useNavigate } from 'react-router-dom';
 import { AgentChat } from './components/AgentChat.tsx';
 import { WizardProvider } from './context/WizardContext.tsx';
 import { ChoosePair } from './pages/ChoosePair.tsx';
@@ -38,42 +38,15 @@ function AppHeader() {
   );
 }
 
-/** Enterprise wizard order: Map Users early (before environments / agents). */
-const STEPS = [
-  { label: 'Connect Platforms', paths: ['/home', '/connect'] },
-  { label: 'Choose Pair', paths: ['/pair'] },
-  { label: 'Map Users', paths: ['/map-users'] },
-  { label: 'Select & Map', paths: ['/map', '/explore'] },
-  { label: 'Select Agents', paths: ['/select-data'] },
-  { label: 'Connectors', paths: ['/connectors'] },
-  { label: 'Live Migration', paths: ['/migrate'] },
-  { label: 'Report', paths: [] as string[] },
-];
-
-function Stepper() {
-  const { pathname } = useLocation();
-  const activeIdx = STEPS.findIndex((s) => s.paths.includes(pathname));
-  const active = activeIdx === -1 ? 0 : activeIdx;
-  return (
-    <div className="wizard">
-      {STEPS.map((s, i) => (
-        <div key={i} className={`wstep ${i < active ? 'done' : i === active ? 'active' : 'todo'}`}>
-          <span className="wstep-num">{i < active ? '✓' : i + 1}</span>
-          <span className="wstep-label">{s.label}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** Dual-panel shell: workflow left, AI chat right (GEM_CO parity). */
+/** Dual-panel shell: workflow left, AI chat right (GEM_CO parity). No
+ *  progress/step chrome here — each page's own header carries its context,
+ *  matching GEM_CO's minimal per-screen header. */
 function AppShell() {
   return (
     <WizardProvider>
       <AppHeader />
       <div className="console">
         <div className="pane-workflow">
-          <Stepper />
           <div className="shell">
             <Outlet />
           </div>

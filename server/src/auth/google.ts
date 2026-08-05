@@ -158,8 +158,11 @@ export interface WorkspaceUserBrief {
 }
 
 /**
- * Best-effort list of Workspace users for the Map Users dropdown.
- * Requires DWD scope admin.directory.user.readonly; returns [] on 403.
+ * List of Workspace users for the Map Users grid. Requires DWD scope
+ * admin.directory.user.readonly on an account with Workspace admin rights.
+ * Throws with the real Admin SDK error on failure — the caller (route)
+ * surfaces it to the UI instead of silently rendering an empty directory
+ * that looks identical to "this org just has zero users."
  */
 export async function listWorkspaceUsers(
   saToken: string,
@@ -168,54 +171,51 @@ export async function listWorkspaceUsers(
   const max = Math.min(opts?.max ?? 200, 500);
   const users: WorkspaceUserBrief[] = [];
   let pageToken: string | undefined;
-  try {
-    while (users.length < max) {
-      const params = new URLSearchParams({
-        customer: 'my_customer',
-        maxResults: String(Math.min(100, max - users.length)),
-        orderBy: 'email',
-        projection: 'basic',
-      });
-      if (opts?.query) params.set('query', opts.query);
-      if (pageToken) params.set('pageToken', pageToken);
-      const res = await fetch(
-        `https://admin.googleapis.com/admin/directory/v1/users?${params}`,
-        { headers: { Authorization: `Bearer ${saToken}` } },
-      );
-      if (!res.ok) break;
-      const json = (await res.json()) as {
-        users?: { primaryEmail?: string; name?: { fullName?: string }; suspended?: boolean }[];
-        nextPageToken?: string;
-      };
-      for (const u of json.users ?? []) {
-        if (!u.primaryEmail) continue;
-        users.push({
-          email: u.primaryEmail.toLowerCase(),
-          displayName: u.name?.fullName,
-          suspended: u.suspended,
-        });
-      }
-      pageToken = json.nextPageToken;
-      if (!pageToken) break;
+  while (users.length < max) {
+    const params = new URLSearchParams({
+      customer: 'my_customer',
+      maxResults: String(Math.min(100, max - users.length)),
+      orderBy: 'email',
+      projection: 'basic',
+    });
+    if (opts?.query) params.set('query', opts.query);
+    if (pageToken) params.set('pageToken', pageToken);
+    const res = await fetch(
+      `https://admin.googleapis.com/admin/directory/v1/users?${params}`,
+      { headers: { Authorization: `Bearer ${saToken}` } },
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Admin Directory API ${res.status}: ${body.slice(0, 300) || res.statusText}`);
     }
-  } catch {
-    return users;
+    const json = (await res.json()) as {
+      users?: { primaryEmail?: string; name?: { fullName?: string }; suspended?: boolean }[];
+      nextPageToken?: string;
+    };
+    for (const u of json.users ?? []) {
+      if (!u.primaryEmail) continue;
+      users.push({
+        email: u.primaryEmail.toLowerCase(),
+        displayName: u.name?.fullName,
+        suspended: u.suspended,
+      });
+    }
+    pageToken = json.nextPageToken;
+    if (!pageToken) break;
   }
   return users;
 }
 
-/** List Workspace users using a Directory-scoped DWD token for `adminEmail`. */
+/** List Workspace users using a Directory-scoped DWD token for `adminEmail`.
+ *  Does NOT swallow errors — the route's own try/catch turns a thrown error
+ *  into `{ users: [], error }` so the Map Users UI can tell "zero users
+ *  found" apart from "the directory read itself failed." */
 export async function listWorkspaceUsersAsAdmin(
   adminEmail: string,
   opts?: { max?: number; query?: string },
 ): Promise<WorkspaceUserBrief[]> {
-  try {
-    const token = await getDirectorySaToken(adminEmail);
-    return listWorkspaceUsers(token, opts);
-  } catch (e) {
-    logger.warn(`listWorkspaceUsersAsAdmin failed: ${(e as Error).message}`);
-    return [];
-  }
+  const token = await getDirectorySaToken(adminEmail);
+  return listWorkspaceUsers(token, opts);
 }
 
 /** Build the Google OAuth consent URL. */

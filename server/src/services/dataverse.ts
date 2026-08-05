@@ -125,7 +125,11 @@ async function resolvePrincipalDisplay(
   }
 }
 
-function decodeAccessMask(mask: unknown): { rights: string[]; roleHint: 'coauthor' | 'viewer' | 'custom' } {
+function decodeAccessMask(mask: unknown): {
+  rights: string[];
+  roleHint: 'coauthor' | 'viewer' | 'custom';
+  studioShareRole: 'editor' | 'agent-viewer' | 'end-user' | 'unknown';
+} {
   const rights: string[] = [];
   const push = (name: string) => {
     if (!rights.includes(name)) rights.push(name);
@@ -156,7 +160,13 @@ function decodeAccessMask(mask: unknown): { rights: string[]; roleHint: 'coautho
   const hasWrite = rights.some((r) => r === 'Write' || r === 'Share' || r === 'Assign' || r === 'Delete');
   const roleHint: 'coauthor' | 'viewer' | 'custom' =
     hasWrite ? 'coauthor' : rights.includes('Read') && rights.length <= 2 ? 'viewer' : rights.length ? 'custom' : 'viewer';
-  return { rights, roleHint };
+  // Live Copilot Studio Share dialog alignment (see docs/domain/copilot-studio-sharing.md).
+  const studioShareRole: 'editor' | 'agent-viewer' | 'end-user' | 'unknown' = hasWrite
+    ? 'editor'
+    : rights.includes('Read')
+      ? 'agent-viewer'
+      : 'unknown';
+  return { rights, roleHint, studioShareRole };
 }
 
 function decodeChatPolicy(code: unknown): ChatAccess['policy'] {
@@ -254,7 +264,7 @@ export async function readAgentPermissions(
         const pln = row.Principal?.LogicalName ?? (row.Principal as { logicalname?: string } | undefined)?.logicalname ?? 'systemuser';
         if (!pid) continue;
         const resolved = await resolvePrincipalDisplay(url, token, pid, pln);
-        const { rights, roleHint } = decodeAccessMask(row.AccessMask);
+        const { rights, roleHint, studioShareRole } = decodeAccessMask(row.AccessMask);
         sharedPrincipals.push({
           type: resolved.type,
           id: pid,
@@ -262,6 +272,7 @@ export async function readAgentPermissions(
           displayName: resolved.displayName,
           rights,
           roleHint,
+          studioShareRole,
         });
       }
     } catch (e) {

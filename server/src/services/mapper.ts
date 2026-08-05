@@ -207,9 +207,12 @@ export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAg
     instruction: refined,
     starterPrompts: buildStarterPrompts(ir),
     model: GEMINI_MODEL,
-    // v1: every agent gets googleSearch grounding. Mapping Copilot connector
-    // actions to Gemini tools is deferred to v2.
-    tools: [{ name: 'googleSearch' }],
+    // googleSearch grounding mirrors the source's actual webBrowsing capability
+    // (see the fidelity note above, pushed under the same condition) — a
+    // source agent without web browsing must not gain it just by migrating.
+    // Mapping Copilot connector actions to Gemini tools beyond this is
+    // deferred to v2.
+    tools: ir.capabilities?.webBrowsing ? [{ name: 'googleSearch' }] : [],
     fidelityNotes,
   };
 }
