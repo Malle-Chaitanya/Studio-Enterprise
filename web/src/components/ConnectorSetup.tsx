@@ -128,8 +128,11 @@ export function ConnectorSetup({ session, siteUrl }: { session: string; siteUrl:
       ) : (
         <div className="infobox" style={{ marginTop: 6 }}>
           <p className="lead" style={{ margin: '0 0 8px' }}>
-            Site: <span className="mono">{siteUrl}</span>. If this tenant was already onboarded, leave Client
-            ID/Secret blank — the stored credential is reused automatically.
+            Site: <span className="mono">{siteUrl}</span>.
+            {/\.(txt|docx?|pdf|xlsx?)($|\?)/i.test(siteUrl) && (
+              <> This looks like a <strong>file</strong> URL — the connector needs the SharePoint site root (server will normalize).</>
+            )}{' '}
+            If this tenant was already onboarded, leave Client ID/Secret blank — the stored credential is reused automatically.
           </p>
           <input className="usearch" style={{ marginBottom: 6 }} placeholder="Tenant ID (required)" value={tenantId} onChange={(e) => setTenantId(e.target.value)} />
           <input className="usearch" style={{ marginBottom: 6 }} placeholder="Client ID (new tenant only)" value={clientId} onChange={(e) => setClientId(e.target.value)} />

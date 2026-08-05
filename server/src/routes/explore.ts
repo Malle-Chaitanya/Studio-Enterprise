@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { clientCredsToken } from '../auth/microsoft.js';
 import { logger } from '../logger.js';
 import { extractAgent, inventory, listBots } from '../services/dataverse.js';
+import { normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
 import { assessAgent } from '../services/assess.js';
 import { getSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
 import { mapPoolCollect } from '../concurrency.js';
@@ -154,8 +155,12 @@ exploreRouter.get('/connectors-needed', async (req, res) => {
     for (const { name, actions } of perAgent) {
       for (const a of actions) {
         if (a.target !== 'sharepoint-connector' && a.target !== 'onedrive-connector') continue;
-        const siteUrl = a.references?.[0];
-        if (!siteUrl) continue;
+        const siteUrlRaw = a.references?.[0];
+        if (!siteUrlRaw) continue;
+        const siteUrl =
+          a.target === 'sharepoint-connector'
+            ? normalizeSharePointSiteUrl(siteUrlRaw)
+            : siteUrlRaw;
         const key = `${a.target}::${siteUrl}`;
         if (!bySite.has(key)) bySite.set(key, { siteUrl, kind: a.target, agentNames: new Set() });
         bySite.get(key)!.agentNames.add(name);

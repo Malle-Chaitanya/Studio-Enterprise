@@ -50,6 +50,17 @@ const schema = z.object({
   INSTRUCTION_LLM_PROVIDER: z.enum(['gemini', 'anthropic', '']).optional().default(''),
   INSTRUCTION_LLM_API_KEY: z.string().optional(),
   INSTRUCTION_LLM_MODEL: z.string().optional(),
+
+  /**
+   * Row-count threshold above which a Dataverse-snapshot knowledge source is
+   * exported via BigQuery instead of Discovery Engine's inline documents:import
+   * (capped at 100 rows/request). Below the threshold, inline stays the default
+   * — it needs no extra per-customer GCP footprint (no dataset, no BigQuery API
+   * enablement, no extra IAM role). See .claude/memory/decisions.md (2026-08-04).
+   */
+  BQ_SNAPSHOT_ROW_THRESHOLD: z.coerce.number().default(200),
+  /** BigQuery dataset location for Dataverse-snapshot staging tables. */
+  BQ_SNAPSHOT_DATASET_LOCATION: z.string().default('US'),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -77,7 +88,21 @@ export const MS_SCOPES = 'https://graph.microsoft.com/.default offline_access';
 /** Google OAuth scopes: cloud-platform for project discovery + identity. */
 export const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/cloud-platform openid email profile';
 
+/**
+ * Scopes for Gemini / GCP migration writes. Keep this to cloud-platform ONLY —
+ * bundling Admin Directory scopes here breaks Domain-Wide Delegation for
+ * customers who authorized only cloud-platform (token mint can succeed but
+ * Discovery Engine engine listing comes back empty/403). Directory reads use
+ * SA_DIRECTORY_SCOPES via a separate token mint.
+ */
 export const SA_SCOPES = ['https://www.googleapis.com/auth/cloud-platform'];
+
+/** Best-effort Admin Directory scopes (Map Users / org domains). Separate from SA_SCOPES. */
+export const SA_DIRECTORY_SCOPES = [
+  'https://www.googleapis.com/auth/admin.directory.domain.readonly',
+  'https://www.googleapis.com/auth/admin.directory.user.readonly',
+  'https://www.googleapis.com/auth/admin.directory.group.readonly',
+];
 
 export const llmEnabled = Boolean(
   config.INSTRUCTION_LLM_PROVIDER && config.INSTRUCTION_LLM_API_KEY,

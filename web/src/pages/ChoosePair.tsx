@@ -63,7 +63,7 @@ export function ChoosePair() {
         <button className="wbtn" onClick={() => navigate(`/home?session=${session}`)}>
           ← Back
         </button>
-        <button className="wbtn primary" onClick={() => navigate(`/map?session=${session}`)}>
+        <button className="wbtn primary" onClick={() => navigate(`/map-users?session=${session}`)}>
           Continue →
         </button>
       </div>

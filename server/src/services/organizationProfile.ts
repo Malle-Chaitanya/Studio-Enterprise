@@ -1,5 +1,5 @@
 import { graphTokenFromRefresh, getVerifiedDomains } from '../auth/microsoft.js';
-import { getSaToken, getWorkspaceDomains } from '../auth/google.js';
+import { getWorkspaceDomainsAsAdmin } from '../auth/google.js';
 import { logger } from '../logger.js';
 import type { Session } from '../sessionStore.js';
 import type { OrganizationProfile } from '../types.js';
@@ -47,8 +47,8 @@ export async function buildOrganizationProfile(session: Session, nowIso: string)
   const workspaceDomains: string[] = [];
   try {
     if (session.gEmail) {
-      const saToken = await getSaToken(session.gEmail);
-      const domains = await getWorkspaceDomains(saToken);
+      // Directory-scoped DWD token — must not reuse cloud-platform migration token.
+      const domains = await getWorkspaceDomainsAsAdmin(session.gEmail);
       workspaceDomains.push(...domains);
       if (domains.length) sources.push('google-workspace-domains');
     }

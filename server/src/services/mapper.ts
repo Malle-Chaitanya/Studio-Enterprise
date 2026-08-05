@@ -8,10 +8,14 @@ import type { AgentIR, FidelityNote, MappedAgent } from '../types.js';
  * Maps an AgentIR to a Gemini Enterprise agent definition.
  *
  * The instruction is synthesized with fidelity in mind:
- *   1. The agent's REAL instructions lead (the biggest fidelity win vs. POC).
- *   2. When a topics plan is supplied, topics are COMPILED into followable
- *      "Conversation procedures" (via topicsEmit); otherwise they're summarized.
- *   3. System behaviors (fallback, escalate) are translated to guidance.
+ *   1. The agent's REAL instructions lead, verbatim — and that's ALL that goes
+ *      into the instruction text. Nothing else is folded in.
+ *   2. When a topics plan is supplied, topics are still COMPILED into
+ *      followable "Conversation procedures" (via topicsEmit) for the report,
+ *      but that compiled text is surfaced as a `needs-review` FidelityNote,
+ *      not appended to the instruction — mixing topic-derived guidance into
+ *      the same free-text field as the author's own instructions risked
+ *      shifting the agent's tone away from what the source author wrote.
  * An optional LLM pass can polish the result; it is off by default and the
  * deterministic output is already high fidelity.
  */
@@ -125,10 +129,11 @@ async function refineWithLlm(instruction: string, ir: AgentIR): Promise<string> 
 export interface MapOptions {
   /**
    * Compiled topics plan (from `planTopicsMigration`). When provided, its
-   * capabilities are folded into the instruction as a "## Conversation
-   * procedures" section — turning parsed topics into behavior the single agent
-   * actually follows, instead of a one-line summary. The orchestrator computes
-   * the plan once and passes it here (and stages it), so it isn't recomputed.
+   * capabilities are compiled and reported via a `topics` FidelityNote
+   * (status `needs-review`) — but deliberately NOT folded into the
+   * instruction text, so the agent's tone stays faithful to the source
+   * instructions alone. The orchestrator computes the plan once and passes
+   * it here (and stages it), so it isn't recomputed.
    */
   topicsPlan?: TopicsMigrationPlan;
 }
@@ -137,19 +142,30 @@ export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAg
   const { instruction, notes } = synthesizeInstruction(ir);
   let refined = await refineWithLlm(instruction, ir);
 
-  // ── Topics: fold compiled capabilities into followable procedures ──────────
+  // ── Topics: compiled, but deliberately NOT folded into the instruction ─────
+  // Topics are still fully captured in AgentIR.topics and compiled into a
+  // procedures plan (planTopicsMigration), but that compiled text used to be
+  // appended to the live instruction as a "## Conversation procedures"
+  // section. That mixed source-authored persona rules with topic-derived
+  // guidance in one field, which could shift the agent's tone away from the
+  // author's instructions. The instruction is now exactly the source
+  // instructions (see synthesizeInstruction above); compiled topics surface
+  // only in the fidelity report as needs-review, for a human to apply
+  // deliberately (e.g. as Gemini's own topic/procedure resources) rather than
+  // silently baked into free text.
   if (opts?.topicsPlan) {
     const procedures = buildProceduresInstruction(opts.topicsPlan);
     if (procedures) {
-      refined += '\n\n---\n' + procedures;
       const s = opts.topicsPlan.summary;
       notes.push({
         component: 'topics',
-        status: s.needsReview ? 'partial' : 'mapped',
+        status: 'needs-review',
         detail:
           `${s.capabilities} topic(s) compiled into conversation procedures ` +
           `(${s.byFidelity.full} full, ${s.byFidelity.high} high, ${s.byFidelity.partial} partial; ` +
-          `${s.needsReview} need review, ${s.deterministicTools} deterministic tool(s) to rebuild).`,
+          `${s.needsReview} need review, ${s.deterministicTools} deterministic tool(s) to rebuild) ` +
+          `but NOT added to the instruction — review and apply separately so it doesn't shift the ` +
+          `agent's tone away from the source instructions.`,
       });
     }
   }

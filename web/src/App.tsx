@@ -1,10 +1,13 @@
 import { Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { AgentChat } from './components/AgentChat.tsx';
+import { WizardProvider } from './context/WizardContext.tsx';
 import { ChoosePair } from './pages/ChoosePair.tsx';
 import { Connect } from './pages/Connect.tsx';
 import { Connectors } from './pages/Connectors.tsx';
 import { Explore } from './pages/Explore.tsx';
 import { Home } from './pages/Home.tsx';
 import { Login } from './pages/Login.tsx';
+import { MapUsers } from './pages/MapUsers.tsx';
 import { Migrate } from './pages/Migrate.tsx';
 import { SelectData } from './pages/SelectData.tsx';
 import { SelectMap } from './pages/SelectMap.tsx';
@@ -20,7 +23,7 @@ function AppHeader() {
       <img src="/assets/logo.png" alt="CloudFuze" className="hlogo-img" onClick={() => navigate('/home')} />
       <span className="hdivider" />
       <span className="applogo" style={{ cursor: 'pointer' }} onClick={() => navigate('/home')}>
-        CloudFuze
+        CloudFuze <span>Studio Migrate</span>
       </span>
       <span className="hstatus">
         <span className="statusdot" />
@@ -35,12 +38,14 @@ function AppHeader() {
   );
 }
 
+/** Enterprise wizard order: Map Users early (before environments / agents). */
 const STEPS = [
   { label: 'Connect Platforms', paths: ['/home', '/connect'] },
   { label: 'Choose Pair', paths: ['/pair'] },
-  { label: 'Select & Map', paths: ['/map', '/explore', '/connectors'] },
-  { label: 'Select Data', paths: ['/select-data'] },
-  { label: 'Dry Run', paths: [] as string[] },
+  { label: 'Map Users', paths: ['/map-users'] },
+  { label: 'Select & Map', paths: ['/map', '/explore'] },
+  { label: 'Select Agents', paths: ['/select-data'] },
+  { label: 'Connectors', paths: ['/connectors'] },
   { label: 'Live Migration', paths: ['/migrate'] },
   { label: 'Report', paths: [] as string[] },
 ];
@@ -61,32 +66,37 @@ function Stepper() {
   );
 }
 
-/** Layout for in-app pages: fixed header + step indicator + workflow content. */
+/** Dual-panel shell: workflow left, AI chat right (GEM_CO parity). */
 function AppShell() {
   return (
-    <>
+    <WizardProvider>
       <AppHeader />
-      <div className="workspace">
-        <Stepper />
-        <div className="shell">
-          <Outlet />
+      <div className="console">
+        <div className="pane-workflow">
+          <Stepper />
+          <div className="shell">
+            <Outlet />
+          </div>
+        </div>
+        <div className="divider" aria-hidden />
+        <div className="pane-chat">
+          <AgentChat />
         </div>
       </div>
-    </>
+    </WizardProvider>
   );
 }
 
 export function App() {
   return (
     <Routes>
-      {/* Full-screen login (no header) */}
       <Route path="/" element={<Login />} />
-      {/* In-app pages share header + stepper + shell */}
       <Route element={<AppShell />}>
         <Route path="/home" element={<Home />} />
         <Route path="/pair" element={<ChoosePair />} />
-        <Route path="/select-data" element={<SelectData />} />
+        <Route path="/map-users" element={<MapUsers />} />
         <Route path="/map" element={<SelectMap />} />
+        <Route path="/select-data" element={<SelectData />} />
         <Route path="/connect" element={<Connect />} />
         <Route path="/explore" element={<Explore />} />
         <Route path="/connectors" element={<Connectors />} />

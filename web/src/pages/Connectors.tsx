@@ -115,8 +115,8 @@ export function Connectors() {
       )}
 
       <div className="wizard-actions" style={{ marginTop: 20 }}>
-        <button className="wbtn" onClick={() => navigate(`/map?session=${session}`)}>← Back</button>
-        <button className="wbtn primary" onClick={() => navigate(`/select-data?session=${session}`)}>Continue →</button>
+        <button className="wbtn" onClick={() => navigate(`/select-data?session=${session}`)}>← Back</button>
+        <button className="wbtn primary" onClick={() => navigate(`/migrate?session=${session}`)}>Continue →</button>
       </div>
     </div>
   );

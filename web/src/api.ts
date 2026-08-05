@@ -126,10 +126,16 @@ export async function fetchProjects(
 }
 
 /** List the Gemini Enterprise engines (apps) in a chosen project. */
-export async function fetchEngines(session: string, project: string): Promise<DestEngine[]> {
+export async function fetchEngines(
+  session: string,
+  project: string,
+): Promise<{ engines: DestEngine[]; warning?: string; via?: string }> {
   const res = await fetch(`/api/destination/engines?session=${session}&project=${encodeURIComponent(project)}`);
-  if (!res.ok) throw new Error('engines_failed');
-  return ((await res.json()) as { engines: DestEngine[] }).engines;
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(body.detail || 'engines_failed');
+  }
+  return (await res.json()) as { engines: DestEngine[]; warning?: string; via?: string };
 }
 
 // ── SharePoint connector setup (the customer's own Entra app credentials) ────
@@ -227,6 +233,114 @@ export async function fetchConnectorsNeeded(session: string, env: string): Promi
   const res = await fetch(`/api/explore/connectors-needed?session=${session}&env=${encodeURIComponent(env)}`);
   if (!res.ok) throw new Error('connectors_needed_failed');
   return ((await res.json()) as { connectors: ConnectorNeeded[] }).connectors;
+}
+
+// ── Identity map (agent-touched principals) ─────────────────────────────────
+export interface DiscoveredIdentityPrincipal {
+  key: string;
+  role: 'owner' | 'editor' | 'viewer' | 'chat-group' | 'org-wide';
+  type: 'user' | 'team' | 'group';
+  id: string;
+  email?: string;
+  displayName?: string;
+  agentCount: number;
+  agentNames: string[];
+  geminiSeat: 'unknown' | 'yes' | 'no';
+}
+
+export interface IdentityMapPayload {
+  tenantId: string;
+  users: Record<string, string>;
+  groups: Record<string, string>;
+}
+
+export async function discoverPrincipals(
+  session: string,
+  selection: { env: string; botIds: string[]; name?: string }[],
+): Promise<{ principals: DiscoveredIdentityPrincipal[]; orgWideAgentsReferenced: number; errors: { env: string; botId: string; error: string }[] }> {
+  const res = await fetch('/api/identity/principals', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, selection }),
+  });
+  if (!res.ok) throw new Error('principals_failed');
+  return (await res.json()) as {
+    principals: DiscoveredIdentityPrincipal[];
+    orgWideAgentsReferenced: number;
+    errors: { env: string; botId: string; error: string }[];
+  };
+}
+
+export async function fetchIdentityMap(session: string): Promise<IdentityMapPayload> {
+  const res = await fetch(`/api/identity/map?session=${session}`);
+  if (!res.ok) throw new Error('identity_map_failed');
+  return (await res.json()) as IdentityMapPayload;
+}
+
+export async function saveIdentityMap(
+  session: string,
+  users: Record<string, string>,
+  groups: Record<string, string>,
+): Promise<IdentityMapPayload> {
+  const res = await fetch('/api/identity/map', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, users, groups }),
+  });
+  if (!res.ok) throw new Error('identity_map_save_failed');
+  return (await res.json()) as IdentityMapPayload;
+}
+
+export async function suggestIdentityMap(
+  session: string,
+  principals: { type: string; id: string; email?: string; displayName?: string }[],
+): Promise<{ ownedDomains: string[]; suggested: { users: Record<string, string>; groups: Record<string, string> } }> {
+  const res = await fetch('/api/identity/suggest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, principals }),
+  });
+  if (!res.ok) throw new Error('identity_suggest_failed');
+  return (await res.json()) as {
+    ownedDomains: string[];
+    suggested: { users: Record<string, string>; groups: Record<string, string> };
+  };
+}
+
+export async function fetchGoogleUsers(
+  session: string,
+  opts?: { q?: string; max?: number },
+): Promise<{ email: string; displayName?: string; suspended?: boolean }[]> {
+  const qs = new URLSearchParams({ session });
+  if (opts?.q) qs.set('q', opts.q);
+  if (opts?.max) qs.set('max', String(opts.max));
+  const res = await fetch(`/api/identity/google-users?${qs}`);
+  if (!res.ok) throw new Error('google_users_failed');
+  return ((await res.json()) as { users: { email: string; displayName?: string; suspended?: boolean }[] }).users;
+}
+
+export interface MsUserBrief {
+  id: string;
+  email: string;
+  displayName?: string;
+  userPrincipalName?: string;
+  accountEnabled?: boolean;
+}
+
+/** Microsoft Graph users for the Map Users grid. */
+export async function fetchMsUsers(
+  session: string,
+  opts?: { q?: string; max?: number },
+): Promise<MsUserBrief[]> {
+  const qs = new URLSearchParams({ session });
+  if (opts?.q) qs.set('q', opts.q);
+  if (opts?.max) qs.set('max', String(opts.max));
+  const res = await fetch(`/api/identity/ms-users?${qs}`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+    throw new Error(body.detail || body.error || 'ms_users_failed');
+  }
+  return ((await res.json()) as { users: MsUserBrief[] }).users;
 }
 
 // ── SharePoint/OneDrive knowledge source: search-and-confirm ────────────────

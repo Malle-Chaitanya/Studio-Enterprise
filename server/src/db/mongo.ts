@@ -129,6 +129,26 @@ async function ensureCollections(): Promise<void> {
     { unique: true },
   );
 
+  // 13. adkKnowledgeStores — per (customer, agent, file) Discovery Engine
+  //     "document" data store already created+imported for grounding a
+  //     locally-uploaded file on an ADK/Reasoning-Engine agent, so a re-run
+  //     reuses the existing data store instead of re-uploading to GCS and
+  //     re-indexing every time. See knowledgeDataStoreExecutor.migrateFileToDocumentStore.
+  await ensure('adkKnowledgeStores');
+  await db.collection('adkKnowledgeStores').createIndex(
+    { appUserId: 1, sourceId: 1, fileName: 1 },
+    { unique: true },
+  );
+
+  // 14. identityMappings — durable Entra/email → Google Workspace override map
+  //     per (customer, Microsoft tenant). Used for permission handoff / owner
+  //     remap; never stores secrets.
+  await ensure('identityMappings');
+  await db.collection('identityMappings').createIndex(
+    { appUserId: 1, tenantId: 1 },
+    { unique: true },
+  );
+
   // Seed default app users if empty (parity with GEM_CO).
   const userCount = await db.collection('appUsers').countDocuments();
   if (userCount === 0) {
@@ -140,5 +160,5 @@ async function ensureCollections(): Promise<void> {
     logger.info('Seeded 2 default app users');
   }
 
-  logger.info('All 12 collections verified with indexes (multi-tenant scoped)');
+  logger.info('All 14 collections verified with indexes (multi-tenant scoped)');
 }

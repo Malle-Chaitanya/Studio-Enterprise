@@ -127,6 +127,90 @@ export interface AgentSourceMetadata {
   schemaName?: string;
 }
 
+/** A security principal on either side of the migration (platform-neutral). */
+export interface PrincipalRef {
+  type: 'user' | 'team' | 'group';
+  /** Source id: Dataverse systemuserid / teamid, or Entra group objectId. */
+  id: string;
+  /** Primary email / UPN when resolvable — the join key for identity mapping. */
+  email?: string;
+  displayName?: string;
+}
+
+/** A principal granted explicit rights on the source agent (a share). */
+export interface SharedPrincipal extends PrincipalRef {
+  /**
+   * Dataverse AccessRights, decoded into stable tokens
+   * (Read | Write | Append | AppendTo | Share | Assign | Delete).
+   */
+  rights: string[];
+  /** Coarse roll-up for mapper/report: coauthor ≈ edit, viewer ≈ Read only. */
+  roleHint?: 'coauthor' | 'viewer' | 'custom';
+}
+
+/**
+ * End-user CHAT access — separate from record sharing. Maps to Gemini sharing
+ * intent (org-wide vs narrower).
+ */
+export interface ChatAccess {
+  policy: 'any' | 'copilot-readers' | 'group' | 'any-multitenant' | 'unknown';
+  policyCode?: number;
+  /** Up to 20 Entra security group objectIds when policy = 'group'. */
+  groupIds: string[];
+}
+
+/**
+ * Source access model for an agent. Additive & optional — absent on IRs
+ * extracted before this feature, or when shares could not be read.
+ */
+export interface AgentPermissions {
+  owner?: PrincipalRef;
+  sharedPrincipals: SharedPrincipal[];
+  chatAccess?: ChatAccess;
+  /**
+   * Set when we could read the bot row but NOT its shares (insufficient
+   * privilege). Never treat empty sharedPrincipals as "no one has access".
+   */
+  readError?: string;
+}
+
+/** Customer override map: Microsoft principal → Google Workspace principal. */
+export interface IdentityMapOverrides {
+  /** sourceEmail/UPN (lowercased) → googleEmail */
+  users: Record<string, string>;
+  /** sourceGroupObjectId → googleGroupEmail */
+  groups: Record<string, string>;
+}
+
+export interface ResolvedPrincipal {
+  source: PrincipalRef;
+  google?: { type: 'user' | 'group'; email: string };
+  via: 'override' | 'email-match' | 'group-match' | 'unmatched';
+  reason?: string;
+}
+
+export interface PermissionResolution {
+  owner: ResolvedPrincipal | undefined;
+  coauthors: ResolvedPrincipal[];
+  viewers: ResolvedPrincipal[];
+  chatPrincipals: ResolvedPrincipal[];
+  unmatched: ResolvedPrincipal[];
+}
+
+/**
+ * Manual permission handoff when Gemini cannot apply per-user/group sharing
+ * via API (only ALL_USERS is supported today).
+ */
+export interface PermissionHandoff {
+  agentName: string;
+  geminiAgentId?: string;
+  reason: string;
+  grantUsers: string[];
+  grantGroups: string[];
+  unresolved: { source: string; reason: string }[];
+  steps: string[];
+}
+
 export interface AgentIR {
   /** Copilot Studio botid. */
   sourceId: string;
@@ -156,6 +240,8 @@ export interface AgentIR {
   unmapped: string[];
   /** Agent-level source provenance (report/audit only; not migrated to Gemini). */
   sourceMetadata?: AgentSourceMetadata;
+  /** Source access model (owner, shares, chat access). Optional/additive. */
+  permissions?: AgentPermissions;
 }
 
 /**
@@ -214,6 +300,17 @@ export interface GeminiDestination {
   project: string;
   engine: string;
   assistant: string;
+  /**
+   * Optional, customer-declared Gemini Enterprise edition for this
+   * destination. Currently unread by the orchestrator (see
+   * .claude/memory/decisions.md, 2026-08-05 — ADK is now always tried
+   * first, low-code only as a last-resort fallback, since no edition's
+   * low-code agent auto-lists via the API, per
+   * docs/GEMINI-EDITIONS-AND-AGENT-VISIBILITY.md). Left here for reporting/
+   * future use; not a behavioral switch today. NOT auto-detected — no
+   * reliable API signal for edition was found.
+   */
+  edition?: 'business' | 'standard' | 'plus';
 }
 
 /** Destination-mapping options (how source environments map into Gemini). */
@@ -228,6 +325,11 @@ export interface DestinationOptions {
   environmentMap?: Record<string, GeminiDestination>;
   /** @deprecated legacy name-prefix map (env url → label). Superseded by environmentMap. */
   projects?: Record<string, string>;
+  /**
+   * When true, narrower-than-org-wide source chat access is still shared
+   * ALL_USERS (over-share). Default false — emit PermissionHandoff instead.
+   */
+  allowOvershare?: boolean;
 }
 
 /** One environment's worth of resolved work. */
@@ -305,6 +407,8 @@ export interface MigrationResult {
       parentContext?: string;
     }[];
   }[];
+  /** Manual permission steps when Gemini cannot apply per-principal sharing. */
+  permissionHandoff?: PermissionHandoff;
 }
 
 /** Server-sent progress event to the browser. */

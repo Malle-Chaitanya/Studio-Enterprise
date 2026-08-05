@@ -6,6 +6,347 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
+## 2026-08-05 — Detect source drift on re-run; redeploy ADK agents only when changed
+
+- **Decision**: re-running a migration against an agent that already has a recorded ADK deployment
+  now compares the freshly-extracted `AgentIR` against a snapshot of the last confirmed-successful
+  sync (new `services/driftDetector.ts` — pure, `snapshotFrom`/`detectDrift` over a narrow field
+  subset: instructions, description, starter prompts, web-browsing/code-interpreter capabilities,
+  and the knowledge-source set — deliberately excluding `sourceMetadata`, which churns on any
+  Dataverse save including no-op edits, and `topics`, which has no live Gemini-side artifact to
+  redeploy for). New `db/repos/migratedSnapshot.ts` (collection `migratedAgentSnapshots`, same
+  composite-key shape as `adkDeployments.ts`) stores that snapshot, written only on a confirmed
+  successful ADK deploy — kept deliberately separate from `agentIRCache`, which is overwritten
+  unconditionally during Phase-1 extraction and so can never answer "what did we last actually
+  migrate." No drift → same cheap skip as before (no redeploy, no quota spent). Drift found →
+  falls through to the same deploy path a fresh agent uses, so the ADK agent actually picks up the
+  change; `recordAdkDeployment`/`saveMigratedSnapshot` both get overwritten with the new state.
+  Agent existed before this feature shipped (ADK deployment recorded, no snapshot yet) → primes a
+  baseline and reports `needs-review`, does NOT guess "changed" and redeploy speculatively.
+  Low-code agents get no update path in this pass — no confirmed Discovery Engine API exists to
+  patch a `lowCodeAgentDefinition` in place, and this project doesn't guess at unverified endpoints
+  (same discipline as `geminiConnector.ts`'s `setUpOneDriveConnector`); a low-code-only agent that
+  drifts still just gets today's plain "already exists — skipped."
+- **Why**: user asked directly — re-running a migration after editing the source agent (say, its
+  instructions) should update the destination, not silently do nothing, but also shouldn't blindly
+  redeploy every re-run regardless of whether anything changed (ADK redeploys spend the same scarce,
+  ~7/day undocumented quota as a fresh create — see `docs/SUPPORT-TICKET-AGENT-QUOTA.md`). User's own
+  framing: "if changes detected then only redeploy otherwise skip" — no opt-in flag, unconditional
+  once drift is real.
+- **Impact**: no `AgentIR` shape change. One new additive collection, no change to existing ones.
+  **Known, unresolved risk carried over from the earlier ADK-first decision, now more likely to
+  matter**: a drift-triggered redeploy mints a brand-new, separately-billed Reasoning Engine with no
+  confirmed way to retire the old one (no `deleteReasoningEngine`-equivalent exists in
+  `adkDeployer.ts`) — the fidelity note says so plainly every time a redeploy happens, but nothing
+  automatically cleans up the orphan yet. Worth fixing before this sees real, repeated re-run volume.
+
+---
+
+## 2026-08-05 — Try ADK before low-code, not after (low-code becomes the last-resort fallback)
+
+- **Decision**: `orchestrator.ts` no longer attempts low-code (`createAgent`) creation first. It goes
+  straight to the ADK/Reasoning-Engine path; `createAgent` (low-code) is now called ONLY if the ADK
+  deploy+register attempt itself fails, as a last-resort consolation so the customer still gets a
+  (Private) agent instead of nothing. The `lowCodeSkippedForEdition` check
+  (`dest.edition === 'standard' || 'plus'`) and the `needsAdkFallback`/`cleanupOrphanedLowCodeAgent`
+  machinery built around "try low-code first, delete it if ADK replaces it" are removed — there's
+  nothing to clean up when nothing was created ahead of ADK. `GeminiDestination.edition` is left in
+  `types.ts` (harmless, no other reader currently), just no longer read by this decision.
+- **Why**: per `.claude/memory/gemini-editions-agent-visibility.md`, NO Gemini Enterprise edition
+  auto-lists an API-created low-code agent — Business's "self-serve manual publish button" is a human
+  console click this automated pipeline never performs. So the low-code attempt, tried first, could
+  NEVER reach `ENABLED` and ADK fallback fired anyway, every time — confirmed empirically 2026-08-05
+  (every low-code-created agent in this project's Gemini gallery shows `Private`, zero exceptions
+  across many runs and many days). That means the low-code attempt was always a wasted
+  agent-creation quota unit, and this project's real quota is tiny and undocumented (~7/day,
+  empirically measured — see `docs/SUPPORT-TICKET-AGENT-QUOTA.md`) plus a wasted follow-up
+  cleanup-delete call once ADK replaced it. User asked directly for this after noticing the pattern
+  in the Gemini console (every "Employee-made" row Private, only "Agent Engine" rows Enabled).
+- **Impact**: no `AgentIR`/DB schema change. Behavior-preserving for the FINAL outcome — ADK already
+  won 100% of the time in this project before this change (low-code never reached `ENABLED`), so no
+  agent that would have ended up ADK-backed before now ends up low-code-backed, or vice versa. What
+  changes: roughly half the agent-creation quota spend per agent in the common case (ADK succeeds
+  outright — no low-code attempt, no cleanup-delete), and one fewer API round-trip per agent.
+  **Not addressed here, flagged as a real, separate decision**: this makes ADK (billable, always-on
+  Reasoning Engine per agent) the de facto default path for every migrated agent, since low-code is
+  no longer tried as the "free" first attempt — `adkDeployer.ts`'s own header comment still says ADK
+  is "OPT-IN per agent (billable), NOT the default," which this change is now in tension with (in
+  practice, on THIS project, ADK was already the outcome for every agent before this change too — but
+  a customer who explicitly wants to avoid ADK's cost and is fine with Private-only agents has no way
+  to opt out of the attempt today). Worth a real product decision if/when that matters, not something
+  to silently resolve further here.
+
+---
+
+## 2026-08-05 — Keep SA_SCOPES = cloud-platform only (Directory scopes separate)
+
+- **Decision**: Revert bundling Admin Directory scopes into `SA_SCOPES`. Gemini/DWD
+  migration tokens use `cloud-platform` only again. Directory reads use
+  `getDirectorySaToken()` / `SA_DIRECTORY_SCOPES`. Engines list tries SA then falls
+  back to admin OAuth (same token as `hasGeminiApp` probe).
+- **Why**: Mixing Directory scopes into the shared SA JWT broke engine listing for
+  DWD setups that only authorized cloud-platform — UI showed "No apps in this project"
+  even though projects (and prior migrates) worked.
+- **Impact**: `config.ts`, `auth/google.ts`, `destination` engines route, SelectMap
+  no longer caches empty engines forever; shows warning + Retry.
+
+## 2026-08-04 — Enterprise identity map + permission handoff (agent-touched principals)
+
+- **Decision**: Discover and map **agent-touched** principals only (owners, record shares,
+  chat-access groups) — not full Entra/Workspace dumps and not "Copilot Studio licensed users
+  only" (Microsoft docs: chat users need no Studio license). Persist overrides in
+  `identityMappings`. At INSERT: org-wide chat → `shareAgent(ALL_USERS)`; narrower → do **not**
+  silently over-share; emit `PermissionHandoff` + `needs-review` (Gemini has no per-principal
+  agent share API). Absent `AgentIR.permissions` keeps legacy ALL_USERS behavior.
+- **Why**: CloudFuze-style enterprise migration; honesty over overclaiming; official MS/Google
+  licensing and share models.
+- **Impact**: Additive `AgentIR.permissions`, `MigrationResult.permissionHandoff`, collection
+  #14, `/api/identity/*`, wizard step `/map-users`, SA Directory readonly scopes for dropdown.
+  ADK path still registers ALL_USERS — handoff warns when source was narrower.
+
+## 2026-08-04 — Resolve Dataverse-snapshot/SharePoint-connector knowledge BEFORE the low-code/ADK decision
+
+- **Decision**: `orchestrator.ts` now resolves every `dataverse-snapshot` and `sharepoint-connector`
+  knowledge source into a built Discovery Engine data store (`resolveDataverseSnapshotSources`,
+  `resolveSharePointConnectorSources` — new local functions) *before* deciding low-code vs. ADK,
+  instead of resolving+attaching them unconditionally *after* agent creation via
+  `attachDataStoreToEngine` only. `attachDataStoreToEngine` is engine-scoped — it only feeds the
+  low-code path's search grounding; an ADK/Reasoning-Engine agent's `VertexAiSearchTool` never
+  consults it, it only queries resource paths baked in at deploy time. Because resolution used to
+  run after creation with no path awareness, an agent that fell back to ADK (low-code stuck
+  `PRIVATE`) got a fidelity note claiming its SharePoint/Dataverse knowledge was "attached," but the
+  deployed agent could never actually retrieve from it — `verify.ts` didn't catch this because it
+  only probes that the agent responds, not that a specific source is retrievable.
+  `adkDeployer.ts`'s `publishAgentToGallery` opt `fileGroundingDataStores` is renamed
+  `groundingDataStores` (now carries file **and** Dataverse/SharePoint resource paths — ADK combines
+  all of them onto one `VertexAiSearchTool` regardless of origin). `migrateDataverseSnapshot`
+  (`knowledgeDataStoreExecutor.ts`) no longer calls `attachDataStoreToEngine` itself — it only
+  resolves/builds the store now; the caller decides how to attach based on which path won. Its data-
+  store naming key changed from the destination agent's id (didn't exist yet at resolve time) to the
+  stable Copilot `sourceId` (botid) — a one-time naming change; any table-snapshot data store built
+  under the old `agentId`-based name before this shipped is now orphaned (acceptable: this codebase
+  is still at test-tenant stage, confirmed zero real customer migrations use this path yet).
+  Considered and **rejected** (over-engineering for this fix's actual scope): a full
+  "Knowledge Manifest" type with per-entry resolution-status enums and a generalized
+  deployment-adapter abstraction (from an architect design pass) — the same effect is achieved with
+  two plain resolver functions and a few plain arrays; introduce the fuller abstraction only if a
+  third deployment path (beyond low-code/ADK) actually materializes.
+- **Why**: root-caused from a live migration (`KB-Grounding-Test-Agent`) that reported
+  `verified=true` and an "attached — engine-wide visibility" fidelity note for its SharePoint source,
+  but never actually answered from it — the agent had fallen back to ADK, and ADK never got that
+  source's resource path. User's ask was explicit parity: whichever path a migrated agent lands on,
+  it must be able to use whatever knowledge sources it had at the source, not just a subset.
+- **Impact**: no `AgentIR` shape change, no new DB collections/persistence — the resolved data is
+  recomputed per insert attempt, not cached (the real work underneath, e.g. `createDataStore`, is
+  already idempotency-checked). `FidelityNote` text now branches by which path actually ran: low-code
+  keeps the existing "partial — engine-wide" wording; ADK gets a new "mapped/partial — per-agent, not
+  engine-wide" note, plus a new `capability:web-browsing` **lost** note when ADK's
+  `VertexAiSearchTool` silently displaced `googleSearch` (pre-1.16 ADK can't combine them — this was
+  already true for file/website grounding but previously unreported). **Known limitation, not fixed
+  here**: an agent with an *already-cached* ADK deployment (`adkDeployments` repo) short-circuits
+  before reaching the new grounding logic on re-run — its `groundingDataStores` won't pick up
+  SharePoint/Dataverse sources just by re-running the migration; the cached deployment record (or the
+  underlying Reasoning Engine) needs to be cleared first so a fresh `publishAgentToGallery` call runs.
+  Also out of scope: `FederatedStructuredSearchSource` (search-assisted OneDrive/SharePoint copy-mode)
+  still uses `migrateSharePointDriveItem`'s agentFiles mechanism, which ADK agents don't support —
+  same bug family, different mechanism, not touched by this fix.
+
+---
+
+## 2026-08-04 — Dataverse-snapshot BigQuery path for large tables (auto-threshold, inline kept)
+
+- **Decision**: `knowledgeDataStoreExecutor.ts`'s `migrateDataverseSnapshot` now routes between two
+  executors by row count instead of always using Discovery Engine's inline `documents:import` (capped
+  at 100 rows/request): tables at or under `config.BQ_SNAPSHOT_ROW_THRESHOLD` (default 200) keep the
+  original, unchanged inline path (`runInlineSnapshot`); larger tables go through a new BigQuery
+  staging path (`runBigQuerySnapshot`) — export rows with real typed columns (`services/dataverseTableSchema.ts`),
+  load them into a per-project BigQuery table (`services/bigqueryUpload.ts`, same plain-REST
+  convention as `gcsUpload.ts`), then a single `documents:import` with a `bigquerySource` instead of
+  `inlineSource` (`geminiDataStore.ts`'s new `importStructuredFromBigQuery`). The exported function's
+  name and signature are unchanged, so `orchestrator.ts`'s call site needed zero edits. Considered and
+  **rejected**: removing the inline path entirely and always using BigQuery. Every customer project
+  would need a net-new BigQuery dataset, an enabled `bigquery.googleapis.com` API, and two more IAM
+  roles (`bigquery.dataEditor`, `bigquery.jobUser`) just for the SA to use it — real infrastructure
+  and audit surface with zero benefit for a 20-row currency/status lookup table. Auto-selecting by row
+  count gets the BigQuery win (no 100-row cap, typed columns) exactly where it's needed and nowhere
+  else.
+- **Why**: the user is building this as an enterprise-grade migration tool and, after live-testing
+  both approaches against a real project end to end (BigQuery dataset → table → load job → Discovery
+  Engine structured data store → confirmed searchable), decided BigQuery should be the path for scale.
+  An architect design pass (this repo's own rule for engine/pipeline changes) recommended the
+  auto-threshold shape over a full replacement for the IAM/API-footprint reason above.
+- **Impact**: `DataverseSnapshotResult` gained additive-only optional fields (`viaBigQuery`,
+  `bqDatasetId`, `bqTableId`, `schemaNotes`) — non-breaking for the one existing consumer.
+  `orchestrator.ts` now pushes real `FidelityNote`s for the Dataverse-snapshot path (previously only
+  logged, never reported): success (naming which path ran), lookup/choice/money flattening (relationship
+  semantics lost — `dataverseTableSchema.ts`'s `buildBqSchema` derives the exact note per column, not
+  boilerplate), and a graceful `needs-review` note (never a blocked migration) when the BigQuery
+  API/IAM isn't available on the customer's project. **Two things flagged, not yet fully verified
+  live**: (1) the BigQuery import uses `reconciliationMode: 'FULL'` (not inline's `INCREMENTAL`) paired
+  with the load job's `WRITE_TRUNCATE` — semantically correct since every run fully re-snapshots the
+  table, and would incidentally fix a pre-existing gap (a row deleted upstream in Dataverse never gets
+  removed from the data store under `INCREMENTAL`), but deletion behavior itself was not live-verified,
+  only insert/update — treat "also fixes stale-row deletion" as unconfirmed until checked. (2) whether
+  a real Gemini Enterprise agent's chat actually surfaces answers from a structured/BigQuery-backed
+  data store (as opposed to it just being indexed and searchable, which WAS live-confirmed) is still
+  blocked on a separate, pre-existing bug: this codebase's `:assist` conversational-query request shape
+  doesn't match the current live API (`agentId`/`agent`/`toolsSpec`/`agentsSpec` all rejected) — that's
+  tracked as its own issue, not something this change attempts to fix.
+- **Live-verified 2026-08-04** (post-build spike, `_diag_bq_snapshot_real_test.ts`, threshold forced to 0
+  via shell env var to force-route a real 1-row `contacts` table through the new path — NOT via an
+  in-file `process.env` assignment, which silently no-ops due to ES module import hoisting running
+  `config.ts`'s parse before any in-file code executes): the full `runBigQuerySnapshot` path — real
+  Dataverse row → typed BigQuery table (399 columns) → load job → structured data store → `documents:import`
+  from BigQuery → indexed document — works end to end against the real test tenant. The indexed
+  document's `structData` showed correctly populated twin columns with real formatted values (e.g.
+  `statuscode: "1"` + `statuscode_label: "Active"`, `preferredappointmenttimecode_label: "Morning"`),
+  confirming the annotation-based formatting layer works on real data, not just synthetic fixtures.
+  **Two minor, non-blocking refinements this test surfaced, logged for follow-up, not fixed here**:
+  (1) Dataverse's metadata returns separate "Virtual" companion attributes for every choice/lookup field
+  (e.g. `owneridname` alongside the real `ownerid`) that duplicate what `buildBqSchema`'s own `_name`/`_label`
+  twins already provide — currently caught by the fallback branch (JSON-stringified, "unrecognized type"
+  note), which is correct but noisy; a future pass could detect and skip `AttributeType: 'Virtual'`
+  attributes whose name matches an existing lookup/choice column's twin. (2) A full standard Contact
+  table produces ~400 BigQuery columns (mostly internal Dataverse plumbing like `adx_identity_*`) —
+  not wrong, but wide enough that a future column-relevance filter might be worth considering.
+- **Retroactive note**: `migrateDataverseSnapshot` (both before and after this change) calls both
+  Dataverse (`resolvePrimaryKey`, `exportTableRows`/`resolveTableAttributes`) and Gemini
+  (`createDataStore`, `importStructured*`, `attachDataStoreToEngine`) from the INSERT phase, using a
+  Dataverse token re-minted at INSERT time — a narrow, deliberate exception to
+  `architecture-boundaries.md`'s "extraction never calls Gemini" rule for bulky/tabular knowledge
+  *content*, which is resolved by reference at INSERT time rather than staged in Mongo (unlike the
+  small, structural `AgentIR`, which genuinely is staged). This carve-out already existed before
+  today's change; recording it here since it was never written down.
+
+## 2026-08-04 — Clean up orphaned low-code agents on ADK fallback; optional edition-aware skip
+
+- **Decision**: Two changes to the low-code→ADK fallback in `orchestrator.ts`. (1) `services/gemini.ts`
+  gained `deleteAgent()`; whenever the ADK fallback ends up being the real, final agent for a source
+  (both the freshly-deployed case and the cached-reuse case), the orchestrator now deletes the
+  stuck-`PRIVATE` low-code agent that was actually created, instead of leaving it sitting at the
+  destination forever. Best-effort — failure surfaces as a `needs-review` fidelity note
+  (`adk-fallback-cleanup`), never blocks the migration. (2) `GeminiDestination` gained an optional
+  `edition?: 'business' | 'standard' | 'plus'` field. When a destination is explicitly declared
+  `standard` or `plus`, the orchestrator skips the low-code `createAgent()` call entirely and goes
+  straight to the ADK path — on those editions low-code agents are ALREADY KNOWN to stay `PRIVATE`
+  forever (see docs/GEMINI-EDITIONS-AND-AGENT-VISIBILITY.md), so attempting it first was guaranteed
+  to spend a quota unit and create an agent only to immediately delete it. Left unset (the default),
+  behavior is unchanged: try low-code first on every destination, exactly as before.
+- **Why**: While running a real end-to-end migration through the actual product (not a spike) with
+  the new ADK file-grounding feature, hit `429 Agent creation quota exceeded` on repeated runs.
+  Investigation surfaced two related but distinct problems, both real: (a) low-code `createAgent()`
+  and ADK's `registerAdkAgent()` POST to the SAME Discovery Engine `.../agents` endpoint and share
+  the SAME quota — every fallback that happens because low-code succeeded-but-stuck-`PRIVATE` (the
+  documented, expected case, not a failure) spends TWO quota units and leaves TWO agent resources
+  for one source agent; (b) nothing in the codebase ever cleaned up the orphaned one. The user's own
+  proposed fix — "always try ADK first, skip low-code" — was rejected as the wrong solution: ADK is
+  a real, ongoing-billable Reasoning Engine deploy (2-5 min, per-agent compute cost) that most agents
+  never need; forcing every migration through it to save a quota unit that's only wasted in the
+  fallback case would regress cost and latency for the common case, and wouldn't even have helped
+  the specific quota-exhaustion just hit (both attempts failed because the quota was ALREADY zero
+  before either call — ordering can't fix an empty bucket). The two changes above fix the actual
+  problems (duplication, and *avoidable* double-spend) without that regression.
+- **Impact**: `edition` is opt-in and NOT auto-detected — no reliable API signal for a Gemini
+  Enterprise project's edition was found (this is the same reason `needsAdkDeployment()`'s old
+  edition check was removed, per the 2026-08-02 entry below). Whoever configures a `GeminiDestination`
+  (currently only via `routes/destination.ts` / internal resolution, no web UI capture yet) must set
+  it explicitly for the skip to activate — surfacing it as a real setup-flow question ("what Gemini
+  edition is this project?") in the Connect/destination UI is a follow-up, not done here. The
+  cleanup half (`deleteAgent`) is unconditional and active today regardless of `edition`. Not yet
+  live-tested end to end (the project used for testing all week is Business edition, where the skip
+  never activates) — the skip-logic branch is new code that type-checks and matches the existing
+  `CreateOutcome` shape, but hasn't been exercised against a real Standard/Plus project.
+
+## 2026-08-03 — ADK agents can ground on locally-uploaded files (live-verified), wired end to end
+
+- **Decision**: ADK/Reasoning-Engine agents (`adkDeployer.ts`) previously reported every uploaded
+  knowledge file as `status: 'lost'` — "ADK deployment path doesn't support agentFiles yet." That's
+  still true (ADK agents have no `agentFiles` concept at all), but it no longer means the file is
+  unrecoverable: it's now grounded via a Discovery Engine **"document" data store** (unstructured
+  content, not the website-only PUBLIC_WEBSITE tier) + `VertexAiSearchTool`, the same mechanism
+  already used for public-website grounding. `AdkSpec.vertexAiSearchDataStore` (single store) was
+  generalized to `AdkSpec.groundingDataStores: string[]`, combining a website store and any number
+  of file stores onto **one** `VertexAiSearchTool` — ADK pre-1.16 only allows this tool alone on an
+  agent (no mixing with `google_search`), and Google's own `data_store_specs` parameter is exactly
+  for combining multiple stores under one tool instance. New pieces: `services/gcsUpload.ts` (plain
+  REST, no new npm dep — same convention as `secretManager.ts`), `knowledgeDataStoreExecutor.ts`'s
+  `migrateFileToDocumentStore()` (upload → `createDataStore(kind:'document')` → `importDocumentsFromGcs`
+  → `awaitImport`, mirroring the existing `migrateDataverseSnapshot` pattern), `adkDeployer.ts`'s
+  `ensureReasoningEngineDiscoveryAccess()`, and a new collection `adkKnowledgeStores` (idempotency —
+  one row per agent+file, reused on re-migration instead of re-uploading/re-indexing every run).
+  `orchestrator.ts` now resolves file grounding stores BEFORE calling `publishAgentToGallery`
+  (the tool must be baked in at deploy time, unlike low-code's patchable `agentFiles`), and reports
+  each file as `mapped` (grounded, IAM confirmed), `partial` (grounded, but the IAM grant below
+  couldn't be confirmed — may 403 at query time), or `lost` (download/import genuinely failed) —
+  never silently degraded.
+- **Why**: Live-verified this end to end on a real throwaway test agent before writing any of the
+  above (see the session that produced this decision): `createDataStore(kind:'document')` and
+  `importDocumentsFromGcs()` existed in this codebase already, written months ago, but had **zero
+  callers anywhere** — untested against the real API. Ran them for real: GCS upload, data-store
+  creation, import, and full indexing all succeeded on the first attempt. Deployed a real ADK
+  Reasoning Engine agent with `VertexAiSearchTool` pointed at that store, queried it, and got a
+  clean 403 (`discoveryengine.servingConfigs.search` denied) — a genuine gap this decision fixes,
+  not a design flaw: the SA that creates the data store and the Google-managed service agent that
+  actually *executes* a deployed Reasoning Engine at inference time
+  (`service-{project}@gcp-sa-aiplatform-re.iam.gserviceaccount.com`) are different identities, and
+  the latter has no Discovery Engine access by default. After granting it `roles/discoveryengine.viewer`
+  on the project and re-querying, the SAME agent correctly retrieved the exact planted marker from
+  the uploaded file, with grounding metadata pointing at the real GCS source — full proof, not a
+  plausible-sounding design. This also retroactively fixes the SAME latent gap in the pre-existing
+  website-grounding ADK path, which never granted this IAM role either.
+- **Impact**: **This is a materially more privileged permission than anything else this tool asks
+  a customer for today.** `ensureReasoningEngineDiscoveryAccess()` calls
+  `cloudresourcemanager.projects.{get,set}IamPolicy` — project-level IAM policy editing, not a
+  scoped Discovery Engine role. The verification session's SA happened to have this on the test
+  project; **there is no guarantee a real customer's Direct-IAM or DWD grant includes it.** The
+  function fails gracefully (best-effort, never blocks deployment) and `orchestrator.ts` reports a
+  `needs-review`/`partial` fidelity note when the grant can't be confirmed — but this needs a real
+  decision before shipping to a customer: either (a) ask the customer's Google admin to grant this
+  IAM role once during setup (same category of ask as the existing Direct IAM/DWD dance), or
+  (b) find a narrower, resource-scoped alternative. **Follow-up same day: checked live — option
+  (b) does not exist.** `POST {dataStore}:getIamPolicy` against a real data store returns `404
+  Method not found` — Discovery Engine data stores have no resource-level IAM policy at all;
+  access is controlled ONLY via project- (or folder-/org-) level Cloud IAM. So the choice is
+  binary: a customer admin grants the project-level role manually (recommended default for
+  enterprise customers — see docs/ADK-FILE-GROUNDING-PERMISSIONS.md), or CloudFuze's SA gets
+  `resourcemanager.projects.setIamPolicy` to grant it automatically (not recommended as a default;
+  a materially bigger ask than this product's normal access model). Also still un-verified: the
+  multi-store `data_store_specs` combination path (website + file sources together) — only the
+  single-store case was live-tested; an agent with both a website source and file sources hits
+  code that type-checks and matches Google's documented parameter shape, but has not been run for
+  real yet.
+
+---
+
+## 2026-08-03 — Stop folding compiled Topics into the migrated instruction text
+
+- **Decision**: `mapper.ts`'s `mapAgent()` no longer appends the topic-compiler's "## Conversation
+  guidance" / "## Conversation procedures" block onto `MappedAgent.instruction`. Topics are still
+  fully extracted (`AgentIR.topics`, unchanged) and still compiled via `planTopicsMigration` +
+  `topicsEmit.buildProceduresInstruction` (unchanged, still used for the report), but the compiled
+  text is now surfaced only as a `topics` `FidelityNote` with `status: 'needs-review'` — never
+  concatenated into the live agent's instruction field. `MappedAgent.instruction` is now exactly
+  `AgentIR.instructions`, verbatim, nothing else folded in.
+- **Why**: While comparing a source Copilot Studio agent ("C2MessageGeneratorAgent," a customer-
+  simulation persona bot with strict "never act as a support agent" rules) against its migrated
+  Gemini agent, the migrated instruction had an appended block compiled from the agent's own
+  Topics (Sign in / Thank you / Greeting) containing generic assistant-style guidance ("Greet the
+  user warmly," "ask a clarifying question," a scripted sign-in line) sitting in the same free-text
+  field as — and in tension with — the strict persona rules above it. Confirmed via
+  `agentIRCache` that the base instructions were carried over 100% verbatim and that this
+  appended block's topic names matched the agent's own extracted `AgentIR.topics` exactly (so it
+  wasn't fabricated), but mixing topic-derived guidance into the same instruction text as the
+  author's own words is a tone-fidelity risk regardless of source — the two are different kinds of
+  authored content and shouldn't share one field silently.
+- **Impact**: Topics are no longer auto-woven into agent behavior at all in v1 — every custom topic
+  now reports as `needs-review` (same bucket the "custom topic(s) captured but NOT added to the
+  instruction" note already used for topics with no plan). This is a net fidelity-reporting change,
+  not a data-loss one: nothing about `AgentIR` changed, and the compiled procedures text is still
+  computed and available (just not injected). Next engineering step, not yet done: give topics a
+  real, separate migration target (e.g. Gemini's own topic/procedure resources, once verified to
+  exist for this agent type) instead of any instruction-text injection at all — this change removes
+  the injection but does not yet build that replacement.
+
 ## 2026-08-03 — Persist per-tenant Entra credentials in GCP Secret Manager (for connector auto-provisioning)
 
 - **Decision**: While wiring up the SharePoint native-connector migration path (`geminiConnector.ts` →

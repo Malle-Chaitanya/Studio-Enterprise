@@ -158,3 +158,43 @@ Support ask (draft):
   listing needs the enable-to-org step** (Support/roadmap). Set this expectation.
 - **`.env` targeting:** `GEMINI_PROJECT_FALLBACK=860501065102` + bypass + impersonate
   zara → the-dispatch (agents as zara). For studio: `studio-enterprise-migration`.
+
+---
+
+## 8. Addendum (2026-08-03) — console rebrand, and "does enabling the Studio API help?"
+
+Google Cloud Next 2026 rebranded **Vertex AI + Agentspace → "Gemini Enterprise Agent
+Platform."** The console path moved to `console.cloud.google.com/agent-platform/studio/...`
+(e.g. `.../settings/api-keys?project=studio-enterprise-migration`), but it is the **same
+underlying Agent surface** — no new product, no new capability.
+
+That settings page's "API Keys are Disallowed — use ADC instead" notice is an **org
+auth-mechanism policy**, not a capability gate. Enabling the API shown there does **not**
+unlock a way to build a low-code agent "in Studio" and deploy it that bypasses the §5
+gap above:
+
+- Studio/Agent Designer-built agents live on the identical Discovery Engine `v1alpha`
+  `Agent` resource (`.../assistants/default_assistant/agents`) that this tool already
+  creates via `services/gemini.ts`. Confirmed independently via a Google Developer
+  forum thread on calling the Agent Designer API
+  ([discuss.google.dev thread](https://discuss.google.dev/t/making-api-calls-to-no-code-agents-agent-designer-in-gemini-enterprise-agentspace/290026))
+  and Google's own [Agent Studio design docs](https://docs.cloud.google.com/gemini-enterprise-agent-platform/agent-studio/design-agents),
+  which describe Studio as a console-only workflow with no separate flow-authoring or
+  publish API.
+- Per [docs/LIMITATIONS-EDITING-AGENTS.md](LIMITATIONS-EDITING-AGENTS.md) §1, API-created
+  agents aren't even Designer-editable (only Preview/Delete) — reinforcing that "build
+  via API" and "build in Studio" are the same resource, not two paths with different
+  capabilities.
+- The separate [Agent Platform API REST reference](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest)
+  is the broad, merged Vertex AI surface (models, RAG, Reasoning Engine/Agent Runtime)
+  — that's the ADK/Agent-Runtime deployment surface `adkDeployer.ts` already targets,
+  not a richer low-code authoring API.
+
+**Conclusion: no code or approach change.** Continue `AgentIR → Discovery Engine v1alpha`
+creation; the PRIVATE→ENABLED gap in §5/§6 is unaffected by which API is "enabled" on
+this settings screen — it needs the Google Support / roadmap answer already tracked in §6.
+
+**Unverified / cheap to close:** whether the rebranded console calls a newly-versioned
+endpoint rather than plain `discoveryengine.googleapis.com`. Check with `gcloud services
+list --enabled` on `studio-enterprise-migration` before/after enabling the API on that
+screen.

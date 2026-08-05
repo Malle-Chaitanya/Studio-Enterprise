@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { JWT } from 'google-auth-library';
-import { config, GOOGLE_SCOPES, SA_SCOPES } from '../config.js';
+import { config, GOOGLE_SCOPES, SA_DIRECTORY_SCOPES, SA_SCOPES } from '../config.js';
 import { logger } from '../logger.js';
 import { mapPoolCollect } from '../concurrency.js';
 
@@ -80,7 +80,7 @@ export function impersonationAllowed(email: string, allowlist: string[]): boolea
  * the SA's domain-wide power on an arbitrary user. The audit line logs the target
  * email only — never the token.
  */
-export async function getSaToken(impersonate?: string): Promise<string> {
+async function mintSaToken(scopes: string[], impersonate?: string): Promise<string> {
   if (impersonate !== undefined) {
     const allowlist = parseImpersonationAllowlist(config.GOOGLE_DWD_ALLOWED_IMPERSONATORS);
     if (!impersonationAllowed(impersonate, allowlist)) {
@@ -96,12 +96,25 @@ export async function getSaToken(impersonate?: string): Promise<string> {
   const client = new JWT({
     email: key.client_email as string,
     key: key.private_key as string,
-    scopes: SA_SCOPES,
+    scopes,
     subject: impersonate,
   });
   const { access_token: token } = await client.authorize();
   if (!token) throw new Error('Service account returned no access token');
   return token;
+}
+
+export async function getSaToken(impersonate?: string): Promise<string> {
+  return mintSaToken(SA_SCOPES, impersonate);
+}
+
+/**
+ * SA token with Admin Directory scopes only — used for Workspace user/domain
+ * discovery. Must NOT be mixed into getSaToken() / Gemini writes (DWD allowlists
+ * often only include cloud-platform).
+ */
+export async function getDirectorySaToken(impersonate?: string): Promise<string> {
+  return mintSaToken(SA_DIRECTORY_SCOPES, impersonate);
 }
 
 /**
@@ -121,6 +134,86 @@ export async function getWorkspaceDomains(saToken: string): Promise<string[]> {
       .map((d) => d.domainName?.toLowerCase())
       .filter((n): n is string => Boolean(n));
   } catch {
+    return [];
+  }
+}
+
+/**
+ * Best-effort Workspace domains via a Directory-scoped DWD token (not the
+ * cloud-platform migration token).
+ */
+export async function getWorkspaceDomainsAsAdmin(adminEmail: string): Promise<string[]> {
+  try {
+    const token = await getDirectorySaToken(adminEmail);
+    return getWorkspaceDomains(token);
+  } catch {
+    return [];
+  }
+}
+
+export interface WorkspaceUserBrief {
+  email: string;
+  displayName?: string;
+  suspended?: boolean;
+}
+
+/**
+ * Best-effort list of Workspace users for the Map Users dropdown.
+ * Requires DWD scope admin.directory.user.readonly; returns [] on 403.
+ */
+export async function listWorkspaceUsers(
+  saToken: string,
+  opts?: { max?: number; query?: string },
+): Promise<WorkspaceUserBrief[]> {
+  const max = Math.min(opts?.max ?? 200, 500);
+  const users: WorkspaceUserBrief[] = [];
+  let pageToken: string | undefined;
+  try {
+    while (users.length < max) {
+      const params = new URLSearchParams({
+        customer: 'my_customer',
+        maxResults: String(Math.min(100, max - users.length)),
+        orderBy: 'email',
+        projection: 'basic',
+      });
+      if (opts?.query) params.set('query', opts.query);
+      if (pageToken) params.set('pageToken', pageToken);
+      const res = await fetch(
+        `https://admin.googleapis.com/admin/directory/v1/users?${params}`,
+        { headers: { Authorization: `Bearer ${saToken}` } },
+      );
+      if (!res.ok) break;
+      const json = (await res.json()) as {
+        users?: { primaryEmail?: string; name?: { fullName?: string }; suspended?: boolean }[];
+        nextPageToken?: string;
+      };
+      for (const u of json.users ?? []) {
+        if (!u.primaryEmail) continue;
+        users.push({
+          email: u.primaryEmail.toLowerCase(),
+          displayName: u.name?.fullName,
+          suspended: u.suspended,
+        });
+      }
+      pageToken = json.nextPageToken;
+      if (!pageToken) break;
+    }
+  } catch {
+    return users;
+  }
+  return users;
+}
+
+/** List Workspace users using a Directory-scoped DWD token for `adminEmail`. */
+export async function listWorkspaceUsersAsAdmin(
+  adminEmail: string,
+  opts?: { max?: number; query?: string },
+): Promise<WorkspaceUserBrief[]> {
+  try {
+    const token = await getDirectorySaToken(adminEmail);
+    return listWorkspaceUsers(token, opts);
+  } catch (e) {
+    logger.warn(`listWorkspaceUsersAsAdmin failed: ${(e as Error).message}`);
     return [];
   }
 }

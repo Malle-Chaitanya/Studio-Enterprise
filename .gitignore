@@ -25,3 +25,4 @@ CLAUDE.local.md
 discovery_v1alpha.json
 server/adk_local_test/
 *.docx
+.gstack/

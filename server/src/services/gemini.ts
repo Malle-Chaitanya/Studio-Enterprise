@@ -160,6 +160,24 @@ export async function shareAgent(dest: GeminiDestination, saToken: string, agent
   return res.ok;
 }
 
+/**
+ * Delete an agent. Used to clean up a stuck-PRIVATE low-code agent once the
+ * ADK/Reasoning-Engine fallback has successfully replaced it — without this,
+ * a fallback leaves TWO agent resources at the destination for one source
+ * agent (wasted quota + a confusing duplicate an admin has to notice and
+ * remove by hand). Idempotent: 404 (already gone) counts as success.
+ */
+export async function deleteAgent(dest: GeminiDestination, saToken: string, agentId: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await withBackoff(() =>
+    fetch(`${agentBase(dest)}/${agentId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${saToken}` },
+    }),
+  );
+  if (res.ok || res.status === 404) return { ok: true };
+  return { ok: false, error: `${res.status}: ${(await res.text()).slice(0, 200)}` };
+}
+
 /** Confirm an engine is reachable (used during connect + before routing to it). */
 export async function engineReachable(dest: GeminiDestination, saToken: string): Promise<boolean> {
   try {

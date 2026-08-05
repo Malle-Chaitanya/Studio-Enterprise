@@ -131,30 +131,55 @@ export async function listProjects(userToken: string | undefined): Promise<Proje
   }
 }
 
+export interface ListEnginesResult {
+  engines: EngineRef[];
+  /** HTTP status from Discovery Engine, when a response was received. */
+  status?: number;
+  /** Set when the call failed or returned non-OK — never silently treated as "no apps". */
+  error?: string;
+}
+
 /**
- * List Agentspace engines (apps) in a project — the destinations a customer maps
- * their Copilot environments onto. Uses the service-account token.
+ * List Agentspace engines (apps) in a project. Returns engines + honest error
+ * info (callers used to swallow 403 as "no apps", which hid SA/IAM failures).
  */
-export async function listEngines(project: string, saToken: string): Promise<EngineRef[]> {
+export async function listEnginesResult(project: string, token: string): Promise<ListEnginesResult> {
   const url =
     `https://discoveryengine.googleapis.com/v1alpha/projects/${project}` +
     `/locations/${LOCATION}/collections/default_collection/engines`;
   try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${saToken}` } });
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) {
-      logger.warn(`listEngines(${project}) failed (${res.status})`);
-      return [];
+      let detail = '';
+      try {
+        const body = (await res.json()) as { error?: { message?: string } };
+        detail = body?.error?.message ?? '';
+      } catch {
+        /* ignore */
+      }
+      const error = `listEngines(${project}) failed (${res.status})${detail ? `: ${detail}` : ''}`;
+      logger.warn(error);
+      return { engines: [], status: res.status, error };
     }
     const json = (await res.json()) as {
       engines?: { name: string; displayName?: string; solutionType?: string }[];
     };
-    return (json.engines ?? []).map((e) => ({
-      id: e.name.split('/').pop() ?? '',
-      displayName: e.displayName ?? e.name.split('/').pop() ?? '',
-      solutionType: e.solutionType,
-    }));
+    return {
+      engines: (json.engines ?? []).map((e) => ({
+        id: e.name.split('/').pop() ?? '',
+        displayName: e.displayName ?? e.name.split('/').pop() ?? '',
+        solutionType: e.solutionType,
+      })),
+      status: res.status,
+    };
   } catch (err) {
-    logger.warn({ err, project }, 'listEngines errored');
-    return [];
+    const error = `listEngines(${project}) errored: ${(err as Error).message}`;
+    logger.warn({ err, project }, error);
+    return { engines: [], error };
   }
+}
+
+/** Convenience wrapper — empty array on failure (legacy call sites). Prefer listEnginesResult. */
+export async function listEngines(project: string, token: string): Promise<EngineRef[]> {
+  return (await listEnginesResult(project, token)).engines;
 }

@@ -23,6 +23,8 @@ export function SelectMap() {
   const [projects, setProjects] = useState<DestProject[]>([]);
   const [manualEntry, setManualEntry] = useState(false);
   const [enginesByProject, setEnginesByProject] = useState<Record<string, DestEngine[]>>({});
+  const [enginesLoaded, setEnginesLoaded] = useState<Record<string, boolean>>({});
+  const [enginesWarning, setEnginesWarning] = useState<string | null>(null);
   const [sel, setSel] = useState<Record<string, { project: string; engine: string }>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,17 +70,27 @@ export function SelectMap() {
     });
   }, [session]);
 
-  const loadEngines = async (project: string): Promise<void> => {
-    if (!project || enginesByProject[project]) return;
-    const engs = await fetchEngines(session, project).catch(() => []);
-    setEnginesByProject((m) => ({ ...m, [project]: engs }));
-    setSel((s) => {
-      const next = { ...s };
-      for (const [env, v] of Object.entries(next)) {
-        if (v.project === project && !v.engine && engs[0]) next[env] = { ...v, engine: engs[0].id };
-      }
-      return next;
-    });
+  const loadEngines = async (project: string, force = false): Promise<void> => {
+    if (!project || (!force && enginesLoaded[project])) return;
+    setEnginesWarning(null);
+    try {
+      const result = await fetchEngines(session, project);
+      const engs = result.engines ?? [];
+      setEnginesByProject((m) => ({ ...m, [project]: engs }));
+      setEnginesLoaded((m) => ({ ...m, [project]: true }));
+      if (!engs.length && result.warning) setEnginesWarning(result.warning);
+      setSel((s) => {
+        const next = { ...s };
+        for (const [env, v] of Object.entries(next)) {
+          if (v.project === project && !v.engine && engs[0]) next[env] = { ...v, engine: engs[0].id };
+        }
+        return next;
+      });
+    } catch (e) {
+      setEnginesByProject((m) => ({ ...m, [project]: [] }));
+      setEnginesLoaded((m) => ({ ...m, [project]: true }));
+      setEnginesWarning((e as Error).message || 'Could not load apps for this project');
+    }
   };
 
   const toggleInclude = (url: string) =>
@@ -89,7 +101,8 @@ export function SelectMap() {
     });
   const onProject = async (env: string, project: string): Promise<void> => {
     setSel((s) => ({ ...s, [env]: { project, engine: '' } }));
-    await loadEngines(project);
+    // Always re-fetch when the user picks a project (don't stick on a prior empty cache).
+    await loadEngines(project, true);
   };
   const onEngine = (env: string, engine: string): void =>
     setSel((s) => ({ ...s, [env]: { ...s[env], engine } }));
@@ -155,6 +168,22 @@ export function SelectMap() {
       </p>
 
       {error && <div className="error">{error}</div>}
+      {enginesWarning && (
+        <div className="error" style={{ marginBottom: 12 }}>
+          Apps list: {enginesWarning}{' '}
+          <button
+            type="button"
+            className="dlink"
+            style={{ padding: 0 }}
+            onClick={() => {
+              const p = Object.values(sel).find((v) => v.project)?.project;
+              if (p) void loadEngines(p, true);
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {loading && <p className="lead">Discovering environments &amp; Gemini projects…</p>}
 
       {!loading && envs.length === 0 && <p className="lead">No accessible environments found.</p>}
@@ -223,7 +252,13 @@ export function SelectMap() {
                     onChange={(ev) => onEngine(e.url, ev.target.value)}
                   >
                     <option value="" disabled>
-                      {!cur.project ? 'Select project first' : engs.length === 0 ? 'No apps in this project' : 'Select app…'}
+                      {!cur.project
+                        ? 'Select project first'
+                        : engs.length === 0
+                          ? enginesLoaded[cur.project]
+                            ? 'No apps found — see warning / Retry'
+                            : 'Loading apps…'
+                          : 'Select app…'}
                     </option>
                     {engs.map((eng) => (
                       <option key={eng.id} value={eng.id}>{eng.displayName}</option>
@@ -235,7 +270,7 @@ export function SelectMap() {
           })}
 
           <div className="wizard-actions">
-            <button className="wbtn" onClick={() => navigate(`/pair?session=${session}`)}>← Back</button>
+            <button className="wbtn" onClick={() => navigate(`/map-users?session=${session}`)}>← Back</button>
             <button className="wbtn primary" disabled={!ready} onClick={cont}>Continue to agents →</button>
           </div>
         </>

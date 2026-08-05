@@ -14,12 +14,15 @@ ADK_STAGING_BUCKET); it is auto-created if missing.
         --spec '{"name":"...","displayName":"...","instruction":"...","model":"gemini-2.5-flash","tools":["googleSearch"]}' \
         --staging-bucket gs://my-bucket
 
-If spec.vertexAiSearchDataStore is set (a public-website knowledge source, grounded
-via a Discovery Engine PUBLIC_WEBSITE data store — see adkDeployer.ts
-createWebsiteGroundingDataStore), VertexAiSearchTool is wired as the agent's ONLY
-tool. ADK (pre-1.16) only allows VertexAiSearchTool alone on an agent — it cannot
-be combined with google_search or any other tool — so `tools` is ignored whenever
-vertexAiSearchDataStore is present.
+If spec.groundingDataStores is set (one or more Discovery Engine data store
+resource paths — a public-website store from adkDeployer.ts
+createWebsiteGroundingDataStore, and/or "document" stores for locally-uploaded
+files from knowledgeDataStoreExecutor.migrateFileToDocumentStore),
+VertexAiSearchTool is wired as the agent's ONLY tool: a single store uses
+`data_store_id`, multiple stores combine via `data_store_specs`. ADK (pre-1.16)
+only allows VertexAiSearchTool alone on an agent — it cannot be combined with
+google_search or any other tool — so `tools` is ignored whenever
+groundingDataStores is non-empty.
 """
 import argparse
 import json
@@ -74,15 +77,30 @@ def main():
     except Exception as e:  # noqa: BLE001
         emit({"error": f"staging bucket setup failed ({bucket}): {e}"}); return
 
-    # Build tools from the spec. VertexAiSearchTool (website-grounding path) must
-    # be the ONLY tool on the agent — ADK (pre-1.16) rejects mixing it with
-    # google_search or any other tool, so it takes priority over spec["tools"].
+    # Build tools from the spec. VertexAiSearchTool requires EXACTLY ONE of
+    # data_store_id / search_engine_id per instance (confirmed against the
+    # installed google-adk 2.5.0 source, vertex_ai_search_tool.py's own
+    # constructor: it raises "Either data_store_id or search_engine_id must be
+    # specified" unless exactly one is set — data_store_specs is NOT a way to
+    # combine independent stores, it's a scoping filter that's only valid
+    # ALONGSIDE search_engine_id, which we don't have/want here since that
+    # would mean searching a whole Discovery Engine "engine" resource instead
+    # of the specific per-agent stores this pipeline resolved). So multiple
+    # data stores become multiple VertexAiSearchTool instances instead, one
+    # per store, each with bypass_multi_tools_limit=True — that flag (present
+    # on this ADK version, not documented anywhere in this codebase before
+    # this fix) makes ADK auto-wrap each as a DiscoveryEngineSearchTool when
+    # there's more than one tool on the agent, instead of rejecting the
+    # combination outright (see llm_agent.py's _convert_tool_union_to_tools).
+    # Harmless to set even when there's only one store: ADK only applies the
+    # wrapping when multiple tools are actually present.
     tools = []
-    vertex_ai_search_data_store = spec.get("vertexAiSearchDataStore")
+    grounding_data_stores = spec.get("groundingDataStores") or []
     try:
-        if vertex_ai_search_data_store:
+        if grounding_data_stores:
             from google.adk.tools import VertexAiSearchTool
-            tools.append(VertexAiSearchTool(data_store_id=vertex_ai_search_data_store))
+            for ds in grounding_data_stores:
+                tools.append(VertexAiSearchTool(data_store_id=ds, bypass_multi_tools_limit=True))
         elif "googleSearch" in (spec.get("tools") or []):
             from google.adk.tools import google_search
             tools.append(google_search)

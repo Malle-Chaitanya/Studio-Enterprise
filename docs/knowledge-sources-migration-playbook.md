@@ -188,18 +188,17 @@ The agent answers from the **extracted text**, and points back to the **original
 
 **✅ Built AND wired (runs in a real migration):**
 - **Uploaded files / PDFs → attached directly onto the Gemini agent** (`attachKnowledgeFiles` → `uploadAgentFile` → `updateAgentFiles`, before publish). Idempotent (skips already-attached by filename), skips incompatible, counts failures. **Uploaded PDFs DO appear in the destination.**
+- **Dataverse reference-table snapshot** (`migrateDataverseSnapshot` in `knowledgeDataStoreExecutor.ts`, called from `orchestrator.ts`'s `dvSnapshots` loop) — corrected 2026-08-04, this section previously said "not wired," which was stale even before that date's BigQuery change. Routes by row count (`config.BQ_SNAPSHOT_ROW_THRESHOLD`, default 200): small tables use `importStructuredInline` (chunked, capped 100 docs/request); large tables use a BigQuery staging table + `importStructuredFromBigQuery` (real typed columns via `dataverseTableSchema.ts`, no row cap). Both paths create a **structured** data store and attach it to the engine. See `.claude/memory/decisions.md` (2026-08-04) for the BigQuery-path design and its two unverified claims (FULL-reconciliation deletion behavior; whether the underlying `:assist` chat bug affects this data specifically).
 
 **🟡 Built as functions but NOT wired into the live flow (only used in a diagnostic):**
 - Document **data store** path: `createDataStore('document')` + `importDocumentsFromGcs` (GCS → ImportDocuments, `dataSchema: 'content'`, `reconciliationMode: 'INCREMENTAL'`).
-- **Structured** path: `importStructuredInline` (inline `structData`, capped 100 docs/request → must chunk).
 - **Website** data store executor (`createDataStore('website', ...)` + `addTargetSite` + `attachDataStoreToEngine` in `geminiDataStore.ts`) is now fully orphaned, not just unwired — the classifier/planner never produce a `website-data-store` target anymore (see the 2026-07-30 decision above), so nothing calls it except the standalone `_diag_website.ts` / `_diag_website_status.ts` spikes. Left in place; not deleted as part of this change.
-- The orchestrator explicitly logs for non-file sources: *"data-store path not yet wired."*
+- The orchestrator explicitly logs *"data-store path not yet wired"* for non-file, non-Dataverse-snapshot sources (SharePoint/OneDrive/other connectors below).
 
 **❌ NOT built at all (only planned as manual checklists):**
 - SharePoint connector creation (no executor).
 - OneDrive connector creation (no executor).
 - Any live-connector (Confluence/ServiceNow/etc.) executor.
-- Dataverse snapshot execution end-to-end (classifier + planner decide it; executor not wired).
 
 **Classifier facts (`knowledgeClassifier.ts`):**
 - Rule order matters: uploaded-file rule runs BEFORE SharePoint (so "upload files > SharePoint" = copy, not reconnect).

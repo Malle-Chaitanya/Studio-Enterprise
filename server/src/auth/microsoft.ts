@@ -139,6 +139,65 @@ export async function getVerifiedDomains(graphToken: string): Promise<string[]> 
   }
 }
 
+export interface GraphUserBrief {
+  id: string;
+  email: string;
+  displayName?: string;
+  userPrincipalName?: string;
+  accountEnabled?: boolean;
+}
+
+/**
+ * List Microsoft Graph users for the Map Users grid (paginated, searchable).
+ * Uses delegated Graph token from the admin refresh token.
+ */
+export async function listGraphUsers(
+  graphToken: string,
+  opts?: { max?: number; query?: string },
+): Promise<GraphUserBrief[]> {
+  const max = Math.min(Math.max(opts?.max ?? 200, 1), 999);
+  const q = (opts?.query || '').trim();
+  const select = '$select=id,displayName,mail,userPrincipalName,accountEnabled';
+  let url: string | null = q
+    ? `https://graph.microsoft.com/v1.0/users?${select}&$top=${Math.min(max, 100)}&$filter=${encodeURIComponent(
+        `startswith(displayName,'${q.replace(/'/g, '')}') or startswith(mail,'${q.replace(/'/g, '')}') or startswith(userPrincipalName,'${q.replace(/'/g, '')}')`,
+      )}`
+    : `https://graph.microsoft.com/v1.0/users?${select}&$top=${Math.min(max, 100)}&$orderby=displayName`;
+
+  const out: GraphUserBrief[] = [];
+  while (url && out.length < max) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${graphToken}` } });
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`graph_users_failed ${res.status}: ${t.slice(0, 200)}`);
+    }
+    const json = (await res.json()) as {
+      value?: {
+        id?: string;
+        displayName?: string;
+        mail?: string;
+        userPrincipalName?: string;
+        accountEnabled?: boolean;
+      }[];
+      '@odata.nextLink'?: string;
+    };
+    for (const u of json.value ?? []) {
+      const email = (u.mail || u.userPrincipalName || '').toLowerCase();
+      if (!email || !u.id) continue;
+      out.push({
+        id: u.id,
+        email,
+        displayName: u.displayName,
+        userPrincipalName: u.userPrincipalName,
+        accountEnabled: u.accountEnabled,
+      });
+      if (out.length >= max) break;
+    }
+    url = out.length < max ? (json['@odata.nextLink'] ?? null) : null;
+  }
+  return out;
+}
+
 /** Look up the org display name via Graph. */
 export async function getOrgName(adminToken: string, fallback: string): Promise<string> {
   try {

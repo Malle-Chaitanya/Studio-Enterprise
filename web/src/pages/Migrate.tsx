@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchSession, migrateStreamUrl, planMigration, type GeminiDest } from '../api.ts';
+import { useWizardOptional } from '../context/WizardContext.tsx';
 import type {
   MigrationResult,
   MigrationScope,
@@ -25,6 +26,7 @@ export function Migrate() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const session = params.get('session') ?? '';
+  const wizard = useWizardOptional();
 
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -41,6 +43,7 @@ export function Migrate() {
   const [results, setResults] = useState<MigrationResult[]>([]);
   const [done, setDone] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const runRef = useRef<(dry: boolean) => Promise<void>>(async () => {});
 
   useEffect(() => {
     if (!session) return;
@@ -54,7 +57,15 @@ export function Migrate() {
       /* no saved selection */
     }
     return () => esRef.current?.close();
-  }, [session]);
+  }, [session, wizard?.toolEpoch]);
+
+  useEffect(() => {
+    if (!wizard) return;
+    return wizard.onMigrateRequest(({ dryRun: dry }) => {
+      setDryRun(dry);
+      void runRef.current(dry);
+    });
+  }, [wizard]);
 
   const totalAgents = units.reduce((n, u) => n + u.botIds.length, 0);
   const canStart = totalAgents > 0 && (dryRun || !!summary?.saOk);
@@ -103,6 +114,7 @@ export function Migrate() {
     setRanDry(dry);
     openStream();
   };
+  runRef.current = run;
 
   const downloadReport = async () => {
     const res = await fetch('/api/migrate/report', {
@@ -135,7 +147,7 @@ export function Migrate() {
             <>
               <div className="infobox">No agents selected yet — go back and pick agents to migrate.</div>
               <button className="btn primary" onClick={() => navigate(`/select-data?session=${session}`)}>
-                Go to Select Data →
+                Go to Select Agents →
               </button>
             </>
           ) : (
@@ -175,7 +187,7 @@ export function Migrate() {
               )}
 
               <div className="wizard-actions">
-                <button className="wbtn" onClick={() => navigate(`/select-data?session=${session}`)}>
+                <button className="wbtn" onClick={() => navigate(`/connectors?session=${session}`)}>
                   ← Back
                 </button>
                 <button className="wbtn primary" disabled={!canStart || busy} onClick={() => run(dryRun)}>
@@ -280,7 +292,11 @@ function AgentCard({ r, dry }: { r: MigrationResult; dry: boolean }) {
             <>
               <Chip on={r.created} label="created" />
               <Chip on={r.deployed} label="deployed" />
-              <Chip on={r.shared} label="shared" />
+              {r.permissionHandoff ? (
+                <span className="chip warn">handoff</span>
+              ) : (
+                <Chip on={r.shared} label="shared" />
+              )}
               {r.verified !== undefined && <Chip on={r.verified} label="verified" />}
             </>
           )}
@@ -288,6 +304,13 @@ function AgentCard({ r, dry }: { r: MigrationResult; dry: boolean }) {
       </div>
       {realError && <div className="fidelity" style={{ color: 'var(--fail)' }}>{realError}</div>}
       {r.verifySample && <div className="fidelity">“{r.verifySample}”</div>}
+      {r.permissionHandoff && (
+        <div className="fidelity">
+          Permission handoff: {r.permissionHandoff.grantUsers.length} user(s),{' '}
+          {r.permissionHandoff.grantGroups.length} group(s),{' '}
+          {r.permissionHandoff.unresolved.length} unresolved
+        </div>
+      )}
       {r.fidelity.length > 0 && (
         <div className="chips" style={{ marginTop: 8 }}>
           {auto > 0 && <span className="tag supported">{auto} auto</span>}

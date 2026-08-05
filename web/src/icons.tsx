@@ -78,8 +78,26 @@ export function Chevron({ open, s = 14 }: { open: boolean; s?: number }) {
 
 /** Deterministic avatar color from a string (for user/agent initials). */
 export function avatarColor(key: string): string {
-  const palette = ['#2563eb', '#16a34a', '#9333ea', '#dc2626', '#0891b2', '#ca8a04', '#db2777'];
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-  return palette[h % palette.length];
+  const hues = [210, 160, 25, 280, 340, 190];
+  return `hsl(${hues[h % hues.length]} 55% 42%)`;
+}
+
+export function IcoCheck({ s = 14 }: { s?: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+export function IcoWarn({ s = 14 }: { s?: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
 }

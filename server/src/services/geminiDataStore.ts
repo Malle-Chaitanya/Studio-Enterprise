@@ -118,6 +118,23 @@ export async function createDataStore(
 }
 
 /**
+ * Whether a data store still actually exists in Discovery Engine — used
+ * before trusting a cached "already migrated" record (e.g. adkKnowledgeStores)
+ * so a data store deleted out-of-band (manual cleanup, console testing) is
+ * detected as stale instead of silently reused. A dangling cached resourcePath
+ * would otherwise get baked into a new ADK deploy's VertexAiSearchTool,
+ * producing an agent that reports `mapped` in the fidelity note but can never
+ * actually retrieve anything — the exact silent-overclaim this project's
+ * honesty principle exists to prevent.
+ */
+export async function dataStoreExists(project: string, saToken: string, dataStoreId: string): Promise<boolean> {
+  const res = await fetch(`${collectionBase(project)}/dataStores/${encodeURIComponent(dataStoreId)}`, {
+    headers: { Authorization: `Bearer ${saToken}` },
+  });
+  return res.ok;
+}
+
+/**
  * Add a target site (URL pattern) to a PUBLIC_WEBSITE data store so Gemini
  * crawls/indexes it. `uriPattern` e.g. "learn.microsoft.com/en-us/dynamics365/*".
  */
@@ -222,6 +239,41 @@ export async function importStructuredInline(
       body: JSON.stringify({
         inlineSource: { documents: docs.map((d) => ({ id: d.id, structData: d.structData })) },
         reconciliationMode: 'INCREMENTAL', // upsert by id → idempotent refresh
+      }),
+    }),
+  );
+  if (!res.ok) return { started: false, error: `${res.status}: ${(await res.text()).slice(0, 200)}` };
+  const json = (await res.json()) as { name?: string };
+  return { started: true, operationName: json.name };
+}
+
+/**
+ * Import structured (tabular) documents FROM a BigQuery table — the
+ * large-table counterpart to importStructuredInline (no 100-doc/request cap;
+ * one job handles the whole table). Used by the Dataverse-snapshot path when
+ * a table's row count exceeds config.BQ_SNAPSHOT_ROW_THRESHOLD.
+ * `reconciliationMode: 'FULL'` is intentional here (not 'INCREMENTAL' like the
+ * inline path) — every run re-snapshots the source table fully via a
+ * WRITE_TRUNCATE BigQuery load first, so FULL is the semantically correct
+ * pairing. NOTE: deletion behavior (does FULL actually remove rows absent
+ * from the new snapshot) has not been live-verified — treat as unconfirmed
+ * until checked; only insert/update is proven.
+ */
+export async function importStructuredFromBigQuery(
+  project: string,
+  saToken: string,
+  dataStoreId: string,
+  bq: { datasetId: string; tableId: string; idField?: string },
+): Promise<{ started: boolean; operationName?: string; error?: string }> {
+  const branch = `${collectionBase(project)}/dataStores/${dataStoreId}/branches/default_branch`;
+  const res = await withBackoff(() =>
+    fetch(`${branch}/documents:import`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bigquerySource: { projectId: project, datasetId: bq.datasetId, tableId: bq.tableId, dataSchema: 'custom' },
+        reconciliationMode: 'FULL',
+        ...(bq.idField ? { autoGenerateIds: false, idField: bq.idField } : { autoGenerateIds: true }),
       }),
     }),
   );

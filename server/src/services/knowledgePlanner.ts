@@ -81,8 +81,35 @@ export function sanitizeDataStoreId(raw: string): string {
  */
 export function connectorCollectionId(orgLabel: string, siteUrl: string): string {
   const hash = createHash('sha1').update(siteUrl).digest('hex').slice(0, 12);
-  const base = sanitizeDataStoreId(orgLabel).slice(0, 30);
-  return sanitizeDataStoreId(`${base}-sp-${hash}`);
+  const slug = orgLabel
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 24) || 'org';
+  return `sp-${slug}-${hash}`.slice(0, 63);
+}
+
+/**
+ * Gemini's SharePoint federated connector wants a **site** `instance_uri`
+ * (tenant root, /sites/X, /teams/X, /personal/X) — not a path to a document
+ * library file. Knowledge sources often capture the full file URL
+ * (…/Shared Documents/…/daily_queries.txt); normalize before setup/lookup so
+ * we don't send Google a document path and get a cryptic setup failure.
+ */
+export function normalizeSharePointSiteUrl(raw: string): string {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return trimmed;
+  try {
+    const u = new URL(trimmed);
+    if (!/\.sharepoint\.com$/i.test(u.hostname)) return trimmed;
+    const path = decodeURIComponent(u.pathname);
+    const m = path.match(/^\/(sites|teams|personal)\/([^/]+)/i);
+    if (m) return `${u.origin}/${m[1]}/${m[2]}`;
+    // Root site (or /Shared Documents/… file under the tenant root).
+    return u.origin;
+  } catch {
+    return trimmed;
+  }
 }
 
 /** Short, stable slug from the agent id for resource naming. */

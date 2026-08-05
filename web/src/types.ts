@@ -32,6 +32,15 @@ export interface MigrationResult {
   verifySample?: string;
   error?: string;
   fidelity: FidelityNote[];
+  permissionHandoff?: {
+    agentName: string;
+    geminiAgentId?: string;
+    reason: string;
+    grantUsers: string[];
+    grantGroups: string[];
+    unresolved: { source: string; reason: string }[];
+    steps: string[];
+  };
 }
 
 export interface EnvironmentInfo {
@@ -95,6 +104,11 @@ export interface AgentAssessment {
 export interface AgentBrief {
   botid: string;
   name: string;
+  ownerId?: string;
+  ownerEmail?: string;
+  ownerDisplayName?: string;
+  accessLabel?: string;
+  accessPolicy?: string;
 }
 
 export interface MigrationScope {

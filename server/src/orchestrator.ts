@@ -7,20 +7,36 @@ import { buildOrganizationProfile } from './services/organizationProfile.js';
 import { createAgent, defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, type CreateOutcome } from './services/gemini.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
-import { migrateDataverseSnapshot, migrateSharePointDriveItem } from './services/knowledgeDataStoreExecutor.js';
-import { attachDataStoreToEngine } from './services/geminiDataStore.js';
+import {
+  migrateDataverseSnapshot,
+  migrateSharePointDriveItem,
+  migrateFileToDocumentStore,
+  type DataverseSnapshotResult,
+} from './services/knowledgeDataStoreExecutor.js';
+import { attachDataStoreToEngine, dataStoreExists, dataStoreResourcePath } from './services/geminiDataStore.js';
 import { getConnectorOperation, getConnectorDataStores } from './services/geminiConnector.js';
 import { getKnowledgeConnector, markKnowledgeConnectorStatus } from './db/repos/knowledgeConnectors.js';
 import { firstWebsiteSource, publishAgentToGallery } from './services/adkDeployer.js';
 import { getAdkDeployment, recordAdkDeployment } from './db/repos/adkDeployments.js';
+import { getMigratedSnapshot, saveMigratedSnapshot } from './db/repos/migratedSnapshot.js';
+import { snapshotFrom, detectDrift } from './services/driftDetector.js';
+import { getAdkKnowledgeStore, upsertAdkKnowledgeStore } from './db/repos/adkKnowledgeStores.js';
 import { planTopicsMigration } from './services/topicsMigration.js';
+import { normalizeSharePointSiteUrl } from './services/knowledgePlanner.js';
 import { verifyAgent } from './services/verify.js';
 import { preflightQuota, nextQuotaResetUtc } from './services/quota.js';
 import { DEFAULT_APP_USER_ID, newId, type Session } from './sessionStore.js';
 import { appendLog, finishRun, saveResult, startRun } from './db/repos/migrations.js';
 import { cacheAgentIR } from './db/repos/agentIR.js';
 import { listStaged, markStaged, stageAgent } from './db/repos/staged.js';
-import type { AgentIR, GeminiDestination, MigrationResult, ProgressEvent, ResolvedPlan } from './types.js';
+import { getIdentityMap } from './db/repos/identityMap.js';
+import {
+  buildPermissionHandoff,
+  isOrgWideChat,
+  permissionFidelityNotes,
+  resolvePermissions,
+} from './services/identityMap.js';
+import type { AgentIR, FidelityNote, GeminiDestination, IdentityMapOverrides, KnowledgeSourceIR, MigrationResult, ProgressEvent, ResolvedPlan } from './types.js';
 
 /** Strip extension + OneDrive/Windows dedup suffixes (" -1)", " (1)") and lowercase, for name comparison only. */
 function normalizeForNameCompare(name: string): string {
@@ -46,6 +62,186 @@ function isPlausibleFilenameMatch(sourceName: string, candidateName: string): bo
   const b = normalizeForNameCompare(candidateName);
   if (!a || !b) return false;
   return a === b || a.includes(b) || b.includes(a);
+}
+
+interface DataverseSnapshotResolution {
+  src: KnowledgeSourceIR;
+  snap: DataverseSnapshotResult;
+}
+
+interface SharePointConnectorResolution {
+  src: KnowledgeSourceIR;
+  siteUrl: string;
+  dataStoreIds: string[];
+}
+
+/**
+ * Resolve every dataverse-snapshot knowledge source into a built, importable
+ * Discovery Engine data store — BEFORE the low-code/ADK decision, so the SAME
+ * resolved store can be attached engine-wide (low-code) or baked into
+ * VertexAiSearchTool (ADK) instead of only ever reaching the low-code path.
+ * Naming key is the stable Copilot botid (`sourceId`), not the destination
+ * agent id — the agent doesn't exist yet at this point.
+ */
+async function resolveDataverseSnapshotSources(
+  dest: GeminiDestination,
+  saToken: string,
+  dvToken: string,
+  envUrl: string,
+  sourceId: string,
+  sources: KnowledgeSourceIR[],
+): Promise<DataverseSnapshotResolution[]> {
+  const out: DataverseSnapshotResolution[] = [];
+  for (const src of sources) {
+    const snap = await migrateDataverseSnapshot(dest, saToken, dvToken, envUrl, sourceId, src);
+    out.push({ src, snap });
+  }
+  return out;
+}
+
+/**
+ * Resolve every sharepoint-connector knowledge source into ready-to-use
+ * Discovery Engine data store ids — BEFORE the low-code/ADK decision, same
+ * reasoning as resolveDataverseSnapshotSources above. Every "not ready yet"
+ * outcome (no URL captured / not configured / still provisioning / failed) is
+ * path-independent — nothing was built either way — so those FidelityNotes
+ * are returned immediately; only resolved entries need a path-specific attach
+ * step afterward (engine-wide attach for low-code, VertexAiSearchTool for ADK).
+ */
+async function resolveSharePointConnectorSources(
+  appUserId: string,
+  dest: GeminiDestination,
+  saToken: string,
+  sources: KnowledgeSourceIR[],
+): Promise<{
+  resolved: SharePointConnectorResolution[];
+  notes: FidelityNote[];
+  logs: { level: 'info' | 'ok' | 'warn' | 'fail'; text: string }[];
+}> {
+  const resolved: SharePointConnectorResolution[] = [];
+  const notes: FidelityNote[] = [];
+  const logs: { level: 'info' | 'ok' | 'warn' | 'fail'; text: string }[] = [];
+
+  for (const src of sources) {
+    const siteUrlRaw = (src.reference ?? src.references?.[0] ?? '').trim();
+    const siteUrl = siteUrlRaw ? normalizeSharePointSiteUrl(siteUrlRaw) : '';
+    if (!siteUrl) {
+      notes.push({
+        component: `knowledge:${src.name}`,
+        status: 'needs-review',
+        detail: 'SharePoint source has no site URL captured — cannot look up or create a connector for it.',
+      });
+      logs.push({ level: 'warn', text: `    "${src.name}": no SharePoint site URL captured — needs manual review.` });
+      continue;
+    }
+    try {
+      // Prefer normalized site key; also try the raw file URL for older connector rows.
+      const conn =
+        (await getKnowledgeConnector(appUserId, 'sharepoint', siteUrl)) ??
+        (siteUrlRaw !== siteUrl ? await getKnowledgeConnector(appUserId, 'sharepoint', siteUrlRaw) : null);
+      if (!conn) {
+        notes.push({
+          component: `knowledge:${src.name}`,
+          status: 'needs-review',
+          detail: `No SharePoint connector configured for ${siteUrl} yet — set one up via POST /api/destination/sharepoint-connector, then re-run this migration.`,
+        });
+        logs.push({ level: 'warn', text: `    "${src.name}": no connector configured yet for ${siteUrl} (POST /api/destination/sharepoint-connector).` });
+        continue;
+      }
+      if (conn.status === 'failed') {
+        notes.push({
+          component: `knowledge:${src.name}`,
+          status: 'lost',
+          detail: `SharePoint connector setup for ${siteUrl} failed: ${conn.error ?? 'unknown error'}.`,
+        });
+        logs.push({ level: 'warn', text: `    "${src.name}": connector for ${siteUrl} failed — ${conn.error ?? 'unknown error'}.` });
+        continue;
+      }
+
+      let dataStoreIds = conn.dataStoreIds;
+      if (conn.status === 'pending') {
+        if (!conn.operationName) {
+          notes.push({
+            component: `knowledge:${src.name}`,
+            status: 'needs-review',
+            detail: `SharePoint connector for ${siteUrl} has no operation to poll (collection "${conn.collectionId}") — re-run once setup completes.`,
+          });
+          logs.push({ level: 'warn', text: `    "${src.name}": connector for ${siteUrl} has no operation to poll.` });
+          continue;
+        }
+        const op = await getConnectorOperation(saToken, conn.operationName);
+        // Resolved outcome, driven by the operation check UNLESS it fails, in
+        // which case the realtimeState fallback below resolves these instead.
+        let opDone = op.done;
+        let opError = op.error;
+
+        if (op.checkFailed) {
+          const discovered = await getConnectorDataStores(dest.project, 'global', saToken, conn.collectionId);
+          if (discovered.dataStoreIds.length || discovered.realtimeState === 'ACTIVE') {
+            opDone = true;
+            opError = undefined;
+            if (discovered.dataStoreIds.length) dataStoreIds = discovered.dataStoreIds;
+          } else if (discovered.realtimeState === 'FAILED' || discovered.realtimeState === 'INITIALIZATION_FAILED') {
+            opDone = true;
+            opError = `connector state: ${discovered.realtimeState}`;
+          } else {
+            notes.push({
+              component: `knowledge:${src.name}`,
+              status: 'needs-review',
+              detail: `Could not confirm SharePoint connector status for ${siteUrl}: ${op.error ?? 'unknown error'} — re-run to check again.`,
+            });
+            logs.push({ level: 'warn', text: `    "${src.name}": connector status check failed for ${siteUrl} — ${op.error ?? 'unknown error'}.` });
+            continue;
+          }
+        }
+        if (!opDone) {
+          notes.push({
+            component: `knowledge:${src.name}`,
+            status: 'needs-review',
+            detail: `SharePoint connector for ${siteUrl} is still provisioning (collection "${conn.collectionId}") — re-run once it completes.`,
+          });
+          logs.push({ level: 'warn', text: `    "${src.name}": connector for ${siteUrl} still provisioning.` });
+          continue;
+        }
+        const status = opError ? 'failed' : 'done';
+        if (status === 'done' && !dataStoreIds?.length) {
+          const discovered = await getConnectorDataStores(dest.project, 'global', saToken, conn.collectionId);
+          dataStoreIds = discovered.dataStoreIds;
+        }
+        await markKnowledgeConnectorStatus(appUserId, 'sharepoint', siteUrl, { status, error: opError, dataStoreIds });
+        if (status === 'failed') {
+          notes.push({
+            component: `knowledge:${src.name}`,
+            status: 'lost',
+            detail: `SharePoint connector setup for ${siteUrl} failed: ${opError ?? 'unknown error'}.`,
+          });
+          logs.push({ level: 'warn', text: `    "${src.name}": connector for ${siteUrl} failed — ${opError ?? 'unknown error'}.` });
+          continue;
+        }
+      }
+
+      if (!dataStoreIds || !dataStoreIds.length) {
+        notes.push({
+          component: `knowledge:${src.name}`,
+          status: 'needs-review',
+          detail: `SharePoint connector for ${siteUrl} finished provisioning but no data store was discoverable yet — verify in Cloud Console.`,
+        });
+        logs.push({ level: 'warn', text: `    "${src.name}": connector for ${siteUrl} done but no data store discovered.` });
+        continue;
+      }
+
+      resolved.push({ src, siteUrl, dataStoreIds });
+    } catch (e) {
+      notes.push({
+        component: `knowledge:${src.name}`,
+        status: 'needs-review',
+        detail: `Error while processing the SharePoint connector for ${siteUrl}: ${(e as Error).message}`,
+      });
+      logs.push({ level: 'warn', text: `    "${src.name}": SharePoint connector error — ${(e as Error).message}` });
+    }
+  }
+
+  return { resolved, notes, logs };
 }
 
 /**
@@ -346,6 +542,16 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   if (orgProfile.ownedDomains.length) {
     emitLog('info', `Org profile: owned domains [${orgProfile.ownedDomains.join(', ')}] via ${orgProfile.domainSources.join(', ') || 'none'}`);
   }
+  const identityOverrides: IdentityMapOverrides = await getIdentityMap(
+    appUserId,
+    session.tenantId ?? '',
+  );
+  const mappedUserCount = Object.keys(identityOverrides.users).length;
+  const mappedGroupCount = Object.keys(identityOverrides.groups).length;
+  if (mappedUserCount || mappedGroupCount) {
+    emitLog('info', `Identity map: ${mappedUserCount} user override(s), ${mappedGroupCount} group override(s)`);
+  }
+  const allowOvershare = !!plan.destination.allowOvershare;
 
   // ── PHASE 1 — EXTRACT → stage in DB (parallel, batched) ───────────────────
   emitLog('info', `── Phase 1: extract → stage in DB (${total} agents) ──`);
@@ -355,8 +561,9 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       const token = await tokenFor(item.envUrl);
       const ir = await extractAgent(item.envUrl, token, item.bot);
       // Compile topics ONCE (Topic → Capability → Connected-Agent plan) and feed
-      // it to the mapper so its procedures are folded into the instruction, and
-      // stage a flat, queryable copy of the capabilities.
+      // it to the mapper for reporting (surfaced as a needs-review FidelityNote,
+      // no longer folded into the instruction — see mapper.ts), and stage a
+      // flat, queryable copy of the capabilities.
       const topicsPlan = planTopicsMigration(ir);
       const mapped = await mapAgent(ir, { topicsPlan });
       const capabilities = [...topicsPlan.systemCapabilities, ...topicsPlan.connectedAgents.flatMap((a) => a.capabilities)];
@@ -529,60 +736,303 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       if (!row.mapped) throw new Error('staged row missing mapped agent');
       const dest = targetFor(row.envUrl); // route to THIS environment's engine
 
-      // ADK/Reasoning-Engine fallback: on some projects a low-code agent
-      // comes back state: PRIVATE and NEVER moves to ENABLED — gallery-
-      // invisible forever, no API/console/IAM fix (see adkDeployer.ts).
-      // Low-code stays the cheap default for every agent; ADK only fires
-      // when low-code create fails outright, or succeeds but can't reach
-      // ENABLED. This is a fallback, not a default double-create.
-      const lowCode = await createAgent(dest, saToken, row.mapped);
-      const needsAdkFallback =
-        !lowCode.alreadyExists && (!lowCode.created || !lowCode.agentId || lowCode.state !== 'ENABLED');
+      // Resolve every knowledge source we already know how to ground into a
+      // Discovery Engine data store BEFORE deciding low-code vs ADK, so
+      // whichever path wins can actually use them — this is the fix for the
+      // class of bug where an ADK-fallback agent reports a knowledge source as
+      // "attached" but can never retrieve from it (attachDataStoreToEngine
+      // only feeds the low-code path's engine-wide search; ADK's
+      // VertexAiSearchTool needs the resource path baked in at deploy time).
+      // Low-code and ADK need the SAME resolved stores; only how each attaches
+      // them differs, decided further down once usedAdk is known.
+      const ks = row.mapped.ir.knowledgeSources;
+      const dvSnapshotSources = ks.filter((k) => k.kind !== 'FileUpload' && k.classification?.strategy === 'dataverse-snapshot');
+      const spConnectorSources = ks.filter(
+        (k) =>
+          k.kind !== 'FileUpload' &&
+          k.classification?.strategy !== 'dataverse-snapshot' &&
+          k.classification?.geminiTarget === 'sharepoint-connector',
+      );
+
+      let dvResolved: DataverseSnapshotResolution[] = [];
+      if (dvSnapshotSources.length) {
+        const dvToken = await tokenFor(row.envUrl);
+        dvResolved = await resolveDataverseSnapshotSources(dest, saToken, dvToken, row.envUrl, row.sourceId, dvSnapshotSources);
+        for (const { src, snap } of dvResolved) {
+          result.knowledgeTableRowsIndexed = (result.knowledgeTableRowsIndexed ?? 0) + snap.succeeded;
+          result.knowledgeTableRowsFailed = (result.knowledgeTableRowsFailed ?? 0) + snap.failed;
+          const via = snap.viaBigQuery ? ' (via BigQuery)' : '';
+          emitLog(
+            snap.error || snap.failed ? 'warn' : 'ok',
+            `    Dataverse snapshot "${src.name}"${via}: ${snap.succeeded}/${snap.attempted} row(s) indexed` +
+              (snap.failed ? `, ${snap.failed} failed` : '') +
+              (snap.error ? ` — ${snap.error}` : ''),
+          );
+          // Row counts/logs are path-independent — always reported once,
+          // here. The "grounded via X" headline note is path-specific and
+          // gets pushed later, once low-code vs ADK is known — except a total
+          // resolution failure, which is equally true on either path.
+          if (!snap.resourcePath) {
+            result.fidelity.push({
+              component: `knowledge:${src.name}`,
+              status: 'needs-review',
+              detail:
+                `Dataverse table snapshot could not run: ${snap.error}` +
+                (snap.viaBigQuery
+                  ? ' — this table is large enough to require the BigQuery path; ask the Google admin to enable the BigQuery API and grant the service account bigquery.dataEditor + bigquery.jobUser on this project, then re-run.'
+                  : ''),
+            });
+          } else {
+            for (const note of snap.schemaNotes ?? []) {
+              result.fidelity.push({ component: `knowledge:${src.name}`, status: 'partial', detail: note });
+            }
+          }
+        }
+      }
+
+      const spResult = spConnectorSources.length
+        ? await resolveSharePointConnectorSources(appUserId, dest, saToken, spConnectorSources)
+        : { resolved: [] as SharePointConnectorResolution[], notes: [] as FidelityNote[], logs: [] as { level: 'info' | 'ok' | 'warn' | 'fail'; text: string }[] };
+      for (const note of spResult.notes) result.fidelity.push(note);
+      for (const l of spResult.logs) emitLog(l.level, l.text);
+      const spResolved = spResult.resolved;
+
+      // Same resolved resource paths feed either path: attachDataStoreToEngine
+      // (low-code) or ADK's groundingDataStores (see the create ternary below).
+      const connectorGroundingDataStores: string[] = [
+        ...dvResolved.filter((r) => r.snap.resourcePath).map((r) => r.snap.resourcePath!),
+        ...spResolved.flatMap((r) => r.dataStoreIds.map((id) => dataStoreResourcePath(dest.project, id))),
+      ];
+
+      // ADK-first: try the ADK/Reasoning-Engine path BEFORE low-code, not
+      // after it. Historically low-code was tried first and ADK only kicked
+      // in once it came back stuck PRIVATE — but NO Gemini Enterprise edition
+      // auto-lists an API-created low-code agent (see .claude/memory/
+      // gemini-editions-agent-visibility.md — Business's "self-serve manual
+      // publish button" is a human console click this automated pipeline
+      // never performs). So the low-code attempt, tried first, NEVER reached
+      // ENABLED and ADK fallback fired anyway, every single time — confirmed
+      // empirically 2026-08-05 (every low-code-created agent in this
+      // project's gallery shows Private, zero exceptions across many runs).
+      // That means the low-code attempt was ALWAYS a wasted agent-creation
+      // quota unit (this project's real quota is tiny and undocumented —
+      // ~7/day empirically, see docs/SUPPORT-TICKET-AGENT-QUOTA.md) plus a
+      // wasted follow-up cleanup-delete call once ADK replaced it. Low-code
+      // is now attempted ONLY as a last resort if ADK itself fails, so a
+      // customer still gets SOMETHING (a Private agent) rather than a hard
+      // failure — same safety net as before, inverted order, and no orphaned
+      // low-code agent to clean up in the (now-typical) case where ADK
+      // succeeds outright, since nothing was created ahead of it.
+      //
       // Tracks whether the FINAL create.agentId is actually the ADK/Reasoning-
-      // Engine agent (vs. the stuck-PRIVATE low-code one kept as a fallback-
-      // failed consolation) — downstream publish/share/knowledge-file logic
-      // branches on this, so it must reflect the real outcome, not just
-      // "did we attempt ADK".
+      // Engine agent (vs. a last-resort low-code consolation) — downstream
+      // publish/share/knowledge-file logic branches on this, so it must
+      // reflect the real outcome, not just "did we attempt ADK".
       let usedAdk = false;
-      const create: CreateOutcome = !needsAdkFallback
-        ? lowCode
-        : await (async () => {
+      const create: CreateOutcome = await (async () => {
             // Idempotency: Reasoning Engine `create` has no name-based dedup of
             // its own (unlike low-code's agents.create) — check our own record
             // FIRST so a re-run reuses the existing deployment instead of
             // minting a second, billable Reasoning Engine.
             const existing = await getAdkDeployment(appUserId, row.envUrl, row.sourceId, dest);
             if (existing) {
-              usedAdk = true;
-              return { created: true, agentId: existing.agentId, alreadyExists: true };
+              const priorSnapshot = await getMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest);
+              if (!priorSnapshot) {
+                // Migrated before drift-tracking existed — record a baseline now
+                // rather than guess whether it changed; drift detection starts
+                // for real from the NEXT re-run.
+                await saveMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest, snapshotFrom(row.mapped!.ir));
+                result.fidelity.push({
+                  component: 'resync',
+                  status: 'needs-review',
+                  detail: 'No prior sync snapshot existed for this agent (migrated before drift-tracking was added) — baseline recorded now; drift will be detected starting next re-run.',
+                });
+                usedAdk = true;
+                return { created: true, agentId: existing.agentId, alreadyExists: true };
+              }
+              const drift = detectDrift(priorSnapshot, row.mapped!.ir);
+              if (!drift.changed) {
+                usedAdk = true;
+                return { created: true, agentId: existing.agentId, alreadyExists: true };
+              }
+              // Drift detected — do NOT return here. Fall through to the same
+              // deploy flow a fresh agent uses, so the ADK agent actually picks
+              // up the change (redeploy is the only way; ADK create has no
+              // in-place update — see adkDeployments.ts).
+              emitLog('warn', `  ${row.name}: source changed since last migration (${drift.reasons.join(', ')}) — redeploying via ADK.`);
+              result.fidelity.push({
+                component: 'resync',
+                status: 'mapped',
+                detail: `Source changed since last migration (${drift.reasons.join(', ')}) — redeployed via ADK to pick up the change. The previous Reasoning Engine is NOT automatically deleted (no delete capability exists for it yet) — it may still exist and bill separately; delete manually if so.`,
+              });
             }
             const websiteSource = firstWebsiteSource(row.mapped!.ir);
-            const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, { websiteSource });
+
+            // ADK agents have no agentFiles concept at all (unlike low-code —
+            // see attachKnowledgeFiles below), so uploaded files must be
+            // grounded via a Discovery Engine "document" data store +
+            // VertexAiSearchTool INSTEAD, resolved before deploy since the
+            // tool must be baked into the agent at create time, not patched
+            // in afterward. Idempotent via adkKnowledgeStores: a re-run reuses
+            // the same data store instead of re-uploading to GCS every time.
+            const adkFileSources = row.mapped!.ir.knowledgeSources.filter((k) => k.kind === 'FileUpload' && k.file?.name);
+            const fileGroundingDataStores: string[] = [];
+            const groundedFileNames: string[] = [];
+            if (adkFileSources.length) {
+              const dvToken = await tokenFor(row.envUrl);
+              for (const k of adkFileSources) {
+                const name = k.file!.name!;
+                const cached = await getAdkKnowledgeStore(appUserId, row.sourceId, name);
+                if (cached?.status === 'done') {
+                  // Don't trust the cache blindly — the data store may have been
+                  // deleted since (manual cleanup, console testing). A stale
+                  // resourcePath baked into a new ADK deploy produces an agent
+                  // that reports `mapped` here but can never retrieve anything.
+                  if (await dataStoreExists(dest.project, saToken, cached.dataStoreId)) {
+                    fileGroundingDataStores.push(cached.resourcePath);
+                    groundedFileNames.push(name);
+                    continue;
+                  }
+                  logger.warn(
+                    `ADK knowledge store cache stale for "${name}" (dataStoreId=${cached.dataStoreId}) — ` +
+                      'data store no longer exists in Discovery Engine; recreating.',
+                  );
+                }
+                const got = await fetchFileAttachmentBytes(row.envUrl, dvToken, k.id);
+                if (!got) {
+                  result.fidelity.push({
+                    component: `knowledge:${name}`,
+                    status: 'lost',
+                    detail: 'Could not download the file from Dataverse for ADK grounding (see server logs for the HTTP status).',
+                  });
+                  continue;
+                }
+                const ground = await migrateFileToDocumentStore(dest.project, saToken, row.sourceId, {
+                  name,
+                  bytes: got.bytes,
+                  mimeType: mimeTypeForFile(name, got.contentType),
+                });
+                if (ground.resourcePath) {
+                  fileGroundingDataStores.push(ground.resourcePath);
+                  groundedFileNames.push(name);
+                  await upsertAdkKnowledgeStore({
+                    appUserId,
+                    sourceId: row.sourceId,
+                    fileName: name,
+                    dataStoreId: ground.dataStoreId ?? '',
+                    resourcePath: ground.resourcePath,
+                    status: 'done',
+                  });
+                } else {
+                  result.fidelity.push({
+                    component: `knowledge:${name}`,
+                    status: 'lost',
+                    detail: `ADK file grounding failed: ${ground.error ?? 'unknown error'}.`,
+                  });
+                }
+              }
+            }
+
+            // Same resolved SharePoint/Dataverse stores the low-code path
+            // would attach engine-wide — here they ride the same
+            // VertexAiSearchTool as files/website, so this ADK agent isn't
+            // missing knowledge the low-code path would have had.
+            const groundingDataStores = [...fileGroundingDataStores, ...connectorGroundingDataStores];
+            const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, { websiteSource, groundingDataStores });
+
+            // Everything below claims specific knowledge sources are grounded
+            // on "the ADK agent" — that's only true if ADK is actually the
+            // FINAL agent. Gate ALL of these notes on adk.ok, not just the
+            // usedAdk/deployment bookkeeping — otherwise, when ADK ultimately
+            // fails and the code falls back to the stuck-PRIVATE low-code
+            // agent below, the report keeps claiming ADK grounding that
+            // never actually reached the agent the customer is looking at
+            // (live-confirmed 2026-08-05: exactly this happened — both an
+            // ADK "mapped" note and a low-code "engine-wide" note showed up
+            // for the same source, because the ADK notes were pushed before
+            // this check existed).
             if (adk.ok && adk.agentId && adk.reasoningEngine) {
+              for (const name of groundedFileNames) {
+                result.fidelity.push({
+                  component: `knowledge:${name}`,
+                  status: adk.groundingIamGranted === false ? 'partial' : 'mapped',
+                  detail:
+                    adk.groundingIamGranted === false
+                      ? 'Uploaded to a Discovery Engine document data store and wired as a VertexAiSearchTool, but Discovery Engine access for the Reasoning Engine service agent could not be confirmed/granted — grounding may 403 until an admin grants it manually (see docs/ADK-FILE-GROUNDING-PERMISSIONS.md).'
+                      : 'Uploaded file grounded on the ADK agent via a Discovery Engine document data store + VertexAiSearchTool.',
+                });
+              }
+              for (const { src, snap } of dvResolved) {
+                if (!snap.resourcePath) continue; // resolution failure already reported above
+                result.fidelity.push({
+                  component: `knowledge:${src.name}`,
+                  status: adk.groundingIamGranted === false ? 'partial' : snap.failed ? 'needs-review' : 'mapped',
+                  detail:
+                    `Dataverse table "${src.name}" snapshotted into a per-agent Discovery Engine data store` +
+                    (snap.viaBigQuery ? ` via BigQuery (${snap.attempted} row(s), large-table path)` : ` inline (${snap.attempted} row(s))`) +
+                    ` and grounded via ADK's VertexAiSearchTool — per-agent, not engine-wide (unlike the low-code path, other agents sharing this engine do NOT get access). Point-in-time snapshot, not a live connection — refresh by re-running the migration.` +
+                    (adk.groundingIamGranted === false
+                      ? ' Discovery Engine access for the Reasoning Engine service agent could not be confirmed/granted — grounding may 403 until an admin grants it manually (see docs/ADK-FILE-GROUNDING-PERMISSIONS.md).'
+                      : ''),
+                });
+              }
+              for (const { src, siteUrl } of spResolved) {
+                result.fidelity.push({
+                  component: `knowledge:${src.name}`,
+                  status: adk.groundingIamGranted === false ? 'partial' : 'mapped',
+                  detail:
+                    `SharePoint site ${siteUrl} grounded via ADK's VertexAiSearchTool — per-agent, not engine-wide (unlike the low-code path, other agents sharing this engine do NOT get access to this site).` +
+                    (adk.groundingIamGranted === false
+                      ? ' Discovery Engine access for the Reasoning Engine service agent could not be confirmed/granted — grounding may 403 until an admin grants it manually (see docs/ADK-FILE-GROUNDING-PERMISSIONS.md).'
+                      : ''),
+                });
+                emitLog('ok', `    "${src.name}": SharePoint connector for ${siteUrl} grounded via ADK VertexAiSearchTool (per-agent).`);
+              }
+              if (adk.googleSearchDropped) {
+                result.fidelity.push({
+                  component: 'capability:web-browsing',
+                  status: 'lost',
+                  detail:
+                    "Source agent had web browsing enabled, but ADK (pre-1.16) only allows VertexAiSearchTool alone on an agent once it's grounded on any knowledge source — googleSearch was dropped for this agent. If both web browsing and this knowledge are required together, this agent needs to stay on the low-code path instead.",
+                });
+                emitLog('warn', `  ${row.name}: web browsing dropped — ADK can't combine VertexAiSearchTool grounding with googleSearch on the same agent.`);
+              }
               await recordAdkDeployment(appUserId, row.envUrl, row.sourceId, dest, {
                 reasoningEngine: adk.reasoningEngine,
                 agentId: adk.agentId,
               });
-              emitLog(
-                'warn',
-                `  ${row.name}: low-code ${lowCode.created ? `stayed ${lowCode.state ?? 'PRIVATE'}` : 'create failed'} — fell back to ADK (now ${adk.state})`,
-              );
+              await saveMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest, snapshotFrom(row.mapped!.ir));
+              emitLog('ok', `  ${row.name}: deployed via ADK (${adk.state}).`);
               usedAdk = true;
               return { created: true, agentId: adk.agentId };
             }
-            // Both paths came up short. Prefer the low-code agent if it at
-            // least exists (PRIVATE, not gallery-visible, but not nothing) so
-            // it isn't silently orphaned from the result; only treat this as
-            // a hard create failure if low-code failed too. Either way this
-            // agent is NOT the ADK one, so usedAdk stays false.
+            // ADK failed — fall back to a low-code create as a last resort so
+            // the customer gets SOMETHING rather than a hard failure. This is
+            // now the ONLY place low-code creation is attempted, so it costs
+            // an agent-creation quota unit only when actually needed, never
+            // speculatively. NONE of the file/Dataverse/SharePoint grounding
+            // attempted above for the ADK agent applies to this low-code
+            // agent — say so explicitly instead of leaving it unexplained
+            // (the low-code attach loop below still runs its OWN, real attach
+            // for the same sources — this note is just about the ADK attempt).
+            result.fidelity.push({
+              component: 'adk-fallback',
+              status: 'needs-review',
+              detail: `ADK deployment failed (${adk.error ?? 'unknown error'}) — falling back to a low-code agent, which will stay PRIVATE (not gallery-visible) with no automated way to change that. Any "grounded via ADK" outcome above does not apply; knowledge sources are attached via the low-code (engine-wide) path below instead.`,
+            });
+            emitLog('warn', `  ${row.name}: ADK failed (${adk.error ?? 'unknown error'}) — falling back to low-code create.`);
+            const lowCode = await createAgent(dest, saToken, row.mapped!);
+            if (lowCode.alreadyExists) {
+              return { created: false, alreadyExists: true, error: 'already exists' };
+            }
             return lowCode.created && lowCode.agentId
               ? {
                   created: true,
                   agentId: lowCode.agentId,
                   state: lowCode.state,
-                  error: `stayed ${lowCode.state ?? 'PRIVATE'}; ADK fallback failed: ${adk.error}`,
+                  error: `ADK failed (${adk.error}); created via low-code instead (state: ${lowCode.state ?? 'PRIVATE'}).`,
                 }
-              : { created: false, error: lowCode.error ?? `create failed; ADK fallback also failed: ${adk.error}` };
+              : { created: false, error: `ADK failed (${adk.error}); low-code fallback also failed: ${lowCode.error}` };
           })();
       // Only meaningful once usedAdk is settled above — a website source is
       // only actually grounded when the final agent really is the ADK one.
@@ -606,25 +1056,17 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         result.geminiAgentId = create.agentId;
 
         // Migrate knowledge sources. FILES → agentFiles (wired, before publish
-        // so the published revision includes them). Non-file sources (websites,
-        // Dataverse) use the data-store path — not yet wired; reported honestly.
-        const ks = row.mapped.ir.knowledgeSources;
+        // so the published revision includes them). Dataverse-snapshot and
+        // SharePoint-connector sources were already RESOLVED earlier (before
+        // the low-code/ADK decision, see dvResolved/spResolved above) —
+        // only the ADK path's grounding notes were pushed already (inside
+        // the ADK closure); the low-code attach step below still needs to run.
         const fileSources = ks.filter((k) => k.kind === 'FileUpload');
         if (usedAdk) {
-          // Confirmed 2026-07-31 (live, on a real re-deployed agent): ADK/Agent
-          // Engine agents don't carry agentFiles at all — knowledge must be baked
-          // into the deployed code (like the website tool below). Attaching files
-          // here would silently no-op, so report it honestly instead of trying.
-          for (const f of fileSources) {
-            result.fidelity.push({
-              component: `knowledge:${f.file?.name ?? f.name}`,
-              status: 'lost',
-              detail: 'Uploaded file not carried into the ADK (Agent Engine) deployment — this agent path only supports knowledge baked into its own code (e.g. VertexAiSearchTool). Re-attach manually if needed.',
-            });
-          }
-          if (fileSources.length) {
-            emitLog('warn', `    ${fileSources.length} uploaded file(s) NOT migrated — ADK deployment path doesn't support agentFiles yet.`);
-          }
+          // Already handled BEFORE deploy, inside the ADK-fallback closure
+          // above — ADK agents have no agentFiles concept, so uploaded files
+          // are grounded via migrateFileToDocumentStore + VertexAiSearchTool
+          // instead, and their fidelity notes were already pushed there.
         } else if (fileSources.length) {
           try {
             const dvToken = await tokenFor(row.envUrl);
@@ -655,207 +1097,79 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
           });
           emitLog('ok', `    public website "${adkWebsiteSource.name}": grounded via ADK VertexAiSearchTool.`);
         }
-        // Dataverse reference tables → structured data store (wired below).
-        // Everything else non-file (websites, connectors, sensitive tables,
-        // manual-review) has no automatic path yet — reported honestly.
-        const nonFile = ks.filter((k) => k.kind !== 'FileUpload' && k !== adkWebsiteSource);
-        const dvSnapshots = nonFile.filter((k) => k.classification?.strategy === 'dataverse-snapshot');
-        const stillUnwired = nonFile.filter((k) => k.classification?.strategy !== 'dataverse-snapshot');
-
-        for (const src of dvSnapshots) {
-          try {
-            const dvToken = await tokenFor(row.envUrl);
-            const snap = await migrateDataverseSnapshot(dest, saToken, dvToken, row.envUrl, create.agentId, src);
-            result.knowledgeTableRowsIndexed = (result.knowledgeTableRowsIndexed ?? 0) + snap.succeeded;
-            result.knowledgeTableRowsFailed = (result.knowledgeTableRowsFailed ?? 0) + snap.failed;
-            emitLog(
-              snap.error || snap.failed ? 'warn' : 'ok',
-              `    Dataverse snapshot "${src.name}": ${snap.succeeded}/${snap.attempted} row(s) indexed` +
+        // Dataverse-snapshot / SharePoint-connector: resolved earlier (see
+        // dvResolved/spResolved above), so this is attach-only here — the
+        // low-code counterpart to the ADK grounding notes already pushed
+        // inside the ADK closure when usedAdk is true.
+        if (!usedAdk) {
+          for (const { src, snap } of dvResolved) {
+            if (!snap.resourcePath) continue; // resolution failure already reported earlier
+            await attachDataStoreToEngine(dest, saToken, snap.dataStoreId!);
+            result.fidelity.push({
+              component: `knowledge:${src.name}`,
+              status: snap.failed ? 'needs-review' : 'mapped',
+              detail:
+                `Dataverse table "${src.name}" snapshotted into a Gemini structured data store` +
+                (snap.viaBigQuery ? ` via BigQuery (${snap.attempted} row(s), large-table path)` : ` inline (${snap.attempted} row(s))`) +
+                ` — ${snap.succeeded}/${snap.attempted} row(s) indexed` +
                 (snap.failed ? `, ${snap.failed} failed` : '') +
-                (snap.error ? ` — ${snap.error}` : ''),
-            );
-          } catch (e) {
-            emitLog('warn', `    Dataverse snapshot "${src.name}" error: ${(e as Error).message}`);
+                '. Point-in-time snapshot, not a live connection — refresh by re-running the migration.',
+            });
+          }
+
+          // SharePoint native-connector reconnect: dataStoreIds were already
+          // discovered (see resolveSharePointConnectorSources above) — attach
+          // them to this agent's engine, the same mechanism the Dataverse-
+          // snapshot path uses. Every outcome gets an honest FidelityNote.
+          for (const { src, siteUrl, dataStoreIds } of spResolved) {
+            let attached = 0;
+            let failedAttach = 0;
+            for (const dsId of dataStoreIds) {
+              const attach = await attachDataStoreToEngine(dest, saToken, dsId);
+              if (attach.ok) attached++;
+              else failedAttach++;
+            }
+            if (attached && !failedAttach) {
+              // 'partial', not 'mapped': Gemini Enterprise data-store attach
+              // is ENGINE-WIDE (confirmed against Google's own schema —
+              // Engine.dataStoreIds — and the docs' "an app must be
+              // connected to a data store"), unlike agentFiles which are
+              // genuinely per-agent. Every other agent sharing this engine
+              // gains access to this site too, even if it never referenced
+              // it in Copilot — a real fidelity gap from the source's
+              // per-agent scoping, not a clean 1:1 migration. Surface it so
+              // it lands in the report's "Needs human review" section
+              // instead of reading as unqualified success.
+              result.fidelity.push({
+                component: `knowledge:${src.name}`,
+                status: 'partial',
+                detail: `SharePoint site ${siteUrl} reconnected via Gemini's native connector and attached to the agent's engine. Caveat: this attachment is engine-wide in Gemini Enterprise — every other agent sharing the same engine can also search this site, even if it never referenced it in Copilot Studio. Review whether agents needing separate access should be split across engines.`,
+              });
+              emitLog('ok', `    "${src.name}": SharePoint connector for ${siteUrl} attached (${attached} data store(s)) — engine-wide visibility, see fidelity report.`);
+            } else if (attached) {
+              result.fidelity.push({
+                component: `knowledge:${src.name}`,
+                status: 'partial',
+                detail: `SharePoint site ${siteUrl}: ${attached}/${dataStoreIds.length} data store(s) attached, ${failedAttach} failed.`,
+              });
+              emitLog('warn', `    "${src.name}": SharePoint connector for ${siteUrl} partially attached (${attached}/${dataStoreIds.length}).`);
+            } else {
+              result.fidelity.push({
+                component: `knowledge:${src.name}`,
+                status: 'lost',
+                detail: `SharePoint site ${siteUrl}: connector data store(s) exist but attaching to the engine failed.`,
+              });
+              emitLog('warn', `    "${src.name}": SharePoint connector for ${siteUrl} exists but attach-to-engine failed.`);
+            }
           }
         }
-        if (stillUnwired.length) {
-          const spSources = stillUnwired.filter((k) => k.classification?.geminiTarget === 'sharepoint-connector');
-          const other = stillUnwired.filter((k) => k.classification?.geminiTarget !== 'sharepoint-connector');
 
-          // SharePoint native-connector reconnect: look up the per-site connector
-          // (knowledgeConnectors.ts — one row per site, not a session singleton),
-          // poll it to completion if still provisioning, discover the data
-          // store(s) it created, and attach them to this agent's engine via the
-          // same attachDataStoreToEngine the Dataverse-snapshot path already
-          // uses. Every outcome gets an honest FidelityNote — never log-only.
-          for (const src of spSources) {
-            const siteUrl = (src.reference ?? src.references?.[0] ?? '').trim();
-            if (!siteUrl) {
-              result.fidelity.push({
-                component: `knowledge:${src.name}`,
-                status: 'needs-review',
-                detail: 'SharePoint source has no site URL captured — cannot look up or create a connector for it.',
-              });
-              emitLog('warn', `    "${src.name}": no SharePoint site URL captured — needs manual review.`);
-              continue;
-            }
-            try {
-              const conn = await getKnowledgeConnector(appUserId, 'sharepoint', siteUrl);
-              if (!conn) {
-                result.fidelity.push({
-                  component: `knowledge:${src.name}`,
-                  status: 'needs-review',
-                  detail: `No SharePoint connector configured for ${siteUrl} yet — set one up via POST /api/destination/sharepoint-connector, then re-run this migration.`,
-                });
-                emitLog('warn', `    "${src.name}": no connector configured yet for ${siteUrl} (POST /api/destination/sharepoint-connector).`);
-                continue;
-              }
-              if (conn.status === 'failed') {
-                result.fidelity.push({
-                  component: `knowledge:${src.name}`,
-                  status: 'lost',
-                  detail: `SharePoint connector setup for ${siteUrl} failed: ${conn.error ?? 'unknown error'}.`,
-                });
-                emitLog('warn', `    "${src.name}": connector for ${siteUrl} failed — ${conn.error ?? 'unknown error'}.`);
-                continue;
-              }
-
-              let dataStoreIds = conn.dataStoreIds;
-              if (conn.status === 'pending') {
-                if (!conn.operationName) {
-                  result.fidelity.push({
-                    component: `knowledge:${src.name}`,
-                    status: 'needs-review',
-                    detail: `SharePoint connector for ${siteUrl} has no operation to poll (collection "${conn.collectionId}") — re-run once setup completes.`,
-                  });
-                  emitLog('warn', `    "${src.name}": connector for ${siteUrl} has no operation to poll.`);
-                  continue;
-                }
-                const op = await getConnectorOperation(saToken, conn.operationName);
-                // Resolved outcome, driven by the operation check UNLESS it
-                // fails, in which case the realtimeState fallback below
-                // resolves these instead — never reuse op.done/op.error
-                // directly after that fallback runs, since they'd still
-                // reflect the stale CHECK failure, not the connector's
-                // actual state.
-                let opDone = op.done;
-                let opError = op.error;
-
-                if (op.checkFailed) {
-                  // The LRO record itself may be gone (confirmed live —
-                  // Google 404s old operations). Fall back to the connector's
-                  // own realtimeState on the Collection resource before
-                  // giving up — durable ground truth instead of a possibly-
-                  // expired operation record.
-                  const discovered = await getConnectorDataStores(dest.project, 'global', saToken, conn.collectionId);
-                  // A real dataStoreId is direct, definitive proof the
-                  // connector finished — realtimeState came back undefined in
-                  // practice (confirmed live), so trust the stronger signal.
-                  if (discovered.dataStoreIds.length || discovered.realtimeState === 'ACTIVE') {
-                    opDone = true;
-                    opError = undefined;
-                    if (discovered.dataStoreIds.length) dataStoreIds = discovered.dataStoreIds;
-                  } else if (discovered.realtimeState === 'FAILED' || discovered.realtimeState === 'INITIALIZATION_FAILED') {
-                    opDone = true;
-                    opError = `connector state: ${discovered.realtimeState}`;
-                  } else {
-                    // Still genuinely unknown either way — never collapse a
-                    // real check failure into the same message as normal
-                    // provisioning, or a real problem hides behind an endless
-                    // "still provisioning" note nobody investigates.
-                    result.fidelity.push({
-                      component: `knowledge:${src.name}`,
-                      status: 'needs-review',
-                      detail: `Could not confirm SharePoint connector status for ${siteUrl}: ${op.error ?? 'unknown error'} — re-run to check again.`,
-                    });
-                    emitLog('warn', `    "${src.name}": connector status check failed for ${siteUrl} — ${op.error ?? 'unknown error'}.`);
-                    continue;
-                  }
-                }
-                if (!opDone) {
-                  result.fidelity.push({
-                    component: `knowledge:${src.name}`,
-                    status: 'needs-review',
-                    detail: `SharePoint connector for ${siteUrl} is still provisioning (collection "${conn.collectionId}") — re-run once it completes.`,
-                  });
-                  emitLog('warn', `    "${src.name}": connector for ${siteUrl} still provisioning.`);
-                  continue;
-                }
-                const status = opError ? 'failed' : 'done';
-                if (status === 'done' && !dataStoreIds?.length) {
-                  const discovered = await getConnectorDataStores(dest.project, 'global', saToken, conn.collectionId);
-                  dataStoreIds = discovered.dataStoreIds;
-                }
-                await markKnowledgeConnectorStatus(appUserId, 'sharepoint', siteUrl, { status, error: opError, dataStoreIds });
-                if (status === 'failed') {
-                  result.fidelity.push({
-                    component: `knowledge:${src.name}`,
-                    status: 'lost',
-                    detail: `SharePoint connector setup for ${siteUrl} failed: ${opError ?? 'unknown error'}.`,
-                  });
-                  emitLog('warn', `    "${src.name}": connector for ${siteUrl} failed — ${opError ?? 'unknown error'}.`);
-                  continue;
-                }
-              }
-
-              if (!dataStoreIds || !dataStoreIds.length) {
-                result.fidelity.push({
-                  component: `knowledge:${src.name}`,
-                  status: 'needs-review',
-                  detail: `SharePoint connector for ${siteUrl} finished provisioning but no data store was discoverable yet — verify in Cloud Console.`,
-                });
-                emitLog('warn', `    "${src.name}": connector for ${siteUrl} done but no data store discovered.`);
-                continue;
-              }
-
-              let attached = 0;
-              let failedAttach = 0;
-              for (const dsId of dataStoreIds) {
-                const attach = await attachDataStoreToEngine(dest, saToken, dsId);
-                if (attach.ok) attached++;
-                else failedAttach++;
-              }
-              if (attached && !failedAttach) {
-                // 'partial', not 'mapped': Gemini Enterprise data-store attach
-                // is ENGINE-WIDE (confirmed against Google's own schema —
-                // Engine.dataStoreIds — and the docs' "an app must be
-                // connected to a data store"), unlike agentFiles which are
-                // genuinely per-agent. Every other agent sharing this engine
-                // gains access to this site too, even if it never referenced
-                // it in Copilot — a real fidelity gap from the source's
-                // per-agent scoping, not a clean 1:1 migration. Surface it so
-                // it lands in the report's "Needs human review" section
-                // instead of reading as unqualified success.
-                result.fidelity.push({
-                  component: `knowledge:${src.name}`,
-                  status: 'partial',
-                  detail: `SharePoint site ${siteUrl} reconnected via Gemini's native connector and attached to the agent's engine. Caveat: this attachment is engine-wide in Gemini Enterprise — every other agent sharing the same engine can also search this site, even if it never referenced it in Copilot Studio. Review whether agents needing separate access should be split across engines.`,
-                });
-                emitLog('ok', `    "${src.name}": SharePoint connector for ${siteUrl} attached (${attached} data store(s)) — engine-wide visibility, see fidelity report.`);
-              } else if (attached) {
-                result.fidelity.push({
-                  component: `knowledge:${src.name}`,
-                  status: 'partial',
-                  detail: `SharePoint site ${siteUrl}: ${attached}/${dataStoreIds.length} data store(s) attached, ${failedAttach} failed.`,
-                });
-                emitLog('warn', `    "${src.name}": SharePoint connector for ${siteUrl} partially attached (${attached}/${dataStoreIds.length}).`);
-              } else {
-                result.fidelity.push({
-                  component: `knowledge:${src.name}`,
-                  status: 'lost',
-                  detail: `SharePoint site ${siteUrl}: connector data store(s) exist but attaching to the engine failed.`,
-                });
-                emitLog('warn', `    "${src.name}": SharePoint connector for ${siteUrl} exists but attach-to-engine failed.`);
-              }
-            } catch (e) {
-              result.fidelity.push({
-                component: `knowledge:${src.name}`,
-                status: 'needs-review',
-                detail: `Error while processing the SharePoint connector for ${siteUrl}: ${(e as Error).message}`,
-              });
-              emitLog('warn', `    "${src.name}": SharePoint connector error — ${(e as Error).message}`);
-            }
-          }
+        // Everything else non-file (websites already handled, connectors
+        // already handled, sensitive tables, manual-review) has no automatic
+        // path yet — reported honestly.
+        const nonFile = ks.filter((k) => k.kind !== 'FileUpload' && k !== adkWebsiteSource);
+        {
+          const other = nonFile.filter((k) => !dvSnapshotSources.includes(k) && !spConnectorSources.includes(k));
 
           if (other.length) {
             emitLog(
@@ -948,12 +1262,45 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         if (usedAdk) {
           // ADK/Agent Engine agents are created ENABLED (deployed) and
           // ALL_USERS-shared automatically at registration — confirmed live
-          // 2026-07-31 (registered agent already showed sharingConfig.scope:
-          // "ALL_USERS" with no separate call). The low-code publish/share
-          // REST calls below are for lowCodeAgentDefinition agents specifically
-          // and are skipped here rather than called speculatively/untested.
+          // 2026-07-31. When source chat access was narrower than org-wide,
+          // record an honest over-share handoff (Gemini has no API to restrict
+          // after the fact on this path).
           result.deployed = true;
-          result.shared = true;
+          const perms = row.mapped.ir.permissions;
+          const hasPerms = !!perms;
+          const orgWide = !hasPerms || isOrgWideChat(perms);
+          if (orgWide || allowOvershare) {
+            result.shared = true;
+            if (hasPerms && orgWide) {
+              result.fidelity.push(...permissionFidelityNotes(perms, true, undefined));
+            } else if (hasPerms && allowOvershare) {
+              result.fidelity.push({
+                component: 'sharing',
+                status: 'needs-review',
+                detail:
+                  'Source chat access was narrower than org-wide, but allowOvershare was set — ADK registration left ALL_USERS.',
+              });
+            }
+          } else {
+            result.shared = true; // registration already shared; cannot undo via API
+            const resolution = resolvePermissions(perms, {
+              ownedDomains: orgProfile.ownedDomains,
+              overrides: identityOverrides,
+            });
+            const handoff = buildPermissionHandoff(
+              row.name,
+              create.agentId,
+              resolution,
+              perms,
+              'ADK registration shares ALL_USERS automatically; source was narrower — restrict via console Share / User permissions. Gemini API cannot apply per-user/group sharing.',
+            );
+            result.permissionHandoff = handoff;
+            result.fidelity.push(...permissionFidelityNotes(perms, false, handoff));
+            emitLog(
+              'warn',
+              `  ${row.name}: ADK agent is ALL_USERS (platform default) but source was not org-wide — see permission handoff in report.`,
+            );
+          }
         } else {
           // Mirror the source agent's publish state instead of force-publishing
           // every migration: a bot never published in Copilot Studio (still a
@@ -970,7 +1317,44 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
           } else {
             result.deployed = await publishAgent(dest, saToken, create.agentId);
           }
-          result.shared = await shareAgent(dest, saToken, create.agentId);
+
+          const perms = row.mapped.ir.permissions;
+          const hasPerms = !!perms;
+          // Backward compatible: if permissions were never extracted, keep
+          // today's shareAgent(ALL_USERS) behavior.
+          const orgWide = !hasPerms || isOrgWideChat(perms);
+          if (orgWide || allowOvershare) {
+            result.shared = await shareAgent(dest, saToken, create.agentId);
+            if (hasPerms && orgWide) {
+              result.fidelity.push(...permissionFidelityNotes(perms, true, undefined));
+            } else if (hasPerms && allowOvershare && !orgWide) {
+              result.fidelity.push({
+                component: 'sharing',
+                status: 'needs-review',
+                detail:
+                  'Source chat access was narrower than org-wide, but allowOvershare was set — shared ALL_USERS intentionally.',
+              });
+            }
+          } else {
+            result.shared = false;
+            const resolution = resolvePermissions(perms, {
+              ownedDomains: orgProfile.ownedDomains,
+              overrides: identityOverrides,
+            });
+            const handoff = buildPermissionHandoff(
+              row.name,
+              create.agentId,
+              resolution,
+              perms,
+              'Gemini API has no per-user/group agent sharing (only ALL_USERS). Manual console steps required.',
+            );
+            result.permissionHandoff = handoff;
+            result.fidelity.push(...permissionFidelityNotes(perms, false, handoff));
+            emitLog(
+              'warn',
+              `  ${row.name}: not auto-shared (source chat access was not org-wide) — permission handoff in report.`,
+            );
+          }
         }
         const v = await verifyAgent(dest, saToken, create.agentId);
         result.verified = v.verified;

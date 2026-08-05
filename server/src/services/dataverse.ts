@@ -3,7 +3,7 @@ import { logger } from '../logger.js';
 import { ComponentType } from '../types.js';
 import { parseTopicGraph } from './topicGraph.js';
 import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClassifier.js';
-import type { AgentIR, AgentSourceMetadata, KnowledgeSourceIR, KnowledgeSourceMetadata, TopicIR } from '../types.js';
+import type { AgentIR, AgentPermissions, AgentSourceMetadata, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
 
 /**
  * Copilot Studio extraction: reads an agent's complete definition from the
@@ -94,6 +94,196 @@ export async function resolveSystemUserEmail(url: string, token: string, userId:
   }
 }
 
+async function resolvePrincipalDisplay(
+  url: string,
+  token: string,
+  id: string,
+  logicalName: string,
+): Promise<{ email?: string; displayName?: string; type: 'user' | 'team' | 'group' }> {
+  const ln = (logicalName || '').toLowerCase();
+  if (ln.includes('team')) {
+    try {
+      const t = await dvGet<{ name?: string }>(url, token, `teams(${id})?$select=name`);
+      return { type: 'team', displayName: t.name };
+    } catch {
+      return { type: 'team' };
+    }
+  }
+  try {
+    const u = await dvGet<{ internalemailaddress?: string; fullname?: string }>(
+      url,
+      token,
+      `systemusers(${id})?$select=internalemailaddress,fullname`,
+    );
+    return {
+      type: 'user',
+      email: u.internalemailaddress ?? undefined,
+      displayName: u.fullname ?? undefined,
+    };
+  } catch {
+    return { type: 'user' };
+  }
+}
+
+function decodeAccessMask(mask: unknown): { rights: string[]; roleHint: 'coauthor' | 'viewer' | 'custom' } {
+  const rights: string[] = [];
+  const push = (name: string) => {
+    if (!rights.includes(name)) rights.push(name);
+  };
+  if (typeof mask === 'string') {
+    for (const part of mask.split(/[,\s]+/).filter(Boolean)) {
+      const p = part.replace(/Access$/i, '');
+      if (/read/i.test(p)) push('Read');
+      else if (/write/i.test(p)) push('Write');
+      else if (/appendto/i.test(p)) push('AppendTo');
+      else if (/append/i.test(p)) push('Append');
+      else if (/share/i.test(p)) push('Share');
+      else if (/assign/i.test(p)) push('Assign');
+      else if (/delete/i.test(p)) push('Delete');
+      else push(p);
+    }
+  } else if (typeof mask === 'number') {
+    // Dynamics AccessRights bit flags (common subset).
+    if (mask & 1) push('Read');
+    if (mask & 2) push('Write');
+    if (mask & 4) push('Append');
+    if (mask & 8) push('AppendTo');
+    if (mask & 16) push('Create');
+    if (mask & 32) push('Delete');
+    if (mask & 262144) push('Share');
+    if (mask & 524288) push('Assign');
+  }
+  const hasWrite = rights.some((r) => r === 'Write' || r === 'Share' || r === 'Assign' || r === 'Delete');
+  const roleHint: 'coauthor' | 'viewer' | 'custom' =
+    hasWrite ? 'coauthor' : rights.includes('Read') && rights.length <= 2 ? 'viewer' : rights.length ? 'custom' : 'viewer';
+  return { rights, roleHint };
+}
+
+function decodeChatPolicy(code: unknown): ChatAccess['policy'] {
+  const n = typeof code === 'number' ? code : Number(code);
+  if (n === 0) return 'any';
+  if (n === 1) return 'copilot-readers';
+  if (n === 2) return 'group';
+  if (n === 3) return 'any-multitenant';
+  return 'unknown';
+}
+
+function parseGroupIds(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw === 'string') {
+    const s = raw.trim();
+    if (!s) return [];
+    try {
+      const parsed = JSON.parse(s) as unknown;
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    } catch {
+      /* fall through */
+    }
+    return s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+/**
+ * Best-effort source access model for one bot: owner, record shares, chat
+ * access policy. Never throws — sets `readError` when shares are unreadable
+ * so we never present an empty share list as "no one has access".
+ */
+export async function readAgentPermissions(
+  url: string,
+  token: string,
+  botId: string,
+): Promise<AgentPermissions> {
+  const empty: AgentPermissions = { sharedPrincipals: [] };
+  try {
+    const b = await dvGet<Record<string, unknown>>(
+      url,
+      token,
+      `bots(${botId})?$select=_ownerid_value,accesscontrolpolicy,authorizedsecuritygroupids`,
+      // Prefer formatted annotations when Dataverse returns them via Prefer header — we
+      // call without Prefer; resolve owner via follow-up lookups instead.
+    );
+
+    const ownerId = (b['_ownerid_value'] as string) || undefined;
+    const ownerLogical =
+      (b['_ownerid_value@Microsoft.Dynamics.CRM.lookuplogicalname'] as string) ||
+      (b['ethan.b@example.com.V1.FormattedValue'] as string) ||
+      'systemuser';
+
+    let owner: PrincipalRef | undefined;
+    if (ownerId) {
+      const resolved = await resolvePrincipalDisplay(url, token, ownerId, ownerLogical);
+      owner = {
+        type: resolved.type,
+        id: ownerId,
+        email: resolved.email,
+        displayName:
+          resolved.displayName ??
+          ((b['_ownerid_value@OData.Community.Display.V1.FormattedValue'] as string) || undefined),
+      };
+    }
+
+    const policyCode = b.accesscontrolpolicy as number | undefined;
+    const chatAccess: ChatAccess = {
+      policy: decodeChatPolicy(policyCode),
+      policyCode: typeof policyCode === 'number' ? policyCode : undefined,
+      groupIds: parseGroupIds(b.authorizedsecuritygroupids),
+    };
+
+    let sharedPrincipals: SharedPrincipal[] = [];
+    let readError: string | undefined;
+    try {
+      const shares = await dvGet<{
+        PrincipalAccesses?: {
+          Principal?: { Id?: string; LogicalName?: string; id?: string; logicalname?: string };
+          AccessMask?: unknown;
+        }[];
+        // Some orgs return a flat array under value
+        value?: {
+          Principal?: { Id?: string; LogicalName?: string };
+          AccessMask?: unknown;
+        }[];
+      }>(
+        url,
+        token,
+        `bots(${botId})/Microsoft.Dynamics.CRM.RetrieveSharedPrincipalsAndAccess()`,
+      );
+      const rows = shares.PrincipalAccesses ?? shares.value ?? [];
+      for (const row of rows) {
+        const pid = row.Principal?.Id ?? (row.Principal as { id?: string } | undefined)?.id;
+        const pln = row.Principal?.LogicalName ?? (row.Principal as { logicalname?: string } | undefined)?.logicalname ?? 'systemuser';
+        if (!pid) continue;
+        const resolved = await resolvePrincipalDisplay(url, token, pid, pln);
+        const { rights, roleHint } = decodeAccessMask(row.AccessMask);
+        sharedPrincipals.push({
+          type: resolved.type,
+          id: pid,
+          email: resolved.email,
+          displayName: resolved.displayName,
+          rights,
+          roleHint,
+        });
+      }
+    } catch (e) {
+      const msg = (e as Error).message || String(e);
+      if (/\(403\)|\(401\)/i.test(msg) || /insufficient|privilege|access/i.test(msg)) {
+        readError = 'shares not readable (insufficient app-user privilege)';
+      } else {
+        readError = `shares not readable: ${msg.slice(0, 200)}`;
+      }
+      sharedPrincipals = [];
+    }
+
+    return { owner, sharedPrincipals, chatAccess, readError };
+  } catch (e) {
+    logger.warn(`readAgentPermissions failed for ${botId}: ${(e as Error).message}`);
+    return {
+      ...empty,
+      readError: `permissions not readable: ${(e as Error).message?.slice(0, 200) ?? 'unknown'}`,
+    };
+  }
+}
+
 async function dvGet<T>(url: string, token: string, path: string): Promise<T> {
   const res = await fetch(API(url, path), {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
@@ -118,6 +308,13 @@ async function dvGet<T>(url: string, token: string, path: string): Promise<T> {
 export interface BotSummary {
   botid: string;
   name: string;
+  /** Best-effort owner systemuserid / team id. */
+  ownerId?: string;
+  ownerEmail?: string;
+  ownerDisplayName?: string;
+  /** Decoded chat access policy label for Select Agents UI. */
+  accessLabel?: string;
+  accessPolicy?: string;
 }
 
 /**
@@ -239,14 +436,64 @@ export function getAiPromptMap(url: string, token: string): Promise<Map<string, 
   return p;
 }
 
-/** List all active agents (bots) in the environment. */
+/** List all active agents (bots) in the environment (includes lightweight owner/access). */
 export async function listBots(url: string, token: string): Promise<BotSummary[]> {
-  const json = await dvGet<{ value: BotSummary[] }>(
+  const json = await dvGet<{
+    value: {
+      botid: string;
+      name: string;
+      _ownerid_value?: string;
+      accesscontrolpolicy?: number;
+      '_ownerid_value@OData.Community.Display.V1.FormattedValue'?: string;
+    }[];
+  }>(
     url,
     token,
-    'bots?$select=name,botid&$filter=statecode eq 0',
+    'bots?$select=name,botid,_ownerid_value,accesscontrolpolicy&$filter=statecode eq 0',
   );
-  return json.value ?? [];
+  const rows = json.value ?? [];
+  const out: BotSummary[] = [];
+  // Resolve a small unique set of owners (cap lookups to keep list snappy).
+  const ownerCache = new Map<string, { email?: string; displayName?: string }>();
+  for (const b of rows) {
+    const policy = decodeChatPolicy(b.accesscontrolpolicy);
+    const accessLabel =
+      policy === 'any' || policy === 'any-multitenant'
+        ? 'Org-wide'
+        : policy === 'group' || policy === 'copilot-readers'
+          ? 'Group'
+          : policy === 'unknown'
+            ? 'Unknown'
+            : 'Private';
+    let ownerEmail: string | undefined;
+    let ownerDisplayName =
+      b['_ownerid_value@OData.Community.Display.V1.FormattedValue'] || undefined;
+    if (b._ownerid_value) {
+      let cached = ownerCache.get(b._ownerid_value);
+      if (!cached && ownerCache.size < 40) {
+        try {
+          const resolved = await resolvePrincipalDisplay(url, token, b._ownerid_value, 'systemuser');
+          cached = { email: resolved.email, displayName: resolved.displayName };
+          ownerCache.set(b._ownerid_value, cached);
+        } catch {
+          ownerCache.set(b._ownerid_value, {});
+          cached = {};
+        }
+      }
+      ownerEmail = cached?.email;
+      ownerDisplayName = cached?.displayName || ownerDisplayName;
+    }
+    out.push({
+      botid: b.botid,
+      name: b.name,
+      ownerId: b._ownerid_value,
+      ownerEmail,
+      ownerDisplayName,
+      accessLabel,
+      accessPolicy: policy,
+    });
+  }
+  return out;
 }
 
 /** Safe YAML parse that never throws — returns null on malformed input. */
@@ -674,6 +921,8 @@ export async function extractAgent(
     /* best-effort — provenance is nice-to-have, never blocks extraction */
   }
 
+  const permissions = await readAgentPermissions(url, token, bot.botid);
+
   const gptComp = components.find((c) => c.componenttype === ComponentType.CustomGpt);
   const topicComps = components.filter((c) => c.componenttype === ComponentType.Topic);
   const ksComps = components.filter((c) => c.componenttype === ComponentType.KnowledgeSource);
@@ -804,6 +1053,7 @@ export async function extractAgent(
     thinContent,
     unmapped,
     sourceMetadata,
+    permissions,
   };
 }
 

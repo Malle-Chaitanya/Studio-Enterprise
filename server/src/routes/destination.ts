@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { config } from '../config.js';
 import { getSaToken } from '../auth/google.js';
-import { listEngines, listProjects } from '../services/destination.js';
+import { listEnginesResult, listProjects } from '../services/destination.js';
+import { logger } from '../logger.js';
 import { engineReachable } from '../services/gemini.js';
 import { setUpSharePointConnector, getConnectorOperation, getConnectorDataStores, type SharePointConnectorCreds } from '../services/geminiConnector.js';
 import { putEntraSecret, getEntraSecret } from '../services/secretManager.js';
-import { connectorCollectionId } from '../services/knowledgePlanner.js';
+import { connectorCollectionId, normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
 import { getSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
 import { getEntraAppCredential, upsertEntraAppCredential } from '../db/repos/entraAppCredentials.js';
 import {
@@ -48,7 +49,9 @@ destinationRouter.get('/projects', async (req, res) => {
 /**
  * GET /api/destination/engines?session=…&project=…
  * Existing Agentspace engines in a project — the destinations the customer maps
- * each Copilot environment onto. Discovered via the service account.
+ * each Copilot environment onto. Prefer SA (same identity as migrate writes);
+ * fall back to the admin OAuth token when SA returns empty/403 — matches how
+ * hasGeminiApp is probed on the projects list.
  */
 destinationRouter.get('/engines', async (req, res) => {
   const session = await getSession(req.query.session as string);
@@ -57,9 +60,38 @@ destinationRouter.get('/engines', async (req, res) => {
   if (!project) return void res.status(400).json({ error: 'project_required' });
 
   try {
-    const saToken = await getSaToken(session.gEmail);
-    const engines = await listEngines(project, saToken);
-    res.json({ project, engines });
+    let via: 'sa' | 'oauth' | 'none' = 'none';
+    let engines: Awaited<ReturnType<typeof listEnginesResult>>['engines'] = [];
+    let lastError: string | undefined;
+
+    try {
+      const saToken = await getSaToken(session.gEmail);
+      const saResult = await listEnginesResult(project, saToken);
+      engines = saResult.engines;
+      lastError = saResult.error;
+      if (engines.length) via = 'sa';
+    } catch (err) {
+      lastError = (err as Error).message;
+      logger.warn(`engines: SA token failed for ${project}: ${lastError}`);
+    }
+
+    if (!engines.length && session.gToken) {
+      const oauthResult = await listEnginesResult(project, session.gToken);
+      if (oauthResult.engines.length) {
+        engines = oauthResult.engines;
+        via = 'oauth';
+        lastError = undefined;
+      } else if (oauthResult.error) {
+        lastError = oauthResult.error;
+      }
+    }
+
+    res.json({
+      project,
+      engines,
+      via,
+      ...(engines.length === 0 && lastError ? { warning: lastError } : {}),
+    });
   } catch (err) {
     res.status(502).json({ error: 'engines_failed', detail: (err as Error).message });
   }
@@ -125,9 +157,11 @@ destinationRouter.post('/sharepoint-connector', async (req, res) => {
   const session = await getSession(body.session ?? '');
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
 
-  const siteUrl = body.siteUrl?.trim();
+  const siteUrlRaw = body.siteUrl?.trim();
   const tenantId = body.tenantId?.trim();
-  if (!siteUrl || !tenantId) return void res.status(400).json({ error: 'site_url_and_tenant_id_required' });
+  if (!siteUrlRaw || !tenantId) return void res.status(400).json({ error: 'site_url_and_tenant_id_required' });
+  // Knowledge sources often capture a document URL; Gemini needs the site root.
+  const siteUrl = normalizeSharePointSiteUrl(siteUrlRaw);
 
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const project = session.geminiProject || '';
@@ -184,7 +218,12 @@ destinationRouter.post('/sharepoint-connector', async (req, res) => {
         appUserId, kind: 'sharepoint', siteUrl, collectionId, tenantId,
         clientId: creds.clientId, status: 'failed', error: result.error,
       });
-      return void res.status(502).json({ error: 'connector_setup_failed', detail: result.error });
+      return void res.status(502).json({
+        error: 'connector_setup_failed',
+        detail: result.error || 'Google setUpDataConnector returned failure with no message',
+        siteUrl,
+        ...(siteUrl !== siteUrlRaw ? { originalUrl: siteUrlRaw } : {}),
+      });
     }
 
     await upsertKnowledgeConnector({
@@ -218,13 +257,16 @@ destinationRouter.post('/sharepoint-connector', async (req, res) => {
  */
 destinationRouter.get('/sharepoint-connector/status', async (req, res) => {
   const sessionId = req.query.session as string;
-  const siteUrl = (req.query.siteUrl as string) ?? '';
+  const siteUrlRaw = (req.query.siteUrl as string) ?? '';
   const session = await getSession(sessionId);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
-  if (!siteUrl) return void res.status(400).json({ error: 'site_url_required' });
+  if (!siteUrlRaw) return void res.status(400).json({ error: 'site_url_required' });
+  const siteUrl = normalizeSharePointSiteUrl(siteUrlRaw);
 
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
-  const sp = await getKnowledgeConnector(appUserId, 'sharepoint', siteUrl);
+  const sp =
+    (await getKnowledgeConnector(appUserId, 'sharepoint', siteUrl)) ??
+    (siteUrlRaw !== siteUrl ? await getKnowledgeConnector(appUserId, 'sharepoint', siteUrlRaw) : null);
   if (!sp) return void res.status(404).json({ error: 'connector_not_configured' });
   if (!sp.operationName || sp.status !== 'pending') {
     return void res.json({ status: sp.status, collectionId: sp.collectionId, dataStoreIds: sp.dataStoreIds, error: sp.error });
@@ -288,11 +330,13 @@ destinationRouter.get('/sharepoint-connector/status', async (req, res) => {
 destinationRouter.delete('/sharepoint-connector', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
-  const siteUrl = req.query.siteUrl as string;
-  if (!siteUrl) return void res.status(400).json({ error: 'site_url_required' });
+  const siteUrlRaw = req.query.siteUrl as string;
+  if (!siteUrlRaw) return void res.status(400).json({ error: 'site_url_required' });
+  const siteUrl = normalizeSharePointSiteUrl(siteUrlRaw);
 
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   await deleteKnowledgeConnector(appUserId, 'sharepoint', siteUrl);
+  if (siteUrlRaw !== siteUrl) await deleteKnowledgeConnector(appUserId, 'sharepoint', siteUrlRaw);
   res.json({ ok: true });
 });
 

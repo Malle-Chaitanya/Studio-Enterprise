@@ -103,6 +103,24 @@ The orchestrator **auto-detects**: it tries a direct SA token first; if that can
 the project, it falls back to impersonation. This is why both an enterprise customer
 (direct IAM) and a self-serve project (DWD) both work.
 
+**Additional roles for large Dataverse reference tables (BigQuery snapshot path):**
+When a Dataverse reference table exceeds `BQ_SNAPSHOT_ROW_THRESHOLD` (default 200 rows),
+the snapshot is staged through a BigQuery table instead of Discovery Engine's inline
+import (see `services/knowledgeDataStoreExecutor.ts`). This needs two roles beyond the
+single one above, on the Direct-IAM path:
+- `roles/bigquery.dataEditor` — create the staging dataset/table, load rows.
+- `roles/bigquery.jobUser` — run the load job.
+
+The tool also opportunistically tries to self-enable the `bigquery.googleapis.com` API
+if it's not already on — this needs `serviceusage.serviceUsageAdmin` (or a broader role
+like `Editor`) and is **not required**: if it fails, the migration reports a
+`needs-review` fidelity note (asking the admin to enable it manually) instead of
+blocking. On the **DWD** path, no extra grant is needed — the SA impersonates the
+signed-in admin, so it inherits whatever BigQuery access that admin's own account
+already has on the project.
+Small tables (below the threshold) need none of this — the inline path has no
+BigQuery footprint at all.
+
 - **Reachability check:** `verifySaReachable(geminiProject, adminEmail)` in
   `routes/auth.ts` runs at connect-time — direct IAM first, DWD fallback, engine
   discovered via `resolveDestination`.
