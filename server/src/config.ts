@@ -83,7 +83,10 @@ export const config = parsed.data;
  * a delegated token — so we do not need (and do not request) delegated Dynamics
  * consent here. Requesting it would trigger AADSTS65001 on the refresh exchange.
  */
-export const MS_SCOPES = 'https://graph.microsoft.com/.default offline_access';
+// Multi-resource scopes: openid basics + PowerApps User (for PVA Direct Line token endpoint).
+// Refresh token can then exchange for Graph, Dataverse, and PowerApps separately via admin consent.
+// Cannot mix .default with resource-specific scopes (AADSTS70011).
+export const MS_SCOPES = 'openid profile offline_access https://api.powerapps.com/User';
 
 /** Google OAuth scopes: cloud-platform for project discovery + identity. */
 export const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/cloud-platform openid email profile';

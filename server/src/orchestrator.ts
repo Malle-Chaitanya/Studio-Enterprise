@@ -7,6 +7,8 @@ import { buildOrganizationProfile } from './services/organizationProfile.js';
 import { createAgent, defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, type CreateOutcome } from './services/gemini.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
+import { resolveConnectorSecrets, buildLiveConnectorSpecs } from './services/connectorToolBuilder.js';
+import { migrateConfluenceToDataStore, type ConfluenceCreds, type ConfluenceMigrationResult } from './services/confluenceMigrator.js';
 import {
   migrateDataverseSnapshot,
   migrateSharePointDriveItem,
@@ -553,6 +555,34 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   }
   const allowOvershare = !!plan.destination.allowOvershare;
 
+  // ── Resolve connector credentials once before extraction starts ──────────
+  // Reads any third-party / MS-native API credentials the customer saved in
+  // ConnectorConfig from Google Secret Manager, then embeds them in every
+  // agent's instruction via buildConnectorInstructionBlock.
+  const savedConnectors = plan.savedConnectors ?? [];
+  const resolvedConnectors = savedConnectors.length && session.geminiProject
+    ? await resolveConnectorSecrets(saToken, session.geminiProject, savedConnectors).catch((err) => {
+        logger.warn({ err }, 'orchestrator: connector secret resolution failed; continuing without connector context');
+        return [];
+      })
+    : [];
+  if (resolvedConnectors.length) {
+    emitLog('info', `Connector credentials resolved: ${resolvedConnectors.map((c) => c.name).join(', ')}`);
+  }
+
+  // Live API tools for the ADK deployment. Built from the saved connector IDS and
+  // the registry alone — deliberately NOT from resolvedConnectors, because these
+  // specs travel into the deployment and must never carry a credential value. The
+  // container reads each secret from Secret Manager on every tool call.
+  const liveConnectorSpecs = buildLiveConnectorSpecs(savedConnectors);
+  if (liveConnectorSpecs.length) {
+    emitLog('info', `Live connector tools to wire: ${liveConnectorSpecs.map((c) => c.name).join(', ')}`);
+  }
+
+  // Confluence connector creds (if the customer filled them in the Connectors step).
+  // Used per-agent in Phase 2 to crawl only the spaces that specific agent selected.
+  const confluenceConnector = resolvedConnectors.find((c) => c.connectorId === 'shared_confluence');
+
   // ── PHASE 1 — EXTRACT → stage in DB (parallel, batched) ───────────────────
   emitLog('info', `── Phase 1: extract → stage in DB (${total} agents) ──`);
   let extracted = 0;
@@ -565,7 +595,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       // no longer folded into the instruction — see mapper.ts), and stage a
       // flat, queryable copy of the capabilities.
       const topicsPlan = planTopicsMigration(ir);
-      const mapped = await mapAgent(ir, { topicsPlan });
+      const mapped = await mapAgent(ir, { topicsPlan, connectors: resolvedConnectors });
       const capabilities = [...topicsPlan.systemCapabilities, ...topicsPlan.connectedAgents.flatMap((a) => a.capabilities)];
 
       // Name prefixing is opt-in via the "prefix with source environment"
@@ -804,6 +834,46 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         ...spResolved.flatMap((r) => r.dataStoreIds.map((id) => dataStoreResourcePath(dest.project, id))),
       ];
 
+      // Confluence pre-resolution: crawl BEFORE ADK deploy so the data store
+      // path is baked into VertexAiSearchTool at deploy time. The same
+      // dataStoreId is used in the post-create block for low-code attachment
+      // (migrateConfluenceToDataStore is idempotent — returns the same store).
+      let preCfResult: ConfluenceMigrationResult | null = null;
+      let preCfCredsIncomplete = false;
+      if (confluenceConnector && dest.project) {
+        const confluenceKs = ks.filter(
+          (s) => Array.isArray(s.confluenceSpaceNames) && s.confluenceSpaceNames.length > 0,
+        );
+        if (confluenceKs.length > 0) {
+          const allCfSpaceNames: string[] = [
+            ...new Set(confluenceKs.flatMap((s) => s.confluenceSpaceNames as string[])),
+          ];
+          const cfCreds: ConfluenceCreds = {
+            base_url: confluenceConnector.fields['base_url'] ?? '',
+            email: confluenceConnector.fields['email'] ?? '',
+            api_token: confluenceConnector.fields['api_token'] ?? '',
+            spaceNames: allCfSpaceNames,
+          };
+          if (cfCreds.base_url && cfCreds.email && cfCreds.api_token) {
+            emitLog('info', `    Confluence: crawling ${allCfSpaceNames.length} space(s) for grounding…`);
+            preCfResult = await migrateConfluenceToDataStore(
+              dest.project, saToken, row.mapped.ir.sourceId, cfCreds,
+            ).catch((err): ConfluenceMigrationResult => {
+              logger.warn({ err }, 'orchestrator: Confluence pre-crawl threw; continuing');
+              return { pageCount: 0, spaceCount: 0, error: (err as Error).message };
+            });
+            if (preCfResult.dataStoreId) {
+              connectorGroundingDataStores.push(dataStoreResourcePath(dest.project, preCfResult.dataStoreId));
+              emitLog('ok', `    Confluence: ${preCfResult.pageCount} page(s) ready — data store queued for grounding.`);
+            } else {
+              emitLog('warn', `    Confluence crawl failed: ${preCfResult.error ?? 'unknown'}.`);
+            }
+          } else {
+            preCfCredsIncomplete = true;
+          }
+        }
+      }
+
       // ADK-first: try the ADK/Reasoning-Engine path BEFORE low-code, not
       // after it. Historically low-code was tried first and ADK only kicked
       // in once it came back stuck PRIVATE — but NO Gemini Enterprise edition
@@ -829,6 +899,9 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       // publish/share/knowledge-file logic branches on this, so it must
       // reflect the real outcome, not just "did we attempt ADK".
       let usedAdk = false;
+      // True when the agent was created via low-code + dataStoreSpecs (native
+      // grounding), bypassing ADK/RE entirely for connector-grounded agents.
+      let usedDataStoreSpecs = false;
       const create: CreateOutcome = await (async () => {
             // Idempotency: Reasoning Engine `create` has no name-based dedup of
             // its own (unlike low-code's agents.create) — check our own record
@@ -867,6 +940,24 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               });
             }
             const websiteSource = firstWebsiteSource(row.mapped!.ir);
+
+            // Connector-grounded agents (Confluence, SharePoint, Dataverse snapshots)
+            // used to be diverted here to low-code + dataStoreSpecs, on the belief that
+            // Reasoning Engines always fail at query time with "class_method='query' not
+            // found". That was our bug, not Google's: ADK-framework engines simply do not
+            // expose a `query` method (only create_session / stream_query /
+            // async_stream_query / streaming_agent_run_with_events), and stream_query
+            // requires `user_id`. Called correctly, a deployed RE answers fine — verified
+            // live against a Confluence-grounded deployment (see
+            // spikes/_probe_adk_agent_answers.ts and _diag_re_class_methods.ts).
+            //
+            // So connector stores now flow into the ADK deploy's groundingDataStores
+            // (merged below with file-grounded stores), which is strictly better than the
+            // low-code path: registerAdkAgent returns state=ENABLED — no admin Publish
+            // click — and VertexAiSearchTool bakes the data store resource path into the
+            // deployment, so it needs neither an engine.dataStoreIds attach nor the
+            // several-minute serving propagation that attach requires. Low-code remains
+            // the last-resort fallback further down if the deploy itself fails.
 
             // ADK agents have no agentFiles concept at all (unlike low-code —
             // see attachKnowledgeFiles below), so uploaded files must be
@@ -938,7 +1029,16 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // VertexAiSearchTool as files/website, so this ADK agent isn't
             // missing knowledge the low-code path would have had.
             const groundingDataStores = [...fileGroundingDataStores, ...connectorGroundingDataStores];
-            const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, { websiteSource, groundingDataStores });
+            // Configured third-party connectors become REAL callable tools on the
+            // deployment (secret ids only — resolved in-container per call). This is
+            // what makes a migrated connector actually able to hit Jira/Slack/etc.,
+            // as opposed to the old instruction-block approach that only described
+            // the API to a model that had no way to call it.
+            const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, {
+              websiteSource,
+              groundingDataStores,
+              liveConnectors: liveConnectorSpecs,
+            });
 
             // Everything below claims specific knowledge sources are grounded
             // on "the ADK agent" — that's only true if ADK is actually the
@@ -1104,6 +1204,12 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         if (!usedAdk) {
           for (const { src, snap } of dvResolved) {
             if (!snap.resourcePath) continue; // resolution failure already reported earlier
+            // Always attach, even on the dataStoreSpecs path. dataStoreSpecs does NOT
+            // make a store reachable on its own: the engine rejects any store missing
+            // from engine.dataStoreIds with 400 "Data stores ... are not found in the
+            // engine", so an agent wired only via dataStoreSpecs can never retrieve
+            // anything. Skipping the attach here is what left previously-migrated
+            // agents silently ungrounded. Attach is idempotent (see geminiDataStore).
             await attachDataStoreToEngine(dest, saToken, snap.dataStoreId!);
             result.fidelity.push({
               component: `knowledge:${src.name}`,
@@ -1113,7 +1219,9 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                 (snap.viaBigQuery ? ` via BigQuery (${snap.attempted} row(s), large-table path)` : ` inline (${snap.attempted} row(s))`) +
                 ` — ${snap.succeeded}/${snap.attempted} row(s) indexed` +
                 (snap.failed ? `, ${snap.failed} failed` : '') +
-                '. Point-in-time snapshot, not a live connection — refresh by re-running the migration.',
+                (usedDataStoreSpecs
+                  ? '. Grounded per-agent via dataStoreSpecs — not engine-wide. Point-in-time snapshot, refresh by re-running the migration.'
+                  : '. Point-in-time snapshot, not a live connection — refresh by re-running the migration.'),
             });
           }
 
@@ -1122,6 +1230,16 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
           // them to this agent's engine, the same mechanism the Dataverse-
           // snapshot path uses. Every outcome gets an honest FidelityNote.
           for (const { src, siteUrl, dataStoreIds } of spResolved) {
+            if (usedDataStoreSpecs) {
+              // Stores already wired per-agent via dataStoreSpecs — skip engine attach.
+              result.fidelity.push({
+                component: `knowledge:${src.name}`,
+                status: 'mapped',
+                detail: `SharePoint site ${siteUrl} reconnected via Gemini's native connector and grounded per-agent via dataStoreSpecs — not engine-wide.`,
+              });
+              emitLog('ok', `    "${src.name}": SharePoint connector for ${siteUrl} grounded via dataStoreSpecs (per-agent).`);
+              continue;
+            }
             let attached = 0;
             let failedAttach = 0;
             for (const dsId of dataStoreIds) {
@@ -1162,6 +1280,57 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               emitLog('warn', `    "${src.name}": SharePoint connector for ${siteUrl} exists but attach-to-engine failed.`);
             }
           }
+        }
+
+        // Confluence knowledge: fidelity notes + low-code engine attachment.
+        // Crawl already ran above (preCfResult) — here we only attach the
+        // data store for the low-code fallback path (ADK already baked it in
+        // via groundingDataStores / VertexAiSearchTool at deploy time).
+        if (preCfResult !== null) {
+          if (preCfResult.dataStoreId) {
+            if (usedDataStoreSpecs) {
+              // Data store already wired per-agent via dataStoreSpecs — no engine attach needed.
+              result.fidelity.push({
+                component: 'knowledge:Confluence',
+                status: 'mapped',
+                detail: `${preCfResult.pageCount} Confluence page(s) from ${preCfResult.spaceCount} space(s) indexed and grounded per-agent via dataStoreSpecs — not engine-wide.`,
+              });
+              emitLog('ok', `    Confluence: ${preCfResult.pageCount} page(s) indexed, grounded via dataStoreSpecs (per-agent).`);
+            } else if (!usedAdk) {
+              const cfAttach = await attachDataStoreToEngine(dest, saToken, preCfResult.dataStoreId);
+              result.fidelity.push({
+                component: 'knowledge:Confluence',
+                status: cfAttach.ok ? 'partial' : 'needs-review',
+                detail: cfAttach.ok
+                  ? `${preCfResult.pageCount} Confluence page(s) from ${preCfResult.spaceCount} space(s) indexed and attached to this agent's engine.`
+                  : `Confluence pages indexed but attaching data store to engine failed: ${cfAttach.error ?? 'unknown'}.`,
+              });
+              if (cfAttach.ok) {
+                emitLog('ok', `    Confluence: ${preCfResult.pageCount} page(s) indexed and attached.`);
+              } else {
+                emitLog('warn', `    Confluence data store attach failed: ${cfAttach.error ?? 'unknown'}.`);
+              }
+            } else {
+              result.fidelity.push({
+                component: 'knowledge:Confluence',
+                status: 'mapped',
+                detail: `${preCfResult.pageCount} Confluence page(s) from ${preCfResult.spaceCount} space(s) grounded via ADK VertexAiSearchTool — per-agent, not engine-wide.`,
+              });
+            }
+          } else {
+            result.fidelity.push({
+              component: 'knowledge:Confluence',
+              status: 'needs-review',
+              detail: `Confluence knowledge migration failed: ${preCfResult.error ?? 'unknown'}.`,
+            });
+            emitLog('warn', `    Confluence migration failed: ${preCfResult.error ?? 'unknown'}.`);
+          }
+        } else if (preCfCredsIncomplete) {
+          result.fidelity.push({
+            component: 'knowledge:Confluence',
+            status: 'needs-review',
+            detail: 'Confluence credentials incomplete (base_url / email / api_token required) — enter them in the Connectors step.',
+          });
         }
 
         // Everything else non-file (websites already handled, connectors

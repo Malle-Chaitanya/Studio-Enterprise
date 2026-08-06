@@ -414,3 +414,107 @@ export async function planMigration(
   if (!res.ok) throw new Error('plan_failed');
   return (await res.json()) as PlanPreview;
 }
+
+// ── Third-party connectors ────────────────────────────────────────────────────
+
+export interface CredentialField {
+  key: string;
+  label: string;
+  type: 'text' | 'password' | 'url';
+  placeholder?: string;
+  hint?: string;
+}
+
+export interface ConnectorDef {
+  id: string;
+  name: string;
+  category: string;
+  icon: string;
+  docsUrl?: string;
+  credentials: CredentialField[];
+}
+
+export interface DetectedConnector {
+  connectorId: string;
+  def: ConnectorDef;
+  flowCount: number;
+  flowNames: string[];
+}
+
+export async function fetchThirdPartyConnectors(session: string): Promise<DetectedConnector[]> {
+  const res = await fetch(`/api/migrate/third-party-connectors?session=${session}`);
+  if (!res.ok) throw new Error('connector_scan_failed');
+  return ((await res.json()) as { connectors: DetectedConnector[] }).connectors;
+}
+
+/** Scan knowledge-source botcomponents for specific agents — detects Confluence, etc. */
+export async function fetchKnowledgeSourceConnectors(
+  session: string,
+  envUrl: string,
+  botIds: string[],
+): Promise<DetectedConnector[]> {
+  const res = await fetch('/api/migrate/knowledge-connectors', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, envUrl, botIds }),
+  });
+  if (!res.ok) return []; // non-fatal — flow connectors still shown
+  return ((await res.json()) as { connectors: DetectedConnector[] }).connectors;
+}
+
+export async function saveConnectorCredentials(
+  session: string,
+  connectorId: string,
+  creds: Array<{ field: string; value: string }>,
+): Promise<{ secretIds: string[] }> {
+  const res = await fetch('/api/migrate/third-party-connectors/credentials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, connectorId, creds }),
+  });
+  if (!res.ok) throw new Error('credentials_save_failed');
+  return (await res.json()) as { secretIds: string[] };
+}
+
+/** One connector the customer has already configured. Never carries credential values. */
+export interface SavedConnector {
+  connectorId: string;
+  fields: string[];
+  project: string;
+  updatedAt?: string;
+}
+
+/**
+ * Connectors this customer configured previously (persisted per customer, not per
+ * session) so the UI can show "configured" instead of asking again for credentials
+ * that are already in Secret Manager.
+ */
+export async function fetchSavedConnectors(session: string): Promise<SavedConnector[]> {
+  const res = await fetch(`/api/migrate/connector-credentials?session=${session}`);
+  if (!res.ok) throw new Error('saved_connectors_failed');
+  const body = (await res.json()) as { connectors: SavedConnector[] };
+  return body.connectors;
+}
+
+/** Forget our record of a connector so the form asks for credentials again.
+ *  Leaves the Secret Manager secrets untouched. */
+export async function forgetConnectorCredentials(session: string, connectorId: string): Promise<void> {
+  const res = await fetch(
+    `/api/migrate/connector-credentials?session=${session}&connectorId=${encodeURIComponent(connectorId)}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) throw new Error('connector_forget_failed');
+}
+
+export async function saveMsConnectorCredentials(
+  session: string,
+  creds: Record<string, string>,
+): Promise<{ secretIds: string[] }> {
+  const res = await fetch('/api/migrate/ms-connector-credentials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, creds }),
+  });
+  if (!res.ok) throw new Error('ms_creds_save_failed');
+  return (await res.json()) as { secretIds: string[] };
+}

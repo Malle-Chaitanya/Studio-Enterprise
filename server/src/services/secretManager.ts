@@ -65,6 +65,21 @@ export async function putEntraSecret(
   return { ok: true, versionName: json.name };
 }
 
+/**
+ * Upsert a connector credential into a CUSTOMER'S Google Cloud project.
+ * Signature matches what migrate.ts expects: (saToken, project, secretId, value).
+ * Re-uses the existing create-then-addVersion pattern.
+ */
+export async function upsertSecret(
+  saToken: string,
+  project: string,
+  secretId: string,
+  plaintext: string,
+): Promise<void> {
+  const result = await putEntraSecret(project, saToken, secretId, plaintext);
+  if (!result.ok) throw new Error(result.error ?? 'upsertSecret failed');
+}
+
 export interface GetSecretResult {
   ok: boolean;
   plaintext?: string;

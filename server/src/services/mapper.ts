@@ -1,6 +1,8 @@
 import { config, llmEnabled } from '../config.js';
 import { logger } from '../logger.js';
 import { buildProceduresInstruction } from './topicsEmit.js';
+import type { ResolvedConnector } from './connectorToolBuilder.js';
+import { buildLiveConnectorSpecs, buildLiveConnectorInstruction } from './connectorToolBuilder.js';
 import type { TopicsMigrationPlan } from './topicsMigration.js';
 import type { AgentIR, FidelityNote, MappedAgent } from '../types.js';
 
@@ -136,6 +138,13 @@ export interface MapOptions {
    * it here (and stages it), so it isn't recomputed.
    */
   topicsPlan?: TopicsMigrationPlan;
+  /**
+   * Resolved third-party / MS-native connector contexts. When provided, a
+   * structured `## External Connector Access` block is appended to the agent
+   * instruction so the Gemini agent knows the base URLs, auth headers, and
+   * usage pattern for each configured connector.
+   */
+  connectors?: ResolvedConnector[];
 }
 
 export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAgent> {
@@ -166,6 +175,31 @@ export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAg
           `${s.needsReview} need review, ${s.deterministicTools} deterministic tool(s) to rebuild) ` +
           `but NOT added to the instruction — review and apply separately so it doesn't shift the ` +
           `agent's tone away from the source instructions.`,
+      });
+    }
+  }
+
+  // ── Connector instruction block ────────────────────────────────────────────
+  // Credential-free on purpose. The old block pasted each connector's base URL and
+  // bearer token into the instruction, which (a) gave the model no actual ability to
+  // call anything and (b) let any user extract the token by asking the agent to
+  // repeat its prompt. Real calling ability comes from ADK function tools wired at
+  // deploy time (AdkSpec.liveConnectors); this text only tells the agent when to
+  // reach for them.
+  if (opts?.connectors && opts.connectors.length > 0) {
+    const specs = buildLiveConnectorSpecs(opts.connectors.map((c) => c.connectorId));
+    const block = buildLiveConnectorInstruction(specs);
+    if (block) {
+      refined += block;
+      notes.push({
+        component: 'connectors',
+        status: 'needs-review',
+        detail:
+          `${specs.length} external connector(s) wired as live API tools: ${specs.map((c) => c.name).join(', ')}. ` +
+          'Credentials stay in Secret Manager and are read per call — never placed in the agent instruction. ' +
+          'This migrates API ACCESS to these systems, not the source flow\'s orchestration logic ' +
+          '(triggers, conditions, loops): the agent decides which calls to make, so verify the ' +
+          'behaviour matches what the Copilot flow did before relying on it.',
       });
     }
   }
@@ -207,8 +241,6 @@ export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAg
     instruction: refined,
     starterPrompts: buildStarterPrompts(ir),
     model: GEMINI_MODEL,
-    // v1: every agent gets googleSearch grounding. Mapping Copilot connector
-    // actions to Gemini tools is deferred to v2.
     tools: [{ name: 'googleSearch' }],
     fidelityNotes,
   };

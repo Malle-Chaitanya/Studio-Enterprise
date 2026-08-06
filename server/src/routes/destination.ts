@@ -8,6 +8,8 @@ import { setUpSharePointConnector, getConnectorOperation, getConnectorDataStores
 import { putEntraSecret, getEntraSecret } from '../services/secretManager.js';
 import { connectorCollectionId, normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
 import { getSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
+import { chatWithAdkAgent, createAdkSession } from '../services/adkAgentChat.js';
+import { listAdkDeployments } from '../db/repos/adkDeployments.js';
 import { getEntraAppCredential, upsertEntraAppCredential } from '../db/repos/entraAppCredentials.js';
 import {
   getKnowledgeConnector,
@@ -352,4 +354,88 @@ destinationRouter.get('/connectors', async (req, res) => {
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const connectors = await listKnowledgeConnectors(appUserId);
   res.json({ connectors });
+});
+
+/**
+ * GET /api/destination/migrated-agents?session=…
+ * Every ADK agent this customer has deployed, newest first — the picker for the
+ * "test a migrated agent" panel. Scoped by the session's appUserId, never a
+ * client-supplied one.
+ */
+destinationRouter.get('/migrated-agents', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const deployments = await listAdkDeployments(appUserId);
+  res.json({
+    agents: deployments.map((d) => ({
+      agentId: d.agentId,
+      // The UI only ever needs the id; keep the full resource server-side.
+      reasoningEngineId: d.reasoningEngine.split('/').pop(),
+      sourceId: d.sourceId,
+      envUrl: d.envUrl,
+      project: d.project,
+      engine: d.engine,
+      deployedAt: d.deployedAt,
+    })),
+  });
+});
+
+/**
+ * POST /api/destination/agent-chat
+ * Body: { session, reasoningEngineId, message, chatSessionId? }
+ *
+ * Send one message to a migrated ADK agent and return its reply. This is how a
+ * customer verifies a migration actually behaves, without waiting on a Google
+ * Workspace admin to publish the agent in the console.
+ *
+ * The reasoningEngineId is validated against this tenant's own deployments
+ * before use — otherwise the endpoint would happily invoke any Reasoning Engine
+ * id a client cared to guess, using OUR service-account credentials.
+ */
+destinationRouter.post('/agent-chat', async (req, res) => {
+  const body = req.body as {
+    session?: string;
+    reasoningEngineId?: string;
+    message?: string;
+    chatSessionId?: string;
+  };
+  const session = await getSession(body.session ?? '');
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!body.reasoningEngineId) return void res.status(400).json({ error: 'reasoning_engine_required' });
+  if (!body.message?.trim()) return void res.status(400).json({ error: 'message_required' });
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const owned = (await listAdkDeployments(appUserId)).find(
+    (d) => d.reasoningEngine.split('/').pop() === body.reasoningEngineId,
+  );
+  if (!owned) return void res.status(404).json({ error: 'agent_not_found' });
+
+  try {
+    const saToken = await getSaToken(session.gEmail);
+    // Reuse the caller's chat session so multi-turn history is kept; open one on
+    // the first turn if the deployment supports sessions at all.
+    const chatSessionId =
+      body.chatSessionId ??
+      (await createAdkSession(owned.project, saToken, body.reasoningEngineId, appUserId)) ??
+      undefined;
+
+    const result = await chatWithAdkAgent(owned.project, saToken, {
+      reasoningEngineId: body.reasoningEngineId,
+      message: body.message,
+      userId: appUserId,
+      sessionId: chatSessionId,
+    });
+    if (!result.ok) return void res.status(502).json({ error: 'agent_chat_failed', detail: result.error });
+
+    res.json({
+      answer: result.answer,
+      chatSessionId,
+      usedSearchTool: result.usedSearchTool,
+      agentId: owned.agentId,
+    });
+  } catch (e) {
+    logger.warn(`agent-chat failed: ${(e as Error).message}`);
+    res.status(500).json({ error: 'agent_chat_failed', detail: (e as Error).message });
+  }
 });

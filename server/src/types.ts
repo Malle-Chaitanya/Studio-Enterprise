@@ -67,6 +67,35 @@ export interface KnowledgeSourceIR {
   references?: string[];
   /** Author's description of what the source is for (folded into instruction). */
   description?: string;
+  /**
+   * Primary Confluence signal: space display names parsed from the Dataverse `description`
+   * column ("…Confluence items: Engineering, Chaitanya Malle, Demo Company Wiki").
+   * Comma-separated; most reliable for CQL queries. Cross-reference with the signals
+   * below if this is absent or the description format changes.
+   * Space IDs are NOT stored in Dataverse — only display names are available.
+   */
+  confluenceSpaceNames?: string[];
+  /**
+   * Auto-generated `source.skillConfiguration` from the YAML data blob — a stable,
+   * system-written identifier. Format: "{spacesConcatenated}_{randomSuffix}".
+   * e.g. "Engineering_ChaitanyaMalleDemoCompanyWiki_0ioUg9wnrKb1GTC6avSgS".
+   * Word boundaries between space names are lost (no separators), so this cannot
+   * be split back into individual names reliably — use as a stable key / fallback.
+   */
+  confluenceSkillConfig?: string;
+  /**
+   * Botcomponent `name` field — comma-separated space names when the author did not
+   * customize the label (e.g. "Engineering, Chaitanya Malle, Demo Company Wiki").
+   * UNRELIABLE: the author can set this to any string; always prefer `confluenceSpaceNames`.
+   */
+  confluenceComponentName?: string;
+  /**
+   * Concatenated space-name key from the botcomponent `schemaname`, with the dotted
+   * type prefix and random suffix stripped.
+   * e.g. "crf37_Agent.topic.SpaceASpaceB_QfXX…" → "SpaceASpaceB".
+   * Same concatenation as `confluenceSkillConfig` prefix — useful for cross-referencing.
+   */
+  confluenceSchemaName?: string;
   /** Present when the source is an author-uploaded file. */
   file?: {
     name?: string;
@@ -346,6 +375,10 @@ export interface ResolvedPlan {
   destination: DestinationOptions;
   /** Dry run: extract + map + assess, but do NOT create/deploy/share in Gemini. */
   dryRun?: boolean;
+  /** Third-party connector IDs whose credentials have been saved to Secret Manager. */
+  savedConnectors?: string[];
+  /** Whether MS native app registration creds were saved (Teams/SharePoint/Office365). */
+  msCreds?: boolean;
 }
 
 /** Result of mapping one AgentIR to a Gemini agent definition. */
@@ -357,6 +390,12 @@ export interface MappedAgent {
   starterPrompts: { text: string }[];
   model: string;
   tools: { name: string }[];
+  /**
+   * Full Discovery Engine data store resource paths to ground this agent on.
+   * When set, the low-code agent uses dataStoreSpecs (native grounding) instead
+   * of selectedTools, bypassing the RE class_method='query' platform bug.
+   */
+  groundingDataStores?: string[];
   /** Notes about lossy or heuristic mappings for the fidelity report. */
   fidelityNotes: FidelityNote[];
 }

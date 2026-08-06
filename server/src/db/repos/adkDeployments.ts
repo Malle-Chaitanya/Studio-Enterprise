@@ -56,6 +56,35 @@ export async function recordAdkDeployment(
   }
 }
 
+/** One deployed ADK agent, with enough context for a UI to label and invoke it. */
+export interface AdkDeploymentListing extends AdkDeploymentRecord {
+  sourceId: string;
+  envUrl: string;
+  project: string;
+  engine: string;
+  deployedAt?: Date;
+}
+
+/**
+ * Every ADK agent deployed by this tenant, newest first — powers the "chat with
+ * a migrated agent" screen. Scoped by appUserId like every other
+ * migration-scoped read; never take the tenant from the client.
+ */
+export async function listAdkDeployments(appUserId: string, limit = 100): Promise<AdkDeploymentListing[]> {
+  if (!isDbConnected()) return [];
+  try {
+    return await getDb(config.CSGE_DB)
+      .collection(COLL)
+      .find<AdkDeploymentListing>({ appUserId })
+      .sort({ deployedAt: -1 })
+      .limit(limit)
+      .toArray();
+  } catch (e) {
+    logger.warn(`listAdkDeployments read failed: ${(e as Error).message}`);
+    return [];
+  }
+}
+
 export async function getAdkDeployment(
   appUserId: string,
   envUrl: string,

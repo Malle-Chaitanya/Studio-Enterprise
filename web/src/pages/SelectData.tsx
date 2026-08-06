@@ -91,7 +91,7 @@ export function SelectData() {
       .filter((u) => u.botIds.length);
     sessionStorage.setItem(`csge_data_${session}`, JSON.stringify(payload));
     wizard?.setAgentSelection(payload);
-    navigate(`/connectors?session=${session}`);
+    navigate(`/connector-config?session=${session}`);
   };
 
   const match = (a: AgentBrief) => {

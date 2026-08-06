@@ -61,6 +61,9 @@ interface BotComponent {
    *  to the person who added a SharePoint/OneDrive copy-mode source). See
    *  resolveSystemUserEmail below. */
   _modifiedby_value?: string | null;
+  /** Dataverse schemaname for the botcomponent — used to extract the concatenated
+   *  space-name key for Confluence sources (strip dotted prefix + random suffix). */
+  schemaname?: string | null;
 }
 
 /** Build the provenance metadata block for a knowledge component. */
@@ -730,11 +733,13 @@ function parseKnowledgeSource(c: BotComponent): KnowledgeSourceIR {
   if (doc) collectStrings(doc, (k) => /url|site|siteurl|reference|entity|path|connection|skill/i.test(k), refs);
   const references = dedupe(refs);
 
-  // Author's description of what this source is for ("...answer questions about
-  // the Dynamics 365 contact center product") — folded into the Gemini agent's
-  // instruction for website sources that can't become a data store.
-  const descRaw = (doc?.description as string) ?? '';
-  const description = descRaw.trim() ? descRaw.trim().slice(0, 500) : undefined;
+  // Author's description of what this source is for — used in the classifier and
+  // folded into the Gemini agent's instruction for website sources.
+  // Two sources: (a) YAML `data` blob (`doc.description`) for older-schema sources;
+  // (b) Dataverse `description` column (`c.description`) for Confluence and newer
+  // sources — it's the authoritative field for identifying Confluence knowledge sources.
+  const descRaw = (c.description ?? (doc?.description as string) ?? '').trim();
+  const description = descRaw ? descRaw.slice(0, 500) : undefined;
 
   // Uploaded-file metadata, when this source is a file. The actual bytes live in
   // Dataverse and are pulled at migration time; here we capture name/size so the
@@ -750,7 +755,7 @@ function parseKnowledgeSource(c: BotComponent): KnowledgeSourceIR {
     if (fileName || sizeBytes) file = { name: fileName ? normalizeFileName(fileName) : fileName, sizeBytes };
   }
 
-  const classification = classifyKnowledgeSource({ kind, references, file });
+  const classification = classifyKnowledgeSource({ kind, references, file, description });
 
   // Reflect the file-compat gate back onto the file record for the report.
   if (file?.name) {
@@ -763,6 +768,48 @@ function parseKnowledgeSource(c: BotComponent): KnowledgeSourceIR {
     };
   }
 
+  // Confluence sources — capture ALL available signals for cross-referencing space names.
+  // No single field is 100% reliable alone:
+  //   c.description  → "…Confluence items: SpaceA, SpaceB" (best for comma-separated names)
+  //   c.name         → EDITOR-SET label; may be space names or anything the author typed
+  //   skillConfig    → "SpaceASpaceB_<randomId>" (auto-generated, stable, but no word boundaries)
+  //   schemaname     → dotted prefix + same concatenated key as skillConfig
+  // Space IDs (UUID_{numeric}) are NOT present in Dataverse at all.
+  // Detection: kind=FederatedStructuredSearchSource + description contains "confluence".
+  let confluenceSpaceNames: string[] | undefined;
+  let confluenceSkillConfig: string | undefined;
+  let confluenceComponentName: string | undefined;
+  let confluenceSchemaName: string | undefined;
+  const rowDesc = (c.description ?? '').trim();
+  const isConfluenceSource =
+    /confluence/i.test(kind) ||
+    (kind === 'FederatedStructuredSearchSource' && rowDesc.toLowerCase().includes('confluence'));
+  if (isConfluenceSource) {
+    // Signal 1: description → comma-separated space names (most actionable for CQL)
+    const m = rowDesc.match(/confluence items:\s*(.+)$/i);
+    if (m) {
+      const names = m[1].split(',').map((s) => s.trim()).filter(Boolean);
+      if (names.length > 0) confluenceSpaceNames = names;
+    }
+
+    // Signal 2: YAML source.skillConfiguration — stable auto-generated key
+    const srcBlock = doc?.source as Record<string, unknown> | undefined;
+    const sc = srcBlock?.skillConfiguration;
+    if (typeof sc === 'string' && sc) confluenceSkillConfig = sc;
+
+    // Signal 3: botcomponent name — may be space names or a custom user label
+    if (c.name) confluenceComponentName = c.name;
+
+    // Signal 4: schemaname — strip dotted type prefix + trailing random suffix
+    // "crf37_Agent.topic.SpaceASpaceB_QfXXbkQ3xcN5Bw9598KB0" → "SpaceASpaceB"
+    if (c.schemaname) {
+      const last = c.schemaname.split('.').pop() ?? '';
+      // Suffix is always pure alphanumeric, 15+ chars; schemaname suffix never contains '_'
+      const stripped = last.replace(/_[A-Za-z0-9]{15,}$/, '');
+      if (stripped && stripped !== last) confluenceSchemaName = stripped;
+    }
+  }
+
   return {
     id: c.botcomponentid,
     name: c.name,
@@ -771,6 +818,10 @@ function parseKnowledgeSource(c: BotComponent): KnowledgeSourceIR {
     references,
     description,
     file,
+    confluenceSpaceNames,
+    confluenceSkillConfig,
+    confluenceComponentName,
+    confluenceSchemaName,
     classification,
     metadata: buildKnowledgeMetadata(c),
     raw: doc ?? c.data ?? undefined,
@@ -835,7 +886,7 @@ export async function extractAgent(
   const json = await dvGet<{ value: BotComponent[] }>(
     url,
     token,
-    'botcomponents?$select=name,data,content,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode,description,_modifiedby_value' +
+    'botcomponents?$select=name,data,content,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode,description,_modifiedby_value,schemaname' +
       `&$filter=statecode eq 0 and _parentbotid_value eq ${bot.botid}&$top=1000`,
   );
   const components = json.value ?? [];

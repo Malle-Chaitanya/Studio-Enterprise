@@ -118,6 +118,18 @@ async function ensureCollections(): Promise<void> {
     { unique: true },
   );
 
+  // 11b. connectorCredentials — per (customer, third-party connector) record of
+  //      WHICH credential fields were supplied and the Secret Manager secret id
+  //      each one lives under. Replaces `plan.savedConnectors` on the session,
+  //      which died with the session TTL and made a customer re-enter Jira /
+  //      Confluence credentials that were already in Secret Manager. Stores
+  //      field names and secret ids only — never a credential value.
+  await ensure('connectorCredentials');
+  await db.collection('connectorCredentials').createIndex(
+    { appUserId: 1, connectorId: 1 },
+    { unique: true },
+  );
+
   // 12. entraAppCredentials — per (customer, Microsoft tenant) reference to a
   //     Secret Manager-stored Entra app credential, so a NEW site under an
   //     already-onboarded tenant can auto-provision a connector without asking

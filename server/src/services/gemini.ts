@@ -73,6 +73,33 @@ async function withBackoff(
 }
 
 function buildCreateBody(agent: MappedAgent) {
+  const hasDataStores = (agent.groundingDataStores?.length ?? 0) > 0;
+
+  const llmAgentNode: Record<string, unknown> = {
+    description: agent.description,
+    model: agent.model,
+    instruction: agent.instruction,
+    subAgentIds: [],
+  };
+
+  if (hasDataStores) {
+    // Native data store grounding via dataStoreSpecs — bypasses RE entirely.
+    // Learned from inspecting a console-created connector agent: the console
+    // uses dataStoreSpecs.specs (not selectedTools.tool) for knowledge grounding.
+    llmAgentNode['dataStoreSpecs'] = {
+      specs: agent.groundingDataStores!.map((ds) => ({ dataStore: ds })),
+    };
+    llmAgentNode['selectedTools'] = { tool: [{ name: 'googleSearch' }] };
+  } else {
+    llmAgentNode['selectedTools'] = { tool: agent.tools };
+  }
+
+  const rootNode = {
+    id: 'root_agent',
+    displayName: agent.displayName,
+    llmAgentNode,
+  };
+
   return {
     displayName: agent.displayName,
     description: agent.description,
@@ -80,24 +107,16 @@ function buildCreateBody(agent: MappedAgent) {
     icon: {},
     lowCodeAgentDefinition: {
       rootAgentId: 'root_agent',
-      nodes: [
-        {
-          id: 'root_agent',
-          displayName: agent.displayName,
-          llmAgentNode: {
-            description: agent.description,
-            model: agent.model,
-            instruction: agent.instruction,
-            subAgentIds: [],
-            selectedTools: { tool: agent.tools },
-          },
-        },
-      ],
+      nodes: [rootNode],
+      // Pre-populate deployedNodes (same as nodes) — mirrors what the console does.
+      // Agents created this way are PRIVATE (creator-accessible draft) and require
+      // a manual Publish click in the Agentspace console for org-wide ENABLED state.
+      deployedNodes: [rootNode],
+      deployedRootAgentId: 'root_agent',
       draftDisplayName: agent.displayName,
       draftDescription: agent.description,
       draftStarterPrompts: agent.starterPrompts.slice(0, 2),
       draftIcon: { content: '' },
-      deployedNodes: [],
       agentFiles: [],
       draftSchedules: [],
       deployedSchedules: [],

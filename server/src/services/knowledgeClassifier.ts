@@ -27,6 +27,7 @@ export type KnowledgeStrategy =
   | 'copy-and-index' // pull the bytes → GCS → ImportDocuments into a document data store
   | 'recreate' // recreate the pointer (e.g. a website data store over the same URL)
   | 'reconnect' // wire Gemini's native federated connector to the same source
+  | 'confluence-crawler' // crawl selected Confluence spaces via REST API → GCS → ImportDocuments
   | 'dataverse-snapshot' // export a reference table's rows → a structured data store (snapshot)
   | 'rebuild-as-tool' // a live/structured source → rebuild as a Gemini agent tool/action
   | 'manual-review'; // no automatic path; a human must decide
@@ -65,6 +66,12 @@ export interface ClassifierInput {
   references?: string[];
   /** Present when the source is an author-uploaded file. */
   file?: { name?: string; sizeBytes?: number };
+  /**
+   * The source's description field from the YAML, used as a secondary signal
+   * when the `kind` token is generic (e.g. FederatedStructuredSearchSource is
+   * used for both Confluence and SharePoint — the description disambiguates).
+   */
+  description?: string;
 }
 
 // ── Gemini / Vertex AI Search ingestion limits (document data store) ──────────
@@ -144,8 +151,8 @@ export function isPublicWebsiteKind(kind: string): boolean {
 }
 
 interface Rule {
-  /** Ordered match against the normalized kind. First match wins. */
-  test: (k: string) => boolean;
+  /** Ordered match against the normalized kind (and optionally the full input). First match wins. */
+  test: (k: string, input: ClassifierInput) => boolean;
   build: (input: ClassifierInput) => KnowledgeClassification;
 }
 
@@ -232,6 +239,32 @@ const RULES: Rule[] = [
       notes: [
         'OneDrive reference: use Gemini\'s native OneDrive federated connector against the same account/paths.',
         'NOT unattended: requires the same Workforce Identity Federation setup as SharePoint for ACL enforcement.',
+      ],
+    }),
+  },
+  {
+    // Confluence spaces selected by the agent author in Copilot Studio.
+    // Copilot Studio writes kind=FederatedStructuredSearchSource for Confluence knowledge
+    // sources (the same generic token it uses for SharePoint federated sources). The
+    // description field disambiguates: Confluence sources always contain the string
+    // "Confluence items" in their description. Space names (not IDs) are stored in the
+    // botcomponent name field and extracted into KnowledgeSourceIR.confluenceSpaceNames.
+    // Migration: CQL search → fetch pages → GCS upload → ImportDocuments into a document
+    // data store. Requires the customer's Atlassian credentials in the Connectors step.
+    test: (k, input) =>
+      k.includes('confluence') ||
+      (k.includes('federatedstructured') &&
+        (input.description ?? '').toLowerCase().includes('confluence')),
+    build: ({ description }) => ({
+      strategy: 'confluence-crawler',
+      retrievability: 'connector-backed',
+      geminiTarget: 'document-data-store',
+      automatable: true,
+      notes: [
+        `Confluence knowledge source: the agent's selected space(s) will be crawled via Atlassian REST API (CQL search) and indexed into a Gemini document data store.`,
+        description ? `Space description: "${description.slice(0, 200)}"` : 'Space names extracted from the botcomponent name field.',
+        'Requires Atlassian credentials (email + API token + Confluence site URL) entered in the Connectors step.',
+        'Only the exact spaces the agent author selected in Copilot Studio will be crawled — no other spaces.',
       ],
     }),
   },
@@ -335,7 +368,7 @@ const RULES: Rule[] = [
 export function classifyKnowledgeSource(input: ClassifierInput): KnowledgeClassification {
   const k = norm(input.kind);
   for (const rule of RULES) {
-    if (rule.test(k)) return rule.build(input);
+    if (rule.test(k, input)) return rule.build(input);
   }
   // Kind unrecognized — infer from the reference URL/path before giving up.
   // (Real Copilot agents carry Dynamics-specific kind tokens our rules don't

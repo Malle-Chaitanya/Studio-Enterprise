@@ -60,6 +60,50 @@ export interface AdkSpec {
    * agent 403s at query time even though deployment itself succeeds.
    */
   groundingDataStores?: string[];
+  /**
+   * Live third-party action connectors (Track B). Each entry becomes a REAL
+   * Python function tool inside the deployed Reasoning Engine that calls the
+   * third-party API at inference time — see `_build_live_connector_tool` in
+   * scripts/adk_deploy.py.
+   *
+   * This replaces the earlier "## External Connector Access" instruction-block
+   * approach (connectorToolBuilder.ts), which could not work: an LLM handed a
+   * base URL and a bearer token in its prompt has no way to make an HTTP
+   * request, so it could only narrate a curl command or hallucinate a response.
+   * It was also unsafe — anything in the instruction can be extracted by asking
+   * the agent to repeat its prompt.
+   *
+   * `secretIds` maps a credential field name to its Secret Manager secret id;
+   * the container resolves them per call, so nothing secret is pickled into the
+   * deployment and a rotated token needs no redeploy.
+   *
+   * ⚠️ Requires the Reasoning Engine runtime service agent to hold
+   * roles/secretmanager.secretAccessor on the project, or every tool call 403s
+   * at inference time while deployment still reports success.
+   */
+  liveConnectors?: Array<{
+    id: string;
+    /** 'confluence' gets a purpose-built search tool; anything else gets the generic REST tool. */
+    kind: string;
+    name?: string;
+    secretIds: Record<string, string>;
+    /** Registry templates for the generic REST tool, e.g. 'https://{subdomain}.example.com'. */
+    baseUrlTemplate?: string;
+    authHeaderTemplate?: string;
+    /**
+     * How the container builds the Authorization header: 'bearer' (stored value is the
+     * token), 'basic-userpass' (it base64s the pair itself), or one of the token-minting
+     * kinds — 'oauth2-client-credentials', 'oauth2-refresh-token',
+     * 'google-service-account'. The minting kinds exist because customers can supply
+     * durable app credentials but not an access token: those are produced by the
+     * exchange and expire within about an hour.
+     */
+    authKind?: string;
+    tokenUrlTemplate?: string;
+    scope?: string;
+    basicUserField?: string;
+    basicSecretField?: string;
+  }>;
 }
 
 /**
@@ -191,11 +235,36 @@ export async function createWebsiteGroundingDataStore(
  * explicitly), this fails gracefully — callers must treat that as "grounding
  * may not work" and report it honestly, NOT crash the whole deployment.
  */
+/** Resolve a project id to its numeric project number (cached per process). */
+const projectNumberCache = new Map<string, string>();
+async function resolveProjectNumber(project: string, saToken: string): Promise<string | null> {
+  const cached = projectNumberCache.get(project);
+  if (cached) return cached;
+  const res = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${project}`, {
+    headers: { Authorization: `Bearer ${saToken}` },
+  });
+  if (!res.ok) {
+    logger.warn({ project, status: res.status }, 'adk: could not resolve project number for RE service agent');
+    return null;
+  }
+  const json = (await res.json()) as { projectNumber?: string };
+  if (!json.projectNumber) return null;
+  projectNumberCache.set(project, json.projectNumber);
+  return json.projectNumber;
+}
+
 export async function ensureReasoningEngineDiscoveryAccess(
   project: string,
   saToken: string,
 ): Promise<{ ok: boolean; alreadyGranted?: boolean; error?: string }> {
-  const serviceAgent = `service-${project}@gcp-sa-aiplatform-re.iam.gserviceaccount.com`;
+  // The service agent is keyed by project NUMBER, not project id. Using the id
+  // produced `400 Service account service-<projectId>@gcp-sa-aiplatform-re...
+  // does not exist` on every call, so the grant silently never applied and every
+  // grounded ADK agent 403d at query time on any project that had not been
+  // granted by hand (verified live 2026-08-06).
+  const projectNumber = await resolveProjectNumber(project, saToken);
+  if (!projectNumber) return { ok: false, error: `could not resolve project number for ${project}` };
+  const serviceAgent = `service-${projectNumber}@gcp-sa-aiplatform-re.iam.gserviceaccount.com`;
   const role = 'roles/discoveryengine.viewer';
   const member = `serviceAccount:${serviceAgent}`;
 
@@ -335,6 +404,11 @@ export async function publishAgentToGallery(
      *  orchestrator.ts needs the per-source success/failure detail for its
      *  own fidelity reporting, so resolution stays the caller's job. */
     groundingDataStores?: string[];
+    /** Configured third-party connectors to wire as LIVE API tools on this agent
+     *  (see AdkSpec.liveConnectors). Built by
+     *  connectorToolBuilder.buildLiveConnectorSpecs from the customer's saved
+     *  connectors — secret ids only, resolved in-container per call. */
+    liveConnectors?: AdkSpec['liveConnectors'];
   },
 ): Promise<{
   ok: boolean;
@@ -378,6 +452,7 @@ export async function publishAgentToGallery(
   }
 
   const spec = buildAdkSpec(ir, { model: opts?.model, instruction: opts?.instruction, groundingDataStores });
+  if (opts?.liveConnectors?.length) spec.liveConnectors = opts.liveConnectors;
   logger.info({ agent: ir.name, location }, 'adk: deploying reasoning engine');
   const dep = await deployReasoningEngine(dest.project, location, spec, { stagingBucket: opts?.stagingBucket });
   if (!dep.ok || !dep.reasoningEngine) return { ok: false, error: `deploy: ${dep.error}` };

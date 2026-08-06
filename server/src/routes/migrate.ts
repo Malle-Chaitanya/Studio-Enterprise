@@ -2,7 +2,12 @@ import { Router } from 'express';
 import { runMigration } from '../orchestrator.js';
 import { renderReport } from '../services/report.js';
 import { resolveScope } from '../services/scope.js';
-import { getSession, updateSession } from '../sessionStore.js';
+import { getSession, updateSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
+import {
+  upsertConnectorCredential,
+  listConnectorCredentials,
+  deleteConnectorCredential,
+} from '../db/repos/connectorCredentials.js';
 import { clientCredsToken } from '../auth/microsoft.js';
 import { resolveSystemUserEmail } from '../services/dataverse.js';
 import { getSaToken } from '../auth/google.js';
@@ -10,6 +15,11 @@ import { defaultDestination } from '../services/gemini.js';
 import { findCandidates } from '../services/graphSearch.js';
 import { resolveShareUrlSmart } from '../services/graphFiles.js';
 import { migrateSharePointDriveItem } from '../services/knowledgeDataStoreExecutor.js';
+import { detectThirdPartyConnectors } from '../services/thirdPartyConnectorScan.js';
+import { detectKnowledgeConnectors } from '../services/knowledgeConnectorScan.js';
+import { upsertSecret } from '../services/secretManager.js';
+import { connectorSecretId } from '../services/connectorCredentials.js';
+import { MS_APP_REG_FIELDS } from '../services/connectorToolBuilder.js';
 import type { DestinationOptions, GeminiDestination, MigrationResult, MigrationScope } from '../types.js';
 
 export const migrateRouter = Router();
@@ -229,5 +239,181 @@ migrateRouter.post('/knowledge-source-confirm', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(502).json({ error: 'knowledge_source_confirm_failed', detail: (err as Error).message });
+  }
+});
+
+// ── Third-party connector detection + credential storage ──────────────────────
+
+/** GET /api/migrate/third-party-connectors?session= */
+migrateRouter.get('/third-party-connectors', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!session.tenantId) return void res.status(400).json({ error: 'ms_not_connected' });
+  if (!session.dvOrgUrl) return void res.status(400).json({ error: 'ms_env_not_selected' });
+
+  try {
+    const dvToken = await clientCredsToken(session.tenantId, session.dvOrgUrl);
+    const connectors = await detectThirdPartyConnectors(session.dvOrgUrl, dvToken);
+    res.json({ connectors });
+  } catch (err) {
+    res.status(502).json({ error: 'connector_scan_failed', detail: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/migrate/knowledge-connectors
+ * body: { session, envUrl, botIds: string[] }
+ *
+ * Scans Dataverse knowledge-source botcomponents for the specified agents and
+ * returns which knowledge connectors need credentials (e.g. shared_confluence).
+ * Called from ConnectorConfig after the user has selected agents.
+ */
+migrateRouter.post('/knowledge-connectors', async (req, res) => {
+  const { session: sessionId, envUrl, botIds } = req.body as {
+    session?: string;
+    envUrl?: string;
+    botIds?: string[];
+  };
+  const session = await getSession(sessionId ?? '');
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!session.tenantId) return void res.status(400).json({ error: 'ms_not_connected' });
+  if (!envUrl || !Array.isArray(botIds) || botIds.length === 0) {
+    return void res.json({ connectors: [] });
+  }
+
+  try {
+    const dvToken = await clientCredsToken(session.tenantId, envUrl);
+    const connectors = await detectKnowledgeConnectors(envUrl, dvToken, botIds);
+    res.json({ connectors });
+  } catch (err) {
+    res.status(502).json({ error: 'knowledge_connector_scan_failed', detail: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/migrate/third-party-connectors/credentials
+ * body: { session, connectorId, creds: [{ field, value }] }
+ * Stores credentials in Secret Manager and records connectorId on the session plan.
+ */
+migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
+  const { session: sessionId, connectorId, creds } = req.body as {
+    session?: string;
+    connectorId?: string;
+    creds?: Array<{ field: string; value: string }>;
+  };
+  const session = await getSession(sessionId ?? '');
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!connectorId || !Array.isArray(creds) || creds.length === 0) {
+    return void res.status(400).json({ error: 'connector_id_and_creds_required' });
+  }
+  if (!session.geminiProject) return void res.status(400).json({ error: 'google_not_connected' });
+
+  try {
+    const saToken = await getSaToken(session.gEmail);
+    const secretIds: string[] = [];
+    const secretIdByField: Record<string, string> = {};
+    for (const { field, value } of creds) {
+      const secretId = connectorSecretId(connectorId, field);
+      await upsertSecret(saToken, session.geminiProject, secretId, value);
+      secretIds.push(secretId);
+      secretIdByField[field] = secretId;
+    }
+
+    // Durable record, keyed by customer — survives the session TTL so a returning
+    // admin sees "already configured" instead of re-entering credentials that are
+    // already in Secret Manager. Field names + secret ids only, never values.
+    const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+    await upsertConnectorCredential(appUserId, {
+      connectorId,
+      fields: creds.map((c) => c.field),
+      secretIds: secretIdByField,
+      project: session.geminiProject,
+    });
+
+    // Still recorded on the session plan: that's what the in-flight migration reads.
+    const existing = session.plan?.savedConnectors ?? [];
+    if (!existing.includes(connectorId)) {
+      const updated = { ...session.plan, savedConnectors: [...existing, connectorId] };
+      await updateSession(sessionId!, { plan: updated as typeof session.plan });
+    }
+    res.json({ secretIds });
+  } catch (err) {
+    res.status(502).json({ error: 'credentials_save_failed', detail: (err as Error).message });
+  }
+});
+
+/**
+ * GET /api/migrate/connector-credentials?session=…
+ *
+ * Which connectors this customer has ALREADY configured, so the UI can render a
+ * connector as "configured" instead of asking for credentials that are already in
+ * Secret Manager. Returns field names and secret ids only — never a value, so this
+ * response is safe to hold in the browser.
+ */
+migrateRouter.get('/connector-credentials', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const saved = await listConnectorCredentials(appUserId);
+  res.json({
+    connectors: saved.map((s) => ({
+      connectorId: s.connectorId,
+      fields: s.fields,
+      project: s.project,
+      updatedAt: s.updatedAt,
+    })),
+  });
+});
+
+/**
+ * DELETE /api/migrate/connector-credentials?session=…&connectorId=…
+ *
+ * Forget our record of a connector so the UI asks for credentials again. Leaves the
+ * Secret Manager secrets in place on purpose — destroying customer secret material
+ * is an explicit, irreversible action, not a side effect of "reconfigure this".
+ */
+migrateRouter.delete('/connector-credentials', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const connectorId = req.query.connectorId as string;
+  if (!connectorId) return void res.status(400).json({ error: 'connector_id_required' });
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  await deleteConnectorCredential(appUserId, connectorId);
+  res.json({ ok: true });
+});
+
+/**
+ * POST /api/migrate/ms-connector-credentials
+ * body: { session, creds: { tenant_id, client_id, client_secret } }
+ * Stores MS App Registration credentials for MS-native connectors (Teams, SP, O365).
+ */
+migrateRouter.post('/ms-connector-credentials', async (req, res) => {
+  const { session: sessionId, creds } = req.body as {
+    session?: string;
+    creds?: Record<string, string>;
+  };
+  const session = await getSession(sessionId ?? '');
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!creds || Object.keys(creds).length === 0) {
+    return void res.status(400).json({ error: 'creds_required' });
+  }
+  if (!session.geminiProject) return void res.status(400).json({ error: 'google_not_connected' });
+
+  try {
+    const saToken = await getSaToken(session.gEmail);
+    const secretIds: string[] = [];
+    for (const field of MS_APP_REG_FIELDS) {
+      const value = creds[field.key];
+      if (!value) continue;
+      const secretId = connectorSecretId('ms_native', field.key);
+      await upsertSecret(saToken, session.geminiProject, secretId, value);
+      secretIds.push(secretId);
+    }
+    // Flag MS creds saved on the session plan
+    const updated = { ...session.plan, msCreds: true };
+    await updateSession(sessionId!, { plan: updated as typeof session.plan });
+    res.json({ secretIds });
+  } catch (err) {
+    res.status(502).json({ error: 'ms_creds_save_failed', detail: (err as Error).message });
   }
 });

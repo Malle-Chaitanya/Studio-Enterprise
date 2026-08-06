@@ -3,6 +3,7 @@ import { AgentChat } from './components/AgentChat.tsx';
 import { WizardProvider } from './context/WizardContext.tsx';
 import { ChoosePair } from './pages/ChoosePair.tsx';
 import { Connect } from './pages/Connect.tsx';
+import { ConnectorConfig } from './pages/ConnectorConfig.tsx';
 import { Connectors } from './pages/Connectors.tsx';
 import { Explore } from './pages/Explore.tsx';
 import { Home } from './pages/Home.tsx';
@@ -45,7 +46,7 @@ const STEPS = [
   { label: 'Map Users', paths: ['/map-users'] },
   { label: 'Select & Map', paths: ['/map', '/explore'] },
   { label: 'Select Agents', paths: ['/select-data'] },
-  { label: 'Connectors', paths: ['/connectors'] },
+  { label: 'Connectors', paths: ['/connectors', '/connector-config'] },
   { label: 'Live Migration', paths: ['/migrate'] },
   { label: 'Report', paths: [] as string[] },
 ];
@@ -95,6 +96,7 @@ export function App() {
         <Route path="/home" element={<Home />} />
         <Route path="/pair" element={<ChoosePair />} />
         <Route path="/map-users" element={<MapUsers />} />
+        <Route path="/connector-config" element={<ConnectorConfig />} />
         <Route path="/map" element={<SelectMap />} />
         <Route path="/select-data" element={<SelectData />} />
         <Route path="/connect" element={<Connect />} />
