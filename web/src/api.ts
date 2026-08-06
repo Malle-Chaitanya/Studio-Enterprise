@@ -310,13 +310,13 @@ export async function suggestIdentityMap(
 export async function fetchGoogleUsers(
   session: string,
   opts?: { q?: string; max?: number },
-): Promise<{ email: string; displayName?: string; suspended?: boolean }[]> {
+): Promise<{ users: { email: string; displayName?: string; suspended?: boolean }[]; error?: string }> {
   const qs = new URLSearchParams({ session });
   if (opts?.q) qs.set('q', opts.q);
   if (opts?.max) qs.set('max', String(opts.max));
   const res = await fetch(`/api/identity/google-users?${qs}`);
   if (!res.ok) throw new Error('google_users_failed');
-  return ((await res.json()) as { users: { email: string; displayName?: string; suspended?: boolean }[] }).users;
+  return (await res.json()) as { users: { email: string; displayName?: string; suspended?: boolean }[]; error?: string };
 }
 
 export interface MsUserBrief {

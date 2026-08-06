@@ -1,5 +1,5 @@
 import { graphTokenFromRefresh, getVerifiedDomains } from '../auth/microsoft.js';
-import { getWorkspaceDomainsAsAdmin } from '../auth/google.js';
+import { getWorkspaceDomainsAsAdmin, listWorkspaceUsersAsAdmin } from '../auth/google.js';
 import { logger } from '../logger.js';
 import type { Session } from '../sessionStore.js';
 import type { OrganizationProfile } from '../types.js';
@@ -60,6 +60,20 @@ export async function buildOrganizationProfile(session: Session, nowIso: string)
   addDomain(gAdminDomain);
   if (gAdminDomain && !sources.includes('google-workspace-domains')) sources.push('google-admin-email');
 
+  // Real Workspace user emails — lets identity resolution verify a same-email
+  // match actually EXISTS rather than just assuming any address on an owned
+  // domain is a real account (that gap fabricated dozens of false "matches").
+  // Best-effort: an empty list here means "can't verify," not "no users."
+  let verifiedUserEmails: string[] = [];
+  if (session.gEmail) {
+    try {
+      const users = await listWorkspaceUsersAsAdmin(session.gEmail, { max: 500 });
+      verifiedUserEmails = users.map((u) => u.email.toLowerCase());
+    } catch (err) {
+      logger.debug({ err }, 'Google Workspace user discovery skipped');
+    }
+  }
+
   return {
     discoveredAt: nowIso,
     microsoft: {
@@ -72,6 +86,7 @@ export async function buildOrganizationProfile(session: Session, nowIso: string)
       adminEmail: session.gEmail,
       project: session.geminiProject,
       workspaceDomains: [...new Set(workspaceDomains.map((d) => d.toLowerCase()))],
+      verifiedUserEmails,
     },
     ownedDomains: [...owned],
     domainSources: sources,

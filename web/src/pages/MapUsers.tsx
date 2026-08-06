@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   fetchGoogleUsers,
@@ -8,12 +8,20 @@ import {
   type MsUserBrief,
 } from '../api.ts';
 import { useWizardOptional } from '../context/WizardContext.tsx';
+import { avatarColor, IcoDownload, IcoUpload } from '../icons.tsx';
 
 /**
  * Map Users (early) — GEM_CO-style mapping grid.
  * Left: Microsoft Graph users. Right: Google Workspace email (directory + free text).
  * Persist via /api/identity/map. Agent-touched principals refine permissions later.
+ * (Per-user agent/chat counts only exist once agents are selected — a later
+ * wizard step — so this grid intentionally shows identity only, not usage.)
  */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
 export function MapUsers() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -27,22 +35,30 @@ export function MapUsers() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [googleUsersError, setGoogleUsersError] = useState<string | null>(null);
   const [status, setStatus] = useState('');
   const [query, setQuery] = useState('');
-  const [ownedHint, setOwnedHint] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     if (!session) return;
     setLoading(true);
     setError(null);
+    setGoogleUsersError(null);
     try {
-      const [ms, map, gUsers] = await Promise.all([
+      const [ms, map, gResult] = await Promise.all([
         fetchMsUsers(session, { max: 300 }),
         fetchIdentityMap(session).catch(() => ({ tenantId: '', users: {}, groups: {} })),
-        fetchGoogleUsers(session, { max: 300 }).catch(() => []),
+        fetchGoogleUsers(session, { max: 300 }).catch((e) => ({ users: [], error: (e as Error).message })),
       ]);
       setMsUsers(ms);
-      setGoogleUsers(gUsers);
+      setGoogleUsers(gResult.users);
+      if (gResult.error) {
+        setGoogleUsersError(
+          `Google Workspace directory couldn't be read (${gResult.error}). Check Domain-Wide Delegation ` +
+            'includes the admin.directory.* readonly scopes, and that the connected Google account has ' +
+            'Workspace admin rights — cloud-platform access alone isn’t enough for this list.',
+        );
+      }
       // Merge server map + any chat-applied sessionStorage overlay
       let overlay: Record<string, string> = {};
       try {
@@ -89,7 +105,16 @@ export function MapUsers() {
         setUserMap((prev) => ({ ...prev, ...users }));
       }
     }
-    if (wizard.lastToolEvent?.type === 'clear_mappings') setUserMap({});
+    if (wizard.lastToolEvent?.type === 'clear_mappings') {
+      // Clear all 3 layers — React state, the local sessionStorage overlay
+      // (which otherwise wins over the server map on next load and makes a
+      // "clear" look like it silently undid itself), and the persisted
+      // server-side map.
+      setUserMap({});
+      sessionStorage.removeItem(`csge_usermap_${session}`);
+      autoMappedOnce.current = false;
+      void saveIdentityMap(session, {}, {}).catch(() => {});
+    }
   }, [wizard?.toolEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = useMemo(() => {
@@ -103,16 +128,43 @@ export function MapUsers() {
     );
   }, [msUsers, query, userMap]);
 
+  const rowStatus = (email: string): { label: string; cls: string } => {
+    const dest = userMap[email]?.trim();
+    if (!dest) return { label: 'Unmapped', cls: 'fail' };
+    if (dest === email.toLowerCase()) return { label: 'Auto-matched', cls: 'ok' };
+    return { label: 'Manual', cls: 'warn' };
+  };
+
   const counts = useMemo(() => {
-    const mapped = Object.entries(userMap).filter(([, v]) => v?.trim()).length;
+    let autoMatched = 0;
+    let manual = 0;
+    let unmapped = 0;
+    for (const u of msUsers) {
+      const cls = rowStatus(u.email).cls;
+      if (cls === 'ok') autoMatched++;
+      else if (cls === 'warn') manual++;
+      else unmapped++;
+    }
     const sel = [...selected].filter((e) => userMap[e]?.trim()).length;
-    return { total: msUsers.length, mapped, selected: selected.size, selectedMapped: sel };
+    return {
+      total: msUsers.length,
+      autoMatched,
+      manual,
+      unmapped,
+      selected: selected.size,
+      selectedMapped: sel,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [msUsers, userMap, selected]);
 
   const setDest = (src: string, dest: string) => {
     setUserMap((prev) => {
       const next = { ...prev, [src]: dest.trim().toLowerCase() };
       sessionStorage.setItem(`csge_usermap_${session}`, JSON.stringify(next));
+      // Best-effort background save on every edit (GEM_CO-style autosave) —
+      // cont() still awaits a final persist() before navigating, so a failed
+      // background save here is never the only save attempt.
+      void saveIdentityMap(session, next, {}).catch(() => {});
       return next;
     });
   };
@@ -125,31 +177,29 @@ export function MapUsers() {
     });
   };
 
-  const selectAll = () => setSelected(new Set(filtered.map((u) => u.email)));
-  const deselectAll = () => setSelected(new Set());
+  const toggleAll = () => {
+    setSelected((prev) => (prev.size === filtered.length ? new Set() : new Set(filtered.map((u) => u.email))));
+  };
 
   const autoMap = async () => {
-    setStatus('Auto-mapping by email…');
     const gSet = new Set(googleUsers.map((g) => g.email.toLowerCase()));
     const domains = new Set(
       googleUsers.map((g) => g.email.split('@')[1]?.toLowerCase()).filter(Boolean) as string[],
     );
-    setOwnedHint([...domains]);
     const next = { ...userMap };
     let n = 0;
     for (const u of msUsers) {
       const email = u.email.toLowerCase();
-      const domain = email.split('@')[1];
-      if (gSet.has(email) || domains.has(domain)) {
-        if (!next[email]) {
-          next[email] = email;
-          n++;
-        } else if (!next[email] && gSet.has(email)) {
-          next[email] = email;
-          n++;
-        }
+      // Exact-match only: the Microsoft email must actually exist as a real
+      // Google Workspace account. Domain ownership alone (checked below) is
+      // NOT proof this specific address exists — that was the bug that
+      // "auto-mapped" 34 users against a directory of only 13 real accounts.
+      if (!next[email] && gSet.has(email)) {
+        next[email] = email;
+        n++;
       }
-      // Same local-part match on first owned google domain
+      // Same local-part match on first owned google domain — still verifies
+      // the candidate address actually exists via gSet.has() below.
       if (!next[email] && domains.size) {
         const local = email.split('@')[0];
         for (const d of domains) {
@@ -164,9 +214,21 @@ export function MapUsers() {
     }
     setUserMap(next);
     sessionStorage.setItem(`csge_usermap_${session}`, JSON.stringify(next));
-    setStatus(`Auto-mapped ${n} user(s). Review before continuing.`);
+    if (n) void saveIdentityMap(session, next, {}).catch(() => {});
     wizard?.applyUserMapping(next, false);
   };
+
+  // Auto-map runs once, silently, as soon as both directories are loaded —
+  // no manual "Auto-map" button. Counts surface via `counts` in the header
+  // instead of a status line.
+  const autoMappedOnce = useRef(false);
+  useEffect(() => {
+    if (!loading && msUsers.length && !autoMappedOnce.current) {
+      autoMappedOnce.current = true;
+      void autoMap();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, msUsers.length]);
 
   const persist = async () => {
     setSaving(true);
@@ -174,7 +236,6 @@ export function MapUsers() {
     try {
       await saveIdentityMap(session, userMap, {});
       sessionStorage.setItem(`csge_usermap_${session}`, JSON.stringify(userMap));
-      setStatus('Mappings saved.');
     } catch (e) {
       setError((e as Error).message || 'Save failed');
     } finally {
@@ -217,116 +278,98 @@ export function MapUsers() {
     navigate(`/map?session=${session}`);
   };
 
+  const allSelected = filtered.length > 0 && selected.size === filtered.length;
+
   return (
-    <div className="card wide" style={{ maxWidth: 960 }}>
-      <h2>Map Users</h2>
-      <p className="lead">
-        Map Microsoft identities to Google Workspace emails early. After you select agents,
-        permissions still use agent-touched principals + this map — we never silently over-share.
-      </p>
-
-      {loading && <p className="lead">Loading directory…</p>}
-      {error && <p className="error">{error}</p>}
-      {status && <p className="lead">{status}</p>}
-
-      <div className="map-counts">
-        <span>
-          Users <strong>{counts.total}</strong>
-        </span>
-        <span>
-          Mapped <strong>{counts.mapped}</strong>
-        </span>
-        <span>
-          Selected <strong>{counts.selected}</strong>
-        </span>
-        {ownedHint.length > 0 && (
-          <span>
-            Domains <strong>{ownedHint.join(', ')}</strong>
-          </span>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
-        <div className="usearch-wrap" style={{ flex: 1, minWidth: 180 }}>
-          <input
-            className="usearch"
-            placeholder="Search users…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-        <button type="button" className="wbtn" onClick={() => void autoMap()}>
-          Auto-map
-        </button>
-        <button type="button" className="wbtn" onClick={selectAll}>
-          Select all
-        </button>
-        <button type="button" className="wbtn" onClick={deselectAll}>
-          Deselect
-        </button>
-        <button type="button" className="wbtn" onClick={exportCsv}>
-          Export CSV
-        </button>
-        <label className="wbtn" style={{ cursor: 'pointer' }}>
-          Import CSV
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) importCsv(f);
-            }}
-          />
-        </label>
-        <button type="button" className="wbtn" disabled={saving} onClick={() => void persist()}>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-
-      <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
-        <table className="mapgrid">
-          <thead>
-            <tr>
-              <th style={{ width: 36 }} />
-              <th>Microsoft (source)</th>
-              <th>Google Workspace (destination)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((u) => {
-              const on = selected.has(u.email);
-              return (
-                <tr key={u.id || u.email} className={on ? 'selected' : ''}>
-                  <td>
-                    <input type="checkbox" checked={on} onChange={() => toggleRow(u.email)} />
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 500 }}>{u.displayName || u.email}</div>
-                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>{u.email}</div>
-                  </td>
-                  <td>
-                    <input
-                      type="email"
-                      list="gusers"
-                      placeholder="user@workspace.com"
-                      value={userMap[u.email] || ''}
-                      onChange={(e) => setDest(u.email, e.target.value)}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-            {!loading && filtered.length === 0 && (
-              <tr>
-                <td colSpan={3} style={{ padding: 20, color: 'var(--muted)' }}>
-                  No users to show. Connect Microsoft with directory read consent, or continue and map
-                  principals after agent selection.
-                </td>
-              </tr>
+    <div className="mu-page">
+      <div className="mu-head">
+        <div>
+          <div className="mu-title">Map Users</div>
+          <div className="mu-sub">
+            Map Microsoft identities to their Google Workspace destination.{' '}
+            {counts.autoMatched > 0 && <span className="mu-ok">{counts.autoMatched} auto-mapped</span>}
+            {counts.unmapped > 0 && (
+              <span className="mu-fail">
+                {counts.autoMatched > 0 ? ' · ' : ''}
+                {counts.unmapped} need mapping
+              </span>
             )}
-          </tbody>
-        </table>
+          </div>
+        </div>
+        <div className="mu-actions">
+          <label className="mu-iconbtn" title="Import CSV">
+            <IcoUpload s={13} />
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importCsv(f);
+              }}
+            />
+          </label>
+          <button type="button" className="mu-iconbtn primary" title="Export CSV" onClick={exportCsv}>
+            <IcoDownload s={13} />
+          </button>
+        </div>
+      </div>
+
+      {loading && <p className="mu-note">Loading directory…</p>}
+      {error && <p className="mu-note fail">{error}</p>}
+      {googleUsersError && <p className="mu-note fail">{googleUsersError}</p>}
+      {status && <p className="mu-note">{status}</p>}
+
+      <div className="mu-selected">
+        <strong>{counts.selected}</strong> of {counts.total} selected
+      </div>
+
+      <input className="usearch" placeholder="Search by email…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ marginBottom: 12, width: '100%' }} />
+
+      <div className="mu-list">
+        <div className="mu-cols">
+          <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+          <div>Microsoft</div>
+          <div>Google Workspace</div>
+        </div>
+        {filtered.map((u) => {
+          const on = selected.has(u.email);
+          const dest = userMap[u.email] || '';
+          return (
+            <div key={u.id || u.email} className={`mu-row${on ? ' selected' : ''}`} onClick={() => toggleRow(u.email)}>
+              <input type="checkbox" checked={on} onChange={() => toggleRow(u.email)} onClick={(e) => e.stopPropagation()} />
+              <div className="mu-who">
+                <span className="uavatar" style={{ width: 26, height: 26, fontSize: 10, background: avatarColor(u.displayName || u.email) }}>
+                  {initials(u.displayName || u.email)}
+                </span>
+                <span className="mu-email">{u.email}</span>
+              </div>
+              <div className="mu-dest" onClick={(e) => e.stopPropagation()}>
+                {dest ? (
+                  <>
+                    <span className="uavatar" style={{ width: 22, height: 22, fontSize: 9, background: avatarColor(dest), flexShrink: 0 }}>
+                      {initials(dest.split('@')[0])}
+                    </span>
+                    <span className="mu-email">{dest}</span>
+                    <button type="button" className="mdelete" title="Clear mapping" onClick={() => setDest(u.email, '')}>
+                      ✕
+                    </button>
+                  </>
+                ) : (
+                  <input
+                    type="email"
+                    list="gusers"
+                    placeholder="— assign —"
+                    value={dest}
+                    onChange={(e) => setDest(u.email, e.target.value)}
+                    className="mu-dest-input"
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {!loading && filtered.length === 0 && <div className="mu-empty">No users to show. Connect Microsoft with directory read consent, or continue and map principals after agent selection.</div>}
         <datalist id="gusers">
           {googleUsers.map((g) => (
             <option key={g.email} value={g.email}>
@@ -336,12 +379,12 @@ export function MapUsers() {
         </datalist>
       </div>
 
-      <div className="wizard-actions" style={{ marginTop: 20 }}>
+      <div className="mu-footer">
         <button type="button" className="wbtn" onClick={() => navigate(`/pair?session=${session}`)}>
           ← Back
         </button>
-        <button type="button" className="btn primary" onClick={() => void cont()}>
-          Continue to Environments →
+        <button type="button" className="btn primary" style={{ flex: 1, justifyContent: 'center' }} disabled={saving} onClick={() => void cont()}>
+          Continue →
         </button>
       </div>
     </div>

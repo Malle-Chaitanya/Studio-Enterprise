@@ -241,7 +241,12 @@ export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAg
     instruction: refined,
     starterPrompts: buildStarterPrompts(ir),
     model: GEMINI_MODEL,
-    tools: [{ name: 'googleSearch' }],
+    // googleSearch grounding mirrors the source's actual webBrowsing capability
+    // (see the fidelity note above, pushed under the same condition) — a
+    // source agent without web browsing must not gain it just by migrating.
+    // Copilot connector actions map to real ADK function tools instead, wired at
+    // deploy time via AdkSpec.liveConnectors (see connectorToolBuilder).
+    tools: ir.capabilities?.webBrowsing ? [{ name: 'googleSearch' }] : [],
     fidelityNotes,
   };
 }

@@ -827,12 +827,31 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       for (const l of spResult.logs) emitLog(l.level, l.text);
       const spResolved = spResult.resolved;
 
-      // Same resolved resource paths feed either path: attachDataStoreToEngine
-      // (low-code) or ADK's groundingDataStores (see the create ternary below).
-      const connectorGroundingDataStores: string[] = [
-        ...dvResolved.filter((r) => r.snap.resourcePath).map((r) => r.snap.resourcePath!),
-        ...spResolved.flatMap((r) => r.dataStoreIds.map((id) => dataStoreResourcePath(dest.project, id))),
-      ];
+      // SharePoint federated connectors need ONE more Google-side, Console-only
+      // step before they ever return real content: a manual "Authorize" click
+      // on the data store — and that control only becomes reachable in Console
+      // once the store is attached to an app's engine (Engine.dataStoreIds).
+      // Discovery Engine has no REST endpoint for the Authorize handshake
+      // itself (see geminiConnector.ts), so attach unconditionally, BEFORE the
+      // low-code/ADK decision below, regardless of which path wins — ADK's own
+      // VertexAiSearchTool queries the data store directly and doesn't need
+      // the attach to function, but without it the store never surfaces in
+      // any app's "Manage your data" page and Authorize can never be clicked.
+      // (Confirmed empirically 2026-08-05: a SharePoint connector attached
+      // only via the low-code fallback path — which never ran because ADK won
+      // every time — sat outside every app's connected data, unreachable in
+      // Console, and returned zero content even with correct Entra consent.)
+      const spAttached: { src: KnowledgeSourceIR; siteUrl: string; dataStoreIds: string[]; attached: number; failedAttach: number }[] = [];
+      for (const { src, siteUrl, dataStoreIds } of spResolved) {
+        let attached = 0;
+        let failedAttach = 0;
+        for (const dsId of dataStoreIds) {
+          const attach = await attachDataStoreToEngine(dest, saToken, dsId);
+          if (attach.ok) attached++;
+          else failedAttach++;
+        }
+        spAttached.push({ src, siteUrl, dataStoreIds, attached, failedAttach });
+      }
 
       // Confluence pre-resolution: crawl BEFORE ADK deploy so the data store
       // path is baked into VertexAiSearchTool at deploy time. The same
@@ -840,6 +859,11 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       // (migrateConfluenceToDataStore is idempotent — returns the same store).
       let preCfResult: ConfluenceMigrationResult | null = null;
       let preCfCredsIncomplete = false;
+      // Confluence data store paths, collected here and folded into
+      // groundingDataStores at deploy time. Kept separate from dvResolved/spResolved
+      // because the Confluence crawl is the only source those two do not cover —
+      // dropping it silently un-grounds every Confluence agent.
+      const connectorGroundingDataStores: string[] = [];
       if (confluenceConnector && dest.project) {
         const confluenceKs = ks.filter(
           (s) => Array.isArray(s.confluenceSpaceNames) && s.confluenceSpaceNames.length > 0,
@@ -1024,16 +1048,30 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               }
             }
 
-            // Same resolved SharePoint/Dataverse stores the low-code path
-            // would attach engine-wide — here they ride the same
-            // VertexAiSearchTool as files/website, so this ADK agent isn't
-            // missing knowledge the low-code path would have had.
-            const groundingDataStores = [...fileGroundingDataStores, ...connectorGroundingDataStores];
+            // Combine every resolved grounding source — uploaded files, Dataverse
+            // snapshots, SharePoint connectors, and the Confluence crawl. adk_deploy.py
+            // (2026-08-05 fix, live-verified against 2 real combined stores) wires a
+            // single store via the built-in VertexAiSearchTool, and 2+ stores via
+            // hand-rolled, distinctly-named FunctionTools instead of combining
+            // VertexAiSearchTool instances (which crashed every query — see
+            // decisions.md: data_store_specs misuse -> missing runtime dependency ->
+            // duplicate function name, each root-caused and fixed in turn).
+            //
+            // connectorGroundingDataStores stays in this list: it carries the
+            // pre-resolved Confluence store (see preCfResult above), which is NOT
+            // covered by dvResolved/spResolved. Dropping it silently un-grounds every
+            // Confluence agent.
+            const groundingDataStores = [
+              ...fileGroundingDataStores,
+              ...connectorGroundingDataStores,
+              ...dvResolved.filter((r) => r.snap.resourcePath).map((r) => r.snap.resourcePath!),
+              ...spResolved.flatMap((r) => r.dataStoreIds.map((id) => dataStoreResourcePath(dest.project, id))),
+            ];
             // Configured third-party connectors become REAL callable tools on the
             // deployment (secret ids only — resolved in-container per call). This is
-            // what makes a migrated connector actually able to hit Jira/Slack/etc.,
-            // as opposed to the old instruction-block approach that only described
-            // the API to a model that had no way to call it.
+            // what lets a migrated connector actually hit Jira/Slack/Graph, as opposed
+            // to the old instruction block that merely described the API to a model
+            // with no way to call it.
             const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, {
               websiteSource,
               groundingDataStores,
@@ -1076,17 +1114,31 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                       : ''),
                 });
               }
-              for (const { src, siteUrl } of spResolved) {
+              for (const { src, siteUrl, attached, failedAttach } of spAttached) {
+                // 'needs-review', not 'mapped': the ADK tool is correctly wired
+                // to this data store, but SharePoint federated connectors need
+                // a one-time, Console-only "Authorize" click before they ever
+                // return real content, and Discovery Engine exposes no REST
+                // endpoint to check or perform it — so wiring success here is
+                // NOT proof the source actually returns content. Overclaiming
+                // "mapped" for a connector we can't verify is a fidelity-
+                // honesty violation (confirmed empirically 2026-08-05: a
+                // "grounded" SharePoint source returned zero results because
+                // Authorize had never been done, despite correct Entra consent).
                 result.fidelity.push({
                   component: `knowledge:${src.name}`,
-                  status: adk.groundingIamGranted === false ? 'partial' : 'mapped',
+                  status: adk.groundingIamGranted === false || failedAttach ? 'partial' : 'needs-review',
                   detail:
-                    `SharePoint site ${siteUrl} grounded via ADK's VertexAiSearchTool — per-agent, not engine-wide (unlike the low-code path, other agents sharing this engine do NOT get access to this site).` +
+                    `SharePoint site ${siteUrl}: wired via ADK's VertexAiSearchTool (per-agent, not engine-wide) and the data store attached to the app's engine (${attached}/${attached + failedAttach} succeeded) so it's reachable in Console. ` +
+                    'This pipeline cannot confirm or perform the required one-time "Authorize" step on the data store — Discovery Engine has no REST endpoint for it. Verify in Cloud Console (app → Manage your data → this data store → Authorize) and confirm the agent actually returns SharePoint content before trusting this source.' +
                     (adk.groundingIamGranted === false
                       ? ' Discovery Engine access for the Reasoning Engine service agent could not be confirmed/granted — grounding may 403 until an admin grants it manually (see docs/ADK-FILE-GROUNDING-PERMISSIONS.md).'
                       : ''),
                 });
-                emitLog('ok', `    "${src.name}": SharePoint connector for ${siteUrl} grounded via ADK VertexAiSearchTool (per-agent).`);
+                emitLog(
+                  failedAttach ? 'warn' : 'ok',
+                  `    "${src.name}": SharePoint connector for ${siteUrl} wired via ADK VertexAiSearchTool — confirm Console "Authorize" is done before trusting this source.`,
+                );
               }
               if (adk.googleSearchDropped) {
                 result.fidelity.push({
@@ -1225,50 +1277,29 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             });
           }
 
-          // SharePoint native-connector reconnect: dataStoreIds were already
-          // discovered (see resolveSharePointConnectorSources above) — attach
-          // them to this agent's engine, the same mechanism the Dataverse-
-          // snapshot path uses. Every outcome gets an honest FidelityNote.
-          for (const { src, siteUrl, dataStoreIds } of spResolved) {
-            if (usedDataStoreSpecs) {
-              // Stores already wired per-agent via dataStoreSpecs — skip engine attach.
-              result.fidelity.push({
-                component: `knowledge:${src.name}`,
-                status: 'mapped',
-                detail: `SharePoint site ${siteUrl} reconnected via Gemini's native connector and grounded per-agent via dataStoreSpecs — not engine-wide.`,
-              });
-              emitLog('ok', `    "${src.name}": SharePoint connector for ${siteUrl} grounded via dataStoreSpecs (per-agent).`);
-              continue;
-            }
-            let attached = 0;
-            let failedAttach = 0;
-            for (const dsId of dataStoreIds) {
-              const attach = await attachDataStoreToEngine(dest, saToken, dsId);
-              if (attach.ok) attached++;
-              else failedAttach++;
-            }
+          // SharePoint native-connector reconnect: already attached to the
+          // engine unconditionally, above (spAttached) — this is note-only.
+          for (const { src, siteUrl, dataStoreIds, attached, failedAttach } of spAttached) {
             if (attached && !failedAttach) {
-              // 'partial', not 'mapped': Gemini Enterprise data-store attach
-              // is ENGINE-WIDE (confirmed against Google's own schema —
-              // Engine.dataStoreIds — and the docs' "an app must be
-              // connected to a data store"), unlike agentFiles which are
-              // genuinely per-agent. Every other agent sharing this engine
-              // gains access to this site too, even if it never referenced
-              // it in Copilot — a real fidelity gap from the source's
-              // per-agent scoping, not a clean 1:1 migration. Surface it so
-              // it lands in the report's "Needs human review" section
-              // instead of reading as unqualified success.
+              // 'needs-review', not 'mapped' or 'partial': attach succeeded
+              // (engine-wide, per the caveat below) but that only makes the
+              // Console "Authorize" control reachable — it doesn't confirm
+              // the customer has clicked it. Discovery Engine has no REST way
+              // to check, so we cannot claim this source actually returns
+              // content (confirmed empirically 2026-08-05: an attached,
+              // "reconnected" SharePoint source returned zero results with
+              // correct Entra consent, purely because Authorize was never done).
               result.fidelity.push({
                 component: `knowledge:${src.name}`,
-                status: 'partial',
-                detail: `SharePoint site ${siteUrl} reconnected via Gemini's native connector and attached to the agent's engine. Caveat: this attachment is engine-wide in Gemini Enterprise — every other agent sharing the same engine can also search this site, even if it never referenced it in Copilot Studio. Review whether agents needing separate access should be split across engines.`,
+                status: 'needs-review',
+                detail: `SharePoint site ${siteUrl} reconnected via Gemini's native connector and attached to the agent's engine (engine-wide — every other agent sharing this engine can also search this site, even if it never referenced it in Copilot Studio). This pipeline cannot confirm or perform the required one-time "Authorize" step on the data store — verify in Cloud Console (app → Manage your data → this data store → Authorize) and confirm real content is returned before trusting this source.`,
               });
-              emitLog('ok', `    "${src.name}": SharePoint connector for ${siteUrl} attached (${attached} data store(s)) — engine-wide visibility, see fidelity report.`);
+              emitLog('ok', `    "${src.name}": SharePoint connector for ${siteUrl} attached (${attached} data store(s)) — confirm Console "Authorize" is done before trusting this source.`);
             } else if (attached) {
               result.fidelity.push({
                 component: `knowledge:${src.name}`,
                 status: 'partial',
-                detail: `SharePoint site ${siteUrl}: ${attached}/${dataStoreIds.length} data store(s) attached, ${failedAttach} failed.`,
+                detail: `SharePoint site ${siteUrl}: ${attached}/${dataStoreIds.length} data store(s) attached, ${failedAttach} failed. Even for the attached ones, Cloud Console's one-time "Authorize" step still needs manual confirmation.`,
               });
               emitLog('warn', `    "${src.name}": SharePoint connector for ${siteUrl} partially attached (${attached}/${dataStoreIds.length}).`);
             } else {
@@ -1455,6 +1486,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             const resolution = resolvePermissions(perms, {
               ownedDomains: orgProfile.ownedDomains,
               overrides: identityOverrides,
+              knownGoogleUsers: orgProfile.google.verifiedUserEmails,
             });
             const handoff = buildPermissionHandoff(
               row.name,
@@ -1509,6 +1541,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             const resolution = resolvePermissions(perms, {
               ownedDomains: orgProfile.ownedDomains,
               overrides: identityOverrides,
+              knownGoogleUsers: orgProfile.google.verifiedUserEmails,
             });
             const handoff = buildPermissionHandoff(
               row.name,

@@ -47,12 +47,18 @@ export interface AdkSpec {
    * VertexAiSearchTool is the ONLY tool-based way to ground on either kind,
    * since Gemini Enterprise apps/engines refuse to attach a website store
    * directly (docs/knowledge-sources-migration-playbook.md §4.1), and ADK
-   * agents have no agentFiles concept at all (decisions.md). One store →
-   * adk_deploy.py wires `data_store_id`; more than one → `data_store_specs`
-   * (both combine on a single VertexAiSearchTool instance). ADK currently
-   * allows VertexAiSearchTool ONLY as the sole tool on an agent (pre-1.16
-   * limitation), so when this is non-empty, `tools` above is ignored by
-   * adk_deploy.py.
+   * agents have no agentFiles concept at all (decisions.md). adk_deploy.py
+   * wires ONE VertexAiSearchTool per resource path here (not a single tool
+   * combining all of them via `data_store_specs` — the installed ADK SDK's
+   * own constructor requires exactly one of `data_store_id`/`search_engine_id`
+   * per instance; `data_store_specs` is a scoping filter valid only alongside
+   * `search_engine_id`, not a way to combine independent stores — see
+   * `scripts/adk_deploy.py`'s 2026-08-05 fix). Each instance sets
+   * `bypass_multi_tools_limit=True`, which this ADK version (2.5.0, not the
+   * pre-1.16 this comment used to assume) uses to let multiple
+   * VertexAiSearchTool instances — and potentially `tools` above too —
+   * coexist on one agent instead of rejecting the combination; not yet wired
+   * to actually combine with `tools` in this pass, see decisions.md.
    *
    * ⚠️ Requires the Reasoning Engine's runtime service agent to have
    * Discovery Engine read access on the project (see

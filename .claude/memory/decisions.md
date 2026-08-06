@@ -6,6 +6,188 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
+## 2026-08-05 — Fix low-code path granting googleSearch regardless of source webBrowsing capability
+
+- **Decision**: `mapper.ts`'s `tools: [{ name: 'googleSearch' }]` (was unconditional for every low-code
+  agent) is now `ir.capabilities?.webBrowsing ? [{ name: 'googleSearch' }] : []` — mirroring the
+  fidelity note three lines above it (`if (ir.capabilities.webBrowsing) { notes.push({component:
+  'webBrowsing', status: 'mapped', ...}) }`), which was ALREADY correctly conditioned, and matching
+  `adkDeployer.ts`'s `buildAdkSpec` (`if (ir.capabilities?.webBrowsing) tools.push('googleSearch')`),
+  which was also already correct — this was specifically a low-code-path bug.
+- **Why**: found while auditing the ADK multi-store fix for hardcoded values, at the user's direct
+  request ("is this production grade fix, is there any hardcoding"). A source Copilot agent WITHOUT
+  web browsing enabled was silently granted it after migrating to low-code — a real, live fidelity
+  mismatch (over-granting a capability), and the exact kind of "hardcoded, doesn't reflect the actual
+  source" bug the question was asking about, just in a different file than the one being audited.
+- **Impact**: no `AgentIR` shape change. An agent with zero source-side tools now correctly gets
+  `tools: []` on the low-code path (confirmed safe: `gemini.ts`'s `buildCreateBody` just passes it
+  through as `selectedTools: { tool: [] }`, a valid empty-tools shape, not an error case).
+
+## 2026-08-05 — Correction to the engine-wide/per-agent knowledge-scoping assumption (low-code)
+
+- **Finding** (research, not yet acted on in code): a `researcher` subagent pass, live-checking
+  Google's official docs, confirmed the engine-level `dataStoreIds` pool mechanism
+  (`attachDataStoreToEngine`) is real (docs.cloud.google.com/gemini/enterprise/docs/apps-data-stores:
+  "Apps have a many-to-many relationship with data stores... blended search", 50-stores/app limit)
+  — but corrected the "engine-wide only, no per-agent scoping exists" assumption used throughout this
+  week's fixes. Google's Console **does** expose a per-agent data-source toggle, separate from the
+  engine-level pool: "Manage your data" (prompt-based agent creation) / "Add data sources & tools"
+  (flow-builder agent creation) — docs.cloud.google.com/gemini/enterprise/docs/agent-designer/create-agent.
+  This lets a human narrow which of an app's engine-attached stores one specific agent actually
+  searches. **CS_GE's pipeline never sets whatever field this Console control writes** — confirmed by
+  reading `gemini.ts`'s `buildCreateBody`: `selectedTools.tool` only ever contains a bare
+  `{"name":"googleSearch"}` entry (see fix directly above), never a data-store-scoped tool entry. So
+  a Console-created low-code agent COULD be narrower than an API-created one — an expected,
+  explainable divergence between manual and automated agents, not a bug in either.
+- **Not yet verified**: the exact REST/proto field "Manage your data" persists to (attempted via
+  docs.cloud.google.com's REST reference, blocked by JS-rendered pages `WebFetch` can't read) — per
+  this project's "don't guess at unverified Google behavior" discipline, this is flagged unverified,
+  not assumed. **Recommended before relying on this further**: a `_diag_*.ts` probe — create a
+  low-code agent via Console with 2 engine-attached stores, toggle one off via "Manage your data",
+  `GET` the `Agent` resource via the same v1alpha API this codebase already uses, and diff its JSON
+  against an agent with both enabled, to find the actual field.
+- **Impact**: none yet (research only) — carried here so the next person to touch low-code tool
+  wiring knows engine-wide sharing isn't necessarily the ONLY lever, even though it's the only one
+  this pipeline currently sets.
+
+---
+
+## 2026-08-05 — SUPERSEDED same day: real ADK multi-store fix — hand-rolled, distinctly-named FunctionTools
+
+- **Decision**: replaces the single-source cap immediately below (superseded, not deleted, so the
+  investigation trail stays intact). `scripts/adk_deploy.py`'s `_make_search_tool` now builds ONE
+  `FunctionTool` per grounding data store, each wrapping a closure that calls
+  `discoveryengine_v1beta.SearchServiceClient.search()` directly (mirroring
+  `DiscoveryEngineSearchTool._do_search`, including its CHUNKS-first/DOCUMENTS-fallback
+  auto-detection for structured vs. unstructured stores) — instead of N `VertexAiSearchTool`
+  instances combined via `bypass_multi_tools_limit`, which a `researcher` subagent investigation
+  confirmed is a genuinely unfinished area of `google-adk` upstream (open issues
+  [#3146](https://github.com/google/adk-python/issues/3146) and
+  [#3406](https://github.com/google/adk-python/issues/3406) — `DiscoveryEngineSearchTool`'s function
+  name is hardcoded with no override, confirmed unchanged on `google/adk-python@main`, not a version
+  lag in this project's installed 2.5.0). Each closure's `__name__` is set explicitly before
+  wrapping, so the `FunctionDeclaration` sent to Gemini is genuinely distinct per store — the
+  collision is structurally impossible this way. Two more issues surfaced and were fixed in the same
+  pass, both live-verified via a zero-quota-cost method (`deployReasoningEngine` alone, never
+  registered — Reasoning Engine deploy and Discovery Engine agent registration are separate APIs;
+  only the latter spends this project's scarce ~7/day undocumented quota, see
+  `docs/SUPPORT-TICKET-AGENT-QUOTA.md`):
+  1. The closure must NOT capture a pre-built `SearchServiceClient` — Agent Engine deployment
+     pickles the whole agent (including tools) to ship it to the cloud, and a live gRPC client
+     (open credentials/channel state) isn't picklable (confirmed: deploy itself failed with "Failed
+     to serialize agent engine" until the client was moved to build fresh inside the search
+     function on every call, capturing only the plain `serving_config` string).
+  2. The SharePoint-connector store in this pipeline is a structured data store and rejects CHUNKS
+     mode outright (`400: content_search_spec.search_result_mode must be set to
+     ...DOCUMENTS when the engine contains structured data store`) — fixed by porting
+     `DiscoveryEngineSearchTool`'s own CHUNKS-try-then-DOCUMENTS-retry pattern.
+  Considered and **rejected**: `search_engine_id` + `data_store_specs` (Vertex AI Search's own way to
+  scope one tool across several stores) — confirmed via the same researcher investigation (citing
+  `google.genai.types`' own docstring: "only considered for Engines with multiple data stores") that
+  it requires the target stores to already be attached to a shared Engine resource, which would
+  reintroduce the exact engine-wide (not per-agent) sharing this whole knowledge-parity effort exists
+  to avoid.
+- **Why**: user pushed back correctly that an enterprise migration tool should ground on ALL of an
+  agent's knowledge sources, not silently cap at one — the single-source cap was a same-day stopgap,
+  not an acceptable end state.
+- **Impact**: no `AgentIR`/DB schema change. Live-verified end-to-end with 2 real, different-kind
+  data stores (an uploaded-file document store + the SharePoint-connector structured store) combined
+  on one agent: all three test questions (including an unrelated control question) answered
+  correctly with proper source citation, zero crashes, zero quota spent verifying it. The
+  single-source cap in `orchestrator.ts` (immediately below in this log) has been fully reverted —
+  `groundingDataStores` once again combines every resolved source unconditionally, matching the
+  original 2026-08-04 knowledge-parity fix's intent.
+
+## 2026-08-05 — Cap ADK grounding at ONE knowledge source per agent (temporary, until multi-store is fixed) — SUPERSEDED same day, see entry above
+
+- **Decision**: `orchestrator.ts`'s ADK closure now picks at most ONE grounding candidate — uploaded
+  files first, then Dataverse/SharePoint connector sources, then a website source — and passes only
+  that one into `publishAgentToGallery`. Every other resolved-but-excluded source gets an honest
+  `needs-review` `FidelityNote` ("not connected yet... only one source can be grounded per agent until
+  [the multi-source crash] is fixed... re-run once the multi-source fix ships") instead of being
+  silently dropped or, as before this change, crashing the whole agent.
+- **Why**: live-confirmed 2026-08-05 (via a throwaway, zero-quota-cost deploy — `deployReasoningEngine`
+  alone, never registered, so no agent-creation quota spent verifying this): combining 2+ grounding
+  data stores on one ADK agent — even after the `data_store_specs` fix and the
+  `google-cloud-discoveryengine` requirements fix immediately above — still crashes on EVERY query,
+  including ones needing no knowledge lookup at all, with `400 INVALID_ARGUMENT: "Duplicate function
+  declaration found: discovery_engine_search"`. Root cause: ADK's `bypass_multi_tools_limit` wraps
+  each `VertexAiSearchTool` instance into a tool registered under the same fixed function name
+  (`discovery_engine_search`) — 2+ instances always collide, unconditionally. This is a real SDK
+  limitation, not something fixable by more careful use of `VertexAiSearchTool`/`bypass_multi_tools_
+  limit` from the outside — the real fix needs a dedicated per-agent Discovery Engine search resource
+  so ONE tool can span multiple stores (`search_engine_id` + `data_store_specs`, using a real Engine
+  resource scoped to just that agent, not the shared Gemini Enterprise app engine) — not built yet.
+  User's explicit call: ship single-source now (uploaded files prioritized first) rather than block
+  every multi-source agent on the bigger fix.
+- **Impact**: no `AgentIR`/DB schema change. An agent with 2+ knowledge sources now deploys
+  successfully and actually works for its ONE selected source, instead of deploying successfully but
+  failing every query (the state `KB-Grounding-Test-Agent` was in before this change). Real,
+  acknowledged fidelity loss for the excluded source(s) — reported honestly, not hidden. Follow-up:
+  design the dedicated-per-agent-search-resource fix properly (architect pass recommended, same as
+  the earlier knowledge-parity and ADK-first decisions) before removing this cap.
+
+## 2026-08-05 — Fix ADK multi-store query-time crash: add `google-cloud-discoveryengine` to deploy requirements
+
+- **Decision**: `scripts/adk_deploy.py`'s `agent_engines.create(...)` call now includes
+  `google-cloud-discoveryengine` in `requirements` whenever `groundingDataStores` is non-empty.
+- **Why**: the multi-store fix immediately below (`bypass_multi_tools_limit=True`) makes ADK wrap
+  `VertexAiSearchTool` as a `DiscoveryEngineSearchTool` whenever multiple tools are present — but only
+  at QUERY time, not deploy/construction time (confirmed by reading `llm_agent.py`'s
+  `_convert_tool_union_to_tools` and reproducing locally: `Agent(...)` builds fine either way, the
+  conversion only runs inside request processing). `DiscoveryEngineSearchTool` does `from
+  google.cloud import discoveryengine_v1beta`, a module the existing requirements
+  (`google-cloud-aiplatform[agent_engines,adk]`, `google-adk`) don't pull in. Live-confirmed
+  2026-08-05: after the multi-store fix shipped, a real 2-knowledge-source agent
+  (`KB-Grounding-Test-Agent`) deployed successfully (`deployed=true, shared=true, verified=true`) but
+  then failed on **every single query**, including one needing no tool at all ("What is the capital
+  of France?"), with `ImportError: cannot import name 'discoveryengine_v1beta' from 'google.cloud'` —
+  the same import fails locally too until `pip install google-cloud-discoveryengine` (0.20.2) is run.
+- **Impact**: the already-deployed agent from before this fix is unrecoverable as-is (a Reasoning
+  Engine's requirements are baked in at deploy time; no way to patch a running one) — its cached
+  `adkDeployments` record and `migratedAgentSnapshots` snapshot were cleared, and its registered
+  agent (`1238471887308860960`) deleted, so the next migration run deploys fresh with the fix instead
+  of drift-detection correctly-but-unhelpfully seeing "no source change" and skipping. Its orphaned
+  Reasoning Engine (`reasoningEngines/4888500715103715328`) still needs manual `gcloud` deletion — no
+  automated cleanup exists for that yet (same known gap as the 2026-08-04 ADK-first decision).
+
+## 2026-08-05 — Fix ADK multi-store grounding: one VertexAiSearchTool per store, not `data_store_specs`
+
+- **Decision**: `scripts/adk_deploy.py` no longer tries to combine 2+ grounding data stores into a
+  single `VertexAiSearchTool` via `data_store_specs`. Confirmed by reading the installed `google-adk`
+  2.5.0 source directly (`vertex_ai_search_tool.py`'s constructor): it requires **exactly one** of
+  `data_store_id` or `search_engine_id` — never neither, never both — and raises `"Either
+  data_store_id or search_engine_id must be specified"` otherwise. `data_store_specs` is not an
+  alternative way to specify stores; it's a scoping filter valid only *alongside* `search_engine_id`
+  (an actual Discovery Engine "engine" resource), which this pipeline deliberately doesn't want to
+  require here (it would mean searching a whole shared engine instead of the specific per-agent
+  stores this pipeline resolved — the same fidelity point the 2026-08-04 knowledge-parity fix was
+  built around). Fixed by building ONE `VertexAiSearchTool(data_store_id=..., bypass_multi_tools_
+  limit=True)` per grounding data store instead, so N stores become N tool instances. Verified live
+  (not just read): constructed two `VertexAiSearchTool` instances against fake resource paths and
+  built a full `Agent` with both — no error, matching the exact failure shape a real 2-source agent
+  hit in production (`KB-Grounding-Test-Agent`, 2026-08-05: `"tool wiring failed: Either
+  data_store_id or search_engine_id must be specified."`, ADK failed, fell back to low-code, agent
+  stayed Private).
+- **Why**: this was a deterministic bug, not a flaky one — it fails for EVERY agent with 2+ knowledge
+  sources needing ADK grounding, discovered because `KB-Grounding-Test-Agent` was the first agent in
+  this whole investigation to actually have 2 (a SharePoint connector + an uploaded file). Every
+  earlier live verification this week happened to use only 1 grounding source, so this never surfaced
+  until a real multi-source production agent hit it.
+- **Impact**: no `AgentIR`/DB schema change, Python-script-only. Also surfaced a bigger, separate
+  finding worth its own follow-up: `bypass_multi_tools_limit=True` (confirmed in
+  `llm_agent.py`'s `_convert_tool_union_to_tools`) lets ADK auto-wrap `VertexAiSearchTool` as a
+  `DiscoveryEngineSearchTool` when multiple tools are present, instead of rejecting the combination —
+  meaning the "ADK can't combine VertexAiSearchTool with googleSearch, pre-1.16 limitation" comments
+  and the `googleSearchDropped` fidelity note added in the 2026-08-04 knowledge-parity fix describe a
+  limitation this installed ADK version (2.5.0) may no longer actually have. **Not fixed in this
+  pass** — `adk_deploy.py`'s `tools`/grounding branches are still mutually exclusive (`elif`), so
+  googleSearch still gets dropped whenever any grounding store is present, and the fidelity note
+  still fires. Confirming and wiring the actual combination is separate, deliberately out-of-scope
+  work here — this pass only fixes the deterministic multi-store crash that was blocking real agents.
+
+---
+
 ## 2026-08-05 — Detect source drift on re-run; redeploy ADK agents only when changed
 
 - **Decision**: re-running a migration against an agent that already has a recorded ADK deployment

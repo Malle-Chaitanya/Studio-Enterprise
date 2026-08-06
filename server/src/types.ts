@@ -175,6 +175,15 @@ export interface SharedPrincipal extends PrincipalRef {
   rights: string[];
   /** Coarse roll-up for mapper/report: coauthor ≈ edit, viewer ≈ Read only. */
   roleHint?: 'coauthor' | 'viewer' | 'custom';
+  /**
+   * Best-effort Copilot Studio Share-dialog semantics (live-validated 2026-08):
+   * - editor — Studio "Editor access" (view/edit/configure/share/publish; not delete)
+   * - agent-viewer — Studio "Agent viewer" (Analytics/Evaluation). Often **blocked** when
+   *   the user already has Environment Maker (typical licensed maker).
+   * - end-user — Studio "End user access" (chat/connections only; does NOT appear in
+   *   the maker Agents list). Usually surfaces via chatAccess, not this record share.
+   */
+  studioShareRole?: 'editor' | 'agent-viewer' | 'end-user' | 'unknown';
 }
 
 /**
@@ -214,14 +223,17 @@ export interface IdentityMapOverrides {
 export interface ResolvedPrincipal {
   source: PrincipalRef;
   google?: { type: 'user' | 'group'; email: string };
-  via: 'override' | 'email-match' | 'group-match' | 'unmatched';
+  via: 'override' | 'email-match' | 'email-match-unverified' | 'group-match' | 'unmatched';
   reason?: string;
 }
 
 export interface PermissionResolution {
   owner: ResolvedPrincipal | undefined;
+  /** Studio Editor / Dataverse coauthor shares. */
   coauthors: ResolvedPrincipal[];
+  /** Studio Agent viewer / read-only shares (often Environment Maker–incompatible on source). */
   viewers: ResolvedPrincipal[];
+  /** Chat-scoped groups / end-user chat principals. */
   chatPrincipals: ResolvedPrincipal[];
   unmatched: ResolvedPrincipal[];
 }
@@ -234,8 +246,17 @@ export interface PermissionHandoff {
   agentName: string;
   geminiAgentId?: string;
   reason: string;
+  /** All mapped Google user emails (union) — backward-compatible checklist. */
   grantUsers: string[];
   grantGroups: string[];
+  /**
+   * Categorized for honest enterprise reporting (Studio → Gemini ceiling):
+   * chatUsers = need use/chat access; editorUsers = had Studio Editor (no Gemini
+   * per-agent co-admin); viewerUsers = had Agent viewer (no Gemini equivalent).
+   */
+  chatUsers?: string[];
+  editorUsers?: string[];
+  viewerUsers?: string[];
   unresolved: { source: string; reason: string }[];
   steps: string[];
 }
@@ -293,6 +314,12 @@ export interface OrganizationProfile {
     project?: string;
     /** Verified Workspace domains (Directory API, when the SA has the scope). */
     workspaceDomains: string[];
+    /** Real Workspace user emails (Directory API, when the SA has the scope) —
+     *  lets identity resolution verify a same-email match actually EXISTS,
+     *  not just that its domain is owned by the org. Empty when the Directory
+     *  read is unavailable; callers must not treat empty as "no users exist,"
+     *  only as "existence can't be verified" (falls back to domain-only). */
+    verifiedUserEmails: string[];
   };
   /** Unified, deduped set of every domain the org owns (both clouds). */
   ownedDomains: string[];

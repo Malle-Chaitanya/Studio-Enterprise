@@ -12,6 +12,11 @@ import type {
  * Pure-ish identity + permission resolution.
  * Maps Microsoft principals → Google Workspace principals using customer
  * overrides first, then same-email match on owned domains. Never guesses.
+ *
+ * Copilot Studio Share semantics (live-validated): End user = chat only;
+ * Agent viewer = Analytics (often blocked for Environment Makers); Editor =
+ * edit/configure/publish. Gemini has no per-agent co-admin and only ALL_USERS
+ * via API — never auto-grant broader project IAM to "make up" for lost rights.
  */
 
 function emailDomain(email?: string): string | undefined {
@@ -27,9 +32,12 @@ function normalizeEmail(email?: string): string | undefined {
 
 export function resolvePrincipal(
   source: PrincipalRef,
-  ctx: { ownedDomains: string[]; overrides: IdentityMapOverrides },
+  ctx: { ownedDomains: string[]; overrides: IdentityMapOverrides; knownGoogleUsers?: string[] },
 ): ResolvedPrincipal {
   const owned = new Set(ctx.ownedDomains.map((d) => d.toLowerCase()));
+  // Real Workspace accounts, when we could read the directory. Owning a
+  // domain never proves a specific address on it exists — only this does.
+  const known = ctx.knownGoogleUsers ? new Set(ctx.knownGoogleUsers.map((e) => e.toLowerCase())) : undefined;
   const srcEmail = normalizeEmail(source.email);
 
   if (source.type === 'group' || source.type === 'team') {
@@ -42,6 +50,8 @@ export function resolvePrincipal(
       };
     }
     if (srcEmail && owned.has(emailDomain(srcEmail) ?? '')) {
+      // No verified Workspace GROUP directory read exists yet — this stays
+      // domain-only (unlike users below), so it's still a guess.
       return {
         source,
         google: { type: 'group', email: srcEmail },
@@ -66,10 +76,24 @@ export function resolvePrincipal(
     };
   }
   if (srcEmail && owned.has(emailDomain(srcEmail) ?? '')) {
+    if (known) {
+      // Directory was readable — only claim a match if the account is real.
+      if (known.has(srcEmail)) {
+        return { source, google: { type: 'user', email: srcEmail }, via: 'email-match' };
+      }
+      return {
+        source,
+        via: 'unmatched',
+        reason: `domain "${emailDomain(srcEmail)}" is owned, but no Google Workspace account exists at ${srcEmail}`,
+      };
+    }
+    // Directory unreadable (missing scope/API) — can't verify, so this is
+    // still a guess, not a confirmed match. Kept permissive (matches prior
+    // behavior) but labeled honestly for the fidelity report.
     return {
       source,
       google: { type: 'user', email: srcEmail },
-      via: 'email-match',
+      via: 'email-match-unverified',
     };
   }
   return {
@@ -83,10 +107,11 @@ export function resolvePrincipal(
 
 export function resolvePermissions(
   perms: AgentPermissions | undefined,
-  ctx: { ownedDomains: string[]; overrides?: IdentityMapOverrides },
+  ctx: { ownedDomains: string[]; overrides?: IdentityMapOverrides; knownGoogleUsers?: string[] },
 ): PermissionResolution {
   const overrides = ctx.overrides ?? { users: {}, groups: {} };
-  const resolve = (p: PrincipalRef) => resolvePrincipal(p, { ownedDomains: ctx.ownedDomains, overrides });
+  const resolve = (p: PrincipalRef) =>
+    resolvePrincipal(p, { ownedDomains: ctx.ownedDomains, overrides, knownGoogleUsers: ctx.knownGoogleUsers });
 
   if (!perms) {
     return { owner: undefined, coauthors: [], viewers: [], chatPrincipals: [], unmatched: [] };
@@ -97,15 +122,17 @@ export function resolvePermissions(
   const viewers: ResolvedPrincipal[] = [];
   for (const sp of perms.sharedPrincipals) {
     const r = resolve(sp);
-    if (sp.roleHint === 'coauthor') coauthors.push(r);
+    const isEditor =
+      sp.studioShareRole === 'editor' ||
+      sp.roleHint === 'coauthor' ||
+      (sp.rights ?? []).some((x) => x === 'Write' || x === 'Share');
+    if (isEditor) coauthors.push(r);
     else viewers.push(r);
   }
 
   const chatPrincipals: ResolvedPrincipal[] = [];
   for (const gid of perms.chatAccess?.groupIds ?? []) {
-    chatPrincipals.push(
-      resolve({ type: 'group', id: gid, displayName: gid }),
-    );
+    chatPrincipals.push(resolve({ type: 'group', id: gid, displayName: gid }));
   }
 
   const all = [
@@ -133,8 +160,14 @@ export function suggestMappings(
   principals: PrincipalRef[],
   ownedDomains: string[],
   existing: IdentityMapOverrides,
+  knownGoogleUsers?: string[],
 ): IdentityMapOverrides {
   const owned = new Set(ownedDomains.map((d) => d.toLowerCase()));
+  // When the Workspace directory was readable, only suggest a user mapping
+  // for an account that actually exists — domain ownership alone previously
+  // caused every same-domain user to be "auto-mapped" to itself regardless
+  // of whether that address was real, badly inflating auto-mapped counts.
+  const known = knownGoogleUsers ? new Set(knownGoogleUsers.map((e) => e.toLowerCase())) : undefined;
   const users = { ...existing.users };
   const groups = { ...existing.groups };
   for (const p of principals) {
@@ -142,10 +175,23 @@ export function suggestMappings(
     if (!email) continue;
     const dom = emailDomain(email);
     if (!dom || !owned.has(dom)) continue;
-    if (p.type === 'user' && !users[email]) users[email] = email;
+    if (p.type === 'user' && !users[email] && (!known || known.has(email))) users[email] = email;
+    // No verified Workspace GROUP directory read exists yet — groups stay
+    // domain-only (unchanged), same limitation as resolvePrincipal above.
     if ((p.type === 'group' || p.type === 'team') && !groups[p.id]) groups[p.id] = email;
   }
   return { users, groups };
+}
+
+function emailsOf(list: ResolvedPrincipal[]): string[] {
+  return [
+    ...new Set(
+      list
+        .map((r) => r.google?.email)
+        .filter((e): e is string => Boolean(e))
+        .map((e) => e.toLowerCase()),
+    ),
+  ];
 }
 
 export function buildPermissionHandoff(
@@ -177,18 +223,30 @@ export function buildPermissionHandoff(
   for (const r of resolution.viewers) consider(r);
   for (const r of resolution.chatPrincipals) consider(r);
 
+  const editorUsers = emailsOf(resolution.coauthors);
+  const viewerUsers = emailsOf(resolution.viewers);
+  const chatUsers = emailsOf(resolution.chatPrincipals);
+  // Owner may need chat/use if they aren't the creating SA identity.
+  if (resolution.owner?.google?.type === 'user') {
+    chatUsers.push(resolution.owner.google.email.toLowerCase());
+  }
+
   const policy = perms?.chatAccess?.policy ?? 'unknown';
   const steps = [
-    'Open the Gemini Enterprise Agent Gallery (or Cloud Console → Agents).',
+    'Open Gemini Enterprise (or Cloud Console → Discovery Engine → Agents).',
     `Open agent "${agentName}"${geminiAgentId ? ` (${geminiAgentId})` : ''}.`,
-    'Use Share (owner) or User permissions (admin) — Gemini has no API for per-user/group agent sharing today.',
-    grantUsers.size
-      ? `Add these users: ${[...grantUsers].join(', ')}`
-      : 'No mapped Google users to add (see unresolved).',
-    grantGroups.size
-      ? `Add these groups: ${[...grantGroups].join(', ')}`
-      : 'No mapped Google groups to add.',
-    `Source chat policy was "${policy}" — do not share org-wide unless that matches intent.`,
+    'Gemini API only supports org-wide ALL_USERS — use console Share / User permissions for everyone else.',
+    chatUsers.length
+      ? `Chat / end-user access (Studio "End user access"): ${[...new Set(chatUsers)].join(', ')}`
+      : 'No mapped chat-only principals beyond owner checklist.',
+    editorUsers.length
+      ? `Studio Editors (edit/configure/publish on source): ${editorUsers.join(', ')} — Gemini has NO per-agent co-admin. Grant console edit only if the customer explicitly wants it; NEVER auto-grant roles/discoveryengine.editor on the whole GCP project (least-privilege).`
+      : 'No Studio Editor shares to re-apply.',
+    viewerUsers.length
+      ? `Studio Agent viewers (Analytics/Evaluation): ${viewerUsers.join(', ')} — no Gemini equivalent. On source, Agent viewer often conflicts with Environment Maker; treat as needs-review, not silent drop.`
+      : 'No Agent-viewer shares recorded.',
+    `Source chat policy was "${policy}". On Standard/Plus, gallery listing may still require ADK (ENABLED) or a direct agent link — do not claim org gallery visibility from ALL_USERS alone.`,
+    'Security rule: never grant a broader destination permission to compensate for a narrower source right you cannot replicate.',
   ];
 
   return {
@@ -197,6 +255,9 @@ export function buildPermissionHandoff(
     reason,
     grantUsers: [...grantUsers],
     grantGroups: [...grantGroups],
+    chatUsers: [...new Set(chatUsers)],
+    editorUsers,
+    viewerUsers,
     unresolved,
     steps,
   };
@@ -226,24 +287,61 @@ export function permissionFidelityNotes(
       component: 'sharing',
       status: 'needs-review',
       detail:
-        `${handoff.reason} Mapped users: ${handoff.grantUsers.length || 'none'}; ` +
-        `groups: ${handoff.grantGroups.length || 'none'}; unresolved: ${handoff.unresolved.length}.`,
+        `${handoff.reason} Chat users: ${handoff.chatUsers?.length ?? 0}; ` +
+        `editors: ${handoff.editorUsers?.length ?? 0}; viewers: ${handoff.viewerUsers?.length ?? 0}; ` +
+        `unresolved: ${handoff.unresolved.length}.`,
     });
   }
-  if (resolutionOwnerNote(perms)) notes.push(resolutionOwnerNote(perms)!);
-  return notes;
-}
 
-function resolutionOwnerNote(perms: AgentPermissions | undefined): FidelityNote | undefined {
-  if (!perms?.owner) return undefined;
-  const label = perms.owner.email || perms.owner.displayName || perms.owner.id;
-  return {
-    component: 'ownership',
-    status: 'needs-review',
-    detail:
-      `Source owner is ${label}. Gemini agent ownership follows the creating identity ` +
-      `(SA / DWD admin); intended owner must be granted via console Share if different.`,
-  };
+  const editors = (perms?.sharedPrincipals ?? []).filter(
+    (s) => s.studioShareRole === 'editor' || s.roleHint === 'coauthor',
+  );
+  if (editors.length) {
+    notes.push({
+      component: 'permissions-editor',
+      status: 'needs-review',
+      detail:
+        `${editors.length} Studio Editor/coauthor(s) on source. Gemini has no per-agent co-admin; ` +
+        `do not auto-grant project-wide IAM. Manual console share only if customer confirms.`,
+    });
+  }
+
+  const viewers = (perms?.sharedPrincipals ?? []).filter(
+    (s) => s.studioShareRole === 'agent-viewer' || (s.roleHint === 'viewer' && s.studioShareRole !== 'editor'),
+  );
+  if (viewers.length) {
+    notes.push({
+      component: 'permissions-viewer',
+      status: 'needs-review',
+      detail:
+        `${viewers.length} Agent-viewer / read share(s). Studio blocks Agent viewer when the user ` +
+        `already has Environment Maker (typical makers). Gemini has no Analytics-viewer role — report only.`,
+    });
+  }
+
+  if (perms?.owner) {
+    const label = perms.owner.email || perms.owner.displayName || perms.owner.id;
+    notes.push({
+      component: 'ownership',
+      status: 'needs-review',
+      detail:
+        `Source owner is ${label} (personal agent case if private). Gemini creator attribution ` +
+        `follows the creating identity (SA / DWD); mapped owner must be granted via console if different.`,
+    });
+  }
+
+  // Enterprise matrix reminder when permissions exist at all.
+  if (perms && (perms.owner || perms.sharedPrincipals.length || perms.chatAccess)) {
+    notes.push({
+      component: 'permissions-matrix',
+      status: 'mapped',
+      detail:
+        'Enterprise cases captured: (1) owner personal agents, (2) Studio Editors, (3) chat/end-user & org-wide. ' +
+        'View-only Studio Agent viewer is often unusable for Environment Makers on source.',
+    });
+  }
+
+  return notes;
 }
 
 /** Deduped catalog entry for the Map Users UI. */
@@ -271,7 +369,6 @@ export function catalogPrincipalsFromPermissions(
         existing.agentIds.push(agentId);
         existing.agentNames.push(agentName);
       }
-      // Prefer richer role if we see owner/editor on another agent.
       const rank = { owner: 4, editor: 3, viewer: 2, 'chat-group': 1, 'org-wide': 0 };
       if (rank[role] > rank[existing.role]) existing.role = role;
       if (!existing.source.email && source.email) existing.source = { ...existing.source, ...source };
@@ -296,7 +393,11 @@ export function catalogPrincipalsFromPermissions(
   }
   if (perms.owner) add('owner', perms.owner);
   for (const sp of perms.sharedPrincipals) {
-    add(sp.roleHint === 'coauthor' ? 'editor' : 'viewer', sp);
+    const editor =
+      sp.studioShareRole === 'editor' ||
+      sp.roleHint === 'coauthor' ||
+      (sp.rights ?? []).some((x) => x === 'Write' || x === 'Share');
+    add(editor ? 'editor' : 'viewer', sp);
   }
   for (const gid of perms.chatAccess?.groupIds ?? []) {
     add('chat-group', { type: 'group', id: gid, displayName: gid });
