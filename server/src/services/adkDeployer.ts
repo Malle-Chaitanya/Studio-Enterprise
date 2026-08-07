@@ -277,7 +277,8 @@ export async function createWebsiteGroundingDataStore(
   const dataStoreId = sanitizeDataStoreId(`${agentSourceId}-web-${source.id}`);
   const create = await createDataStore(project, saToken, {
     dataStoreId,
-    displayName: `${source.name} (ADK website grounding — ${agentSourceId})`,
+    // Display name only — the ID above is what must be unique.
+    displayName: `${source.name} (ADK website grounding — ${agentSourceId})`.slice(0, 128),
     kind: 'website',
     advanced: false,
   });
@@ -532,7 +533,13 @@ export async function publishAgentToGallery(
   googleSearchDropped?: boolean;
 }> {
   const location = opts?.location || process.env.ADK_LOCATION || 'us-central1';
-  const agentSourceId = sanitize(ir.name);
+  // Key the website grounding store by the Copilot botid, NOT the agent's display name.
+  // Names are not unique — two agents in different environments routinely share one, and
+  // the same name in two environments produced the SAME data store id, so the second
+  // agent silently adopted the first's website index. Every other knowledge path
+  // (Confluence, Dataverse snapshots, uploaded files) already keys by sourceId; this was
+  // the one that did not. `ir.name` is kept only for the human-readable display name.
+  const agentSourceId = sanitize(ir.sourceId || ir.name);
 
   const groundingDataStores: string[] = [...(opts?.groundingDataStores ?? [])];
   if (opts?.websiteSource) {
