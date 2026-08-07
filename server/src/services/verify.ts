@@ -1,5 +1,6 @@
 import { logger } from '../logger.js';
 import { assistantBase } from './gemini.js';
+import { chatWithAdkAgent } from './adkAgentChat.js';
 import type { GeminiDestination } from '../types.js';
 
 /**
@@ -63,6 +64,15 @@ export async function verifyAgent(
   saToken: string,
   agentId: string,
   probe = 'Briefly, what can you help me with?',
+  /** When the agent is ADK-backed, its Reasoning Engine id. Supplying it turns
+   *  verification from "the resource exists" into "the agent actually answers". */
+  opts?: {
+    reasoningEngineId?: string;
+    location?: string;
+    /** True when the agent was given knowledge sources — then the probe must actually
+     *  retrieve, and a retrieval failure means the migration did not work. */
+    expectsGrounding?: boolean;
+  },
 ): Promise<VerifyResult> {
   // Level 1: existence check (retries transient network errors so a connection
   // blip doesn't mislabel a successfully-created agent as unverified).
@@ -76,7 +86,60 @@ export async function verifyAgent(
     return { verified: false, note: 'existence check errored (network)' };
   }
 
-  // Level 2: best-effort conversational probe.
+  // Level 2: ASK IT SOMETHING. An agent that exists is not an agent that works.
+  //
+  // This used to return verified:true whenever the resource was retrievable, which is
+  // how a migrated agent whose every retrieval failed with
+  // `403 discoveryengine.servingConfigs.search denied` still reported
+  // "deployed · shared · verified" (2026-08-07). A verification that cannot fail tells
+  // a customer nothing.
+  if (opts?.reasoningEngineId) {
+    // A generic "what can you help me with?" is answered from the instruction alone, so
+    // it passes even when every knowledge source is unreachable — which is exactly how a
+    // broken agent reported verified. When the agent is supposed to have knowledge, ask
+    // something that CANNOT be answered without retrieving.
+    const groundedProbe =
+      'Search your knowledge sources and name one specific document, page or file you can ' +
+      'actually see. If you cannot access them, say why.';
+    const r = await chatWithAdkAgent(dest.project, saToken, {
+      reasoningEngineId: opts.reasoningEngineId,
+      message: opts.expectsGrounding ? groundedProbe : probe,
+      userId: 'cf-verify',
+      location: opts.location,
+    });
+    if (!r.ok) {
+      return { verified: false, note: `agent did not answer: ${(r.error ?? '').slice(0, 200)}` };
+    }
+    // A failed tool call is definitive, whatever the model said around it.
+    if (opts.expectsGrounding && r.toolError) {
+      return {
+        verified: false,
+        sample: (r.answer ?? '').slice(0, 200),
+        note: `knowledge retrieval failed: ${r.toolError.slice(0, 180)}`,
+      };
+    }
+
+    const answer = r.answer ?? '';
+    // A tool that 403s or errors comes back inside the answer text, not as an HTTP
+    // failure — the agent politely says it cannot access its sources.
+    const brokenGrounding =
+      opts.expectsGrounding === true &&
+      (/permission.{0,40}denied|IAM_PERMISSION_DENIED|servingConfigs\.search|403/i.test(answer) ||
+        /unable to access|cannot access|could not access|no access to|knowledge sources? (are|is) (currently )?unavailable|don't have access to (my|the) knowledge/i.test(answer));
+    if (brokenGrounding) {
+      return {
+        verified: false,
+        sample: answer.slice(0, 240),
+        note: 'agent responded but could not reach its knowledge sources — check the data stores are in the same project as the agent',
+      };
+    }
+    if (!answer.trim()) {
+      return { verified: false, note: 'agent returned an empty answer' };
+    }
+    return { verified: true, sample: answer.slice(0, 240), note: 'deployed and answered a live probe' };
+  }
+
+  // Level 2 (non-ADK): best-effort conversational probe.
   try {
     const assistUrl = `${assistantBase(dest)}:assist`;
     const res = await fetch(assistUrl, {

@@ -319,7 +319,11 @@ export async function migrateConfluenceToDataStore(
     };
   }
 
-  const recon = await awaitImport(saToken, imp.operationName, gcsUris.length);
+  const recon = await awaitImport(saToken, imp.operationName, gcsUris.length, {
+    // Verify against the store: the operation's counters lag, and treating that as
+    // failure once discarded a data store holding every document.
+    verifyIn: { project, dataStoreId },
+  });
   if (recon.succeeded === 0) {
     return {
       pageCount: allPages.length,

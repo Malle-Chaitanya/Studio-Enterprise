@@ -56,7 +56,11 @@ const plan = await resolveScope(
 );
 // Carry over connector credentials the customer saved in the UI — the orchestrator reads
 // these to decide which live tools to wire.
-plan.savedConnectors = session.plan?.savedConnectors ?? [];
+// Connectors the customer configured. E2E_CONNECTORS lets a test name them explicitly
+// when the cached session predates the credential save.
+const extra = (process.env.E2E_CONNECTORS ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+plan.savedConnectors = [...new Set([...(session.plan?.savedConnectors ?? []), ...extra])];
+console.log(`connectors wired: ${plan.savedConnectors.join(', ') || '(none)'}`);
 console.log(`plan: ${plan.totalAgents} agent(s)\n`);
 
 let done = false;

@@ -270,7 +270,9 @@ export async function migrateSharePointToDataStore(
   if (!imp.started || !imp.operationName) {
     return { dataStoreId, fileCount: gcsUris.length, skipped, error: imp.error ?? 'import did not start' };
   }
-  const recon = await awaitImport(saToken, imp.operationName, gcsUris.length);
+  const recon = await awaitImport(saToken, imp.operationName, gcsUris.length, {
+    verifyIn: { project, dataStoreId },
+  });
   // Deliberately NOT treating succeeded===0 as failure: the operation's counters lag
   // behind the documents actually landing, and confluenceMigrator discarding a perfectly
   // good data store on that signal is a bug we already hit once.

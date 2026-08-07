@@ -65,6 +65,9 @@ function errorDetail(raw: string): string {
 export interface AdkChatResult {
   ok: boolean;
   answer?: string;
+  /** A tool call failed inside the container (e.g. grounding 403). The model may still
+   *  have produced a plausible-sounding answer, so callers must check this. */
+  toolError?: string;
   sessionId?: string;
   /** True when the agent's VertexAiSearchTool was invoked for this turn. */
   usedSearchTool?: boolean;
@@ -181,10 +184,29 @@ export async function chatWithAdkAgent(
     return { ok: false, error: `${errorCode}: ${errorMessage ?? 'no detail'}` };
   }
 
+  // Tool failures do NOT surface as HTTP errors or as text the model reliably repeats —
+  // the model often just says something evasive like "I cannot list specific documents".
+  // The truth is in the runtime's own function_response, which carries the tool's error
+  // verbatim (e.g. `403 Permission 'discoveryengine.servingConfigs.search' denied`).
+  // Reading that is structural; pattern-matching the model's prose is not.
+  const toolError = (() => {
+    const idx = raw.search(/"function_response"|"functionResponse"/);
+    if (idx < 0) return undefined;
+    const window = raw.slice(idx, idx + 4000);
+    if (!/"status":\s*"error"|IAM_PERMISSION_DENIED|PERMISSION_DENIED|"error_message"/i.test(window)) return undefined;
+    const msg = /"error_message":\s*"((?:[^"\\]|\\.)*)"/.exec(window)?.[1];
+    try {
+      return msg ? (JSON.parse(`"${msg}"`) as string) : 'tool returned an error';
+    } catch {
+      return msg ?? 'tool returned an error';
+    }
+  })();
+
   const answer = extractText(raw);
   return {
     ok: true,
     answer,
+    toolError,
     sessionId: args.sessionId,
     // VertexAiSearchTool shows up as a function call / grounding event in the stream.
     usedSearchTool: /vertex_ai_search|VertexAiSearch|functionCall|function_call|grounding/i.test(raw),

@@ -976,6 +976,12 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       // publish/share/knowledge-file logic branches on this, so it must
       // reflect the real outcome, not just "did we attempt ADK".
       let usedAdk = false;
+      // Captured when the ADK deploy succeeds, so verification can ask the deployed
+      // agent a real question rather than only confirming the resource exists.
+      let adkReasoningEngineId: string | undefined;
+      /** How many data stores the ADK deploy was given — drives whether verification
+       *  requires the agent to retrieve something. */
+      let adkGroundedStoreCount = 0;
       // True when the agent was created via low-code + dataStoreSpecs (native
       // grounding), bypassing ADK/RE entirely for connector-grounded agents.
       let usedDataStoreSpecs = false;
@@ -1050,7 +1056,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               const dvToken = await tokenFor(row.envUrl);
               for (const k of adkFileSources) {
                 const name = k.file!.name!;
-                const cached = await getAdkKnowledgeStore(appUserId, row.sourceId, name);
+                const cached = await getAdkKnowledgeStore(appUserId, row.sourceId, name, dest.project);
                 if (cached?.status === 'done') {
                   // Don't trust the cache blindly — the data store may have been
                   // deleted since (manual cleanup, console testing). A stale
@@ -1085,6 +1091,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                   groundedFileNames.push(name);
                   await upsertAdkKnowledgeStore({
                     appUserId,
+                    project: dest.project,
                     sourceId: row.sourceId,
                     fileName: name,
                     dataStoreId: ground.dataStoreId ?? '',
@@ -1179,6 +1186,8 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
             // for the same source, because the ADK notes were pushed before
             // this check existed).
             if (adk.ok && adk.agentId && adk.reasoningEngine) {
+              adkReasoningEngineId = adk.reasoningEngine.split('/').pop();
+              adkGroundedStoreCount = groundingDataStores.length;
               for (const name of groundedFileNames) {
                 result.fidelity.push({
                   component: `knowledge:${name}`,
@@ -1646,9 +1655,24 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
             );
           }
         }
-        const v = await verifyAgent(dest, saToken, create.agentId);
+        // Pass the Reasoning Engine so verification ASKS the agent something instead of
+        // only checking the resource exists — an agent that cannot reach its knowledge
+        // sources must not report `verified`.
+        const v = await verifyAgent(dest, saToken, create.agentId, undefined, {
+          reasoningEngineId: adkReasoningEngineId,
+          // Only demand retrieval from agents we actually gave knowledge to.
+          expectsGrounding: adkGroundedStoreCount > 0,
+        });
         result.verified = v.verified;
         result.verifySample = v.sample;
+        if (!v.verified && v.note) {
+          result.fidelity.push({
+            component: 'verification',
+            status: 'needs-review',
+            detail: `The migrated agent was created but did not pass a live probe: ${v.note}.`,
+          });
+          emitLog('warn', `  ${row.name}: verification failed — ${v.note}`);
+        }
         await markStaged(runId, row.sourceId, {
           status: 'inserted',
           geminiAgentId: create.agentId,

@@ -320,7 +320,7 @@ export async function awaitImport(
   saToken: string,
   operationName: string,
   attemptedUploads: number,
-  { maxPolls = 60, intervalMs = 5000 } = {},
+  { maxPolls = 60, intervalMs = 5000, verifyIn }: { maxPolls?: number; intervalMs?: number; verifyIn?: { project: string; dataStoreId: string } } = {},
 ): Promise<ImportReconciliation> {
   let op: ImportOperation | null = null;
   for (let i = 0; i < maxPolls; i++) {
@@ -328,5 +328,43 @@ export async function awaitImport(
     if (op?.done) break;
     await sleep(intervalMs);
   }
-  return reconcileImport(op, attemptedUploads);
+  const recon = reconcileImport(op, attemptedUploads);
+
+  // The operation's counters lag behind the documents actually landing, so a
+  // completed import can report successCount below what we uploaded and be judged a
+  // failure. That produced two wrong outcomes live (2026-08-07): confluenceMigrator
+  // discarded a data store holding all 10 of its documents, and a migrated PDF was
+  // reported `lost` while sitting indexed in its store. When the counters look short,
+  // ask the store how many documents it actually holds before calling it a failure.
+  if (verifyIn && (recon.failed > 0 || recon.succeeded < attemptedUploads)) {
+    const actual = await countDocuments(verifyIn.project, saToken, verifyIn.dataStoreId);
+    if (actual >= attemptedUploads) {
+      logger.info(
+        { dataStoreId: verifyIn.dataStoreId, reportedSucceeded: recon.succeeded, actual, attemptedUploads },
+        'awaitImport: operation counters lagged; the store holds every uploaded document',
+      );
+      return { ...recon, succeeded: actual, failed: 0, allIndexed: true, failureSamples: [] };
+    }
+  }
+  return recon;
+}
+
+/**
+ * How many documents a data store actually holds. Used to second-guess an import
+ * operation's counters before reporting a document as lost.
+ */
+export async function countDocuments(project: string, saToken: string, dataStoreId: string): Promise<number> {
+  try {
+    const res = await withBackoff(() =>
+      fetch(
+        `${collectionBase(project)}/dataStores/${dataStoreId}/branches/default_branch/documents?pageSize=100`,
+        { headers: { Authorization: `Bearer ${saToken}` } },
+      ),
+    );
+    if (!res.ok) return 0;
+    const json = (await res.json()) as { documents?: unknown[] };
+    return (json.documents ?? []).length;
+  } catch {
+    return 0;
+  }
 }

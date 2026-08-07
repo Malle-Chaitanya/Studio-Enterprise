@@ -407,7 +407,11 @@ export async function migrateFileToDocumentStore(
     return { attempted: 1, succeeded: 0, failed: 1, dataStoreId, error: imp.error ?? 'import did not start' };
   }
 
-  const recon = await awaitImport(saToken, imp.operationName, 1);
+  // This is the uploaded-file path that reported a successfully indexed PDF as `lost`
+  // (2026-08-07). Confirm against the store before believing the operation's counters.
+  const recon = await awaitImport(saToken, imp.operationName, 1, {
+    verifyIn: { project, dataStoreId },
+  });
   return {
     attempted: 1,
     succeeded: recon.succeeded,

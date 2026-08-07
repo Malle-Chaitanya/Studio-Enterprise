@@ -80,7 +80,11 @@ export async function detectKnowledgeConnectors(
   const allComponents: BotKsComponent[] = [];
   for (const chunk of chunks) {
     const ids = chunk.map((id) => `'${id}'`).join(',');
-    const filter = `componenttype eq 16 and Microsoft.Dynamics.CRM.In(PropertyName='parentbotid',PropertyValues=[${ids}])`;
+    // componenttype 9 (topics) as well as 16 (knowledge sources): a connector can be used
+    // as a TOOL inside a topic — `kind: ConnectorTool` with an explicit connectorId — and
+    // that is invisible to a knowledge-source-only scan. The "confluence agent" in the test
+    // tenant has exactly this shape and appeared to have no connectors at all.
+    const filter = `(componenttype eq 16 or componenttype eq 9) and Microsoft.Dynamics.CRM.In(PropertyName='parentbotid',PropertyValues=[${ids}])`;
     const url = `${base}/api/data/v9.2/botcomponents?$filter=${encodeURIComponent(filter)}&$select=botcomponentid,name,data,content,description,schemaname,_parentbotid_value&$top=500`;
     try {
       const res = await fetch(url, {
