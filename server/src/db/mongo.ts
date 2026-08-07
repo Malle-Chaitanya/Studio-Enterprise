@@ -147,10 +147,25 @@ async function ensureCollections(): Promise<void> {
   //     reuses the existing data store instead of re-uploading to GCS and
   //     re-indexing every time. See knowledgeDataStoreExecutor.migrateFileToDocumentStore.
   await ensure('adkKnowledgeStores');
+  // The key MUST include `project`. A data store lives in one project and is unreadable
+  // from another, so the same file legitimately has one store per project — which is why
+  // upsertAdkKnowledgeStore filters on project too. While the unique index omitted it,
+  // that filter matched nothing for a second project and the upsert fell through to an
+  // insert that the 3-field index then rejected: `E11000 duplicate key ... index:
+  // appUserId_1_sourceId_1_fileName_1` (live 2026-08-07). The write is best-effort, so
+  // the failure was only a warning — and the store record silently never updated.
   await db.collection('adkKnowledgeStores').createIndex(
-    { appUserId: 1, sourceId: 1, fileName: 1 },
-    { unique: true },
+    { appUserId: 1, project: 1, sourceId: 1, fileName: 1 },
+    { unique: true, name: 'adkKnowledgeStores_tenant_project_source_file' },
   );
+  // Drop the superseded index if this database predates the fix. Best-effort: a fresh
+  // database never had it, and failing to drop it must not stop the app from booting.
+  try {
+    await db.collection('adkKnowledgeStores').dropIndex('appUserId_1_sourceId_1_fileName_1');
+    logger.info('adkKnowledgeStores: dropped stale unique index missing `project`');
+  } catch {
+    /* not present — nothing to do */
+  }
 
   // 14. identityMappings — durable Entra/email → Google Workspace override map
   //     per (customer, Microsoft tenant). Used for permission handoff / owner

@@ -1497,7 +1497,17 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
           // nothing left to disambiguate, so it's downloaded and attached
           // automatically — recorded in the fidelity report as an automatic
           // match, not a silent one.
-          const searchable = other.filter((k) => k.kind === 'FederatedStructuredSearchSource');
+          // Confluence sources are NOT searchable this way. Their `name` is a list of
+          // space names ("Engineering, Chaitanya Malle, Demo Company Wiki"), not a
+          // filename, so a Graph search can only ever return nothing — it spent a
+          // Dataverse lookup plus a Graph round trip per source to log "no candidates"
+          // (live 2026-08-07). They are handled by the Confluence crawler, and when
+          // that cannot run the reason is already reported against the crawler.
+          const searchable = other.filter(
+            (k) =>
+              k.kind === 'FederatedStructuredSearchSource' &&
+              k.classification?.strategy !== 'confluence-crawler',
+          );
           for (const src of searchable) {
             try {
               let scopedToUser: string | null = null;
