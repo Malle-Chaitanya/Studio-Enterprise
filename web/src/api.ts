@@ -526,6 +526,10 @@ export interface SavedConnector {
   fields: string[];
   project: string;
   updatedAt?: string;
+  /** The secrets are in the project this migration targets. When false they exist but
+   *  are unreachable from the destination, so the connector is NOT configured for
+   *  this run — treating it as configured is what silently skipped knowledge sources. */
+  matchesDestination?: boolean;
 }
 
 /**

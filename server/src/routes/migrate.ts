@@ -391,7 +391,11 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
 
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const saved = await listConnectorCredentials(appUserId);
-  const savedIds = new Set(saved.map((s) => s.connectorId));
+  // Only credentials stored in the project we are migrating INTO are usable — the
+  // deployed container resolves secrets from its own project. See the GET route above.
+  const savedIds = new Set(
+    saved.filter((s) => !!session.geminiProject && s.project === session.geminiProject).map((s) => s.connectorId),
+  );
 
   const connectors = ids.map((id) => {
     const def = REGISTRY_BY_ID.get(id);
@@ -444,12 +448,18 @@ migrateRouter.get('/connector-credentials', async (req, res) => {
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const saved = await listConnectorCredentials(appUserId);
+  // Secrets live in the project they were saved against. Migrating into a DIFFERENT
+  // project cannot read them, so a record from another project must NOT read as
+  // configured — live 2026-08-07 credentials saved during a GTM session made the UI
+  // show "✓ Saved" while the studio run skipped every Confluence source as
+  // "needs a connector or manual step".
   res.json({
     connectors: saved.map((s) => ({
       connectorId: s.connectorId,
       fields: s.fields,
       project: s.project,
       updatedAt: s.updatedAt,
+      matchesDestination: !!session.geminiProject && s.project === session.geminiProject,
     })),
   });
 });

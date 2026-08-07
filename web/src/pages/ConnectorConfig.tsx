@@ -226,8 +226,15 @@ interface ConnectorCardProps {
 
 function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
   const { def, flowCount, flowNames } = c;
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(def.credentials.map((f) => [f.key, ''])));
+  // `def.credentials` holds only the fields a connector declares FOR ITSELF. Connectors in
+  // a credential group declare none — Confluence and Jira both leave it empty because
+  // base_url/email/api_token belong to the shared `atlassian` group. Rendering from it
+  // therefore drew no inputs at all, `[].every()` returned true so Save stayed enabled,
+  // and the save posted an empty creds array that the server rejected with
+  // `connector_id_and_creds_required`. The server already computes the full list
+  // (group + own) and returns it as `req.fields`; use that whenever it is available.
+  const fields = req?.fields?.length ? req.fields : def.credentials;
+  const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   // Start "saved" when this customer configured the connector before, so a
   // returning admin is not asked to re-enter credentials that already exist in
@@ -237,12 +244,14 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
   const [error, setError] = useState('');
   const [showHint, setShowHint] = useState<string | null>(null);
 
-  const allFilled = def.credentials.every((f) => values[f.key]?.trim());
+  // An empty field list must never count as "all filled" — that vacuous `true` is what
+  // let the button submit nothing. No fields means we do not yet know what to ask for.
+  const allFilled = fields.length > 0 && fields.every((f) => values[f.key]?.trim());
 
   const handleSave = async () => {
     setSaving(true); setError('');
     try {
-      await saveConnectorCredentials(session, c.connectorId, def.credentials.map((f) => ({ field: f.key, value: values[f.key] })));
+      await saveConnectorCredentials(session, c.connectorId, fields.map((f) => ({ field: f.key, value: values[f.key] })));
       setSaved(true);
     } catch (err) {
       setError((err as Error).message || 'Failed to save. Please try again.');
@@ -311,7 +320,14 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
         <>
           <PermissionsPanel req={req} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {def.credentials.map((field) => (
+            {fields.length === 0 && (
+              <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px' }}>
+                Still loading what this connector needs. If this persists, the credential
+                requirements could not be read from the server — skip it and it will be
+                flagged for review rather than saved empty.
+              </div>
+            )}
+            {fields.map((field) => (
               <div key={field.key}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <label style={{ fontSize: 12, fontWeight: 600 }}>{field.label}</label>
@@ -355,7 +371,7 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
 
       {saved && (
         <button className="wbtn" style={{ fontSize: 11, padding: '4px 12px', marginTop: 6 }}
-          onClick={() => { setSaved(false); setValues(Object.fromEntries(def.credentials.map((f) => [f.key, '']))); }}>
+          onClick={() => { setSaved(false); setValues({}); }}>
           Edit
         </button>
       )}
@@ -502,7 +518,10 @@ export function ConnectorConfig() {
         // again, which is annoying but never wrong.
         try {
           const previously = await fetchSavedConnectors(session);
-          setSavedIds(new Set(previously.map((s) => s.connectorId)));
+          // Only count credentials stored in the project this migration targets.
+          // Secrets saved against a different project cannot be read by the deployed
+          // agent, so showing them as configured hides a guaranteed failure.
+          setSavedIds(new Set(previously.filter((s) => s.matchesDestination !== false).map((s) => s.connectorId)));
         } catch {
           /* leave empty — cards fall back to asking */
         }
