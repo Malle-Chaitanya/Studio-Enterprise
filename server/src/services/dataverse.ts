@@ -951,6 +951,23 @@ export async function extractAgent(
   );
   const components = json.value ?? [];
 
+  // The fetch above deliberately takes only `statecode eq 0`. Ask separately for what was
+  // left behind so the report can name it — a disabled tool looks identical to a missing
+  // one when you are comparing the two platforms side by side. Best-effort and cheap
+  // (names only): failing to list them must never fail the extraction.
+  let disabledComponentNames: string[] = [];
+  try {
+    const disabled = await dvGet<{ value: Array<{ name?: string }> }>(
+      url,
+      token,
+      'botcomponents?$select=name,componenttype' +
+        `&$filter=statecode ne 0 and _parentbotid_value eq ${bot.botid}&$top=100`,
+    );
+    disabledComponentNames = (disabled.value ?? []).map((c) => c.name ?? '(unnamed)');
+  } catch (err) {
+    logger.debug({ err, bot: bot.name }, 'extractAgent: could not list disabled components');
+  }
+
   // The agent's AUTHORED description/displayName live in bot.configuration
   // (settings["default-2.1.0"].content). For user-authored agents this holds the
   // real description; for Microsoft prebuilt/managed agents it's empty (the
@@ -1118,6 +1135,31 @@ export async function extractAgent(
   const thinContent = !gpt.instructions && !hasReadableTopicContent && !hasAiPrompt;
 
   const unmapped: string[] = [];
+
+  // Evaluation data (componenttype 19) — the agent's authored TEST questions and
+  // evaluation sets. Not runtime behaviour, so nothing is functionally lost by not
+  // migrating them, but they ARE authored content: 11 of this agent's 38 components
+  // were evaluation rows that disappeared without a word. "Lossless" means the report
+  // says what we left behind, not that we migrate everything.
+  const evalComps = components.filter((c) => c.componenttype === 19);
+  if (evalComps.length) {
+    unmapped.push(
+      `${evalComps.length} evaluation component(s) (test questions / evaluation sets authored in ` +
+        `Copilot Studio) were read but not migrated — Gemini has no equivalent. They remain in the ` +
+        `source agent.`,
+    );
+  }
+
+  // Components the author DISABLED in Copilot Studio. Extraction filters `statecode eq 0`,
+  // so these never reach the IR — correct, but worth stating: an admin comparing tool
+  // counts between the two platforms should know one was switched off, not missing.
+  if (disabledComponentNames.length) {
+    unmapped.push(
+      `${disabledComponentNames.length} component(s) are disabled in the source agent and were not ` +
+        `migrated: ${disabledComponentNames.join(', ')}.`,
+    );
+  }
+
   if (knowledgeSources.length) {
     const fileCount = knowledgeSources.filter((k) => k.kind === 'FileUpload').length;
     const nonFile = knowledgeSources.filter((k) => k.kind !== 'FileUpload');

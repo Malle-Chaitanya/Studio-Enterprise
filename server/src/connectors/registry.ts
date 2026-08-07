@@ -129,6 +129,19 @@ export const CREDENTIAL_GROUPS: Record<string, CredentialGroupDef> = {
       'per connector below as APPLICATION permissions, then click Grant admin consent.',
     credentials: [], // filled from MS_GRAPH_FIELDS below
   },
+  hubspot: {
+    id: 'hubspot',
+    name: 'HubSpot (one private app token)',
+    setupUrl: 'https://app.hubspot.com/private-apps',
+    setupHint:
+      'One private app token serves every HubSpot connector. Create it under Settings → ' +
+      'Integrations → Private Apps and grant only the CRM scopes the agent needs — the token ' +
+      'carries exactly the scopes you tick, so a read-only agent should get read scopes only.',
+    credentials: [
+      { key: 'api_key', label: 'Private App Token', type: 'password',
+        placeholder: 'pat-na1-…', hint: 'HubSpot → Settings → Integrations → Private Apps → Create a private app' },
+    ],
+  },
   atlassian: {
     id: 'atlassian',
     name: 'Atlassian (one API token)',
@@ -171,10 +184,33 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'crm',
     icon: '🟠',
     docsUrl: 'https://developers.hubspot.com/docs/api/overview',
-    credentials: [
-      { key: 'api_key', label: 'Private App Token', type: 'password',
-        placeholder: 'pat-na1-…', hint: 'HubSpot → Settings → Integrations → Private Apps → Create a private app' },
-    ],
+    credentialGroup: 'hubspot',
+    credentials: [], // supplied by the hubspot credential group
+    requiredPermissions: ['crm.objects.contacts.read', 'crm.objects.companies.read', 'crm.objects.deals.read'],
+    permissionsHint:
+      'A private app token carries exactly the scopes ticked when it was created. Missing a ' +
+      'scope returns 403 at inference time, not at save time.',
+    baseUrlTemplate: 'https://api.hubapi.com',
+    authHeaderTemplate: 'Bearer {api_key}',
+  },
+
+  {
+    // The Independent Publisher variant is a SEPARATE connector id in Power Platform,
+    // and agents in the field use it (found on "Enterprise Migration Knowledge",
+    // 2026-08-07, where it was silently dropped for having no registry entry). It
+    // targets the same HubSpot REST API with the same private-app-token auth, so it
+    // shares the credential group rather than asking for a second token.
+    id: 'shared_hubspotcrmv2',
+    name: 'HubSpot CRM V2 (Independent Publisher)',
+    category: 'crm',
+    icon: '🟠',
+    docsUrl: 'https://developers.hubspot.com/docs/api/crm/understanding-the-crm',
+    credentialGroup: 'hubspot',
+    credentials: [],
+    requiredPermissions: ['crm.objects.contacts.read', 'crm.objects.companies.read', 'crm.objects.deals.read'],
+    permissionsHint:
+      'Same private app token as the HubSpot connector. Association endpoints need read scope ' +
+      'on BOTH object types involved.',
     baseUrlTemplate: 'https://api.hubapi.com',
     authHeaderTemplate: 'Bearer {api_key}',
   },
