@@ -3,7 +3,7 @@ import { logger } from '../logger.js';
 import { ComponentType } from '../types.js';
 import { parseTopicGraph } from './topicGraph.js';
 import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClassifier.js';
-import type { AgentIR, AgentPermissions, AgentSourceMetadata, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
+import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
 
 /**
  * Copilot Studio extraction: reads an agent's complete definition from the
@@ -567,6 +567,55 @@ function collectStrings(node: unknown, keyMatch: (k: string) => boolean, out: st
 }
 
 /** Parse one topic's AdaptiveDialog YAML into a TopicIR. */
+/**
+ * Is this componenttype-9 row a TOOL rather than a topic?
+ *
+ * Copilot Studio files both under the same component type and separates them by the
+ * `kind:` on the first meaningful line of `data`: `AdaptiveDialog` for an authored
+ * topic, `TaskDialog` for something the agent can invoke.
+ */
+function isAgentToolComponent(c: BotComponent): boolean {
+  const data = c.data || c.content || '';
+  return /^\s*kind:\s*TaskDialog\s*$/m.test(data);
+}
+
+/** `<prefix>.shared_jira.<guid>` → `shared_jira`. */
+function connectorIdFromConnectionReference(ref: string): string | undefined {
+  return /\b(shared_[a-z0-9_]+)/i.exec(ref)?.[1]?.toLowerCase();
+}
+
+const TASK_ACTION_KIND: Record<string, AgentToolKind> = {
+  invokeconnectortaskaction: 'connector',
+  invokeexternalagenttaskaction: 'mcp-server',
+  invokeconnectedagenttaskaction: 'connected-agent',
+  invokeaibuildermodeltaskaction: 'ai-builder',
+};
+
+/**
+ * Parse one TaskDialog component into an AgentToolIR.
+ *
+ * Read with targeted regexes rather than a YAML parse for the same reason the topic
+ * parser does: these bodies are Copilot's own dialect and a strict parse throws on
+ * shapes we have not seen, which would drop the whole tool. An unrecognised action
+ * kind is preserved as 'unknown' — never discarded.
+ */
+function parseAgentTool(c: BotComponent): AgentToolIR {
+  const data = c.data || c.content || '';
+  const rawKind = /^\s*kind:\s*(Invoke\w*TaskAction)\s*$/m.exec(data)?.[1] ?? '';
+  const connectionReference = /^\s*connectionReference:\s*(\S+)\s*$/m.exec(data)?.[1] ?? '';
+  const outputs = [...data.matchAll(/^\s*-\s*propertyName:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+  return {
+    name: c.name ?? '(unnamed tool)',
+    kind: TASK_ACTION_KIND[rawKind.toLowerCase()] ?? 'unknown',
+    displayName: /^\s*modelDisplayName:\s*(.+)$/m.exec(data)?.[1]?.trim() || undefined,
+    description: /^\s*modelDescription:\s*(.+)$/m.exec(data)?.[1]?.trim() || undefined,
+    connectorId: connectionReference ? connectorIdFromConnectionReference(connectionReference) : undefined,
+    operationId: /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1] || undefined,
+    outputs: outputs.length ? outputs : undefined,
+    schemaName: c.schemaname ?? undefined,
+  };
+}
+
 function parseTopic(c: BotComponent): TopicIR {
   const raw = c.data ?? '';
   const doc = tryParseYaml(raw);
@@ -986,7 +1035,16 @@ export async function extractAgent(
   const permissions = await readAgentPermissions(url, token, bot.botid);
 
   const gptComp = components.find((c) => c.componenttype === ComponentType.CustomGpt);
-  const topicComps = components.filter((c) => c.componenttype === ComponentType.Topic);
+  // componenttype 9 is NOT only topics. It also carries the agent's TOOLS — connector
+  // operations, MCP servers, connected agents and AI Builder models — distinguished by
+  // the `kind:` at the top of `data`: `AdaptiveDialog` is a topic, `TaskDialog` is a
+  // tool. Treating every type-9 row as a topic meant "Jira - Get list of issues" was
+  // migrated as a conversational topic (and counted as one: 22 "topics" on an agent
+  // with far fewer), while the operations it actually calls were never recorded.
+  const type9 = components.filter((c) => c.componenttype === ComponentType.Topic);
+  const toolComps = type9.filter((c) => isAgentToolComponent(c));
+  const topicComps = type9.filter((c) => !isAgentToolComponent(c));
+  const agentTools = toolComps.map(parseAgentTool);
   const ksComps = components.filter((c) => c.componenttype === ComponentType.KnowledgeSource);
   const fileComps = components.filter((c) => c.componenttype === ComponentType.BotFileAttachment);
 
@@ -1116,6 +1174,7 @@ export async function extractAgent(
     unmapped,
     sourceMetadata,
     permissions,
+    agentTools: agentTools.length ? agentTools : undefined,
   };
 }
 

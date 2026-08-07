@@ -118,16 +118,23 @@ export async function detectKnowledgeConnectors(
   // `heuristic` and must be presented to the customer as "we think", not "you need".
   const connectorHits = new Map<
     string,
-    { flowCount: number; flowNames: Set<string>; agentNames: Set<string>; certain: boolean }
+    {
+      flowCount: number;
+      flowNames: Set<string>;
+      agentNames: Set<string>;
+      certain: boolean;
+      operations: Set<string>;
+    }
   >();
 
-  const record = (connectorId: string, comp: BotKsComponent, certain: boolean): void => {
+  const record = (connectorId: string, comp: BotKsComponent, certain: boolean, operation?: string): void => {
     if (!connectorId) return; // sources that need no credentials (Dataverse, public site)
     const existing = connectorHits.get(connectorId)
-      ?? { flowCount: 0, flowNames: new Set<string>(), agentNames: new Set<string>(), certain: false };
+      ?? { flowCount: 0, flowNames: new Set<string>(), agentNames: new Set<string>(), certain: false, operations: new Set<string>() };
     existing.flowCount++;
     existing.certain = existing.certain || certain;
     if (comp.name) existing.flowNames.add(comp.name);
+    if (operation) existing.operations.add(operation);
     const owner = comp._parentbotid_value;
     if (owner && botNames?.get(owner)) existing.agentNames.add(botNames.get(owner)!);
     connectorHits.set(connectorId, existing);
@@ -136,9 +143,14 @@ export async function detectKnowledgeConnectors(
   for (const comp of allComponents) {
     const data = comp.data || comp.content || '';
 
+    // On an agent action the operation sits alongside the connection reference, so
+    // capture it in the same pass — it is the difference between "needs Jira
+    // credentials" and "calls ListIssues, GetIssue_V2, …".
+    const operationId = /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1];
+
     // Tier 1a — api names appearing structurally (connection references, connector actions).
     for (const m of data.matchAll(/\bshared_[a-z0-9_]+/gi)) {
-      record(m[0].toLowerCase(), comp, true);
+      record(m[0].toLowerCase(), comp, true, operationId);
     }
 
     // Tier 1b — the source kind enum.
@@ -167,7 +179,13 @@ export async function detectKnowledgeConnectors(
   const results: DetectedConnector[] = [];
   for (const [connectorId, hit] of connectorHits) {
     const def = REGISTRY_BY_ID.get(connectorId);
-    if (!def) continue;
+    // A connector with no registry entry is one we cannot CALL — it is not one the
+    // customer does not have. Dropping it here produced a clean-looking report that
+    // never mentioned it: "Enterprise Migration Knowledge" uses shared_hubspotcrmv2
+    // and shared_cdataconnectai, and neither appeared anywhere in the UI or the
+    // report (live 2026-08-07). thirdPartyConnectorScan already calls this exact
+    // behaviour a fidelity lie and returns `unsupported: true`; this scanner now
+    // does the same instead of contradicting it.
     results.push({
       connectorId,
       def,
@@ -177,6 +195,10 @@ export async function detectKnowledgeConnectors(
       // 'certain' when Copilot Studio itself named the connector; 'heuristic' when we
       // inferred it from editable text on a generic federated source.
       confidence: hit.certain ? 'certain' : 'heuristic',
+      unsupported: def ? undefined : true,
+      // The exact operations this agent invokes. "Uses Jira" is not enough to rebuild
+      // an agent — Jira exposes dozens of operations and this one chose five.
+      operations: hit.operations.size ? [...hit.operations].sort() : undefined,
     });
   }
 

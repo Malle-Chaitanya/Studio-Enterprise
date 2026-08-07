@@ -292,6 +292,58 @@ export interface AgentIR {
   sourceMetadata?: AgentSourceMetadata;
   /** Source access model (owner, shares, chat access). Optional/additive. */
   permissions?: AgentPermissions;
+  /**
+   * Tools the agent can invoke — connector operations, MCP servers, connected
+   * agents and AI Builder models (Dataverse componenttype 9, `kind: TaskDialog`).
+   *
+   * Extraction previously read only CustomGpt / Topic / KnowledgeSource /
+   * BotFileAttachment, so an agent wired to five Jira operations produced an IR
+   * that mentioned none of them (live 2026-08-07, "Enterprise Migration
+   * Knowledge"). The connector SCAN saw them, but the IR the migration maps from
+   * did not — so the operations could never reach the target agent, and the
+   * report could not say what was lost.
+   *
+   * Optional and additive: an agent with no tools simply omits it.
+   */
+  agentTools?: AgentToolIR[];
+}
+
+/** How a tool is invoked in Copilot Studio. Mirrors `action.kind`. */
+export type AgentToolKind =
+  /** A Power Platform connector operation, e.g. Jira `ListIssues`. */
+  | 'connector'
+  /** A remote MCP server exposed as a tool (`InvokeExternalAgentTaskAction`). */
+  | 'mcp-server'
+  /** Another Copilot agent invoked as a tool. */
+  | 'connected-agent'
+  /** An AI Builder prompt/model. */
+  | 'ai-builder'
+  /** A TaskDialog whose action kind we do not recognise — preserved, never dropped. */
+  | 'unknown';
+
+/**
+ * One invocable tool on the source agent.
+ *
+ * `connectorId` + `operationId` together are what make a tool reproducible: knowing
+ * an agent "uses Jira" is not enough to rebuild it, because Jira exposes dozens of
+ * operations and this agent chose five specific ones.
+ */
+export interface AgentToolIR {
+  /** Component name as authored, e.g. "Jira - Get list of issues". */
+  name: string;
+  kind: AgentToolKind;
+  /** Model-facing display name (`modelDisplayName`), when present. */
+  displayName?: string;
+  /** Model-facing description (`modelDescription`) — what the tool is for. */
+  description?: string;
+  /** Registry connector id parsed from the connection reference, e.g. `shared_jira`. */
+  connectorId?: string;
+  /** The exact operation invoked, e.g. `ListIssues`, `GetIssue_V2`. */
+  operationId?: string;
+  /** Declared output property names, when the component lists them. */
+  outputs?: string[];
+  /** Dataverse schema name of the component. */
+  schemaName?: string;
 }
 
 /**

@@ -213,6 +213,33 @@ function PermissionsPanel({ req }: { req?: ConnectorRequirement }) {
   );
 }
 
+/**
+ * The specific operations the source agent invokes on this connector.
+ *
+ * Shown because "this agent uses Jira" is not enough for an admin to judge what the
+ * migrated agent has to be able to do — Jira exposes dozens of operations and an
+ * agent picks a handful. These come from `operationId` on the Copilot Studio action.
+ */
+function OperationList({ operations }: { operations?: string[] }) {
+  if (!operations?.length) return null;
+  return (
+    <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
+      Operations used:{' '}
+      {operations.map((op) => (
+        <code
+          key={op}
+          style={{
+            display: 'inline-block', background: 'var(--bg)', border: '1px solid var(--border)',
+            borderRadius: 4, padding: '1px 6px', marginRight: 4, marginBottom: 4, fontSize: 11,
+          }}
+        >
+          {op}
+        </code>
+      ))}
+    </div>
+  );
+}
+
 interface ConnectorCardProps {
   /** Narrowed at the call site: an unsupported connector has no def and gets its own
    *  card, so nothing inside here has to guard against a missing registry entry. */
@@ -309,6 +336,7 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
           Needed by: <strong>{c.agentNames!.join(', ')}</strong>
         </div>
       )}
+      <OperationList operations={c.operations} />
       {c.confidence === 'heuristic' && !saved && (
         <div style={{ fontSize: 11, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px', marginBottom: 10 }}>
           Copilot Studio records this as a generic federated knowledge source — it does not
@@ -396,6 +424,14 @@ function UnsupportedConnectorCard({ c }: { c: DetectedConnector }) {
           <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
             Used by {c.flowCount} flow{c.flowCount !== 1 ? 's' : ''}
             {c.flowNames.length ? `: ${c.flowNames.slice(0, 3).join(', ')}` : ''}
+          </div>
+          {(c.agentNames?.length ?? 0) > 0 && (
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
+              Used by agent: <strong>{c.agentNames!.join(', ')}</strong>
+            </div>
+          )}
+          <div style={{ marginTop: 6 }}>
+            <OperationList operations={c.operations} />
           </div>
           <div style={{ fontSize: 12, color: '#b45309', marginTop: 6 }}>
             Not supported yet — this connector has no entry in our registry, so the migrated

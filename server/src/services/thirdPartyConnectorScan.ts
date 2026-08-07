@@ -34,6 +34,13 @@ export interface DetectedConnector {
    * The UI must not present a heuristic hit as a requirement.
    */
   confidence?: 'certain' | 'heuristic';
+  /**
+   * The exact connector operations the agent invokes, e.g. `ListIssues`,
+   * `GetIssue_V2`. Knowing an agent "uses Jira" does not let anyone rebuild it —
+   * Jira exposes dozens of operations and an agent selects specific ones. Only
+   * populated by the agent-action path; Power Automate flows do not expose it here.
+   */
+  operations?: string[];
 }
 
 interface PaFlow {

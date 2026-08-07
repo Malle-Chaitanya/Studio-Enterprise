@@ -459,6 +459,8 @@ export interface DetectedConnector {
   unsupported?: boolean;
   /** Which of the selected agents actually use this connector. */
   agentNames?: string[];
+  /** The exact operations the agent invokes, e.g. ListIssues, GetIssue_V2. */
+  operations?: string[];
   /**
    * 'certain'   — Copilot Studio named the connector itself (source kind enum or a
    *               shared_* api name), so this is a fact.

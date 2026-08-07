@@ -1198,6 +1198,35 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                       : 'Uploaded file grounded on the ADK agent via a Discovery Engine document data store + VertexAiSearchTool.',
                 });
               }
+              // Agent TOOLS (Copilot connector actions, MCP servers, connected agents,
+              // AI Builder models). Every one is a capability the source agent had, so
+              // every one must appear in the report — mapped when we wired a live tool
+              // for its connector, lost when we did not. Without this a customer got a
+              // clean report from an agent that used Jira, HubSpot and CData, none of
+              // which were mentioned anywhere (live 2026-08-07). The UI already told
+              // them unsupported connectors were "recorded in the migration report as a
+              // gap" — until now that claim was simply untrue.
+              const wiredConnectorIds = new Set(scopedConnectors.map((c) => c.id));
+              for (const tool of row.mapped!.ir.agentTools ?? []) {
+                const wired = !!tool.connectorId && wiredConnectorIds.has(tool.connectorId);
+                const opText = tool.operationId ? ` (${tool.operationId})` : '';
+                result.fidelity.push({
+                  component: `tool:${tool.name}`,
+                  status: wired ? 'mapped' : 'lost',
+                  detail: wired
+                    ? `Connector action${opText} — a live ${tool.connectorId} tool is wired on the migrated agent.`
+                    : tool.kind === 'connector'
+                      ? `Connector action${opText} on ${tool.connectorId ?? 'an unknown connector'} was NOT migrated — no credentials were configured for it, or the connector has no entry in our registry. The migrated agent cannot perform this action.`
+                      : tool.kind === 'mcp-server'
+                        ? `MCP server tool${opText} (${tool.connectorId ?? 'unknown'}) was NOT migrated — remote MCP servers attached in Copilot Studio have no equivalent in the migrated agent yet.`
+                        : tool.kind === 'connected-agent'
+                          ? 'This agent invoked ANOTHER Copilot agent as a tool. That relationship is not recreated — migrate the other agent and reconnect them manually.'
+                          : tool.kind === 'ai-builder'
+                            ? 'AI Builder model/prompt used as a tool — the prompt text is folded into the instruction where available, but the model itself is not migrated.'
+                            : `Tool of an unrecognised kind was found and preserved in the IR but not migrated${opText}.`,
+                });
+              }
+
               for (const { src, snap } of dvResolved) {
                 if (!snap.resourcePath) continue; // resolution failure already reported above
                 result.fidelity.push({
