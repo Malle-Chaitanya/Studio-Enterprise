@@ -300,6 +300,23 @@ const DISCOVERY_CONCURRENCY = 8;
  */
 export async function discoverGeminiProject(gToken: string): Promise<string> {
   const fallback = config.GEMINI_PROJECT_FALLBACK ?? '';
+
+  // Explicit override wins over discovery. Discovery picks the FIRST project the
+  // signed-in admin can see that has an engine, and the UI offers no way to choose a
+  // different one — so an admin with several eligible projects gets whichever Cloud
+  // Resource Manager happens to list first, with no signal that a choice was made.
+  // Three consecutive runs on 2026-08-07 went to the wrong project this way, deployed
+  // nothing, and looked like operator error.
+  //
+  // This is operator configuration, not a hardcoded id: it stays unset in normal
+  // multi-tenant use, where discovery is correct. The real fix is a destination picker
+  // in the wizard (the session already carries geminiProject) — see handoff.md.
+  const forced = (process.env.GEMINI_PROJECT ?? '').trim();
+  if (forced) {
+    logger.info({ project: forced }, 'Gemini project forced by GEMINI_PROJECT (discovery skipped)');
+    return forced;
+  }
+
   try {
     const res = await fetch('https://cloudresourcemanager.googleapis.com/v1/projects', {
       headers: { Authorization: `Bearer ${gToken}` },
