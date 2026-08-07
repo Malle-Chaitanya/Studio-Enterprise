@@ -111,10 +111,19 @@ def _build_live_connector_tool(conn: dict, project: str):
     # The operations the SOURCE agent actually invoked, extracted from Copilot Studio.
     # Telling the model which ones this agent was built around is the difference between
     # a generic REST tool and one that knows what this agent is for.
-    _ops = [o for o in (conn.get("operations") or []) if isinstance(o, str)]
+    # Each entry is {id, description}; plain strings are still accepted so an older
+    # spec does not break. The DESCRIPTION is the valuable half — it is what Copilot
+    # Studio showed the author for that operation ("This operation returns a list of
+    # issues using JQL"), i.e. the source's own statement of what the agent does.
+    _ops = []
+    for o in (conn.get("operations") or []):
+        if isinstance(o, str):
+            _ops.append((o, ""))
+        elif isinstance(o, dict) and o.get("id"):
+            _ops.append((str(o["id"]), str(o.get("description") or "")))
     operations_hint = (
         "\nThe source agent used these operations — prefer them when they fit the request:\n"
-        + "".join(f"  - {o}\n" for o in _ops)
+        + "".join(f"  - {oid}{': ' + desc if desc else ''}\n" for oid, desc in _ops)
         if _ops
         else ""
     )
@@ -380,6 +389,120 @@ def _build_live_connector_tool(conn: dict, project: str):
             }
 
         return [sharepoint_list_files, sharepoint_read_file]
+
+    if kind == "jira":
+        # Purpose-built, because the generic REST tool cannot know two things that make
+        # the difference between working and not:
+        #
+        #  1. `/rest/api/3/search` was REMOVED by Atlassian. Calling it returns
+        #     410 "The requested API has been removed. Please migrate to
+        #     /rest/api/3/search/jql" — which is exactly what a migrated agent hit
+        #     live on 2026-08-07, reporting "general search functionality is not
+        #     working" to the end user.
+        #  2. `/rest/api/3/search/jql` rejects unbounded queries with
+        #     400 "Unbounded JQL queries are not allowed here", so a bare
+        #     "order by created DESC" fails too. A bounded clause is required.
+        #
+        # Both were verified against the live site. Leaving this to the model means
+        # rediscovering them through failures in front of a customer.
+        def jira_search(jql: str = "", max_results: int = 20) -> dict:
+            """Search Jira issues with JQL and return key, summary, status and assignee.
+
+            Args:
+                jql: A JQL query, e.g. 'project = HCL ORDER BY created DESC' or
+                    'text ~ "login bug" ORDER BY updated DESC'. A project, text or date
+                    clause is REQUIRED — Jira rejects unbounded queries. To find issues
+                    for a project by name, use 'project = <KEY>'.
+                max_results: how many issues to return (default 20, max 100).
+
+            Returns:
+                dict with `issues` (key, summary, status, assignee, url) and `total`,
+                or `error`.
+            """
+            import json as _json
+            import urllib.parse
+            import urllib.request
+
+            try:
+                base = _fill(base_url_tpl).rstrip("/")
+                auth_header = _auth_header(_fill)
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"auth failed: {e}"}
+
+            # The base template already ends in /rest/api/3 for this connector.
+            q = (jql or "").strip() or "ORDER BY created DESC"
+            url = (
+                f"{base}/search/jql?jql={urllib.parse.quote(q)}"
+                f"&maxResults={max(1, min(int(max_results or 20), 100))}"
+                f"&fields=summary,status,assignee"
+            )
+            req = urllib.request.Request(url, headers={"Authorization": auth_header, "Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    data = _json.loads(resp.read().decode("utf-8"))
+            except Exception as e:  # noqa: BLE001
+                detail = ""
+                try:
+                    detail = e.read().decode("utf-8")[:300]  # type: ignore[attr-defined]
+                except Exception:  # noqa: BLE001
+                    detail = str(e)
+                return {"error": f"Jira search failed: {detail}"}
+
+            site = base.split("/rest/")[0]
+            issues = []
+            for it in (data.get("issues") or []):
+                f = it.get("fields") or {}
+                issues.append({
+                    "key": it.get("key"),
+                    "summary": f.get("summary"),
+                    "status": ((f.get("status") or {}).get("name")),
+                    "assignee": ((f.get("assignee") or {}).get("displayName")),
+                    "url": f"{site}/browse/{it.get('key')}",
+                })
+            return {"issues": issues, "total": data.get("total", len(issues))}
+
+        def jira_get_issue(issue_key: str) -> dict:
+            """Fetch ONE Jira issue by its exact key, e.g. 'HCL-123'.
+
+            Args:
+                issue_key: the issue key.
+
+            Returns:
+                dict with key, summary, status, assignee, description text and url,
+                or `error`.
+            """
+            import json as _json
+            import urllib.parse
+            import urllib.request
+
+            try:
+                base = _fill(base_url_tpl).rstrip("/")
+                auth_header = _auth_header(_fill)
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"auth failed: {e}"}
+            url = f"{base}/issue/{urllib.parse.quote(issue_key)}?fields=summary,status,assignee,description"
+            req = urllib.request.Request(url, headers={"Authorization": auth_header, "Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    it = _json.loads(resp.read().decode("utf-8"))
+            except Exception as e:  # noqa: BLE001
+                detail = ""
+                try:
+                    detail = e.read().decode("utf-8")[:300]  # type: ignore[attr-defined]
+                except Exception:  # noqa: BLE001
+                    detail = str(e)
+                return {"error": f"Jira issue fetch failed: {detail}"}
+            f = it.get("fields") or {}
+            site = base.split("/rest/")[0]
+            return {
+                "key": it.get("key"),
+                "summary": f.get("summary"),
+                "status": ((f.get("status") or {}).get("name")),
+                "assignee": ((f.get("assignee") or {}).get("displayName")),
+                "url": f"{site}/browse/{it.get('key')}",
+            }
+
+        return [jira_search, jira_get_issue]
 
     if kind == "confluence":
 

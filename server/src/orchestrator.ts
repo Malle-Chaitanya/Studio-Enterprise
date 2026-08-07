@@ -1204,11 +1204,18 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // property of the individual agent, so they are attached here rather than
             // there. They shape the tool's description only — the tool can still call
             // anything the credentials permit.
-            const opsByConnector = new Map<string, string[]>();
+            // Carry the operation DESCRIPTIONS too, not just the ids. Copilot Studio shows
+            // the author a description per operation ("This operation returns a list of
+            // issues using JQL"); that is the clearest statement of what the agent was
+            // built to do, and dropping it left the migrated tool describing itself in
+            // our words instead of the source's.
+            const opsByConnector = new Map<string, Array<{ id: string; description?: string }>>();
             for (const tool of row.mapped!.ir.agentTools ?? []) {
               if (!tool.connectorId || !tool.operationId) continue;
               const list = opsByConnector.get(tool.connectorId) ?? [];
-              if (!list.includes(tool.operationId)) list.push(tool.operationId);
+              if (!list.some((o) => o.id === tool.operationId)) {
+                list.push({ id: tool.operationId, description: tool.description });
+              }
               opsByConnector.set(tool.connectorId, list);
             }
             // Wire ONLY the connectors THIS agent uses.

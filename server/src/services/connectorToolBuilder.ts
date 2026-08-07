@@ -100,9 +100,10 @@ export interface LiveConnectorSpec {
   kind: string;
   name: string;
   secretIds: Record<string, string>;
-  /** Operations the source agent invoked, e.g. ListIssues. Advisory: it shapes the
-   *  tool's description, it does not restrict what the tool can call. */
-  operations?: string[];
+  /** Operations the source agent invoked, with the description Copilot Studio showed
+   *  for each (`modelDescription`). Advisory: it shapes the tool's description, it does
+   *  not restrict what the tool can call. */
+  operations?: Array<{ id: string; description?: string }>;
   baseUrlTemplate?: string;
   authHeaderTemplate?: string;
   /** How the container obtains an Authorization header — see registry AuthKind. */
@@ -177,6 +178,23 @@ export function buildLiveConnectorSpecs(connectorIds: string[]): LiveConnectorSp
  * credentials in it. ADK exposes each tool's own name and docstring to the model,
  * so the instruction only needs to establish when to reach for them.
  */
+
+/**
+ * One line saying what a connector's tools can actually do.
+ *
+ * Kept alongside the tool builders in scripts/adk_deploy.py — if a purpose-built tool is
+ * added there, its capability belongs here too, or the model will not know to use it.
+ */
+function connectorCapabilityHint(kind: string): string {
+  const k = (kind || '').toLowerCase();
+  if (k === 'jira') {
+    return 'search issues with JQL (project, text or date clause required) and fetch a single issue by key';
+  }
+  if (k === 'confluence') return 'search live pages and read their current text';
+  if (/sharepoint|onedrive/.test(k)) return 'list files in the connected folder and read a file\'s text';
+  return 'call its REST API to read data or perform an action on the user\'s behalf';
+}
+
 export function buildLiveConnectorInstruction(specs: LiveConnectorSpec[]): string {
   if (specs.length === 0) return '';
   const lines = [
@@ -188,13 +206,22 @@ export function buildLiveConnectorInstruction(specs: LiveConnectorSpec[]): strin
     'You can call these systems live, through your tools:',
     '',
   ];
-  for (const s of specs) lines.push(`- **${s.name}**`);
+  // Name what each system can actually DO. Listing the product alone left the model
+  // unaware it had live capability: asked "how many tickets do we have in Jira?" it
+  // answered "I cannot provide a live count, please check Jira directly" WITHOUT
+  // calling the tool at all (live 2026-08-07). A capability sentence is the difference
+  // between a wired tool and a used one.
+  for (const s of specs) {
+    lines.push(`- **${s.name}** — ${connectorCapabilityHint(s.kind)}`);
+  }
   lines.push(
     '',
-    'Use a tool whenever the user asks for data or an action in one of these systems, and',
-    'prefer it over telling the user to do the task manually. If your indexed knowledge has',
-    'no answer, try the relevant tool before saying you do not know. State which system an',
-    'answer came from. If a tool returns an error, say so plainly — never invent the result.',
+    'These are LIVE. When the user asks about current data — counts, recent items, status,',
+    'anything that changes — call the tool. Do NOT answer from indexed knowledge and do NOT',
+    'tell the user to go and check the system themselves: you can look it up, so look it up.',
+    'Your indexed knowledge is a point-in-time copy; the tools are the source of truth for',
+    '"right now". State which system an answer came from. If a tool returns an error, say so',
+    'plainly and quote it — never invent a result and never present a failure as "no data".',
     '',
   );
   return lines.join('\n');

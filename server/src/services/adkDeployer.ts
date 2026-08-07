@@ -93,10 +93,11 @@ export interface AdkSpec {
     kind: string;
     name?: string;
     secretIds: Record<string, string>;
-    /** Operations the SOURCE agent invoked on this connector (e.g. `ListIssues`).
-     *  Advisory only — it shapes the generated tool's description so the model knows
-     *  what this agent was built to do; it does not restrict what the tool may call. */
-    operations?: string[];
+    /** Operations the SOURCE agent invoked on this connector (e.g. `ListIssues`), each
+     *  with the description Copilot Studio showed for it. Advisory only — it shapes the
+     *  generated tool's description so the model knows what this agent was built to do;
+     *  it does not restrict what the tool may call. */
+    operations?: Array<{ id: string; description?: string }>;
     /** Registry templates for the generic REST tool, e.g. 'https://{subdomain}.example.com'. */
     baseUrlTemplate?: string;
     authHeaderTemplate?: string;
@@ -574,7 +575,33 @@ export async function publishAgentToGallery(
   }
 
   const spec = buildAdkSpec(ir, { model: opts?.model, instruction: opts?.instruction, groundingDataStores });
-  if (opts?.liveConnectors?.length) spec.liveConnectors = opts.liveConnectors;
+  if (opts?.liveConnectors?.length) {
+    spec.liveConnectors = opts.liveConnectors;
+    // Appended LAST, after the knowledge rules, because the model weights the end of the
+    // instruction most and this is the behaviour that kept losing. Asked "how many
+    // tickets do we have in Jira?" the agent answered "I cannot provide live counts,
+    // check Jira directly" WITHOUT calling jira_search — while jira_search was wired,
+    // listed among its tools, and worked when named explicitly (live 2026-08-07).
+    // Describing the capability was not enough; it needed a rule against deflecting.
+    spec.instruction +=
+      '\n' +
+      [
+        '## Live systems — non-negotiable',
+        '',
+        'You have working tools for the connected systems listed above. When a question is',
+        'about data in one of them — counts, lists, status, "recent", "open", "how many" —',
+        'CALL THE TOOL. Do not answer from memory, and never reply "I cannot provide live',
+        'data" or "please check <system> directly": you can check it, so check it.',
+        '',
+        'If a tool needs an argument you were not given (a project key, an issue key, a',
+        'search term), make a reasonable attempt first — a broad query is better than a',
+        'refusal — and only ask the user if the attempt genuinely cannot be formed.',
+        '',
+        'Report what the tool returned, including empty results ("Jira returned no matching',
+        'issues") and errors, verbatim. An empty result is an answer; a refusal is not.',
+      ].join('\n') +
+      '\n';
+  }
   if (opts?.subAgents?.length) spec.subAgents = opts.subAgents;
   logger.info({ agent: ir.name, location }, 'adk: deploying reasoning engine');
   const dep = await deployReasoningEngine(dest.project, location, spec, { stagingBucket: opts?.stagingBucket });
