@@ -68,10 +68,82 @@ export interface AdkChatResult {
   /** A tool call failed inside the container (e.g. grounding 403). The model may still
    *  have produced a plausible-sounding answer, so callers must check this. */
   toolError?: string;
+  /** The turn contains at least one tool invocation (function call, or a retrieval the
+   *  runtime performed itself). False means the model answered from its instruction alone. */
+  toolCalled?: boolean;
+  /** The turn contains positive evidence a tool RETURNED DATA — a `function_response`
+   *  that is not an error, or grounding chunks / retrieved context. This, not the
+   *  model's prose, is what proves knowledge sources are actually reachable. */
+  toolSucceeded?: boolean;
   sessionId?: string;
   /** True when the agent's VertexAiSearchTool was invoked for this turn. */
   usedSearchTool?: boolean;
   error?: string;
+}
+
+interface ToolEvidence {
+  called: boolean;
+  succeeded: boolean;
+  error?: string;
+}
+
+function unescapeJsonString(s: string): string {
+  try {
+    return JSON.parse(`"${s}"`) as string;
+  } catch {
+    return s;
+  }
+}
+
+/**
+ * Read what the tools actually did, structurally.
+ *
+ * Tool failures do NOT surface as HTTP errors or as text the model reliably repeats —
+ * the model often just says something evasive like "I cannot list specific documents".
+ * The truth is in the runtime's own `function_response`, which carries the tool's error
+ * verbatim (e.g. `403 Permission 'discoveryengine.servingConfigs.search' denied`).
+ *
+ * The ABSENCE of a successful response matters just as much: an agent given knowledge
+ * sources that answers without ever retrieving is not a working agent, it is a model
+ * improvising from its instruction. Callers must be able to tell those apart, so we
+ * report `succeeded` separately from `error` rather than collapsing both into "no error".
+ *
+ * Two shapes count as success because ADK emits both depending on how the tool is wired:
+ * an explicit non-error `function_response`, and model-side retrieval that appears only
+ * as grounding chunks / retrieved context.
+ */
+function scanToolEvidence(raw: string): ToolEvidence {
+  const responseIdx: number[] = [];
+  const reResp = /"function_response"|"functionResponse"/g;
+  let m: RegExpExecArray | null;
+  while ((m = reResp.exec(raw)) !== null) responseIdx.push(m.index);
+
+  let succeeded = false;
+  let error: string | undefined;
+  for (let i = 0; i < responseIdx.length; i++) {
+    // Bound each window at the NEXT response so one failing tool cannot be masked by a
+    // neighbouring successful one (and vice versa).
+    const start = responseIdx[i];
+    const end = Math.min(responseIdx[i + 1] ?? raw.length, start + 4000);
+    const window = raw.slice(start, end);
+    const failed = /"status":\s*"error"|IAM_PERMISSION_DENIED|PERMISSION_DENIED|"error_message"/i.test(window);
+    if (failed) {
+      if (!error) {
+        const msg = /"error_message":\s*"((?:[^"\\]|\\.)*)"/.exec(window)?.[1];
+        error = msg ? unescapeJsonString(msg) : 'tool returned an error';
+      }
+    } else {
+      succeeded = true;
+    }
+  }
+
+  // Retrieval the runtime performed itself leaves no function_response — only chunks.
+  // Require the chunks, not a bare `groundingMetadata` key, which is emitted empty.
+  const grounded = /"grounding_chunks"|"groundingChunks"|"retrieved_context"|"retrievedContext"/.test(raw);
+  if (grounded) succeeded = true;
+
+  const called = responseIdx.length > 0 || grounded || /"function_call"|"functionCall"/.test(raw);
+  return { called, succeeded, error };
 }
 
 /** Which class methods does this deployment expose? */
@@ -184,31 +256,18 @@ export async function chatWithAdkAgent(
     return { ok: false, error: `${errorCode}: ${errorMessage ?? 'no detail'}` };
   }
 
-  // Tool failures do NOT surface as HTTP errors or as text the model reliably repeats —
-  // the model often just says something evasive like "I cannot list specific documents".
-  // The truth is in the runtime's own function_response, which carries the tool's error
-  // verbatim (e.g. `403 Permission 'discoveryengine.servingConfigs.search' denied`).
-  // Reading that is structural; pattern-matching the model's prose is not.
-  const toolError = (() => {
-    const idx = raw.search(/"function_response"|"functionResponse"/);
-    if (idx < 0) return undefined;
-    const window = raw.slice(idx, idx + 4000);
-    if (!/"status":\s*"error"|IAM_PERMISSION_DENIED|PERMISSION_DENIED|"error_message"/i.test(window)) return undefined;
-    const msg = /"error_message":\s*"((?:[^"\\]|\\.)*)"/.exec(window)?.[1];
-    try {
-      return msg ? (JSON.parse(`"${msg}"`) as string) : 'tool returned an error';
-    } catch {
-      return msg ?? 'tool returned an error';
-    }
-  })();
+  // What the tools actually did — read structurally, never inferred from the prose.
+  const evidence = scanToolEvidence(raw);
 
   const answer = extractText(raw);
   return {
     ok: true,
     answer,
-    toolError,
+    toolError: evidence.error,
+    toolCalled: evidence.called,
+    toolSucceeded: evidence.succeeded,
     sessionId: args.sessionId,
-    // VertexAiSearchTool shows up as a function call / grounding event in the stream.
-    usedSearchTool: /vertex_ai_search|VertexAiSearch|functionCall|function_call|grounding/i.test(raw),
+    // VertexAiSearchTool shows up as a function call or as a grounding event in the stream.
+    usedSearchTool: evidence.called || /vertex_ai_search|VertexAiSearch|grounding/i.test(raw),
   };
 }

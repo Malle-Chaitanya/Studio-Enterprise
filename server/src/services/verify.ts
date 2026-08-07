@@ -118,6 +118,19 @@ export async function verifyAgent(
         note: `knowledge retrieval failed: ${r.toolError.slice(0, 180)}`,
       };
     }
+    // NO tool call is not a pass either. This is the hole that let agent 8277338168224151082
+    // report `deployed · shared · verified` while every retrieval 403'd: the model answered
+    // the probe from its instruction alone, so there was no error to catch. For an agent we
+    // gave knowledge to, only positive evidence that a tool RETURNED DATA counts.
+    if (opts.expectsGrounding && !r.toolSucceeded) {
+      return {
+        verified: false,
+        sample: (r.answer ?? '').slice(0, 240),
+        note: r.toolCalled
+          ? 'the knowledge tool ran but returned no usable result — no successful function_response or grounding chunk in the reply'
+          : 'the agent answered without retrieving anything — its knowledge tool was never called, so the data stores are unproven',
+      };
+    }
 
     const answer = r.answer ?? '';
     // A tool that 403s or errors comes back inside the answer text, not as an HTTP
@@ -136,7 +149,13 @@ export async function verifyAgent(
     if (!answer.trim()) {
       return { verified: false, note: 'agent returned an empty answer' };
     }
-    return { verified: true, sample: answer.slice(0, 240), note: 'deployed and answered a live probe' };
+    return {
+      verified: true,
+      sample: answer.slice(0, 240),
+      note: opts.expectsGrounding
+        ? 'deployed, answered a live probe, and its knowledge tool returned data'
+        : 'deployed and answered a live probe',
+    };
   }
 
   // Level 2 (non-ADK): best-effort conversational probe.

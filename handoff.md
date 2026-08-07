@@ -22,6 +22,7 @@ Read §4 before trusting any "verified" result.
 | **Live SharePoint tools, scoped** | Agent lists/reads only the folder its source named, and refuses "list every site in the tenant" |
 | **Reading file content live** | `.md` and `.txt` proven; `pypdf`/`python-docx`/`openpyxl` in-container for PDF/Word/Excel |
 | **Connector detection, structural** | `shared_confluence`, `shared_jira`, `shared_sharepointonline` all `certain`, attributed per agent |
+| **`verified` fails a broken agent** | Grounded agents must show a tool that returned data; broken → `false`, working → `true`. See §4 |
 
 ### Live agents (project `studio-enterprise-migration`, engine `gemini-enterprise-17847887_1784788734248`)
 
@@ -86,30 +87,43 @@ Microsoft connectors; one Atlassian token serves Confluence and Jira.
 
 ---
 
-## 4. ⚠️ `verified` cannot be trusted yet
+## 4. ✅ `verified` now means something (fixed 2026-08-07)
 
-`verify.ts` now asks the deployed agent a question and reads the runtime's own
-`function_response` for tool errors — but it **still returns `verified: true` for an agent
-whose grounding 403s**, because the model answers the probe without calling the tool.
+When `expectsGrounding` is true, verification requires **positive evidence a tool returned
+data** — a non-error `function_response`, or grounding chunks / retrieved context. Three
+outcomes now fail where all three used to pass:
 
-Proof: agent `8277338168224151082` reported `deployed · shared · verified` while every
-retrieval failed with
-`403 Permission 'discoveryengine.servingConfigs.search' denied`.
+| Case | Result |
+|---|---|
+| tool ran and errored (`toolError`) | `false` — "knowledge retrieval failed: …" |
+| tool never called (`!toolCalled`) | `false` — "answered without retrieving anything" |
+| tool called, returned nothing usable | `false` — "no successful function_response or grounding chunk" |
 
-**Fix to make**: when the agent was given knowledge sources, require *evidence of a
-successful tool call* — a `function_response` with results. No tool call at all is not a
-pass. Until then, treat `verified` as "the agent exists and said something".
+Both failure shapes are needed, not one: the same broken agent fails **differently between
+runs** because the model non-deterministically decides whether to call the tool at all. Two
+independent runs of `_test_verify_honesty.ts` caught agent `8277338168224151082` via
+`toolError` (403) and via `!toolCalled` respectively. Either check alone is a coin flip.
+
+Evidence is read structurally from the stream (`scanToolEvidence()` in `adkAgentChat.ts`),
+never pattern-matched from the model's prose. Each `function_response` window is bounded at
+the next one so a failing tool cannot be masked by a neighbouring successful one.
+
+Proven both directions — broken agent `8277338168224151082` → `false`; working agent
+`13332936524828407630` → `true` with `[INDEXED] Infrastructure Setup Guide`.
+
+The broken agent's own reply is the reason prose could never be trusted:
+> "I can access the team's changelog, roadmap, and known-issues documents."
+
+It retrieved nothing.
 
 ---
 
 ## 5. What to implement next, in priority order
 
-### 1. Make `verified` mean something  ← start here
-Everything else we report rests on it. Require a successful `function_response` when
-`expectsGrounding` is true; fail when the tool was never called or returned an error.
-Files: `services/verify.ts`, `services/adkAgentChat.ts` (already returns `toolError`).
+### 1. ~~Make `verified` mean something~~ — DONE, see §4
+`services/verify.ts` + `services/adkAgentChat.ts`. Proven against both known agents.
 
-### 2. Secret Manager in the customer's project
+### 2. Secret Manager in the customer's project  ← start here
 Saving credentials fails when the target project is not ours — our SA has no
 `secretmanager` rights there, and the UI reports the misleading *"Check that Google is
 connected"*. Decide between:
@@ -187,7 +201,7 @@ Every one of these cost real time. Suspect them first.
 | Migration "succeeds" with PRIVATE agents | `ADK_STAGING_BUCKET` unset → 403 → silent low-code fallback (now removed) |
 | Store parsed badly | `documentProcessingConfig` **rejects `updateMask`** — the only DE endpoint that does |
 | Agent deployed but retrieves nothing | data stores in a different project from the agent (cache key lacked project) |
-| `verified: true` on a broken agent | the probe never forced a tool call — **still open**, §4 |
+| `verified: true` on a broken agent | the probe never forced a tool call — **fixed**, §4. Note the shape: the check only looked for a tool that *failed*, so a tool that never ran read as clean |
 
 Rule: a best-effort call that degrades quality must still be reported, and a 200 is not an
 answer.
