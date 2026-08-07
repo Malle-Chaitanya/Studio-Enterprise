@@ -12,12 +12,94 @@ import { logger } from '../logger.js';
  * existing `cloud-platform` SA scope (auth/google.ts's SA_SCOPES) already
  * covers Secret Manager.
  *
- * Secrets live under CLOUDFUZE'S OWN GCP project (config.CLOUDFUZE_GCP_PROJECT)
- * — never the customer's project. The plaintext is never written to Mongo;
- * only the versioned secret resource name is (db/repos/entraAppCredentials.ts).
+ * Entra app credentials live under CLOUDFUZE'S OWN GCP project
+ * (config.CLOUDFUZE_GCP_PROJECT). The plaintext is never written to Mongo; only
+ * the versioned secret resource name is (db/repos/entraAppCredentials.ts).
+ *
+ * CONNECTOR credentials are different and must NOT be moved to our project without
+ * more work: `upsertSecret` writes them to the DEPLOYMENT project because the
+ * deployed container resolves them from its own project id at inference time
+ * (scripts/adk_deploy.py — `projects/{project}/secrets/{id}/versions/latest:access`).
+ * Writing them anywhere else deploys a healthy-looking agent whose every tool call
+ * then 403s. Splitting the two requires passing a separate secrets project through
+ * to the container; see handoff.md item 2.
  */
 
 const HOST = 'https://secretmanager.googleapis.com/v1';
+
+export interface SecretAccessCheck {
+  ok: boolean;
+  /** Stable machine code for the route to return; see api-conventions.md. */
+  code?: 'secret_manager_access_denied' | 'secret_manager_project_not_found' | 'secret_manager_unavailable';
+  /** Human detail naming the real cause and the exact grant that fixes it. */
+  detail?: string;
+}
+
+/**
+ * Can our service account actually WRITE secrets into `project`?
+ *
+ * Called before the first credential is stored. Without it the flow fails on the
+ * write itself, deep inside a loop, and the UI reported the misleading
+ * "Check that Google is connected" — Google WAS connected; our SA simply had no
+ * Secret Manager rights on the target project. A wrong cause costs more than a
+ * failure, because the admin goes and re-checks the thing that was never broken.
+ *
+ * Listing is the cheapest call that exercises the same IAM the write needs, and it
+ * creates nothing when it succeeds.
+ */
+export async function preflightSecretAccess(
+  project: string,
+  saToken: string,
+  saEmail?: string,
+): Promise<SecretAccessCheck> {
+  let res: Response;
+  try {
+    res = await fetch(`${HOST}/projects/${project}/secrets?pageSize=1`, {
+      headers: { Authorization: `Bearer ${saToken}` },
+    });
+  } catch (err) {
+    // Network-level failure is not an authorization answer — say so rather than
+    // blaming the customer's IAM.
+    return {
+      ok: false,
+      code: 'secret_manager_unavailable',
+      detail: `Could not reach Secret Manager: ${(err as Error).message}`,
+    };
+  }
+  if (res.ok) return { ok: true };
+
+  const body = await res.text().catch(() => '');
+  const who = saEmail ?? 'our service account';
+  if (res.status === 403) {
+    const apiDisabled = /SERVICE_DISABLED|has not been used in project|is disabled/i.test(body);
+    return {
+      ok: false,
+      code: 'secret_manager_access_denied',
+      detail: apiDisabled
+        ? `The Secret Manager API is not enabled on project "${project}". Enable it: gcloud services enable secretmanager.googleapis.com --project ${project}`
+        : // Google answers 403 for a project that does not exist as well as for one we
+          // simply cannot touch — it will not confirm existence. Saying only "grant this
+          // role" sends an admin to run a command against a project that isn't there, so
+          // name both possibilities and let them check the id first.
+          `${who} cannot manage secrets in project "${project}". Either the project id is wrong, ` +
+          `or the service account needs access — grant it: ` +
+          `gcloud projects add-iam-policy-binding ${project} --member serviceAccount:${who} --role roles/secretmanager.admin`,
+    };
+  }
+  if (res.status === 404) {
+    return {
+      ok: false,
+      code: 'secret_manager_project_not_found',
+      detail: `Project "${project}" was not found, or ${who} cannot see it.`,
+    };
+  }
+  logger.warn({ status: res.status, project }, 'Secret Manager: preflight failed');
+  return {
+    ok: false,
+    code: 'secret_manager_unavailable',
+    detail: `Secret Manager returned ${res.status}: ${body.slice(0, 200)}`,
+  };
+}
 
 export interface PutSecretResult {
   ok: boolean;

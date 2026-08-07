@@ -489,6 +489,23 @@ export async function fetchKnowledgeSourceConnectors(
   return ((await res.json()) as { connectors: DetectedConnector[] }).connectors;
 }
 
+/**
+ * Prefer the server's `detail` over the error code when saving credentials.
+ *
+ * These failures are almost always an IAM grant the admin must make, and the fix is
+ * in the detail string ("grant roles/secretmanager.admin on project X"). Throwing the
+ * bare code forced the page to guess, and it guessed "Check that Google is connected"
+ * — which sent admins to re-check a connection that was fine.
+ */
+async function saveErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string; detail?: string };
+    return body.detail || body.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export async function saveConnectorCredentials(
   session: string,
   connectorId: string,
@@ -499,7 +516,7 @@ export async function saveConnectorCredentials(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session, connectorId, creds }),
   });
-  if (!res.ok) throw new Error('credentials_save_failed');
+  if (!res.ok) throw new Error(await saveErrorMessage(res, 'credentials_save_failed'));
   return (await res.json()) as { secretIds: string[] };
 }
 
@@ -574,6 +591,6 @@ export async function saveMsConnectorCredentials(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session, creds }),
   });
-  if (!res.ok) throw new Error('ms_creds_save_failed');
+  if (!res.ok) throw new Error(await saveErrorMessage(res, 'ms_creds_save_failed'));
   return (await res.json()) as { secretIds: string[] };
 }

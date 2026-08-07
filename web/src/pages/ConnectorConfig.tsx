@@ -67,8 +67,10 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
     try {
       await saveMsConnectorCredentials(session, values);
       setSaved(true);
-    } catch {
-      setError('Failed to save. Check that Google is connected and try again.');
+    } catch (err) {
+      // Show the server's real cause — usually a missing IAM grant, with the exact
+      // command in the message. The old canned line named the wrong culprit.
+      setError((err as Error).message || 'Failed to save. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -242,8 +244,8 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
     try {
       await saveConnectorCredentials(session, c.connectorId, def.credentials.map((f) => ({ field: f.key, value: values[f.key] })));
       setSaved(true);
-    } catch {
-      setError('Failed to save. Check Google is connected and try again.');
+    } catch (err) {
+      setError((err as Error).message || 'Failed to save. Please try again.');
     } finally { setSaving(false); }
   };
 

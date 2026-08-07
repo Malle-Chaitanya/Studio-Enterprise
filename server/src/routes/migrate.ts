@@ -18,7 +18,8 @@ import { migrateSharePointDriveItem } from '../services/knowledgeDataStoreExecut
 import { detectThirdPartyConnectors } from '../services/thirdPartyConnectorScan.js';
 import { detectKnowledgeConnectors } from '../services/knowledgeConnectorScan.js';
 import { listBots } from '../services/dataverse.js';
-import { upsertSecret } from '../services/secretManager.js';
+import { upsertSecret, preflightSecretAccess } from '../services/secretManager.js';
+import { serviceAccountEmail } from '../auth/google.js';
 import {
   connectorSecretId,
   connectorCredentialFields,
@@ -325,6 +326,12 @@ migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
 
   try {
     const saToken = await getSaToken(session.gEmail);
+    // Fail BEFORE writing anything, and say what is actually wrong. Discovering this
+    // on the write meant a half-saved connector and a UI blaming the Google
+    // connection, which was never the problem.
+    const access = await preflightSecretAccess(session.geminiProject, saToken, serviceAccountEmail());
+    if (!access.ok) return void res.status(403).json({ error: access.code, detail: access.detail });
+
     const secretIds: string[] = [];
     const secretIdByField: Record<string, string> = {};
     for (const { field, value } of creds) {
@@ -483,6 +490,9 @@ migrateRouter.post('/ms-connector-credentials', async (req, res) => {
 
   try {
     const saToken = await getSaToken(session.gEmail);
+    const access = await preflightSecretAccess(session.geminiProject, saToken, serviceAccountEmail());
+    if (!access.ok) return void res.status(403).json({ error: access.code, detail: access.detail });
+
     const secretIds: string[] = [];
     // Write to the SHARED ms_graph namespace — the same one buildLiveConnectorSpecs
     // hands to the deployed tools. This used to write 'ms_native', so credentials saved
