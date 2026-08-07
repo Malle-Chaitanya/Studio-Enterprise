@@ -197,15 +197,60 @@ export function buildAdkSpec(
   //   VertexAiSearchTool (opts.groundingDataStores). orchestrator.ts resolves all
   //   of them before deciding low-code vs ADK, so this path gets the same
   //   knowledge the low-code path would, not just the two kinds it used to.
+  const baseInstruction = opts?.instruction ?? ir.instructions ?? '';
   return {
     name: sanitize(ir.name),
     displayName: ir.name,                                              // Stage 1 ✓
     description: ir.description || `Migrated from Copilot Studio: ${ir.name}`, // Stage 1 ✓
     model: opts?.model || 'gemini-2.5-flash',
-    instruction: opts?.instruction ?? ir.instructions ?? '',          // Stage 1 ✓ (real instruction; opts.instruction = Stage 2 enriched)
+    instruction: withKnowledgeResponseRules(baseInstruction, (opts?.groundingDataStores?.length ?? 0) > 0),
     tools,                                                            // only googleSearch for now (Stage 3 adds the rest)
     groundingDataStores: opts?.groundingDataStores?.length ? opts.groundingDataStores : undefined,
   };
+}
+
+/**
+ * Append the response rules a grounded agent needs, leaving the migrated instruction
+ * itself untouched above them.
+ *
+ * Two behaviours this fixes, both observed live 2026-08-07 on a migrated agent:
+ *   - it narrated its own plumbing — "I access these through my
+ *     search_knowledge_source_1 and search_knowledge_source_2 functions";
+ *   - it answered from a single source without citing anything, so a reader could not
+ *     tell what was retrieved from what was invented.
+ *
+ * The `Sources:` contract is the one proven in the hand-built cited agent
+ * (spikes/_e2e_adk_cited_agent.ts), which is why migrated agents looked worse than
+ * the demo agent: that instruction existed only in the spike, never in the product.
+ *
+ * Appended, never merged into the customer's own instruction text — migration fidelity
+ * means their words stay verbatim and ours are visibly separate.
+ */
+function withKnowledgeResponseRules(instruction: string, hasKnowledge: boolean): string {
+  if (!hasKnowledge) return instruction;
+  const rules = [
+    '',
+    '---',
+    '## How to answer (added by migration)',
+    '',
+    'Search your knowledge sources before answering questions about their subject matter.',
+    'When more than one source could hold the answer, search each relevant one rather than',
+    'repeating the same search.',
+    '',
+    'Never mention tool or function names, data store ids, or that you performed a search.',
+    'These are internal. Describe what you know, not how you retrieved it.',
+    '',
+    'When you used retrieved information, end the reply with a "Sources:" section, one line',
+    'per source:',
+    '  - [INDEXED] <document or page title>',
+    '  - [LIVE] <title> — <url>',
+    'Use [LIVE] only for results from a live connector tool, including the url it returned.',
+    'Use [INDEXED] for results from a knowledge source search.',
+    '',
+    'If a search returns nothing, say plainly that you could not find it in your knowledge',
+    'sources. Do not answer from general knowledge and present it as if it came from them.',
+  ].join('\n');
+  return `${instruction.trimEnd()}\n${rules}\n`;
 }
 
 /**
@@ -333,6 +378,9 @@ export interface DeployResult {
   /** Full resource: projects/<p>/locations/<loc>/reasoningEngines/<id> */
   reasoningEngine?: string;
   error?: string;
+  /** The worker refused to wire googleSearch because it cannot coexist with the
+   *  function tools this agent has. Reported so it becomes a fidelity note. */
+  droppedGoogleSearch?: boolean;
 }
 
 /**
@@ -371,8 +419,10 @@ export function deployReasoningEngine(
       // The worker prints a JSON result on its LAST non-empty stdout line.
       const line = out.trim().split(/\r?\n/).filter(Boolean).pop() || '';
       try {
-        const j = JSON.parse(line) as { reasoningEngine?: string; error?: string };
-        if (j.reasoningEngine) return resolve({ ok: true, reasoningEngine: j.reasoningEngine });
+        const j = JSON.parse(line) as { reasoningEngine?: string; error?: string; droppedGoogleSearch?: boolean };
+        if (j.reasoningEngine) {
+          return resolve({ ok: true, reasoningEngine: j.reasoningEngine, droppedGoogleSearch: j.droppedGoogleSearch });
+        }
         return resolve({ ok: false, error: j.error || `deploy failed (exit ${code}): ${err.slice(-300)}` });
       } catch {
         return resolve({ ok: false, error: `deploy produced no JSON result (exit ${code}): ${(err || out).slice(-300)}` });
@@ -490,7 +540,11 @@ export async function publishAgentToGallery(
     if (!grounding.ok) return { ok: false, error: `website grounding data store: ${grounding.error}` };
     if (grounding.resourcePath) groundingDataStores.push(grounding.resourcePath);
   }
-  const googleSearchDropped = groundingDataStores.length > 0 && !!ir.capabilities?.webBrowsing;
+  // Web browsing is also dropped when the agent has live connector tools or sub-agents,
+  // because Gemini refuses a built-in search tool alongside function tools. That case is
+  // decided inside the worker (it knows the final tool list), so the flag is OR'd with
+  // what the worker reports back rather than guessed twice in two places.
+  let googleSearchDropped = groundingDataStores.length > 0 && !!ir.capabilities?.webBrowsing;
 
   // Best-effort — a missing grant means degraded (ungrounded) search, not a
   // failed deployment. Caller reports this honestly via fidelity notes.
@@ -514,6 +568,7 @@ export async function publishAgentToGallery(
   logger.info({ agent: ir.name, location }, 'adk: deploying reasoning engine');
   const dep = await deployReasoningEngine(dest.project, location, spec, { stagingBucket: opts?.stagingBucket });
   if (!dep.ok || !dep.reasoningEngine) return { ok: false, error: `deploy: ${dep.error}` };
+  if (dep.droppedGoogleSearch) googleSearchDropped = true;
   logger.info({ agent: ir.name, reasoningEngine: dep.reasoningEngine }, 'adk: registering into engine');
   const reg = await registerAdkAgent(dest, saToken, {
     reasoningEngine: dep.reasoningEngine,

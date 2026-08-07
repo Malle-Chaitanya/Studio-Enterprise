@@ -30,6 +30,7 @@ _make_search_tool for the full writeup and upstream issue links).
 import argparse
 import json
 import os
+import re
 import sys
 
 
@@ -562,7 +563,47 @@ class ReasoningEngineAgentWrapper:
 # __name__ is set explicitly before wrapping, so the FunctionDeclaration ADK
 # sends to Gemini is genuinely distinct per store — the collision is
 # structurally impossible this way, not just avoided.
-def _make_search_tool(data_store_id, tool_name):
+def _store_label(data_store_id):
+    """Human name for a data store, derived from its id.
+
+    Store ids are built from the source name at creation time
+    (`…/dataStores/cf-<agent>-file-migrate-agent-prd-full`), so the name is already
+    in there — no extra plumbing from the server is needed to recover it.
+
+    This matters more than it looks. Every hand-rolled search tool used to be named
+    `search_knowledge_source_1..N` with one identical docstring, so the model had no
+    way to tell two knowledge sources apart: it called the same tool repeatedly and
+    never touched the others (seen live 2026-08-07 — three calls to source 1, zero to
+    source 2). It also read those names out to end users, exposing our plumbing.
+    """
+    tail = data_store_id.rstrip("/").split("/")[-1]
+    for prefix in ("cf-", "csge-"):
+        if tail.startswith(prefix):
+            tail = tail[len(prefix):]
+    tail = re.sub(r"-(file|ds|store|datastore)(-|$)", "-", tail)
+    tail = re.sub(r"-[0-9a-f]{6,}$", "", tail)          # trailing hash/uid
+    words = [w for w in re.split(r"[-_]+", tail) if w]
+    return " ".join(words).strip() or "knowledge source"
+
+
+def _tool_name_for(label, used):
+    """A distinct, valid Python identifier for a store's search tool.
+
+    Distinctness is not cosmetic: ADK sends one FunctionDeclaration per tool and
+    Gemini rejects duplicates outright — the collision documented above.
+    """
+    base = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "knowledge"
+    name = f"search_{base}"[:56]
+    if name in used:
+        i = 2
+        while f"{name}_{i}" in used:
+            i += 1
+        name = f"{name}_{i}"
+    used.add(name)
+    return name
+
+
+def _make_search_tool(data_store_id, tool_name, label=None):
     from google.adk.tools import FunctionTool
 
     # `serving_config` is a plain string — the ONLY thing this closure
@@ -659,6 +700,22 @@ def _make_search_tool(data_store_id, tool_name):
             return {"status": "error", "error_message": str(e)}
 
     _search.__name__ = tool_name
+    # The docstring IS the tool description Gemini uses to choose between tools, so it
+    # must name THIS source. A shared, generic description makes every knowledge tool
+    # look identical and the choice arbitrary.
+    if label:
+        _search.__doc__ = (
+            f'Search the "{label}" knowledge source for information relevant to the query.\n'
+            f"\n"
+            f'Use this when the question could be answered by "{label}". Prefer the source whose\n'
+            f"subject matches the question; if unsure which applies, search more than one.\n"
+            f"\n"
+            f"Args:\n"
+            f"  query: The search query.\n"
+            f"\n"
+            f"Returns:\n"
+            f"  A dict with the search status and any matching results (title, url, content).\n"
+        )
     return FunctionTool(_search)
 
 
@@ -709,6 +766,9 @@ def main():
     # stores use _make_search_tool (module-level, see its comment above for
     # the full reasoning) instead of combining VertexAiSearchTool instances.
     tools = []
+    # Reported back to the server so a dropped capability becomes a fidelity note
+    # instead of vanishing — a silent drop is the failure mode this project keeps hitting.
+    dropped_google_search = False
     grounding_data_stores = spec.get("groundingDataStores") or []
     grounding_engine_configs = spec.get("groundingEngineServingConfigs") or []
     live_connectors = spec.get("liveConnectors") or []
@@ -731,11 +791,23 @@ def main():
                 bypass_multi_tools_limit=bool(live_connectors),
             ))
         elif len(grounding_data_stores) > 1:
-            for i, ds in enumerate(grounding_data_stores):
-                tools.append(_make_search_tool(ds, f"search_knowledge_source_{i + 1}"))
+            used_names = set()
+            for ds in grounding_data_stores:
+                label = _store_label(ds)
+                tools.append(_make_search_tool(ds, _tool_name_for(label, used_names), label))
         elif "googleSearch" in (spec.get("tools") or []):
-            from google.adk.tools import google_search
-            tools.append(google_search)
+            # ONLY when google_search can stand alone. Gemini rejects a built-in search
+            # tool mixed with function tools ("Multiple tools are supported only when
+            # they are all search tools"), and sub-agents add transfer functions of
+            # their own. Adding it anyway produced an agent that deployed cleanly and
+            # then 400'd on every single message — live 2026-08-07, Confluence_agent,
+            # which reached this branch precisely BECAUSE its knowledge migration had
+            # failed and left it with zero stores.
+            if live_connectors or spec.get("subAgents"):
+                dropped_google_search = True
+            else:
+                from google.adk.tools import google_search
+                tools.append(google_search)
 
         # Live action connectors (Track B). A real callable tool, NOT instruction
         # text: an LLM told "call https://... with Bearer x" has no way to make an
@@ -847,7 +919,10 @@ def main():
             display_name=spec.get("displayName", spec.get("name", "Migrated Agent")),
             requirements=requirements,
         )
-        emit({"reasoningEngine": remote.resource_name})
+        emit({
+            "reasoningEngine": remote.resource_name,
+            "droppedGoogleSearch": dropped_google_search,
+        })
     except Exception as e:  # noqa: BLE001
         emit({"error": f"deploy failed: {e}"})
 
