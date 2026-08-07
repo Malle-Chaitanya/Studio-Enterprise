@@ -430,7 +430,14 @@ def _build_live_connector_tool(conn: dict, project: str):
                 return {"error": f"auth failed: {e}"}
 
             # The base template already ends in /rest/api/3 for this connector.
-            q = (jql or "").strip() or "ORDER BY created DESC"
+            #
+            # The default MUST be bounded. Jira rejects "ORDER BY created DESC" on its own
+            # with 400 "Unbounded JQL queries are not allowed here", so a question that
+            # produced no explicit JQL — "how many tickets do we have?" — failed on the
+            # very call it was meant to answer (verified live 2026-08-07). A date window
+            # is the least surprising restriction: it returns recent work rather than
+            # silently narrowing to one project.
+            q = (jql or "").strip() or "created >= -365d ORDER BY created DESC"
             url = (
                 f"{base}/search/jql?jql={urllib.parse.quote(q)}"
                 f"&maxResults={max(1, min(int(max_results or 20), 100))}"
