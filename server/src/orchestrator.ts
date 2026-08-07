@@ -17,6 +17,7 @@ import {
   migrateFileToDocumentStore,
   type DataverseSnapshotResult,
 } from './services/knowledgeDataStoreExecutor.js';
+import { resolveDataverseTables } from './services/dataverseTableExport.js';
 import { attachDataStoreToEngine, dataStoreExists, dataStoreResourcePath } from './services/geminiDataStore.js';
 import { getConnectorOperation, getConnectorDataStores } from './services/geminiConnector.js';
 import { getKnowledgeConnector, markKnowledgeConnectorStatus } from './db/repos/knowledgeConnectors.js';
@@ -97,8 +98,30 @@ async function resolveDataverseSnapshotSources(
 ): Promise<DataverseSnapshotResolution[]> {
   const out: DataverseSnapshotResolution[] = [];
   for (const src of sources) {
-    const snap = await migrateDataverseSnapshot(dest, saToken, dvToken, envUrl, sourceId, src);
-    out.push({ src, snap });
+    // ONE Copilot source can name SEVERAL tables — "FAQ Entry, CF ICP Profile" is two.
+    // Each needs its own structured data store (different schemas cannot share one), so
+    // the source is expanded here rather than silently snapshotting only the first.
+    const resolved = await resolveDataverseTables(
+      envUrl,
+      dvToken,
+      src.name ?? '',
+      [...(src.references ?? []), ...(src.reference ? [src.reference] : [])],
+    );
+
+    if (resolved.entitySetNames.length <= 1) {
+      const snap = await migrateDataverseSnapshot(dest, saToken, dvToken, envUrl, sourceId, src);
+      out.push({ src, snap });
+      continue;
+    }
+
+    for (const entitySetName of resolved.entitySetNames) {
+      const snap = await migrateDataverseSnapshot(
+        dest, saToken, dvToken, envUrl, sourceId, src, entitySetName,
+      );
+      // Name the resolution after the TABLE so the fidelity report says which one
+      // succeeded or failed, instead of one combined entry for a multi-table source.
+      out.push({ src: { ...src, name: `${src.name} → ${entitySetName}` }, snap });
+    }
   }
   return out;
 }

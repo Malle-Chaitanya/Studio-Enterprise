@@ -1,6 +1,6 @@
 import type { GeminiDestination, KnowledgeSourceIR } from '../types.js';
 import { config } from '../config.js';
-import { resolvePrimaryKey, exportTableRows, type DataverseRow } from './dataverseTableExport.js';
+import { resolvePrimaryKey, resolveDataverseTables, exportTableRows, type DataverseRow } from './dataverseTableExport.js';
 import { resolveTableAttributes, buildBqSchema, exportTableRowsForBigQuery } from './dataverseTableSchema.js';
 import { ensureBigQueryApiEnabled, ensureBqDataset, ensureBqTable, loadRowsToBqTable, awaitBqJob } from './bigqueryUpload.js';
 import {
@@ -106,10 +106,33 @@ export async function migrateDataverseSnapshot(
   envUrl: string,
   agentSourceId: string,
   source: KnowledgeSourceIR,
+  /** Explicit table to snapshot. Set by the caller when one source names several
+   *  tables; omitted, the table is resolved from the source itself. */
+  entitySetOverride?: string,
 ): Promise<DataverseSnapshotResult> {
-  const entitySetName = (source.references?.[0] ?? source.reference ?? '').trim();
+  let entitySetName = (entitySetOverride ?? '').trim();
   if (!entitySetName) {
-    return { attempted: 0, succeeded: 0, failed: 0, error: 'no table reference captured for this source' };
+    // What extraction captured is an opaque skillConfiguration key, not a table name
+    // (see resolveDataverseTables). Resolve properly instead of handing that key to
+    // EntityDefinitions, which is what made every Dataverse snapshot index 0 rows.
+    const resolved = await resolveDataverseTables(
+      envUrl,
+      dvToken,
+      source.name ?? '',
+      [...(source.references ?? []), ...(source.reference ? [source.reference] : [])],
+    );
+    if (!resolved.entitySetNames.length) {
+      return {
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        error:
+          `could not resolve any Dataverse table for "${source.name}"` +
+          (resolved.unresolved.length ? ` — tried: ${resolved.unresolved.join(', ')}` : '') +
+          '. Copilot Studio records only an opaque key for this source, so the table is matched by display name.',
+      };
+    }
+    entitySetName = resolved.entitySetNames[0];
   }
 
   const pk = await resolvePrimaryKey(envUrl, dvToken, entitySetName);
