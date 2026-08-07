@@ -86,7 +86,10 @@ async function resolveSpaceKeys(
   const limit = 50;
 
   while (true) {
-    const url = `${creds.base_url}/wiki/rest/api/space?limit=${limit}&start=${start}&type=global`;
+    // No `type` filter. Restricting to `global` made personal spaces invisible, so a
+    // source pointing at one could never match and reported "space not found" with the
+    // space sitting right there (cf2020 has 22 global + ~40 personal spaces).
+    const url = `${creds.base_url}/wiki/rest/api/space?limit=${limit}&start=${start}`;
     const res = await confluenceFetch(url, auth);
     if (!res.ok) {
       // A failed LISTING is not "the space does not exist". Swallowing it and reporting

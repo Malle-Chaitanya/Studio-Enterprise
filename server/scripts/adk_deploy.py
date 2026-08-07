@@ -409,11 +409,17 @@ def _build_live_connector_tool(conn: dict, project: str):
             """Search Jira issues with JQL and return key, summary, status and assignee.
 
             Args:
-                jql: A JQL query, e.g. 'project = HCL ORDER BY created DESC' or
-                    'text ~ "login bug" ORDER BY updated DESC'. A project, text or date
-                    clause is REQUIRED — Jira rejects unbounded queries. To find issues
-                    for a project by name, use 'project = <KEY>'.
-                max_results: how many issues to return (default 20, max 100).
+                jql: A JQL query, e.g. 'project = ENG ORDER BY created DESC' or
+                    'text ~ "login bug" ORDER BY updated DESC'.
+                    Jira rejects queries with no restriction at all, so if the user did
+                    not name a project or a timeframe, DO NOT refuse and DO NOT ask —
+                    pass 'created >= -365d ORDER BY created DESC' and report what comes
+                    back, saying which window you used. Leaving jql empty does this for
+                    you. Use jira_list_projects first when the user names a project by
+                    its display name rather than its key.
+                max_results: how many issues to return (default 20, max 100). The
+                    response also carries `total`, which is the full match count and is
+                    what to quote when asked "how many".
 
             Returns:
                 dict with `issues` (key, summary, status, assignee, url) and `total`,
@@ -509,7 +515,46 @@ def _build_live_connector_tool(conn: dict, project: str):
                 "url": f"{site}/browse/{it.get('key')}",
             }
 
-        return [jira_search, jira_get_issue]
+        def jira_list_projects(query: str = "", max_results: int = 50) -> dict:
+            """List the Jira projects available, optionally filtered by name or key.
+
+            Use this to find a project's KEY before searching its issues — jira_search
+            needs a key like 'ENG', not a display name like 'Engineering'.
+
+            Args:
+                query: optional text to filter projects by name or key.
+                max_results: how many to return (default 50).
+
+            Returns:
+                dict with `projects` (key, name) and `total`, or `error`.
+            """
+            import json as _json
+            import urllib.parse
+            import urllib.request
+
+            try:
+                base = _fill(base_url_tpl).rstrip("/")
+                auth_header = _auth_header(_fill)
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"auth failed: {e}"}
+            url = f"{base}/project/search?maxResults={max(1, min(int(max_results or 50), 100))}"
+            if query:
+                url += f"&query={urllib.parse.quote(query)}"
+            req = urllib.request.Request(url, headers={"Authorization": auth_header, "Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    data = _json.loads(resp.read().decode("utf-8"))
+            except Exception as e:  # noqa: BLE001
+                detail = ""
+                try:
+                    detail = e.read().decode("utf-8")[:300]  # type: ignore[attr-defined]
+                except Exception:  # noqa: BLE001
+                    detail = str(e)
+                return {"error": f"Jira project list failed: {detail}"}
+            projects = [{"key": p.get("key"), "name": p.get("name")} for p in (data.get("values") or [])]
+            return {"projects": projects, "total": data.get("total", len(projects))}
+
+        return [jira_search, jira_get_issue, jira_list_projects]
 
     if kind == "confluence":
 
