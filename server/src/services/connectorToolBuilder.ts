@@ -13,7 +13,7 @@
  */
 
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
-import { connectorSecretId } from './connectorCredentials.js';
+import { connectorSecretId, connectorCredentialFields } from './connectorCredentials.js';
 import { logger } from '../logger.js';
 
 const HOST = 'https://secretmanager.googleapis.com/v1';
@@ -59,8 +59,14 @@ export async function resolveConnectorSecrets(
     const def = REGISTRY_BY_ID.get(connectorId);
     if (!def) continue;
 
+    // connectorCredentialFields, not def.credentials: members of a credential group
+    // declare NO fields of their own (Microsoft connectors carry tenant/client/secret on
+    // the shared ms_graph group, Confluence and Jira on atlassian). Iterating
+    // def.credentials would resolve nothing for them and silently return a connector
+    // with empty fields — which is how the Confluence crawl would have started failing
+    // the moment groups were introduced.
     const fields: Record<string, string> = {};
-    for (const credField of def.credentials) {
+    for (const credField of connectorCredentialFields(connectorId)) {
       const secretId = connectorSecretId(connectorId, credField.key);
       const value = await readSecret(saToken, projectId, secretId);
       if (value) fields[credField.key] = value;
@@ -130,8 +136,14 @@ export function buildLiveConnectorSpecs(connectorIds: string[]): LiveConnectorSp
       logger.warn({ connectorId }, 'buildLiveConnectorSpecs: connector not in registry, skipping');
       continue;
     }
+    // Group fields included, not just the connector's own. Microsoft connectors carry
+    // tenant_id/client_id/client_secret on the shared ms_graph group — iterating only
+    // def.credentials would ship a Graph tool with no credentials at all, and it would
+    // fail at inference rather than at deploy.
     const secretIds: Record<string, string> = {};
-    for (const field of def.credentials) secretIds[field.key] = connectorSecretId(connectorId, field.key);
+    for (const field of connectorCredentialFields(connectorId)) {
+      secretIds[field.key] = connectorSecretId(connectorId, field.key);
+    }
 
     // 'shared_confluence' → 'confluence': the deployer keys its purpose-built tools
     // off the bare product name, not the Power Automate connector api name.

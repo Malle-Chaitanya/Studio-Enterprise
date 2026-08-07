@@ -4,10 +4,12 @@ import { logger } from './logger.js';
 import { extractAgent, fetchFileAttachmentBytes, resolveSystemUserEmail } from './services/dataverse.js';
 import { findCandidates } from './services/graphSearch.js';
 import { buildOrganizationProfile } from './services/organizationProfile.js';
-import { createAgent, defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, type CreateOutcome } from './services/gemini.js';
+import { defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, type CreateOutcome } from './services/gemini.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecs } from './services/connectorToolBuilder.js';
+import { migrateSharePointToDataStore } from './services/sharePointMigrator.js';
+import type { SharePointMigrationResult } from './services/sharePointMigrator.js';
 import { migrateConfluenceToDataStore, type ConfluenceCreds, type ConfluenceMigrationResult } from './services/confluenceMigrator.js';
 import {
   migrateDataverseSnapshot,
@@ -864,6 +866,57 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       // because the Confluence crawl is the only source those two do not cover —
       // dropping it silently un-grounds every Confluence agent.
       const connectorGroundingDataStores: string[] = [];
+
+      // SharePoint pre-resolution: crawl the folder the SOURCE agent named, via
+      // Microsoft Graph, before the ADK deploy so the store path is baked into
+      // VertexAiSearchTool.
+      //
+      // Graph, not Google's SharePoint connector: that connector talks to SharePoint's
+      // own REST API, which only accepts app-only tokens minted with a CERTIFICATE
+      // (appidacr=2). The client secret customers actually supply produces appidacr=1
+      // and every call returns 401 "Unsupported app only token" — which is why the
+      // pre-existing connectors in the test project sit at 0 documents. Graph accepts
+      // the same secret, so this path works with credentials a customer can provide.
+      //
+      // spScopeUri is ALSO captured here and handed to the live SharePoint tools. Without
+      // it those tools are unscoped: the app credential carries Sites.Read.All, which
+      // reads EVERY site in the tenant (99 in the test tenant) while the source agent
+      // named exactly one folder. Scope must come from the source, per agent.
+      let preSpResult: SharePointMigrationResult | null = null;
+      let spScopeUri = '';
+      const spGraphSources = ks.filter(
+        (s) => s.kind !== 'FileUpload' && /sharepoint\.com/i.test(s.reference ?? s.references?.[0] ?? ''),
+      );
+      // Microsoft app credentials come from the shared ms_graph group — the same set
+      // every Microsoft connector uses, saved once by the customer.
+      const msCreds = resolvedConnectors.find((c) =>
+        c.connectorId === 'shared_sharepointonline' || c.connectorId === 'shared_onedrive',
+      )?.fields;
+      if (spGraphSources.length && dest.project && msCreds?.tenant_id && msCreds?.client_id && msCreds?.client_secret) {
+        spScopeUri = spGraphSources[0].reference ?? spGraphSources[0].references?.[0] ?? '';
+        emitLog('info', `    SharePoint: crawling ${spScopeUri} for grounding…`);
+        preSpResult = await migrateSharePointToDataStore(
+          dest.project, saToken, row.mapped.ir.sourceId,
+          { tenantId: msCreds.tenant_id, clientId: msCreds.client_id, clientSecret: msCreds.client_secret, siteUrl: spScopeUri },
+        ).catch((err): SharePointMigrationResult => {
+          logger.warn({ err }, 'orchestrator: SharePoint pre-crawl threw; continuing');
+          return { fileCount: 0, skipped: [], error: (err as Error).message };
+        });
+        if (preSpResult.resourcePath) {
+          connectorGroundingDataStores.push(preSpResult.resourcePath);
+          emitLog('ok', `    SharePoint: ${preSpResult.fileCount} file(s) indexed.`);
+        } else {
+          emitLog('warn', `    SharePoint crawl failed: ${preSpResult.error ?? 'unknown'}.`);
+        }
+        for (const sk of preSpResult.skipped.slice(0, 5)) {
+          result.fidelity.push({
+            component: `knowledge:${sk.name}`,
+            status: 'lost',
+            detail: `SharePoint file not indexed — ${sk.reason}.`,
+          });
+        }
+      }
+
       if (confluenceConnector && dest.project) {
         const confluenceKs = ks.filter(
           (s) => Array.isArray(s.confluenceSpaceNames) && s.confluenceSpaceNames.length > 0,
@@ -1072,10 +1125,46 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // what lets a migrated connector actually hit Jira/Slack/Graph, as opposed
             // to the old instruction block that merely described the API to a model
             // with no way to call it.
+            // Scope the SharePoint/OneDrive tools to THIS agent's own folder. The
+            // specs are shared across agents, so the scope has to be applied per agent
+            // rather than baked in when they were built.
+            const scopedConnectors = liveConnectorSpecs.map((c) =>
+              /sharepoint|onedrive/i.test(c.kind) && spScopeUri ? { ...c, scopeUri: spScopeUri } : c,
+            );
+
+            // Copilot topics become ADK sub-agents INSIDE this deployment. Not one
+            // Reasoning Engine per topic: that would multiply cost and burn the ~7/day
+            // agent-creation quota on a single migrated agent.
+            const topicSubAgents = row.mapped!.ir.topics
+              .filter((t) => !t.isSystem && t.name?.trim())
+              .map((t) => {
+                const name = t.name.trim();
+                return {
+                  id: name,
+                  displayName: name,
+                  // The root agent routes on this text, so it must say WHEN to hand
+                  // over — a description that only restates the name routes nothing.
+                  description: `Handles "${name}" requests — the migrated Copilot topic of the same name.`,
+                  instruction:
+                    `You handle the "${name}" topic, migrated from Microsoft Copilot Studio.
+` +
+                    (t.aiPrompt ? `
+Original AI Builder prompt:
+${t.aiPrompt}
+` : '') +
+                    `
+If the request is outside "${name}", say so briefly so the main assistant takes over.`,
+                };
+              });
+            if (topicSubAgents.length) {
+              emitLog('info', `    ${row.name}: ${topicSubAgents.length} topic(s) → sub-agents in one engine.`);
+            }
+
             const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, {
               websiteSource,
               groundingDataStores,
-              liveConnectors: liveConnectorSpecs,
+              liveConnectors: scopedConnectors,
+              subAgents: topicSubAgents,
             });
 
             // Everything below claims specific knowledge sources are grounded
@@ -1158,33 +1247,32 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               usedAdk = true;
               return { created: true, agentId: adk.agentId };
             }
-            // ADK failed — fall back to a low-code create as a last resort so
-            // the customer gets SOMETHING rather than a hard failure. This is
-            // now the ONLY place low-code creation is attempted, so it costs
-            // an agent-creation quota unit only when actually needed, never
-            // speculatively. NONE of the file/Dataverse/SharePoint grounding
-            // attempted above for the ADK agent applies to this low-code
-            // agent — say so explicitly instead of leaving it unexplained
-            // (the low-code attach loop below still runs its OWN, real attach
-            // for the same sources — this note is just about the ADK attempt).
+            // ADK failed — FAIL. There is deliberately no low-code fallback.
+            //
+            // A low-code agent looks like a successful migration and is not one: it is
+            // created `state: PRIVATE`, which no API call can change (Agent.state is
+            // readOnly and there is no :publish method), it cannot be invoked
+            // programmatically at all, and it carries none of what this pipeline
+            // actually migrates — no live connector tools, no topic sub-agents, and
+            // grounding only via an engine-wide attach rather than per-agent.
+            //
+            // The fallback also masked real, fixable bugs: a wrong engine choice or an
+            // unset staging bucket produced a "migrated" PRIVATE agent instead of an
+            // error naming the cause. Reporting the failure honestly is more useful to
+            // a customer than handing them something broken (see
+            // docs/connector-architecture-decisions.md §9).
             result.fidelity.push({
-              component: 'adk-fallback',
-              status: 'needs-review',
-              detail: `ADK deployment failed (${adk.error ?? 'unknown error'}) — falling back to a low-code agent, which will stay PRIVATE (not gallery-visible) with no automated way to change that. Any "grounded via ADK" outcome above does not apply; knowledge sources are attached via the low-code (engine-wide) path below instead.`,
+              component: 'agent:create',
+              status: 'lost',
+              detail:
+                `ADK deployment failed (${adk.error ?? 'unknown error'}). The agent was NOT created. ` +
+                'No low-code agent was created in its place: that path produces a PRIVATE agent that ' +
+                'cannot be invoked, cannot be published by any API, and carries no connector tools or ' +
+                'topic sub-agents — it would look migrated without being usable. Fix the reported error ' +
+                'and re-run; the migration is idempotent.',
             });
-            emitLog('warn', `  ${row.name}: ADK failed (${adk.error ?? 'unknown error'}) — falling back to low-code create.`);
-            const lowCode = await createAgent(dest, saToken, row.mapped!);
-            if (lowCode.alreadyExists) {
-              return { created: false, alreadyExists: true, error: 'already exists' };
-            }
-            return lowCode.created && lowCode.agentId
-              ? {
-                  created: true,
-                  agentId: lowCode.agentId,
-                  state: lowCode.state,
-                  error: `ADK failed (${adk.error}); created via low-code instead (state: ${lowCode.state ?? 'PRIVATE'}).`,
-                }
-              : { created: false, error: `ADK failed (${adk.error}); low-code fallback also failed: ${lowCode.error}` };
+            emitLog('fail', `  ${row.name}: ADK deployment failed — ${adk.error ?? 'unknown error'}`);
+            return { created: false, error: `ADK deployment failed: ${adk.error ?? 'unknown error'}` };
           })();
       // Only meaningful once usedAdk is settled above — a website source is
       // only actually grounded when the final agent really is the ADK one.

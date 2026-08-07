@@ -35,27 +35,47 @@ export function Connectors() {
     if (!session) return;
     let cancelled = false;
     (async () => {
+      // Scan ONLY what the customer selected. Scanning every environment listed
+      // connectors belonging to agents they never chose — reading as "set all these
+      // up" when most were irrelevant — and made the wait proportional to the whole
+      // tenant (48 agents per environment) rather than to their selection.
+      let selection: Array<{ env: string; botIds: string[] }> = [];
+      try {
+        selection = JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
+      } catch {
+        /* fall back to scanning every environment below */
+      }
+      selection = selection.filter((sel) => sel.botIds?.length);
+
       const envs = (await fetchEnvironments(session).catch(() => [] as EnvironmentInfo[])).filter(
         (e) => e.accessible && (e.knowledgeSources ?? 0) > 0,
       );
       if (cancelled) return;
-      setTotalEnvs(envs.length);
+      const targets = selection.length
+        ? selection.map((sel) => ({
+            url: sel.env,
+            name: envs.find((e) => e.url === sel.env)?.name ?? sel.env,
+            botIds: sel.botIds,
+          }))
+        : envs.map((e) => ({ url: e.url, name: e.name, botIds: [] as string[] }));
+      setTotalEnvs(targets.length);
 
-      const all: Row[] = [];
-      // Sequential per environment (each call already fans out across that
-      // environment's agents server-side with bounded concurrency) — keeps a
-      // simple, readable progress count instead of racing several big scans
-      // against each other.
-      for (const env of envs) {
-        try {
-          const found = await fetchConnectorsNeeded(session, env.url);
-          for (const c of found) all.push({ ...c, envName: env.name });
-        } catch {
-          // one environment failing (e.g. transient 403) shouldn't blank the
-          // whole page — the rest still render, and we're honest about total scanned.
-        }
-        if (!cancelled) setScannedCount((n) => n + 1);
-      }
+      // Parallel, not sequential: environments are independent, and waiting for one
+      // before starting the next doubled the wall clock for no benefit.
+      const results = await Promise.all(
+        targets.map(async (t) => {
+          try {
+            const found = await fetchConnectorsNeeded(session, t.url, t.botIds);
+            return found.map((c) => ({ ...c, envName: t.name }));
+          } catch {
+            // one environment failing (e.g. a transient 403) must not blank the page
+            return [] as Row[];
+          } finally {
+            if (!cancelled) setScannedCount((n) => n + 1);
+          }
+        }),
+      );
+      const all: Row[] = results.flat();
       if (!cancelled) {
         setRows(all);
         setScanning(false);
@@ -81,9 +101,29 @@ export function Connectors() {
       {error && <div className="error">{error}</div>}
 
       {scanning && (
-        <p className="lead">
-          Scanning agents for connector needs… ({scannedCount}/{totalEnvs} environment{totalEnvs === 1 ? '' : 's'})
-        </p>
+        <>
+          <p className="lead" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="cf-spinner" aria-hidden="true" />
+            Scanning your selected agents for connector needs…
+            {totalEnvs > 0 && ` (${scannedCount}/${totalEnvs} environment${totalEnvs === 1 ? '' : 's'})`}
+          </p>
+          {/* Placeholder rows: a bare progress line on an empty page reads as "stuck".
+              Showing the shape of the result makes the wait legible. */}
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="card"
+              style={{
+                padding: '14px 18px', marginBottom: 10, borderLeft: '3px solid var(--border)',
+                opacity: 1 - i * 0.25,
+              }}
+            >
+              <div className="cf-skel" style={{ width: '45%', height: 14, marginBottom: 8 }} />
+              <div className="cf-skel" style={{ width: '65%', height: 11, marginBottom: 6 }} />
+              <div className="cf-skel" style={{ width: '30%', height: 11 }} />
+            </div>
+          ))}
+        </>
       )}
 
       {!scanning && rows && rows.length === 0 && (

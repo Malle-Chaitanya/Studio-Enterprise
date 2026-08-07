@@ -17,8 +17,14 @@ import { resolveShareUrlSmart } from '../services/graphFiles.js';
 import { migrateSharePointDriveItem } from '../services/knowledgeDataStoreExecutor.js';
 import { detectThirdPartyConnectors } from '../services/thirdPartyConnectorScan.js';
 import { detectKnowledgeConnectors } from '../services/knowledgeConnectorScan.js';
+import { listBots } from '../services/dataverse.js';
 import { upsertSecret } from '../services/secretManager.js';
-import { connectorSecretId } from '../services/connectorCredentials.js';
+import {
+  connectorSecretId,
+  connectorCredentialFields,
+  connectorsSharingCredentials,
+} from '../services/connectorCredentials.js';
+import { REGISTRY_BY_ID, CREDENTIAL_GROUPS } from '../connectors/registry.js';
 import { MS_APP_REG_FIELDS } from '../services/connectorToolBuilder.js';
 import type { DestinationOptions, GeminiDestination, MigrationResult, MigrationScope } from '../types.js';
 
@@ -283,7 +289,16 @@ migrateRouter.post('/knowledge-connectors', async (req, res) => {
 
   try {
     const dvToken = await clientCredsToken(session.tenantId, envUrl);
-    const connectors = await detectKnowledgeConnectors(envUrl, dvToken, botIds);
+    // Resolve agent names so the UI can say WHICH agent needs each connector — a flat
+    // list gives no way to tell whether a connector belongs to the agent you selected.
+    let botNames: Map<string, string> | undefined;
+    try {
+      const bots = await listBots(envUrl, dvToken);
+      botNames = new Map(bots.map((b) => [b.botid, b.name]));
+    } catch {
+      /* attribution is a nicety; detection still works without it */
+    }
+    const connectors = await detectKnowledgeConnectors(envUrl, dvToken, botIds, botNames);
     res.json({ connectors });
   } catch (err) {
     res.status(502).json({ error: 'knowledge_connector_scan_failed', detail: (err as Error).message });
@@ -340,6 +355,73 @@ migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: 'credentials_save_failed', detail: (err as Error).message });
   }
+});
+
+/**
+ * GET /api/migrate/connector-requirements?session=…&ids=shared_jira,shared_teams
+ *
+ * Everything the UI needs to ask for a connector correctly, in one call:
+ *   - which credential fields to show, and which are SHARED with sibling connectors
+ *     (one Azure app serves all five Microsoft connectors; one Atlassian token serves
+ *     Confluence and Jira) so we never ask for the same app twice
+ *   - the exact API permissions to add, and whether an admin must consent — granting
+ *     a credential is not granting access: a Microsoft client_credentials exchange
+ *     returns a token even with nothing consented, then 403s on every call
+ *   - whether this customer already configured the credential, so a newly-detected
+ *     sibling connector asks only for the extra permission
+ *
+ * Contains no secret values — only field names, secret ids and permission strings.
+ */
+migrateRouter.get('/connector-requirements', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+
+  const ids = String(req.query.ids ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (ids.length === 0) return void res.json({ connectors: [] });
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const saved = await listConnectorCredentials(appUserId);
+  const savedIds = new Set(saved.map((s) => s.connectorId));
+
+  const connectors = ids.map((id) => {
+    const def = REGISTRY_BY_ID.get(id);
+    if (!def) return { connectorId: id, unknown: true };
+    const group = def.credentialGroup ? CREDENTIAL_GROUPS[def.credentialGroup] : undefined;
+    const siblings = connectorsSharingCredentials(id);
+    // A sibling already configured means the shared credential exists — the customer
+    // only needs to add this connector's permissions to the app they already made.
+    const credentialAlreadySupplied = savedIds.has(id) || siblings.some((s) => savedIds.has(s));
+
+    return {
+      connectorId: id,
+      name: def.name,
+      icon: def.icon,
+      category: def.category,
+      docsUrl: def.docsUrl,
+      authKind: def.authKind ?? 'bearer',
+      fields: connectorCredentialFields(id).map((f) => ({
+        key: f.key,
+        label: f.label,
+        type: f.type,
+        placeholder: f.placeholder,
+        hint: f.hint,
+        shared: f.shared,
+      })),
+      requiredPermissions: def.requiredPermissions ?? [],
+      adminConsentRequired: !!def.adminConsentRequired,
+      permissionsHint: def.permissionsHint,
+      group: group
+        ? { id: group.id, name: group.name, setupUrl: group.setupUrl, setupHint: group.setupHint, siblings }
+        : undefined,
+      configured: savedIds.has(id),
+      credentialAlreadySupplied,
+    };
+  });
+
+  res.json({ connectors });
 });
 
 /**
@@ -402,15 +484,46 @@ migrateRouter.post('/ms-connector-credentials', async (req, res) => {
   try {
     const saToken = await getSaToken(session.gEmail);
     const secretIds: string[] = [];
+    // Write to the SHARED ms_graph namespace — the same one buildLiveConnectorSpecs
+    // hands to the deployed tools. This used to write 'ms_native', so credentials saved
+    // through the UI landed under studio-enterprise-ms-native-* while every Graph tool
+    // looked for studio-enterprise-ms-graph-*: the agent deployed fine and then failed
+    // at inference with "no secret id configured", with nothing in typecheck or the
+    // save flow to reveal the mismatch.
+    const secretIdByField: Record<string, string> = {};
     for (const field of MS_APP_REG_FIELDS) {
       const value = creds[field.key];
       if (!value) continue;
-      const secretId = connectorSecretId('ms_native', field.key);
+      const secretId = connectorSecretId('ms_graph', field.key);
       await upsertSecret(saToken, session.geminiProject, secretId, value);
       secretIds.push(secretId);
+      secretIdByField[field.key] = secretId;
     }
-    // Flag MS creds saved on the session plan
-    const updated = { ...session.plan, msCreds: true };
+
+    // One Azure app serves every Microsoft connector, so record all of them as
+    // configured — otherwise a later-detected sibling (Teams after SharePoint) would
+    // ask for credentials that already exist.
+    const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+    const msConnectorIds = [...REGISTRY_BY_ID.values()]
+      .filter((d) => d.credentialGroup === 'ms_graph')
+      .map((d) => d.id);
+    for (const connectorId of msConnectorIds) {
+      await upsertConnectorCredential(appUserId, {
+        connectorId,
+        fields: Object.keys(secretIdByField),
+        secretIds: secretIdByField,
+        project: session.geminiProject,
+      });
+    }
+
+    // Flag MS creds saved on the session plan, and register the connectors so the
+    // orchestrator wires live Graph tools for them.
+    const existingSaved = session.plan?.savedConnectors ?? [];
+    const updated = {
+      ...session.plan,
+      msCreds: true,
+      savedConnectors: [...new Set([...existingSaved, ...msConnectorIds])],
+    };
     await updateSession(sessionId!, { plan: updated as typeof session.plan });
     res.json({ secretIds });
   } catch (err) {

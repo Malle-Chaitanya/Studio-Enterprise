@@ -4,18 +4,36 @@
  * found across all flows in the environment.
  *
  * Only connectors with entries in the CONNECTOR_REGISTRY are returned —
- * MS-native connectors (Teams, SharePoint, etc.) are in SKIP_CONNECTOR_IDS
+ * Microsoft connectors ARE returned here (action path); SKIP_CONNECTOR_IDS applies to
+ * the knowledge path only
  * and excluded because they use a separate Azure App Registration path.
  */
 
-import { REGISTRY_BY_ID, SKIP_CONNECTOR_IDS } from '../connectors/registry.js';
+import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import type { ConnectorDef } from '../connectors/registry.js';
 
 export interface DetectedConnector {
   connectorId: string;
-  def: ConnectorDef;
+  /** Absent when `unsupported` — we found the connector but have no way to call it. */
+  def?: ConnectorDef;
   flowCount: number;
   flowNames: string[];
+  /**
+   * True when the flow uses a connector with no registry entry. Surfaced rather than
+   * dropped: a customer whose agent depends on an unsupported connector must see that
+   * in the report, not get a clean summary that quietly omits it.
+   */
+  unsupported?: boolean;
+  /** Which selected agents actually use this connector. Empty when unknown. */
+  agentNames?: string[];
+  /**
+   * 'certain'  — Copilot Studio named the connector structurally (kind enum, shared_*
+   *              api name, or a connection reference).
+   * 'heuristic'— inferred from user-editable text on a generic
+   *              FederatedStructuredSearchSource, which the enum does not identify.
+   * The UI must not present a heuristic hit as a requirement.
+   */
+  confidence?: 'certain' | 'heuristic';
 }
 
 interface PaFlow {
@@ -54,6 +72,9 @@ export async function detectThirdPartyConnectors(
 
   // Map: connectorId → { flowCount, flowNames }
   const connectorMap = new Map<string, { flowCount: number; flowNames: string[] }>();
+  // Connector api names found in flows that have no registry entry — reported, never
+  // silently dropped.
+  const unsupportedMap = new Map<string, { flowCount: number; flowNames: string[] }>();
 
   for (const flow of flows) {
     if (!flow.clientdata) continue;
@@ -71,10 +92,31 @@ export async function detectThirdPartyConnectors(
       const apiName = ref.api?.name ?? ref.connection?.connectionReferenceLogicalName;
       if (!apiName) continue;
 
-      // Skip MS-native connectors (handled separately)
-      if (SKIP_CONNECTOR_IDS.has(apiName)) continue;
-      // Skip if not in our registry
-      if (!REGISTRY_BY_ID.has(apiName)) continue;
+      // Two skips used to live here, both wrong for the ACTION path:
+      //
+      // 1. SKIP_CONNECTOR_IDS dropped every Microsoft connector. That list exists for
+      //    the KNOWLEDGE path — SharePoint/OneDrive *documents* migrate as data stores,
+      //    so they must not also be treated as knowledge connectors. But "send a Teams
+      //    message" or "read a Planner task" is an ACTION, and those need a live Graph
+      //    tool. Skipping by id made every Microsoft action connector invisible to the
+      //    UI, so no credentials were ever collected for them. Now: skip only ids we
+      //    have no registry entry for, since a registry entry IS the statement that we
+      //    can call it.
+      //
+      // 2. Unknown ids were dropped silently, so a customer using a connector we do not
+      //    support got a clean-looking report with no mention of it. That is a fidelity
+      //    lie. Unknown ids are now returned with `unsupported: true` so the caller can
+      //    report them honestly.
+      if (!REGISTRY_BY_ID.has(apiName)) {
+        const seen = unsupportedMap.get(apiName);
+        if (seen) {
+          seen.flowCount++;
+          if (!seen.flowNames.includes(flow.name)) seen.flowNames.push(flow.name);
+        } else {
+          unsupportedMap.set(apiName, { flowCount: 1, flowNames: [flow.name] });
+        }
+        continue;
+      }
 
       const existing = connectorMap.get(apiName);
       if (existing) {
@@ -94,6 +136,12 @@ export async function detectThirdPartyConnectors(
     if (def) {
       results.push({ connectorId, def, flowCount, flowNames });
     }
+  }
+
+  // Unsupported connectors ride along with no def, flagged so the UI can show them
+  // as "detected, cannot migrate" and the report can record them as lost.
+  for (const [connectorId, { flowCount, flowNames }] of unsupportedMap) {
+    results.push({ connectorId, flowCount, flowNames, unsupported: true });
   }
 
   // Sort by flow count descending (most-used connectors first)

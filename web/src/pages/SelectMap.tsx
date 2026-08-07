@@ -184,7 +184,33 @@ export function SelectMap() {
           </button>
         </div>
       )}
-      {loading && <p className="lead">Discovering environments &amp; Gemini projects…</p>}
+      {loading && (
+        <>
+          <p className="lead" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="cf-spinner" aria-hidden="true" />
+            Discovering environments &amp; Gemini projects…
+          </p>
+          {/* Skeleton rows so the page shows the shape of the result instead of a bare
+              line of text on empty space. */}
+          {[0, 1].map((i) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 16,
+                padding: '16px 0', borderBottom: '1px solid var(--border)',
+                opacity: 1 - i * 0.3,
+              }}
+            >
+              <div className="cf-skel" style={{ width: 16, height: 16, borderRadius: 3 }} />
+              <div style={{ flex: 1 }}>
+                <div className="cf-skel" style={{ width: '35%', height: 13, marginBottom: 7 }} />
+                <div className="cf-skel" style={{ width: '22%', height: 10 }} />
+              </div>
+              <div className="cf-skel" style={{ width: '32%', height: 34, borderRadius: 6 }} />
+            </div>
+          ))}
+        </>
+      )}
 
       {!loading && envs.length === 0 && <p className="lead">No accessible environments found.</p>}
 

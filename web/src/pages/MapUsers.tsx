@@ -69,7 +69,12 @@ export function MapUsers() {
       const merged = { ...(map.users ?? {}), ...overlay };
       setUserMap(merged);
       sessionStorage.setItem(`csge_usermap_${session}`, JSON.stringify(merged));
-      setSelected(new Set(ms.map((u) => u.email)));
+      // Pre-select only users we could actually map. Selecting all 285 tenant users by
+      // default made the screen read as "285 of 285 selected · 281 need mapping" — an
+      // instruction to hand-map hundreds of accounts that have no Google counterpart and
+      // are irrelevant to the agents being migrated. Users can still Select all.
+      const mappable = ms.filter((u) => merged[u.email]);
+      setSelected(new Set((mappable.length ? mappable : []).map((u) => u.email)));
       if (!ms.length) {
         setStatus('No Microsoft users returned — check Graph User.Read.All consent, or type emails manually after adding rows.');
       }
@@ -127,6 +132,20 @@ export function MapUsers() {
         (userMap[u.email] || '').toLowerCase().includes(q),
     );
   }, [msUsers, query, userMap]);
+
+  // Paging. A tenant directory is hundreds of rows — rendering them all in one scroll
+  // box made the list unusable and slow to render, and made "285 of 285 selected" read
+  // as a demand to review every account.
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // Snap back to page 1 whenever the filter changes the result set under us.
+  useEffect(() => { setPage(0); }, [query]);
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = useMemo(
+    () => filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
+    [filtered, safePage],
+  );
 
   const rowStatus = (email: string): { label: string; cls: string } => {
     const dest = userMap[email]?.trim();
@@ -315,7 +334,32 @@ export function MapUsers() {
         </div>
       </div>
 
-      {loading && <p className="mu-note">Loading directory…</p>}
+      {loading && (
+        <>
+          <p className="mu-note" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="cf-spinner" aria-hidden="true" />
+            Loading directory… this reads every user in the Microsoft tenant, so it can take a moment.
+          </p>
+          {/* Skeleton rows: the table rendered empty while loading, which reads as
+              "no users found" rather than "still fetching". */}
+          <div className="card" style={{ padding: 0, overflow: 'hidden', marginTop: 8 }}>
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '10px 14px', borderBottom: '1px solid var(--border)',
+                  opacity: 1 - i * 0.13,
+                }}
+              >
+                <div className="cf-skel" style={{ width: 24, height: 24, borderRadius: '50%' }} />
+                <div className="cf-skel" style={{ width: '38%', height: 12 }} />
+                <div className="cf-skel" style={{ width: '22%', height: 12, marginLeft: 'auto' }} />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
       {error && <p className="mu-note fail">{error}</p>}
       {googleUsersError && <p className="mu-note fail">{googleUsersError}</p>}
       {status && <p className="mu-note">{status}</p>}
@@ -332,7 +376,7 @@ export function MapUsers() {
           <div>Microsoft</div>
           <div>Google Workspace</div>
         </div>
-        {filtered.map((u) => {
+        {pageRows.map((u) => {
           const on = selected.has(u.email);
           const dest = userMap[u.email] || '';
           return (
@@ -369,6 +413,26 @@ export function MapUsers() {
             </div>
           );
         })}
+        {!loading && filtered.length > PAGE_SIZE && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+            </span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button" className="wbtn" style={{ fontSize: 12, padding: '4px 12px' }}
+                disabled={safePage === 0} onClick={() => setPage(0)}>« First</button>
+              <button type="button" className="wbtn" style={{ fontSize: 12, padding: '4px 12px' }}
+                disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹ Prev</button>
+              <span style={{ fontSize: 12, alignSelf: 'center', minWidth: 70, textAlign: 'center' }}>
+                Page {safePage + 1} / {pageCount}
+              </span>
+              <button type="button" className="wbtn" style={{ fontSize: 12, padding: '4px 12px' }}
+                disabled={safePage >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}>Next ›</button>
+              <button type="button" className="wbtn" style={{ fontSize: 12, padding: '4px 12px' }}
+                disabled={safePage >= pageCount - 1} onClick={() => setPage(pageCount - 1)}>Last »</button>
+            </div>
+          </div>
+        )}
         {!loading && filtered.length === 0 && <div className="mu-empty">No users to show. Connect Microsoft with directory read consent, or continue and map principals after agent selection.</div>}
         <datalist id="gusers">
           {googleUsers.map((g) => (

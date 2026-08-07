@@ -2256,3 +2256,32 @@ table.assess td.note {
 .fiddet[open] > summary::before {
   content: '▾ ';
 }
+
+/* ── Loading affordances ──────────────────────────────────────────────────────
+   Long scans (Dataverse extraction across several agents) previously rendered a
+   single line of text on an otherwise empty page, which reads as a frozen app.
+   A spinner plus skeleton rows make the wait legible and show the shape of what
+   is coming. */
+.cf-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--brand, #1a3fd4);
+  border-radius: 50%;
+  animation: cf-spin 0.7s linear infinite;
+  flex: none;
+}
+@keyframes cf-spin { to { transform: rotate(360deg); } }
+
+.cf-skel {
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--surface) 37%, var(--border) 63%);
+  background-size: 400% 100%;
+  animation: cf-shimmer 1.4s ease infinite;
+}
+@keyframes cf-shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .cf-spinner, .cf-skel { animation: none; }
+}

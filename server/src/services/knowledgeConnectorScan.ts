@@ -13,6 +13,12 @@ import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import type { DetectedConnector } from './thirdPartyConnectorScan.js';
 
 interface BotKsComponent {
+  /** Owning agent — lets us attribute a connector to the agent that needs it. */
+  _parentbotid_value?: string;
+  /** Carries the human description, which names the product for federated sources. */
+  description?: string;
+  /** e.g. `crf37_Confluenceagent.topic...` — also names the product. */
+  schemaname?: string;
   botcomponentid: string;
   name: string;
   data?: string;
@@ -20,9 +26,33 @@ interface BotKsComponent {
   parentbotid?: string;
 }
 
-const KNOWLEDGE_CONNECTOR_KINDS: Record<string, string> = {
+/**
+ * Copilot Studio's own `kind:` enum for a knowledge source → the connector it implies.
+ * These are STRUCTURAL: the enum is emitted by the product, not typed by a person, so a
+ * match here is a fact rather than a guess.
+ */
+const SOURCE_KIND_TO_CONNECTOR: Record<string, string> = {
+  sharepointsearchsource: 'shared_sharepointonline',
+  sharepointknowledgesource: 'shared_sharepointonline',
+  onedrivesearchsource: 'shared_onedrive',
+  dataversestructuredsearchsource: '', // Dataverse — migrated as a snapshot, no credentials
+  publicsitesearchsource: '',          // public website — no credentials
+};
+
+/**
+ * Product names to look for ONLY inside a FederatedStructuredSearchSource, which is the
+ * generic kind Copilot Studio uses for every federated connector. The enum says
+ * "federated" and nothing more, so the product identity has to come from
+ * `skillConfiguration` / `schemaname` / `description` — all of which a user can edit or
+ * misspell (one source in the test tenant reads "confulence"). Any match here is
+ * therefore reported as a HEURISTIC, never as fact.
+ */
+const FEDERATED_TEXT_HINTS: Record<string, string> = {
   confluence: 'shared_confluence',
-  // extend here as more knowledge connectors are supported
+  jira: 'shared_jira',
+  servicenow: 'shared_servicenow',
+  zendesk: 'shared_zendesk',
+  salesforce: 'shared_salesforce',
 };
 
 /**
@@ -33,6 +63,9 @@ export async function detectKnowledgeConnectors(
   orgUrl: string,
   dvToken: string,
   botIds: string[],
+  /** botId → agent name, so the UI can say WHICH agent needs each connector rather
+   *  than showing one undifferentiated list. */
+  botNames?: Map<string, string>,
 ): Promise<DetectedConnector[]> {
   if (botIds.length === 0) return [];
 
@@ -48,7 +81,7 @@ export async function detectKnowledgeConnectors(
   for (const chunk of chunks) {
     const ids = chunk.map((id) => `'${id}'`).join(',');
     const filter = `componenttype eq 16 and Microsoft.Dynamics.CRM.In(PropertyName='parentbotid',PropertyValues=[${ids}])`;
-    const url = `${base}/api/data/v9.2/botcomponents?$filter=${encodeURIComponent(filter)}&$select=botcomponentid,name,data,content,parentbotid&$top=500`;
+    const url = `${base}/api/data/v9.2/botcomponents?$filter=${encodeURIComponent(filter)}&$select=botcomponentid,name,data,content,description,schemaname,_parentbotid_value&$top=500`;
     try {
       const res = await fetch(url, {
         headers: {
@@ -69,19 +102,60 @@ export async function detectKnowledgeConnectors(
     }
   }
 
-  // Parse each knowledge source's YAML/JSON to find the source kind.
-  const connectorHits = new Map<string, { flowCount: number; flowNames: Set<string> }>();
+  // Two-tier detection.
+  //
+  // Tier 1 — STRUCTURAL: the `kind:` enum, and any `shared_*` api name that appears in
+  // a connection reference or an InvokeConnectorTaskAction. Both are emitted by Copilot
+  // Studio itself, so a hit is certain.
+  //
+  // Tier 2 — HEURISTIC: for FederatedStructuredSearchSource the enum reveals nothing
+  // beyond "federated", so we fall back to product names in skillConfiguration /
+  // schemaname / description. Those fields are user-editable, so these hits are marked
+  // `heuristic` and must be presented to the customer as "we think", not "you need".
+  const connectorHits = new Map<
+    string,
+    { flowCount: number; flowNames: Set<string>; agentNames: Set<string>; certain: boolean }
+  >();
+
+  const record = (connectorId: string, comp: BotKsComponent, certain: boolean): void => {
+    if (!connectorId) return; // sources that need no credentials (Dataverse, public site)
+    const existing = connectorHits.get(connectorId)
+      ?? { flowCount: 0, flowNames: new Set<string>(), agentNames: new Set<string>(), certain: false };
+    existing.flowCount++;
+    existing.certain = existing.certain || certain;
+    if (comp.name) existing.flowNames.add(comp.name);
+    const owner = comp._parentbotid_value;
+    if (owner && botNames?.get(owner)) existing.agentNames.add(botNames.get(owner)!);
+    connectorHits.set(connectorId, existing);
+  };
 
   for (const comp of allComponents) {
-    const raw = comp.data || comp.content || '';
-    const normalized = raw.toLowerCase();
+    const data = comp.data || comp.content || '';
 
-    for (const [kindKey, connectorId] of Object.entries(KNOWLEDGE_CONNECTOR_KINDS)) {
-      if (normalized.includes(kindKey)) {
-        const existing = connectorHits.get(connectorId) ?? { flowCount: 0, flowNames: new Set() };
-        existing.flowCount++;
-        if (comp.name) existing.flowNames.add(comp.name);
-        connectorHits.set(connectorId, existing);
+    // Tier 1a — api names appearing structurally (connection references, connector actions).
+    for (const m of data.matchAll(/\bshared_[a-z0-9_]+/gi)) {
+      record(m[0].toLowerCase(), comp, true);
+    }
+
+    // Tier 1b — the source kind enum.
+    const kindMatch = /source:\s*[\s\S]*?\bkind:\s*([A-Za-z0-9_]+)/.exec(data);
+    const sourceKind = kindMatch?.[1]?.toLowerCase() ?? '';
+    if (sourceKind && sourceKind in SOURCE_KIND_TO_CONNECTOR) {
+      record(SOURCE_KIND_TO_CONNECTOR[sourceKind], comp, true);
+      continue;
+    }
+
+    // Tier 2 — federated sources only.
+    if (sourceKind === 'federatedstructuredsearchsource') {
+      const haystack = [comp.data, comp.content, comp.description, comp.schemaname]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      for (const [hint, connectorId] of Object.entries(FEDERATED_TEXT_HINTS)) {
+        if (haystack.includes(hint)) {
+          record(connectorId, comp, false);
+          break;
+        }
       }
     }
   }
@@ -95,6 +169,10 @@ export async function detectKnowledgeConnectors(
       def,
       flowCount: hit.flowCount,
       flowNames: [...hit.flowNames],
+      agentNames: [...hit.agentNames],
+      // 'certain' when Copilot Studio itself named the connector; 'heuristic' when we
+      // inferred it from editable text on a generic federated source.
+      confidence: hit.certain ? 'certain' : 'heuristic',
     });
   }
 

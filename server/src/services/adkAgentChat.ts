@@ -101,11 +101,21 @@ export async function createAdkSession(
   userId: string,
   location = DEFAULT_LOCATION,
 ): Promise<string | null> {
-  const res = await fetch(`${engineUrl(project, location, reasoningEngineId)}:query`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ class_method: 'create_session', input: { user_id: userId } }),
-  });
+  // A THROWN fetch (TLS reset, DNS blip) must degrade to "no session", not crash the
+  // caller — sessions are an optimisation for multi-turn history, and stream_query works
+  // without one. An unhandled ECONNRESET here took down a whole deploy run whose agent
+  // had already been created successfully.
+  let res: Response;
+  try {
+    res = await fetch(`${engineUrl(project, location, reasoningEngineId)}:query`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ class_method: 'create_session', input: { user_id: userId } }),
+    });
+  } catch (e) {
+    logger.warn({ reasoningEngineId, err: (e as Error).message }, 'adkChat: create_session request failed, continuing sessionless');
+    return null;
+  }
   const text = await res.text();
   if (!res.ok) {
     logger.debug({ reasoningEngineId, status: res.status }, 'adkChat: create_session unsupported, continuing sessionless');
@@ -135,11 +145,20 @@ export async function chatWithAdkAgent(
   const input: Record<string, unknown> = { user_id: args.userId, message: args.message };
   if (args.sessionId) input.session_id = args.sessionId;
 
-  const res = await fetch(`${engineUrl(project, location, args.reasoningEngineId)}:streamQuery?alt=sse`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ class_method: 'stream_query', input }),
-  });
+  // Same reasoning as createAdkSession: a network-level failure is an error to REPORT,
+  // never an exception that escapes into a route handler or migration run.
+  let res: Response;
+  try {
+    res = await fetch(`${engineUrl(project, location, args.reasoningEngineId)}:streamQuery?alt=sse`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ class_method: 'stream_query', input }),
+    });
+  } catch (e) {
+    const msg = (e as Error).message;
+    logger.warn({ reasoningEngineId: args.reasoningEngineId, err: msg }, 'adkChat: stream_query request failed');
+    return { ok: false, error: `network: ${msg}` };
+  }
   const raw = await res.text();
 
   if (!res.ok) {

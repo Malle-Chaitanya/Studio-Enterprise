@@ -24,7 +24,26 @@ async function withBackoff(fn: () => Promise<Response>, { retries = 6, baseMs = 
   let attempt = 0;
   while (true) {
     await geminiWriteLimiter.acquire(); // pace writes to avoid 429 bursts
-    const res = await fn();
+    // A THROWN fetch (ECONNRESET, TLS reset, DNS blip) used to escape this helper
+    // entirely, so a single dropped connection aborted a whole migration — observed
+    // live 2026-08-07 killing a SharePoint import while polling its operation, after
+    // the documents had already uploaded. Network failures are exactly what backoff is
+    // for, so they retry on the same schedule as 429/503 and only surface once the
+    // retries are exhausted.
+    let res: Response;
+    try {
+      res = await fn();
+    } catch (err) {
+      if (attempt >= retries) throw err;
+      const wait = Math.min(maxMs, baseMs * 2 ** attempt);
+      logger.warn(
+        { err: (err as Error).message, attempt, wait },
+        'Discovery Engine request failed at the network level — retrying',
+      );
+      await sleep(wait);
+      attempt++;
+      continue;
+    }
     if (res.status !== 429 && res.status !== 503) return res;
     if (res.status === 429) {
       const body = await res.clone().text().catch(() => '');

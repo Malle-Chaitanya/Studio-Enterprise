@@ -276,9 +276,60 @@ export async function resolveDestination(project: string, saToken: string): Prom
     return { project, engine: process.env.GEMINI_ENGINE, assistant };
   }
   const engines = await discoverEngines(project, saToken);
-  const chosen =
-    engines.find((e) => /CHAT|ASSISTANT/i.test(e.solutionType ?? '')) ??
-    engines.find((e) => /SEARCH/i.test(e.solutionType ?? '')) ??
-    engines[0];
-  return { project, engine: chosen?.id || 'agentspace-engine', assistant };
+
+  // Order by likelihood, then VERIFY. solutionType alone is not enough to tell which
+  // engine can host agents: a project can hold several SOLUTION_TYPE_SEARCH engines and
+  // only one of them has an assistant. Picking by heuristic sent a real migration to
+  // `cf-knowledge-search`, whose assistants endpoint 404s — the Reasoning Engine deployed
+  // (and billed) and then registration failed, taking the low-code fallback down with it
+  // since it targets the same engine. Verified live 2026-08-07.
+  const ordered = [
+    ...engines.filter((e) => /CHAT|ASSISTANT/i.test(e.solutionType ?? '')),
+    ...engines.filter((e) => /SEARCH/i.test(e.solutionType ?? '')),
+    ...engines,
+  ].filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i);
+
+  for (const candidate of ordered) {
+    if (await assistantExists(project, saToken, candidate.id, assistant)) {
+      return { project, engine: candidate.id, assistant };
+    }
+  }
+
+  // Nothing verified — fall back to the old heuristic rather than failing outright, so a
+  // transient probe error does not block a migration. The caller still surfaces the
+  // register error honestly if this guess is wrong.
+  logger.warn(
+    { project, engines: ordered.map((e) => e.id) },
+    'resolveDestination: no engine exposed an assistant; falling back to the first candidate',
+  );
+  return { project, engine: ordered[0]?.id || 'agentspace-engine', assistant };
+}
+
+/**
+ * Does this engine actually expose the assistant agents are registered under?
+ * Cached per process: resolveDestination runs per agent in a migration.
+ */
+const assistantProbeCache = new Map<string, boolean>();
+async function assistantExists(
+  project: string,
+  saToken: string,
+  engine: string,
+  assistant: string,
+): Promise<boolean> {
+  const key = `${project}/${engine}/${assistant}`;
+  const cached = assistantProbeCache.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const res = await fetch(
+      `https://discoveryengine.googleapis.com/v1alpha/projects/${project}` +
+        `/locations/${LOCATION}/collections/default_collection` +
+        `/engines/${engine}/assistants/${assistant}`,
+      { headers: { Authorization: `Bearer ${saToken}` } },
+    );
+    const ok = res.ok;
+    assistantProbeCache.set(key, ok);
+    return ok;
+  } catch {
+    return false;
+  }
 }

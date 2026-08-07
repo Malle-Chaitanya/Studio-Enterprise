@@ -4,6 +4,7 @@ import { logger } from '../logger.js';
 import { extractAgent, inventory, listBots } from '../services/dataverse.js';
 import { normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
 import { assessAgent } from '../services/assess.js';
+import { getCachedIR } from '../db/repos/agentIR.js';
 import { getSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
 import { mapPoolCollect } from '../concurrency.js';
 import {
@@ -139,11 +140,29 @@ exploreRouter.get('/connectors-needed', async (req, res) => {
 
   try {
     const token = await clientCredsToken(session.tenantId ?? '', env);
-    const bots = await listBots(env, token);
+    const allBots = await listBots(env, token);
 
-    const perAgent = await mapPoolCollect(bots, 5, async (bot) => {
+    // Scan ONLY the agents the customer selected, when the caller says which.
+    // Scanning every agent in the environment was both slow (48 agents here, each a
+    // full Dataverse extract) and wrong: it listed connectors belonging to agents the
+    // customer had not chosen, which reads as "you must set all these up" when most
+    // are irrelevant to this migration.
+    const botIds = String(req.query.botIds ?? '')
+      .split(',')
+      .map((b) => b.trim())
+      .filter(Boolean);
+    const bots = botIds.length ? allBots.filter((b) => botIds.includes(b.botid)) : allBots;
+
+    const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+    // Concurrency 8 rather than 5: these are reads, and the previous setting made a
+    // full-environment scan take minutes of wall clock with the UI showing nothing.
+    const perAgent = await mapPoolCollect(bots, 8, async (bot) => {
       try {
-        const ir = await extractAgent(env, token, bot);
+        // Reuse the cached IR when we already extracted this agent. The cache existed
+        // but nothing read from it, so every visit to this page re-extracted every
+        // agent from Dataverse.
+        const cached = await getCachedIR(appUserId, env, bot.botid);
+        const ir = cached?.ir ?? (await extractAgent(env, token, bot));
         return { name: bot.name, actions: assessAgent(ir).knowledge?.actions ?? [] };
       } catch (err) {
         logger.debug({ err, bot: bot.name }, 'connectors-needed: agent extract failed');

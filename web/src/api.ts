@@ -229,8 +229,20 @@ export interface ConnectorNeeded {
 
 /** Scans every agent in one environment and returns a single deduplicated list
  *  of sites needing a connector — the batch view, no per-agent drill-down. */
-export async function fetchConnectorsNeeded(session: string, env: string): Promise<ConnectorNeeded[]> {
-  const res = await fetch(`/api/explore/connectors-needed?session=${session}&env=${encodeURIComponent(env)}`);
+/**
+ * SharePoint/OneDrive sites that need a connector.
+ *
+ * `botIds` scopes the scan to the agents the customer selected. Without it the server
+ * extracts EVERY agent in the environment — slow, and it surfaces connectors belonging
+ * to agents that are not part of this migration.
+ */
+export async function fetchConnectorsNeeded(
+  session: string,
+  env: string,
+  botIds: string[] = [],
+): Promise<ConnectorNeeded[]> {
+  const q = botIds.length ? `&botIds=${encodeURIComponent(botIds.join(','))}` : '';
+  const res = await fetch(`/api/explore/connectors-needed?session=${session}&env=${encodeURIComponent(env)}${q}`);
   if (!res.ok) throw new Error('connectors_needed_failed');
   return ((await res.json()) as { connectors: ConnectorNeeded[] }).connectors;
 }
@@ -436,9 +448,24 @@ export interface ConnectorDef {
 
 export interface DetectedConnector {
   connectorId: string;
-  def: ConnectorDef;
+  /** Absent when `unsupported` — the scan found the connector but we cannot call it.
+   *  This mirrors the server type; it used to be declared non-optional here, which
+   *  meant an unsupported connector crashed the page on `def.credentials` with nothing
+   *  in typecheck to catch it. */
+  def?: ConnectorDef;
   flowCount: number;
   flowNames: string[];
+  /** Detected in a flow but not in our registry — shown as "cannot migrate", not hidden. */
+  unsupported?: boolean;
+  /** Which of the selected agents actually use this connector. */
+  agentNames?: string[];
+  /**
+   * 'certain'   — Copilot Studio named the connector itself (source kind enum or a
+   *               shared_* api name), so this is a fact.
+   * 'heuristic' — inferred from editable text on a generic federated source. Must be
+   *               shown as "we think", never as a requirement.
+   */
+  confidence?: 'certain' | 'heuristic';
 }
 
 export async function fetchThirdPartyConnectors(session: string): Promise<DetectedConnector[]> {
@@ -504,6 +531,38 @@ export async function forgetConnectorCredentials(session: string, connectorId: s
     { method: 'DELETE' },
   );
   if (!res.ok) throw new Error('connector_forget_failed');
+}
+
+/** What a connector needs before it can work — fields, permissions, group state. */
+export interface ConnectorRequirement {
+  connectorId: string;
+  name?: string;
+  icon?: string;
+  authKind?: string;
+  fields?: Array<{ key: string; label: string; type: string; placeholder?: string; hint?: string; shared: boolean }>;
+  requiredPermissions?: string[];
+  adminConsentRequired?: boolean;
+  permissionsHint?: string;
+  group?: { id: string; name: string; setupUrl?: string; setupHint?: string; siblings: string[] };
+  configured?: boolean;
+  /** A sibling connector already supplied the shared credential — only permissions remain. */
+  credentialAlreadySupplied?: boolean;
+  unknown?: boolean;
+}
+
+/**
+ * Fields + permissions + group state for the given connectors, in one call.
+ * Permissions matter as much as credentials: a Microsoft client_credentials exchange
+ * returns a token even when nothing is consented, and then every call 403s at runtime.
+ */
+export async function fetchConnectorRequirements(
+  session: string,
+  connectorIds: string[],
+): Promise<ConnectorRequirement[]> {
+  if (connectorIds.length === 0) return [];
+  const res = await fetch(`/api/migrate/connector-requirements?session=${session}&ids=${encodeURIComponent(connectorIds.join(','))}`);
+  if (!res.ok) throw new Error('connector_requirements_failed');
+  return ((await res.json()) as { connectors: ConnectorRequirement[] }).connectors;
 }
 
 export async function saveMsConnectorCredentials(

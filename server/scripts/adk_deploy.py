@@ -33,6 +33,18 @@ import os
 import sys
 
 
+def _safe_agent_name(raw: str) -> str:
+    """ADK agent names must be valid python identifiers (used as function names when
+    the router exposes transfer_to_<name>), so topic titles like "Sign in " cannot be
+    passed through unchanged."""
+    import re as _re
+    name = _re.sub(r"[^A-Za-z0-9_]", "_", str(raw)).strip("_")
+    name = _re.sub(r"_+", "_", name) or "topic"
+    if name[0].isdigit():
+        name = f"t_{name}"
+    return name[:60]
+
+
 def emit(obj):
     # The Node caller parses the LAST stdout line as JSON.
     print(json.dumps(obj), flush=True)
@@ -91,60 +103,6 @@ def _build_live_connector_tool(conn: dict, project: str):
             payload = _json.loads(resp.read().decode("utf-8"))
         return base64.b64decode(payload["payload"]["data"]).decode("utf-8")
 
-    if kind == "confluence":
-
-        def confluence_live_search(query: str) -> dict:
-            """Search the company's LIVE Confluence instance and return matching page
-            titles with their current text. Use this for content that may be newer
-            than the indexed knowledge base, or in spaces the knowledge base does not
-            cover.
-
-            Args:
-                query: free-text search terms, e.g. "python coding standards".
-
-            Returns:
-                dict with `results` (list of {title, space, url, excerpt}) or `error`.
-            """
-            import base64
-            import json as _json
-            import re
-            import urllib.parse
-            import urllib.request
-
-            try:
-                base_url = _secret("base_url").rstrip("/")
-                email = _secret("email")
-                token = _secret("api_token")
-            except Exception as e:  # noqa: BLE001
-                return {"error": f"credential lookup failed: {e}"}
-
-            auth = base64.b64encode(f"{email}:{token}".encode()).decode()
-            cql = urllib.parse.quote(f'text ~ "{query}"')
-            url = f"{base_url}/wiki/rest/api/content/search?cql={cql}&limit=5&expand=body.storage,space"
-            req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}", "Accept": "application/json"})
-            try:
-                with urllib.request.urlopen(req, timeout=25) as resp:
-                    payload = _json.loads(resp.read().decode("utf-8"))
-            except Exception as e:  # noqa: BLE001
-                return {"error": f"confluence request failed: {e}"}
-
-            results = []
-            for item in payload.get("results", []):
-                html = ((item.get("body") or {}).get("storage") or {}).get("value") or ""
-                text = re.sub(r"<[^>]+>", " ", html)
-                text = re.sub(r"\s+", " ", text).strip()
-                results.append({
-                    "title": item.get("title"),
-                    "space": ((item.get("space") or {}).get("name")),
-                    "url": f"{base_url}/wiki{((item.get('_links') or {}).get('webui') or '')}",
-                    "excerpt": text[:1500],
-                })
-            return {"results": results, "count": len(results)}
-
-        return confluence_live_search
-
-    # Generic REST connector: base URL + auth header from the registry, resolved
-    # from Secret Manager the same way.
     base_url_tpl = conn.get("baseUrlTemplate") or ""
     auth_header_tpl = conn.get("authHeaderTemplate") or ""
     conn_name = conn.get("name") or kind or "connector"
@@ -259,6 +217,213 @@ def _build_live_connector_tool(conn: dict, project: str):
         # 'bearer' / 'basic-raw': the stored value IS the credential.
         return fill(auth_header_tpl)
 
+    def _fill(tpl: str) -> str:
+        """Resolve {placeholders} in a template from the stored credentials."""
+        import re as _re
+        out = tpl
+        for field in set(_re.findall(r"\{(\w+)\}", tpl)):
+            out = out.replace(f"{{{field}}}", _secret(field))
+        return out
+
+    if kind in ("sharepointonline", "sharepoint", "onedrive"):
+        # Purpose-built SharePoint tools, SCOPED to the folder the source agent named.
+        #
+        # Two reasons not to use the generic REST tool here:
+        #   1. Scope. An app credential with Sites.Read.All can reach every site in the
+        #      tenant (99 in the test tenant). The source Copilot agent pointed at ONE
+        #      folder, so the migrated agent must be confined to that folder — a tool
+        #      that cannot express a wider path is a stronger guarantee than an
+        #      instruction asking it not to wander.
+        #   2. Reading files. Graph returns raw bytes; the model needs text. Extraction
+        #      (pdf/docx/xlsx) has to happen in the container.
+        scope_uri = conn.get("scopeUri") or ""
+
+        def _graph(path: str, token: str, raw: bool = False):
+            import json as _json
+            import urllib.request
+            req = urllib.request.Request(
+                f"https://graph.microsoft.com/v1.0{path}",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+            return data if raw else _json.loads(data.decode("utf-8"))
+
+        def _resolve_scope(token: str):
+            """Turn the SharePoint URL into (siteId, folderPath). Cached per container."""
+            import urllib.parse
+            if not scope_uri:
+                return None, ""
+            p = urllib.parse.urlparse(scope_uri)
+            host = p.netloc
+            parts = [urllib.parse.unquote(x) for x in p.path.split("/") if x]
+            # .../sites/<name>/<library>/<folders...>  or  /<library>/<folders...>
+            if parts and parts[0].lower() == "sites" and len(parts) >= 2:
+                site_path = f"/sites/{parts[1]}"
+                rest = parts[2:]
+            else:
+                site_path = ""
+                rest = parts
+            site = _graph(f"/sites/{host}:{site_path}" if site_path else f"/sites/{host}", token)
+            # Drop the document-library segment ("Shared Documents"); what remains is the
+            # folder path inside the default drive.
+            if rest and rest[0].lower() in ("shared documents", "documents", "shared%20documents"):
+                rest = rest[1:]
+            return site.get("id"), "/".join(rest)
+
+        def sharepoint_list_files(subfolder: str = "") -> dict:
+            """List files and folders in the company's SharePoint folder this agent is
+            connected to. Only this folder and things inside it are accessible.
+
+            Args:
+                subfolder: optional path INSIDE the connected folder, e.g. "Reports/2026".
+
+            Returns:
+                dict with `items` (name, isFolder, size, lastModified, id) or `error`.
+            """
+            try:
+                token = _mint_token(_fill)
+                site_id, folder = _resolve_scope(token)
+                if not site_id:
+                    return {"error": "no SharePoint scope configured for this agent"}
+                path = "/".join([p for p in [folder, subfolder.strip("/")] if p])
+                url = (
+                    f"/sites/{site_id}/drive/root:/{path}:/children"
+                    if path else f"/sites/{site_id}/drive/root/children"
+                )
+                data = _graph(url, token)
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"SharePoint list failed: {e}"}
+            items = [{
+                "name": i.get("name"),
+                "isFolder": "folder" in i,
+                "size": i.get("size"),
+                "lastModified": i.get("lastModifiedDateTime"),
+                "id": i.get("id"),
+            } for i in data.get("value", [])]
+            return {"folder": scope_uri, "subfolder": subfolder, "items": items, "count": len(items)}
+
+        def sharepoint_read_file(file_path: str) -> dict:
+            """Read the TEXT CONTENT of a file in the connected SharePoint folder, so you
+            can answer questions about what a document says.
+
+            Supports .txt .md .csv .json .log .xml, PDF, Word (.docx) and Excel (.xlsx).
+            Images and other binary formats cannot be read.
+
+            Args:
+                file_path: file name, or path inside the connected folder,
+                    e.g. "daily_queries.txt" or "Reports/Q1.pdf".
+
+            Returns:
+                dict with `text` (extracted, possibly truncated) or `error`.
+            """
+            import io
+            MAX_BYTES = 20 * 1024 * 1024
+            MAX_CHARS = 60000
+            try:
+                token = _mint_token(_fill)
+                site_id, folder = _resolve_scope(token)
+                if not site_id:
+                    return {"error": "no SharePoint scope configured for this agent"}
+                full = "/".join([p for p in [folder, file_path.strip("/")] if p])
+                meta = _graph(f"/sites/{site_id}/drive/root:/{full}", token)
+                size = meta.get("size") or 0
+                if size > MAX_BYTES:
+                    return {"error": f"file is {size} bytes, too large to read inline"}
+                blob = _graph(f"/sites/{site_id}/drive/root:/{full}:/content", token, raw=True)
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"SharePoint read failed: {e}"}
+
+            name = (meta.get("name") or file_path).lower()
+            try:
+                if name.endswith((".txt", ".md", ".csv", ".json", ".log", ".xml", ".yaml", ".yml")):
+                    text = blob.decode("utf-8", errors="replace")
+                elif name.endswith(".pdf"):
+                    from pypdf import PdfReader
+                    reader = PdfReader(io.BytesIO(blob))
+                    text = "\n".join((pg.extract_text() or "") for pg in reader.pages)
+                elif name.endswith(".docx"):
+                    import docx
+                    text = "\n".join(p.text for p in docx.Document(io.BytesIO(blob)).paragraphs)
+                elif name.endswith(".xlsx"):
+                    import openpyxl
+                    wb = openpyxl.load_workbook(io.BytesIO(blob), read_only=True, data_only=True)
+                    rows = []
+                    for ws in wb.worksheets:
+                        rows.append(f"# sheet: {ws.title}")
+                        for row in ws.iter_rows(values_only=True):
+                            rows.append(", ".join("" if c is None else str(c) for c in row))
+                    text = "\n".join(rows)
+                else:
+                    return {"error": f"cannot extract text from '{meta.get('name')}' "
+                                     f"— unsupported format. Only text, PDF, Word and Excel are readable."}
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"text extraction failed for {meta.get('name')}: {e}"}
+
+            truncated = len(text) > MAX_CHARS
+            return {
+                "file": meta.get("name"),
+                "webUrl": meta.get("webUrl"),
+                "truncated": truncated,
+                "text": text[:MAX_CHARS],
+            }
+
+        return [sharepoint_list_files, sharepoint_read_file]
+
+    if kind == "confluence":
+
+        def confluence_live_search(query: str) -> dict:
+            """Search the company's LIVE Confluence instance and return matching page
+            titles with their current text. Use this for content that may be newer
+            than the indexed knowledge base, or in spaces the knowledge base does not
+            cover.
+
+            Args:
+                query: free-text search terms, e.g. "python coding standards".
+
+            Returns:
+                dict with `results` (list of {title, space, url, excerpt}) or `error`.
+            """
+            import base64
+            import json as _json
+            import re
+            import urllib.parse
+            import urllib.request
+
+            try:
+                base_url = _secret("base_url").rstrip("/")
+                email = _secret("email")
+                token = _secret("api_token")
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"credential lookup failed: {e}"}
+
+            auth = base64.b64encode(f"{email}:{token}".encode()).decode()
+            cql = urllib.parse.quote(f'text ~ "{query}"')
+            url = f"{base_url}/wiki/rest/api/content/search?cql={cql}&limit=5&expand=body.storage,space"
+            req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}", "Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    payload = _json.loads(resp.read().decode("utf-8"))
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"confluence request failed: {e}"}
+
+            results = []
+            for item in payload.get("results", []):
+                html = ((item.get("body") or {}).get("storage") or {}).get("value") or ""
+                text = re.sub(r"<[^>]+>", " ", html)
+                text = re.sub(r"\s+", " ", text).strip()
+                results.append({
+                    "title": item.get("title"),
+                    "space": ((item.get("space") or {}).get("name")),
+                    "url": f"{base_url}/wiki{((item.get('_links') or {}).get('webui') or '')}",
+                    "excerpt": text[:1500],
+                })
+            return {"results": results, "count": len(results)}
+
+        return confluence_live_search
+
+    # Generic REST connector: base URL + auth header from the registry, resolved
+    # from Secret Manager the same way.
     def call_external_api(path: str, method: str = "GET", body: str = "") -> dict:
         """Call the configured external system's REST API on the user's behalf.
 
@@ -273,12 +438,6 @@ def _build_live_connector_tool(conn: dict, project: str):
         import json as _json
         import re
         import urllib.request
-
-        def _fill(tpl: str) -> str:
-            out = tpl
-            for field in set(re.findall(r"\{(\w+)\}", tpl)):
-                out = out.replace(f"{{{field}}}", _secret(field))
-            return out
 
         try:
             base = _fill(base_url_tpl).rstrip("/")
@@ -589,9 +748,42 @@ def main():
         # anything placed in the instruction is retrievable by any end user who asks
         # the agent to repeat its prompt.
         for conn in live_connectors:
-            tools.append(_build_live_connector_tool(conn, args.project))
+            built = _build_live_connector_tool(conn, args.project)
+            # SharePoint contributes two tools (list + read); others contribute one.
+            if isinstance(built, (list, tuple)):
+                tools.extend(built)
+            else:
+                tools.append(built)
     except Exception as e:  # noqa: BLE001
         emit({"error": f"tool wiring failed: {e}"}); return
+
+    # ── Sub-agents (migrated Copilot topics) ─────────────────────────────────
+    # Copilot topics are self-contained conversation domains, which is exactly what an
+    # ADK sub-agent is: its own name, description and instruction, routed to by the
+    # root agent when the user's request matches.
+    #
+    # They live INSIDE this one deployment. Deploying each topic as its own Reasoning
+    # Engine would multiply cost and burn the per-day agent-creation quota (~7) on a
+    # single migrated agent; as sub_agents they cost one engine and one registration
+    # no matter how many topics the source agent had.
+    #
+    # `description` is what the root model routes on, so it must say WHEN to use the
+    # sub-agent — a description that only restates the name gives the router nothing.
+    sub_agent_specs = spec.get("subAgents") or []
+    sub_agents = []
+    for sa in sub_agent_specs:
+        try:
+            sub_agents.append(Agent(
+                name=_safe_agent_name(sa.get("id") or sa.get("name") or "topic"),
+                model=sa.get("model") or spec.get("model", "gemini-2.5-flash"),
+                description=sa.get("description") or f"Handles {sa.get('displayName') or sa.get('id')} requests.",
+                instruction=sa.get("instruction") or "",
+                # Sub-agents inherit nothing implicitly: give them the same tools as the
+                # root so a topic that needs SharePoint or a connector can still act.
+                tools=tools if sa.get("inheritTools", True) else [],
+            ))
+        except Exception as e:  # noqa: BLE001
+            emit({"error": f"sub-agent build failed for {sa.get('id')}: {e}"}); return
 
     try:
         root_agent = Agent(
@@ -600,6 +792,7 @@ def main():
             description=spec.get("description", ""),
             instruction=spec.get("instruction", "") or "You are a helpful assistant.",
             tools=tools,
+            **({"sub_agents": sub_agents} if sub_agents else {}),
         )
     except Exception as e:  # noqa: BLE001
         emit({"error": f"agent build failed: {e}"}); return
@@ -617,6 +810,13 @@ def main():
     requirements = ["google-cloud-aiplatform[agent_engines,adk]", "google-adk"]
     if grounding_data_stores:
         requirements.append("google-cloud-discoveryengine")
+    # Document text extraction for SharePoint/OneDrive read tools. Added only when such
+    # a connector is present, to keep the container minimal — and NONE of these are in
+    # the `google.*` namespace, which is the namespace that previously got shadowed and
+    # broke VertexAiSearchTool's imports at inference time.
+    if any((c.get("kind") or "").lower() in ("sharepointonline", "sharepoint", "onedrive")
+           for c in live_connectors):
+        requirements += ["pypdf", "python-docx", "openpyxl"]
 
     try:
         # Deploy a plain AdkApp, NOT ReasoningEngineAgentWrapper.

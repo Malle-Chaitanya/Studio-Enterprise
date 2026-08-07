@@ -109,6 +109,34 @@ export interface AdkSpec {
     scope?: string;
     basicUserField?: string;
     basicSecretField?: string;
+    /**
+     * For SharePoint/OneDrive: the exact folder or site URL the SOURCE agent named as
+     * its knowledge source. The deployed tools are confined to this path.
+     *
+     * Scope matters more than it looks: an app credential with Sites.Read.All can read
+     * every site in the tenant (99 in the test tenant), while the Copilot agent it came
+     * from pointed at ONE folder. Confining the tool is a real guarantee; asking the
+     * model nicely in an instruction is not.
+     */
+    scopeUri?: string;
+  }>;
+  /**
+   * Migrated Copilot topics, deployed as ADK sub-agents INSIDE this one Reasoning
+   * Engine — not as separate deployments. A Copilot agent with six topic domains would
+   * otherwise cost six engines and exhaust the ~7/day agent-creation quota on a single
+   * migration.
+   *
+   * `description` is what the root agent routes on, so it must describe WHEN to use the
+   * sub-agent, not merely restate its name.
+   */
+  subAgents?: Array<{
+    id: string;
+    displayName?: string;
+    description?: string;
+    instruction: string;
+    model?: string;
+    /** Sub-agents share the root's tools unless this is false. */
+    inheritTools?: boolean;
   }>;
 }
 
@@ -353,6 +381,27 @@ export function deployReasoningEngine(
   });
 }
 
+/**
+ * Delete a deployed Reasoning Engine. Used to clean up after a failed registration —
+ * an engine nothing points at still runs and still bills.
+ * `force=true` also removes the sessions it accumulated.
+ */
+async function deleteReasoningEngine(location: string, resourceName: string): Promise<boolean> {
+  try {
+    const { GoogleAuth } = await import('google-auth-library');
+    const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+    const token = await auth.getAccessToken();
+    const res = await fetch(
+      `https://${location}-aiplatform.googleapis.com/v1beta1/${resourceName}?force=true`,
+      { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+    );
+    return res.ok || res.status === 404;
+  } catch (err) {
+    logger.warn({ resourceName, err: (err as Error).message }, 'adk: reasoning engine cleanup failed');
+    return false;
+  }
+}
+
 export interface RegisterResult {
   registered: boolean;
   agentId?: string;
@@ -415,6 +464,8 @@ export async function publishAgentToGallery(
      *  connectorToolBuilder.buildLiveConnectorSpecs from the customer's saved
      *  connectors — secret ids only, resolved in-container per call. */
     liveConnectors?: AdkSpec['liveConnectors'];
+    /** Migrated topics as in-deployment sub-agents (see AdkSpec.subAgents). */
+    subAgents?: AdkSpec['subAgents'];
   },
 ): Promise<{
   ok: boolean;
@@ -459,6 +510,7 @@ export async function publishAgentToGallery(
 
   const spec = buildAdkSpec(ir, { model: opts?.model, instruction: opts?.instruction, groundingDataStores });
   if (opts?.liveConnectors?.length) spec.liveConnectors = opts.liveConnectors;
+  if (opts?.subAgents?.length) spec.subAgents = opts.subAgents;
   logger.info({ agent: ir.name, location }, 'adk: deploying reasoning engine');
   const dep = await deployReasoningEngine(dest.project, location, spec, { stagingBucket: opts?.stagingBucket });
   if (!dep.ok || !dep.reasoningEngine) return { ok: false, error: `deploy: ${dep.error}` };
@@ -468,6 +520,27 @@ export async function publishAgentToGallery(
     displayName: spec.displayName,
     description: spec.description,
   });
-  if (!reg.registered) return { ok: false, reasoningEngine: dep.reasoningEngine, error: `register: ${reg.error}`, groundingIamGranted, groundingIamError, googleSearchDropped };
+  if (!reg.registered) {
+    // Deploy succeeded, registration did not — delete the Reasoning Engine.
+    //
+    // Otherwise every failed migration leaves an always-on, billable engine attached to
+    // nothing. Seen live 2026-08-07: resolveDestination picked an engine with no
+    // assistant, registration 404'd, and the deployed engine had to be deleted by hand.
+    // Best-effort: if the delete fails we still report the register error, and say the
+    // engine was left behind so someone can remove it.
+    const cleanup = await deleteReasoningEngine(location, dep.reasoningEngine);
+    logger.warn(
+      { agent: ir.name, reasoningEngine: dep.reasoningEngine, cleaned: cleanup },
+      'adk: registration failed — deployed reasoning engine ' + (cleanup ? 'deleted' : 'COULD NOT be deleted (still billable)'),
+    );
+    return {
+      ok: false,
+      reasoningEngine: dep.reasoningEngine,
+      error: `register: ${reg.error}${cleanup ? '' : ' (WARNING: the deployed Reasoning Engine could not be deleted and is still billable)'}`,
+      groundingIamGranted,
+      groundingIamError,
+      googleSearchDropped,
+    };
+  }
   return { ok: true, agentId: reg.agentId, reasoningEngine: dep.reasoningEngine, state: reg.state, groundingIamGranted, groundingIamError, googleSearchDropped };
 }

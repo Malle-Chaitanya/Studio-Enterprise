@@ -62,6 +62,44 @@ export interface ConnectorDef {
   /** For 'basic-userpass': which credential field is the user and which the secret. */
   basicUserField?: string;
   basicSecretField?: string;
+  /**
+   * Connectors that share ONE set of credentials. All five Microsoft Graph
+   * connectors are served by a single Azure App Registration, and Confluence and
+   * Jira by a single Atlassian API token — so the customer is asked once and the
+   * values are stored once, under the group name instead of per connector.
+   *
+   * WHY: without this the UI asks for the same Azure app five times and writes
+   * five copies of the same client secret to Secret Manager. Worse, when a second
+   * Microsoft connector shows up on a later migration the customer is asked to
+   * re-enter credentials they already gave — when all that is actually needed is
+   * adding a permission to the app they already made.
+   *
+   * A connector may still declare its own `credentials` on top of the group's
+   * (e.g. Dynamics needs `org_url`); those stay scoped to that connector.
+   */
+  credentialGroup?: string;
+  /**
+   * API permissions/scopes the customer must grant this connector's app, shown as
+   * a checklist before Save. Granting the credential is not the same as granting
+   * access: a Microsoft client_credentials exchange happily returns a token with
+   * no permissions consented, and then every call 403s — a failure that otherwise
+   * only surfaces inside a live agent conversation.
+   */
+  requiredPermissions?: string[];
+  /** True when a tenant/org admin must approve the permissions (e.g. Graph admin consent). */
+  adminConsentRequired?: boolean;
+  /** Human note on what to do if the permission grant is the blocker. */
+  permissionsHint?: string;
+}
+
+/** Credential fields shared by every connector in a group, asked for exactly once. */
+export interface CredentialGroupDef {
+  id: string;
+  name: string;
+  credentials: CredentialField[];
+  /** Where the customer creates the app/token. */
+  setupUrl?: string;
+  setupHint?: string;
 }
 
 /**
@@ -70,6 +108,46 @@ export interface ConnectorDef {
  * customer creates it once and we reuse it — asking three times for the same app
  * would be the UI's mistake, not a real requirement.
  */
+/**
+ * Credential groups: one credential set serving several connectors.
+ *
+ * Microsoft — a single Azure App Registration serves Teams, SharePoint, OneDrive,
+ * Outlook and Planner. When a later migration turns up another Microsoft connector
+ * we must NOT ask for the app again; we ask only for the extra Graph permission on
+ * the app that already exists.
+ *
+ * Atlassian — one API token serves both Confluence and Jira, since it authenticates
+ * the Atlassian account rather than a product.
+ */
+export const CREDENTIAL_GROUPS: Record<string, CredentialGroupDef> = {
+  ms_graph: {
+    id: 'ms_graph',
+    name: 'Microsoft 365 (one App Registration)',
+    setupUrl: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade',
+    setupHint:
+      'Create ONE app registration for all Microsoft connectors. Add the permissions listed ' +
+      'per connector below as APPLICATION permissions, then click Grant admin consent.',
+    credentials: [], // filled from MS_GRAPH_FIELDS below
+  },
+  atlassian: {
+    id: 'atlassian',
+    name: 'Atlassian (one API token)',
+    setupUrl: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+    setupHint:
+      'One API token covers Confluence and Jira. The token inherits the permissions of the ' +
+      'account that creates it — use a purpose-made account limited to the spaces and projects ' +
+      'the agent should see, not a full admin.',
+    credentials: [
+      { key: 'base_url', label: 'Atlassian Cloud URL', type: 'url',
+        placeholder: 'https://yourcompany.atlassian.net',
+        hint: 'Your Atlassian Cloud base URL (before /wiki or /jira)' },
+      { key: 'email', label: 'Account Email', type: 'text', hint: 'The account the API token belongs to' },
+      { key: 'api_token', label: 'API Token', type: 'password',
+        hint: 'id.atlassian.com -> Security -> Create and manage API tokens' },
+    ],
+  },
+};
+
 const MS_GRAPH_FIELDS: CredentialField[] = [
   { key: 'tenant_id', label: 'Tenant ID', type: 'text',
     hint: 'Azure Portal -> Microsoft Entra ID -> Overview -> Tenant ID' },
@@ -78,6 +156,10 @@ const MS_GRAPH_FIELDS: CredentialField[] = [
   { key: 'client_secret', label: 'Client Secret', type: 'password',
     hint: 'Azure Portal -> App registrations -> Certificates & secrets -> New client secret. Grant the app the Graph application permissions the agent needs, then Grant admin consent.' },
 ];
+
+// The Microsoft group's fields are MS_GRAPH_FIELDS, assigned here so the constant
+// stays declared once and reused by every Microsoft connector below.
+CREDENTIAL_GROUPS.ms_graph.credentials = MS_GRAPH_FIELDS;
 
 export const CONNECTOR_REGISTRY: ConnectorDef[] = [
 
@@ -122,11 +204,9 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'crm',
     icon: '💎',
     docsUrl: 'https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/overview',
+    credentialGroup: 'ms_graph',
     credentials: [
       { key: 'org_url', label: 'Org URL', type: 'url', placeholder: 'https://yourorg.crm.dynamics.com', hint: 'Power Platform → Environments → your env → Settings → Session details → Web API URL' },
-      { key: 'tenant_id', label: 'Tenant ID', type: 'text', hint: 'Azure Portal -> Microsoft Entra ID -> Overview -> Tenant ID' },
-      { key: 'client_id', label: 'App (Client) ID', type: 'text', hint: 'Azure Portal -> App registrations -> your app -> Application (client) ID' },
-      { key: 'client_secret', label: 'Client Secret', type: 'password', hint: 'Azure Portal -> App registrations -> Certificates & secrets -> New client secret. Grant the app a Dataverse application user role.' },
     ],
     baseUrlTemplate: '{org_url}/api/data/v9.2',
     // Was a pasted access token. The app registration is durable; the runtime does the
@@ -232,18 +312,17 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'project',
     icon: '🔵',
     docsUrl: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/',
-    credentials: [
-      { key: 'domain', label: 'Atlassian Domain', type: 'text', placeholder: 'yourorg.atlassian.net', hint: 'Your Atlassian Cloud domain' },
-      { key: 'email', label: 'Account Email', type: 'text', hint: 'The email of the API user' },
-      { key: 'api_key', label: 'API Token', type: 'password', hint: 'Atlassian Account → Security → Create and manage API tokens' },
-    ],
-    baseUrlTemplate: 'https://{domain}/rest/api/3',
+    credentialGroup: 'atlassian',
+    requiredPermissions: ['read:jira-work'],
+    permissionsHint: 'The token inherits the account permissions — it can read every project that account can see.',
+    credentials: [], // supplied by the atlassian credential group
+    baseUrlTemplate: '{base_url}/rest/api/3',
     // Atlassian Basic auth is base64(email:apiToken). The old 'Basic {api_key}' sent the
     // raw token and always 401'd, and the collected email was never used at all.
     authHeaderTemplate: 'Basic {basic_b64}',
     authKind: 'basic-userpass',
     basicUserField: 'email',
-    basicSecretField: 'api_key',
+    basicSecretField: 'api_token',
   },
 
   {
@@ -365,6 +444,8 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'storage',
     icon: '📁',
     docsUrl: 'https://developers.google.com/drive/api/reference/rest/v3',
+    requiredPermissions: ['https://www.googleapis.com/auth/drive.readonly'],
+    permissionsHint: 'Either share each Drive folder with the service account client_email, or enable domain-wide delegation in the Workspace admin console and authorize this scope for the client id.',
     credentials: [
       { key: 'service_account_json', label: 'Service Account JSON key', type: 'password',
         placeholder: '{"type":"service_account","project_id":...}',
@@ -461,27 +542,10 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'productivity',
     icon: '📝',
     docsUrl: 'https://developer.atlassian.com/cloud/confluence/rest/v1/intro/',
-    credentials: [
-      {
-        key: 'base_url',
-        label: 'Atlassian Cloud URL',
-        type: 'url' as const,
-        placeholder: 'https://yourcompany.atlassian.net',
-        hint: 'Your Atlassian Cloud domain (the base URL before /wiki)',
-      },
-      {
-        key: 'email',
-        label: 'Account Email',
-        type: 'text' as const,
-        hint: 'Email of the Atlassian account used for API access',
-      },
-      {
-        key: 'api_token',
-        label: 'API Token',
-        type: 'password' as const,
-        hint: 'id.atlassian.com → Security → API tokens → Create API token',
-      },
-    ],
+    credentialGroup: 'atlassian',
+    requiredPermissions: ['read:confluence-content.all'],
+    permissionsHint: 'The token inherits the account permissions — it can read every space that account can see.',
+    credentials: [], // supplied by the atlassian credential group
     // Space selection comes from the agent's Copilot Studio config (extracted
     // automatically) — the user doesn't enter space keys here.
     baseUrlTemplate: '{base_url}/wiki/rest/api',
@@ -566,7 +630,11 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'messaging',
     icon: '🟣',
     docsUrl: 'https://learn.microsoft.com/en-us/graph/api/resources/teams-api-overview',
-    credentials: MS_GRAPH_FIELDS,
+    credentials: [], // supplied by the ms_graph credential group
+    credentialGroup: 'ms_graph',
+    requiredPermissions: ['Chat.ReadWrite.All', 'ChannelMessage.Send', 'Team.ReadBasic.All', 'User.Read.All'],
+    adminConsentRequired: true,
+    permissionsHint: 'Teams messages need Chat.ReadWrite.All; posting to a channel needs ChannelMessage.Send.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
@@ -580,7 +648,11 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'storage',
     icon: '📂',
     docsUrl: 'https://learn.microsoft.com/en-us/graph/api/resources/sharepoint',
-    credentials: MS_GRAPH_FIELDS,
+    credentials: [], // supplied by the ms_graph credential group
+    credentialGroup: 'ms_graph',
+    requiredPermissions: ['Sites.Read.All', 'Files.Read.All'],
+    adminConsentRequired: true,
+    permissionsHint: 'Use Sites.ReadWrite.All / Files.ReadWrite.All only if the agent must write. Sites.Read.All grants read of EVERY site in the tenant — there is no per-site application permission.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
@@ -594,7 +666,11 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'storage',
     icon: '☁️',
     docsUrl: 'https://learn.microsoft.com/en-us/graph/api/resources/onedrive',
-    credentials: MS_GRAPH_FIELDS,
+    credentials: [], // supplied by the ms_graph credential group
+    credentialGroup: 'ms_graph',
+    requiredPermissions: ['Files.Read.All', 'User.Read.All'],
+    adminConsentRequired: true,
+    permissionsHint: 'Files.Read.All covers every user OneDrive in the tenant.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
@@ -608,7 +684,11 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'productivity',
     icon: '📧',
     docsUrl: 'https://learn.microsoft.com/en-us/graph/api/resources/mail-api-overview',
-    credentials: MS_GRAPH_FIELDS,
+    credentials: [], // supplied by the ms_graph credential group
+    credentialGroup: 'ms_graph',
+    requiredPermissions: ['Mail.Read', 'Mail.Send', 'Calendars.Read'],
+    adminConsentRequired: true,
+    permissionsHint: 'Mail.Send lets the agent send as any mailbox — scope it with an application access policy in Exchange Online.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
@@ -622,7 +702,11 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'project',
     icon: '📋',
     docsUrl: 'https://learn.microsoft.com/en-us/graph/api/resources/planner-overview',
-    credentials: MS_GRAPH_FIELDS,
+    credentials: [], // supplied by the ms_graph credential group
+    credentialGroup: 'ms_graph',
+    requiredPermissions: ['Tasks.ReadWrite.All', 'Group.Read.All'],
+    adminConsentRequired: true,
+    permissionsHint: 'Planner tasks live in groups, so Group.Read.All is needed to resolve plans.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',

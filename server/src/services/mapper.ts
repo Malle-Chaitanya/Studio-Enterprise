@@ -57,13 +57,20 @@ function synthesizeInstruction(ir: AgentIR): { instruction: string; notes: Fidel
     notes.push({
       component: 'topics',
       status: 'needs-review',
-      detail: `${aiTopics.length} topic AI Builder prompt(s) captured but NOT added to the instruction — to be migrated as topics next.`,
+      detail:
+        `${aiTopics.length} topic AI Builder prompt(s) kept out of the instruction (deliberately — mixing them ` +
+        'with author-written instructions shifts the agent tone). Each topic is deployed as an ADK ' +
+        'sub-agent carrying its own prompt, inside the same Reasoning Engine. Review that the routing ' +
+        'descriptions send the right requests to each one.',
     });
   } else if (custom.length) {
     notes.push({
       component: 'topics',
       status: 'needs-review',
-      detail: `${custom.length} custom topic(s) captured but NOT added to the instruction — to be migrated as topics next.`,
+      detail:
+        `${custom.length} custom topic(s) deployed as ADK sub-agents inside the same Reasoning Engine ` +
+        '(one engine, not one per topic), rather than folded into the instruction text. The root agent ' +
+        'routes to them by description — verify the routing matches how the source agent behaved.',
     });
   }
 

@@ -6,7 +6,11 @@ import {
   saveConnectorCredentials,
   saveMsConnectorCredentials,
   fetchSavedConnectors,
+  fetchConnectorRequirements,
+  fetchConnectorsNeeded,
   type DetectedConnector,
+  type ConnectorDef,
+  type ConnectorRequirement,
 } from '../api.ts';
 
 // ── Shared input styles ───────────────────────────────────────────────────────
@@ -41,7 +45,12 @@ const MS_CONNECTOR_LABELS: Record<string, { icon: string; name: string }> = {
   shared_excelonline:     { icon: '📊', name: 'Excel Online' },
 };
 
-function MsNativeSection({ session, detectedMsIds }: { session: string; detectedMsIds: string[] }) {
+function MsNativeSection({ session, detectedMsIds, reqs }: {
+  session: string;
+  detectedMsIds: string[];
+  /** Per-connector requirements, so the card can list the exact Graph permissions. */
+  reqs?: Map<string, ConnectorRequirement>;
+}) {
   const [values, setValues] = useState<Record<string, string>>({ tenant_id: '', client_id: '', client_secret: '' });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -93,6 +102,19 @@ function MsNativeSection({ session, detectedMsIds }: { session: string; detected
 
       {!saved && (
         <>
+          {/* One app, but each connector needs its own permissions added to it. */}
+          {detectedMsIds.map((id) => {
+            const r = reqs?.get(id);
+            if (!r?.requiredPermissions?.length) return null;
+            return (
+              <div key={id} style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                  {MS_CONNECTOR_LABELS[id]?.name ?? id} needs:
+                </div>
+                <PermissionsPanel req={r} />
+              </div>
+            );
+          })}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {MS_NATIVE_FIELDS.map((field) => (
               <div key={field.key}>
@@ -151,14 +173,56 @@ const CATEGORY_COLOR: Record<string, string> = {
   devops: '#344563', productivity: '#403294', other: '#6b7280',
 };
 
+/**
+ * The permissions this connector needs on the app whose credentials are being entered.
+ *
+ * Granting a credential is not granting access: a Microsoft client_credentials exchange
+ * returns a token even when nothing has been consented, so without this panel a customer
+ * saves credentials, sees a green tick, and discovers the gap only when a migrated agent
+ * gets a 403 mid-conversation.
+ */
+function PermissionsPanel({ req }: { req?: ConnectorRequirement }) {
+  if (!req?.requiredPermissions?.length) return null;
+  return (
+    <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 12px', marginBottom: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+        Permissions to grant{req.adminConsentRequired ? ' (admin consent required)' : ''}
+      </div>
+      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
+        {req.requiredPermissions.map((p) => (
+          <li key={p}><code style={{ fontSize: 11 }}>{p}</code></li>
+        ))}
+      </ul>
+      {req.adminConsentRequired && (
+        <div style={{ fontSize: 11, color: '#b45309', marginTop: 6 }}>
+          Add these as <strong>Application</strong> permissions (not Delegated — there is no
+          signed-in user when an agent calls the API), then click <strong>Grant admin consent</strong>.
+        </div>
+      )}
+      {req.permissionsHint && (
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>{req.permissionsHint}</div>
+      )}
+      {req.credentialAlreadySupplied && !req.configured && (
+        <div style={{ fontSize: 11, color: 'var(--ok)', marginTop: 6 }}>
+          ✓ Credentials already provided for {req.group?.name ?? 'this group'} — only the permissions above are needed.
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ConnectorCardProps {
-  c: DetectedConnector;
+  /** Narrowed at the call site: an unsupported connector has no def and gets its own
+   *  card, so nothing inside here has to guard against a missing registry entry. */
+  c: DetectedConnector & { def: ConnectorDef };
   session: string;
   /** Already configured in a previous session — credentials are in Secret Manager. */
   alreadySaved?: boolean;
+  /** Fields, permissions and credential-group state from the server. */
+  req?: ConnectorRequirement;
 }
 
-function ConnectorCard({ c, session, alreadySaved }: ConnectorCardProps) {
+function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
   const { def, flowCount, flowNames } = c;
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(def.credentials.map((f) => [f.key, ''])));
@@ -217,12 +281,33 @@ function ConnectorCard({ c, session, alreadySaved }: ConnectorCardProps) {
             )}
           </div>
         </div>
+        {c.confidence === 'heuristic' && !saved && (
+          <span
+            title="Copilot Studio stores this as a generic federated source, so we inferred the product from its text. Skip it if this agent does not actually use it."
+            style={{ fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', borderRadius: 4, padding: '2px 6px', whiteSpace: 'nowrap' }}
+          >
+            LIKELY
+          </span>
+        )}
         {saved && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>}
         {skipped && <span style={{ color: '#f59e0b', fontSize: 13, fontWeight: 600 }}>⚠ Skipped</span>}
       </div>
 
+      {(c.agentNames?.length ?? 0) > 0 && (
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
+          Needed by: <strong>{c.agentNames!.join(', ')}</strong>
+        </div>
+      )}
+      {c.confidence === 'heuristic' && !saved && (
+        <div style={{ fontSize: 11, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px', marginBottom: 10 }}>
+          Copilot Studio records this as a generic federated knowledge source — it does not
+          name the product. We inferred <strong>{c.def.name}</strong> from the source text.
+          If that is wrong, skip it and it will be flagged for review instead.
+        </div>
+      )}
       {!saved && !skipped && (
         <>
+          <PermissionsPanel req={req} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {def.credentials.map((field) => (
               <div key={field.key}>
@@ -276,6 +361,34 @@ function ConnectorCard({ c, session, alreadySaved }: ConnectorCardProps) {
   );
 }
 
+/**
+ * A connector found in a Power Automate flow that we have no way to call.
+ *
+ * These used to be dropped by the scan, which meant the customer got a clean-looking
+ * report that silently omitted a dependency their agent actually relies on. Showing it
+ * is the honest behaviour even though there is nothing to configure.
+ */
+function UnsupportedConnectorCard({ c }: { c: DetectedConnector }) {
+  return (
+    <div className="card" style={{ padding: '14px 18px', marginBottom: 12, borderStyle: 'dashed' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 20 }}>⚠️</span>
+        <div style={{ flex: 1 }}>
+          <strong style={{ fontSize: 14 }}>{c.connectorId}</strong>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
+            Used by {c.flowCount} flow{c.flowCount !== 1 ? 's' : ''}
+            {c.flowNames.length ? `: ${c.flowNames.slice(0, 3).join(', ')}` : ''}
+          </div>
+          <div style={{ fontSize: 12, color: '#b45309', marginTop: 6 }}>
+            Not supported yet — this connector has no entry in our registry, so the migrated
+            agent will not be able to call it. It is recorded in the migration report as a gap.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── MS native connector IDs set ───────────────────────────────────────────────
 
 const MS_NATIVE_IDS = new Set(Object.keys(MS_CONNECTOR_LABELS));
@@ -291,6 +404,7 @@ export function ConnectorConfig() {
   const [connectors, setConnectors] = useState<DetectedConnector[]>([]);
   const [msIds, setMsIds] = useState<string[]>([]);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [requirements, setRequirements] = useState<Map<string, ConnectorRequirement>>(new Map());
   const [error, setError] = useState('');
   const fetchedRef = useRef(false);
 
@@ -305,10 +419,17 @@ export function ConnectorConfig() {
 
         // 2. Scan knowledge sources for connectors (e.g. Confluence) using the
         //    agents selected on the SelectData step (stored in sessionStorage).
+        // Hoisted: the agents chosen on SelectData drive BOTH the knowledge-connector
+        // scan below and the SharePoint-as-knowledge detection further down.
+        let agentSelection: Array<{ env: string; botIds: string[] }> = [];
+        try {
+          agentSelection = JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
+        } catch {
+          /* no selection recorded — fall back to scanning nothing extra */
+        }
+
         let knowledgeConnectors: DetectedConnector[] = [];
         try {
-          const agentSelection: Array<{ env: string; botIds: string[] }> =
-            JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
           const ksPromises = agentSelection
             .filter((sel) => sel.botIds.length > 0)
             .map((sel) => fetchKnowledgeSourceConnectors(session, sel.env, sel.botIds));
@@ -350,7 +471,26 @@ export function ConnectorConfig() {
         }
         const all = [...allById.values()];
 
-        const ms = all.filter((c) => MS_NATIVE_IDS.has(c.connectorId)).map((c) => c.connectorId);
+        // SharePoint/OneDrive used as a KNOWLEDGE source needs the same Azure app as the
+        // action connectors — the migrator crawls it through Microsoft Graph and the
+        // live tools call Graph at runtime. Detection above only covers Power Automate
+        // connectors, so an agent whose SharePoint is knowledge-only reached this step
+        // with nothing to fill in and no way to supply credentials.
+        let knowledgeMsIds: string[] = [];
+        try {
+          const needed = await fetchConnectorsNeeded(session, agentSelection[0]?.env ?? '');
+          if (needed.some((n) => n.kind === 'sharepoint-connector')) knowledgeMsIds.push('shared_sharepointonline');
+          if (needed.some((n) => n.kind === 'onedrive-connector')) knowledgeMsIds.push('shared_onedrive');
+        } catch {
+          /* detection is best-effort; the cards below still render what we did find */
+        }
+
+        const ms = [
+          ...new Set([
+            ...all.filter((c) => MS_NATIVE_IDS.has(c.connectorId)).map((c) => c.connectorId),
+            ...knowledgeMsIds,
+          ]),
+        ];
         const thirdParty = all.filter((c) => !MS_NATIVE_IDS.has(c.connectorId));
         setMsIds(ms);
         setConnectors(thirdParty);
@@ -363,6 +503,14 @@ export function ConnectorConfig() {
           setSavedIds(new Set(previously.map((s) => s.connectorId)));
         } catch {
           /* leave empty — cards fall back to asking */
+        }
+        // Permissions + credential-group state. Best-effort: without it the cards still
+        // collect credentials, they just cannot warn about permissions.
+        try {
+          const reqs = await fetchConnectorRequirements(session, [...new Set([...all.map((c) => c.connectorId), ...ms])]);
+          setRequirements(new Map(reqs.map((r) => [r.connectorId, r])));
+        } catch {
+          /* no permission guidance available */
         }
         setLoading(false);
       } catch {
@@ -385,7 +533,26 @@ export function ConnectorConfig() {
         </p>
       </div>
 
-      {loading && <p className="lead" style={{ color: 'var(--muted)' }}>Scanning flows for connector dependencies…</p>}
+      {loading && (
+        <>
+          <p className="lead" style={{ color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="cf-spinner" aria-hidden="true" />
+            Scanning your selected agents for connectors…
+          </p>
+          {/* Skeleton cards — this scan reads each agent's components from Dataverse and
+              can take a while; an empty page reads as "nothing needed". */}
+          {[0, 1].map((i) => (
+            <div key={i} className="card" style={{ padding: '18px 20px', marginBottom: 12, opacity: 1 - i * 0.3 }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
+                <div className="cf-skel" style={{ width: 26, height: 26, borderRadius: 6 }} />
+                <div className="cf-skel" style={{ width: '30%', height: 14 }} />
+              </div>
+              <div className="cf-skel" style={{ width: '55%', height: 11, marginBottom: 8 }} />
+              <div className="cf-skel" style={{ width: '100%', height: 34, borderRadius: 6 }} />
+            </div>
+          ))}
+        </>
+      )}
       {error && <div className="error">{error}</div>}
 
       {!loading && !error && totalFound === 0 && (
@@ -403,12 +570,27 @@ export function ConnectorConfig() {
           </p>
 
           {/* MS native: one shared App Registration card for all MS connectors */}
-          <MsNativeSection session={session} detectedMsIds={msIds} />
+          <MsNativeSection session={session} detectedMsIds={msIds} reqs={requirements} />
 
-          {/* Third-party: one card per connector */}
-          {connectors.map((c) => (
-            <ConnectorCard key={c.connectorId} c={c} session={session} alreadySaved={savedIds.has(c.connectorId)} />
-          ))}
+          {/* Third-party: one card per connector we can actually call */}
+          {connectors
+            .filter((c): c is DetectedConnector & { def: ConnectorDef } => !!c.def && !c.unsupported)
+            .map((c) => (
+              <ConnectorCard
+                key={c.connectorId}
+                c={c}
+                session={session}
+                alreadySaved={savedIds.has(c.connectorId)}
+                req={requirements.get(c.connectorId)}
+              />
+            ))}
+
+          {/* Detected but not callable — shown, never hidden */}
+          {connectors
+            .filter((c) => c.unsupported || !c.def)
+            .map((c) => (
+              <UnsupportedConnectorCard key={c.connectorId} c={c} />
+            ))}
         </div>
       )}
 
