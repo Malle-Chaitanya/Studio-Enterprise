@@ -21,6 +21,12 @@ export interface DriftSnapshot {
   codeInterpreter: boolean;
   /** Sorted `${kind}:${id}:${reference}` per knowledge source, order-insensitive. */
   knowledgeFingerprint: string[];
+  /**
+   * Connector ids wired into the deployment, sorted. Optional so snapshots written
+   * before this existed still load — they compare as an empty set, so the first
+   * re-run after configuring a connector correctly reports drift.
+   */
+  connectorIds?: string[];
 }
 
 function knowledgeFingerprint(ir: AgentIR): string[] {
@@ -29,7 +35,7 @@ function knowledgeFingerprint(ir: AgentIR): string[] {
     .sort();
 }
 
-export function snapshotFrom(ir: AgentIR): DriftSnapshot {
+export function snapshotFrom(ir: AgentIR, connectorIds: string[] = []): DriftSnapshot {
   return {
     instructions: ir.instructions,
     description: ir.description,
@@ -37,6 +43,7 @@ export function snapshotFrom(ir: AgentIR): DriftSnapshot {
     webBrowsing: Boolean(ir.capabilities?.webBrowsing),
     codeInterpreter: Boolean(ir.capabilities?.codeInterpreter),
     knowledgeFingerprint: knowledgeFingerprint(ir),
+    connectorIds: [...connectorIds].sort(),
   };
 }
 
@@ -47,9 +54,18 @@ export interface DriftResult {
 }
 
 /** Exact-string/array compare — no fuzzy normalization, so a real edit is never silently missed. */
-export function detectDrift(prev: DriftSnapshot, ir: AgentIR): DriftResult {
-  const next = snapshotFrom(ir);
+export function detectDrift(prev: DriftSnapshot, ir: AgentIR, connectorIds: string[] = []): DriftResult {
+  const next = snapshotFrom(ir, connectorIds);
   const reasons: string[] = [];
+
+  // Drift is not only about the SOURCE agent. What we deploy also depends on which
+  // connectors are configured, and that is a decision made in our UI, after the first
+  // migration. Without this, configuring Jira and re-running skipped the agent as
+  // "already exists" and there was no way to get the tool onto it short of editing the
+  // Copilot agent to force a change (live 2026-08-07).
+  if (JSON.stringify(prev.connectorIds ?? []) !== JSON.stringify(next.connectorIds ?? [])) {
+    reasons.push('configured connectors changed');
+  }
 
   if (prev.instructions !== next.instructions) reasons.push('instructions changed');
   if (prev.description !== next.description) reasons.push('description changed');

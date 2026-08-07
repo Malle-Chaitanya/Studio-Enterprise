@@ -4,7 +4,8 @@ import { logger } from './logger.js';
 import { extractAgent, fetchFileAttachmentBytes, resolveSystemUserEmail } from './services/dataverse.js';
 import { findCandidates } from './services/graphSearch.js';
 import { buildOrganizationProfile } from './services/organizationProfile.js';
-import { defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, type CreateOutcome } from './services/gemini.js';
+import { defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, effectiveGeminiProject, type CreateOutcome } from './services/gemini.js';
+import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecs } from './services/connectorToolBuilder.js';
@@ -584,7 +585,24 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // Reads any third-party / MS-native API credentials the customer saved in
   // ConnectorConfig from Google Secret Manager, then embeds them in every
   // agent's instruction via buildConnectorInstructionBlock.
-  const savedConnectors = plan.savedConnectors ?? [];
+  // Connectors come from the DURABLE credential records, not only from the plan.
+  //
+  // plan.savedConnectors is a snapshot taken when the plan was built, so saving a
+  // credential after that point had no effect: the run saw an empty list, wired no
+  // tools, and reported the Confluence source as "needs a connector" while the
+  // credentials sat correctly in Secret Manager (live 2026-08-07, twice). Nothing in
+  // the UI suggested the plan had to be rebuilt afterwards.
+  //
+  // Only records stored in the project we are deploying INTO count — the container
+  // resolves secrets from its own project, so a record from elsewhere is unusable.
+  const destProject = effectiveGeminiProject(session.geminiProject);
+  const durableConnectorIds = (await listConnectorCredentials(appUserId).catch(() => []))
+    .filter((c) => !!destProject && c.project === destProject)
+    .map((c) => c.connectorId);
+  const savedConnectors = [...new Set([...(plan.savedConnectors ?? []), ...durableConnectorIds])];
+  if (durableConnectorIds.length && !(plan.savedConnectors ?? []).length) {
+    emitLog('info', `Connectors from saved credentials: ${durableConnectorIds.join(', ')}`);
+  }
   const resolvedConnectors = savedConnectors.length && session.geminiProject
     ? await resolveConnectorSecrets(saToken, session.geminiProject, savedConnectors).catch((err) => {
         logger.warn({ err }, 'orchestrator: connector secret resolution failed; continuing without connector context');
@@ -1020,7 +1038,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                 // Migrated before drift-tracking existed — record a baseline now
                 // rather than guess whether it changed; drift detection starts
                 // for real from the NEXT re-run.
-                await saveMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest, snapshotFrom(row.mapped!.ir));
+                await saveMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest, snapshotFrom(row.mapped!.ir, savedConnectors));
                 result.fidelity.push({
                   component: 'resync',
                   status: 'needs-review',
@@ -1029,7 +1047,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                 usedAdk = true;
                 return { created: true, agentId: existing.agentId, alreadyExists: true };
               }
-              const drift = detectDrift(priorSnapshot, row.mapped!.ir);
+              const drift = detectDrift(priorSnapshot, row.mapped!.ir, savedConnectors);
               if (!drift.changed) {
                 usedAdk = true;
                 return { created: true, agentId: existing.agentId, alreadyExists: true };
@@ -1318,7 +1336,7 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                 reasoningEngine: adk.reasoningEngine,
                 agentId: adk.agentId,
               });
-              await saveMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest, snapshotFrom(row.mapped!.ir));
+              await saveMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest, snapshotFrom(row.mapped!.ir, savedConnectors));
               emitLog('ok', `  ${row.name}: deployed via ADK (${adk.state}).`);
               usedAdk = true;
               return { created: true, agentId: adk.agentId };
