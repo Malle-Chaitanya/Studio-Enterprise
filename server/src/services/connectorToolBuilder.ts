@@ -15,6 +15,7 @@
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import { connectorSecretId, connectorCredentialFields } from './connectorCredentials.js';
 import { logger } from '../logger.js';
+import type { AgentIR } from '../types.js';
 
 const HOST = 'https://secretmanager.googleapis.com/v1';
 
@@ -361,4 +362,27 @@ export function buildMsNativeInstructionBlock(
   lines.push('');
 
   return lines.join('\n');
+}
+
+/**
+ * Which connectors does THIS agent actually use?
+ *
+ * Derived from the agent's own tools (each names its connector) plus knowledge sources
+ * that imply one — a Confluence source needs the Confluence credential even though it
+ * is not an agent tool.
+ *
+ * Used for both the wired tools and the instruction text, which must agree: wiring nine
+ * connectors onto an agent that references three gave it live API access to systems its
+ * Copilot original never touched, and telling the model about tools that do not exist
+ * is worse than saying nothing.
+ */
+export function agentConnectorIds(ir: AgentIR): Set<string> {
+  const ids = new Set<string>(
+    (ir.agentTools ?? []).map((t) => t.connectorId).filter((id): id is string => !!id),
+  );
+  for (const ks of ir.knowledgeSources) {
+    if (ks.classification?.strategy === 'confluence-crawler') ids.add('shared_confluence');
+    if (ks.kind === 'SharePointSearchSource') ids.add('shared_sharepointonline');
+  }
+  return ids;
 }

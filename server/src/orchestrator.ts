@@ -8,7 +8,7 @@ import { defaultDestination, resolveDestination, projectReachable, publishAgent,
 import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
-import { resolveConnectorSecrets, buildLiveConnectorSpecs } from './services/connectorToolBuilder.js';
+import { resolveConnectorSecrets, buildLiveConnectorSpecs, agentConnectorIds } from './services/connectorToolBuilder.js';
 import { migrateSharePointToDataStore } from './services/sharePointMigrator.js';
 import type { SharePointMigrationResult } from './services/sharePointMigrator.js';
 import { migrateConfluenceToDataStore, type ConfluenceCreds, type ConfluenceMigrationResult } from './services/confluenceMigrator.js';
@@ -638,7 +638,14 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       // no longer folded into the instruction — see mapper.ts), and stage a
       // flat, queryable copy of the capabilities.
       const topicsPlan = planTopicsMigration(ir);
-      const mapped = await mapAgent(ir, { topicsPlan, connectors: resolvedConnectors });
+      // Scope the instruction's connector block to THIS agent too — the wired tools and
+      // the text that describes them must agree, or the model is told about tools that
+      // do not exist on it.
+      const irConnectorIds = agentConnectorIds(ir);
+      const mapped = await mapAgent(ir, {
+        topicsPlan,
+        connectors: resolvedConnectors.filter((c) => irConnectorIds.has(c.connectorId)),
+      });
       const capabilities = [...topicsPlan.systemCapabilities, ...topicsPlan.connectedAgents.flatMap((a) => a.capabilities)];
 
       // Name prefixing is opt-in via the "prefix with source environment"
@@ -1204,7 +1211,32 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               if (!list.includes(tool.operationId)) list.push(tool.operationId);
               opsByConnector.set(tool.connectorId, list);
             }
-            const scopedConnectors = liveConnectorSpecs.map((c) => {
+            // Wire ONLY the connectors THIS agent uses.
+            //
+            // Every saved credential used to be wired onto every agent: an agent using
+            // three connectors received nine, including live API access to systems its
+            // Copilot original never touched. That is a security problem before it is a
+            // quality one, and it also caused a real outage — two of the unused
+            // connectors (SharePoint + OneDrive) collided on tool names and 400'd every
+            // message (live 2026-08-07).
+            //
+            // The agent's own tools name their connectors, and a knowledge source that
+            // needs a crawler names one implicitly. Anything else is dropped and
+            // reported, never silently.
+            const usedConnectorIds = agentConnectorIds(row.mapped!.ir);
+
+            const applicable = liveConnectorSpecs.filter((c) => usedConnectorIds.has(c.id));
+            const droppedConnectors = liveConnectorSpecs
+              .filter((c) => !usedConnectorIds.has(c.id))
+              .map((c) => c.name);
+            if (droppedConnectors.length) {
+              emitLog(
+                'info',
+                `    ${row.name}: ${applicable.length} connector(s) apply to this agent; not wiring ${droppedConnectors.join(', ')} (configured, but this agent does not reference them).`,
+              );
+            }
+
+            const scopedConnectors = applicable.map((c) => {
               const withOps = opsByConnector.has(c.id) ? { ...c, operations: opsByConnector.get(c.id) } : c;
               return /sharepoint|onedrive/i.test(withOps.kind) && spScopeUri
                 ? { ...withOps, scopeUri: spScopeUri }
