@@ -619,6 +619,13 @@ def _store_label(data_store_id):
     for prefix in ("cf-", "csge-"):
         if tail.startswith(prefix):
             tail = tail[len(prefix):]
+    # Store ids are keyed by the Copilot BOTID (so two same-named agents cannot collide),
+    # which puts 36 characters of GUID in front of the only meaningful part. Left in, it
+    # pushed the real name past the length cap and produced sibling tools truncated to
+    # `…tbl_cr88d_fa` / `…tbl_cr88d_cf` — indistinguishable, and different from the name
+    # the description advertised, so the model called a tool that did not exist
+    # (live 2026-08-07: "Tool '…_tbl_cr88d_faqentries' not found").
+    tail = re.sub(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-?", "", tail)
     tail = re.sub(r"-(file|ds|store|datastore)(-|$)", "-", tail)
     tail = re.sub(r"-[0-9a-f]{6,}$", "", tail)          # trailing hash/uid
     words = [w for w in re.split(r"[-_]+", tail) if w]
@@ -632,7 +639,12 @@ def _tool_name_for(label, used):
     Gemini rejects duplicates outright — the collision documented above.
     """
     base = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "knowledge"
-    name = f"search_{base}"[:56]
+    # Truncate from the LEFT, keeping the tail. What distinguishes two stores is at the
+    # end ("…cr88d_faqentries" vs "…cr88d_cficpprofiles"); cutting from the right removes
+    # exactly the part that tells them apart.
+    if len(base) > 48:
+        base = base[-48:].lstrip("_")
+    name = f"search_{base}"
     if name in used:
         i = 2
         while f"{name}_{i}" in used:
