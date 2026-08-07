@@ -870,13 +870,38 @@ def main():
         # never embedded in the agent instruction or pickled into the deployment —
         # anything placed in the instruction is retrievable by any end user who asks
         # the agent to repeat its prompt.
+        # Function names must be unique across the WHOLE agent, so uniqueness is enforced
+        # here — once, over every tool — rather than inside each builder.
+        #
+        # Two connectors of the same family collide otherwise: shared_sharepointonline and
+        # shared_onedrive both take the SharePoint path, which returns hardcoded
+        # `sharepoint_list_files` / `sharepoint_read_file`, so wiring both produced
+        # "Duplicate function declaration found: sharepoint_list_files" and the agent
+        # 400'd on every message (live 2026-08-07). The generic connectors were fixed
+        # earlier the same day by naming them per connector; doing it per builder just
+        # moves the problem to whichever builder is next.
+        used_tool_names = {t.__name__ for t in tools if hasattr(t, "__name__")}
         for conn in live_connectors:
             built = _build_live_connector_tool(conn, args.project)
             # SharePoint contributes two tools (list + read); others contribute one.
-            if isinstance(built, (list, tuple)):
-                tools.extend(built)
-            else:
-                tools.append(built)
+            for fn in (built if isinstance(built, (list, tuple)) else [built]):
+                original = getattr(fn, "__name__", "tool")
+                if original in used_tool_names:
+                    kind_hint = re.sub(r"[^a-z0-9]+", "_", str(conn.get("kind") or conn.get("id") or "")).strip("_")
+                    candidate = f"{original}_{kind_hint}" if kind_hint else f"{original}_2"
+                    i = 2
+                    while candidate in used_tool_names:
+                        candidate = f"{original}_{kind_hint}_{i}" if kind_hint else f"{original}_{i}"
+                        i += 1
+                    try:
+                        fn.__name__ = candidate[:60]
+                    except (AttributeError, TypeError):
+                        # A tool object that is not a plain function cannot be renamed;
+                        # keep it rather than drop a capability, and let the platform
+                        # complain loudly instead of failing silently here.
+                        pass
+                used_tool_names.add(getattr(fn, "__name__", original))
+                tools.append(fn)
     except Exception as e:  # noqa: BLE001
         emit({"error": f"tool wiring failed: {e}"}); return
 
