@@ -153,6 +153,33 @@ authRouter.get('/resume', async (_req, res) => {
   res.json({ session: id });
 });
 
+/**
+ * POST /api/auth/logout  body: { session }
+ *
+ * End the session for real. The Sign out button used to POST to `/api/logout`, which
+ * does not exist — the 404 was swallowed and the session stayed alive, so pressing
+ * Back landed on a fully working wizard page and /resume would hand the same
+ * connection straight back. Signing out has to mean something.
+ *
+ * Deleting the session deliberately also stops `/resume` returning it: resume exists so
+ * a REFRESH does not lose the cloud connections, not so a sign-out can be undone with
+ * the browser's Back button.
+ *
+ * Idempotent and never fails — a sign-out that errors would strand someone on a page
+ * they are trying to leave.
+ */
+authRouter.post('/logout', async (req, res) => {
+  const sessionId = (req.body as { session?: string })?.session ?? '';
+  if (sessionId) {
+    try {
+      await deleteSession(sessionId);
+    } catch (err) {
+      logger.warn({ err }, 'logout: could not delete session');
+    }
+  }
+  res.json({ ok: true });
+});
+
 // ── Microsoft ────────────────────────────────────────────────────────────────
 authRouter.get('/microsoft/start', (req, res) => {
   res.redirect(ms.buildAuthUrl(putState({ popup: req.query.popup === '1' })));

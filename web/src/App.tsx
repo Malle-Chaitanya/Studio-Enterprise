@@ -1,4 +1,6 @@
-import { Outlet, Route, Routes, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Outlet, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
+import { fetchSession } from './api.ts';
 import { AgentChat } from './components/AgentChat.tsx';
 import { WizardProvider } from './context/WizardContext.tsx';
 import { ChoosePair } from './pages/ChoosePair.tsx';
@@ -15,9 +17,39 @@ import { SelectMap } from './pages/SelectMap.tsx';
 
 function AppHeader() {
   const navigate = useNavigate();
-  const signOut = () => {
-    fetch('/api/logout', { method: 'POST' }).catch(() => {});
-    navigate('/');
+  /**
+   * Sign out for real.
+   *
+   * This used to POST `/api/logout` — an endpoint that does not exist — swallow the
+   * 404, and then PUSH `/` onto history. So the session stayed alive, the wizard pages
+   * stayed in history, and Back landed on a fully working screen while Forward returned
+   * to the login page: the browser arrows bounced between signed-in and signed-out.
+   *
+   * Three things are needed and all three were missing: end the session server-side,
+   * drop the client-side session ids so nothing can be resumed from them, and REPLACE
+   * the history entry so Back does not lead back in.
+   */
+  const signOut = async () => {
+    const session = new URLSearchParams(window.location.search).get('session') ?? '';
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session }),
+      });
+    } catch {
+      /* signing out must never strand someone on the page they are leaving */
+    }
+    // Wizard state is cached per session under csge_* keys — leaving it behind lets a
+    // later session pick up the previous user's selections.
+    try {
+      for (const key of Object.keys(sessionStorage)) {
+        if (key.startsWith('csge_')) sessionStorage.removeItem(key);
+      }
+    } catch {
+      /* private mode / storage disabled */
+    }
+    navigate('/', { replace: true });
   };
   return (
     <header className="appheader">
@@ -42,9 +74,39 @@ function AppHeader() {
 /** Dual-panel shell: workflow left, AI chat right (GEM_CO parity). No
  *  progress/step chrome here — each page's own header carries its context,
  *  matching GEM_CO's minimal per-screen header. */
+/**
+ * Send someone back to the login page when the session in the URL is gone.
+ *
+ * After signing out, the browser's Back button still restores a wizard URL carrying
+ * `?session=<id>`. The page renders, fires its API calls, and shows a wall of errors
+ * instead of saying the obvious thing: you are signed out.
+ *
+ * Only acts when a session id is PRESENT and rejected. A missing id is left alone —
+ * pages reach their own conclusions about that, and redirecting on absence would
+ * hijack normal navigation.
+ */
+function SessionGuard() {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const session = params.get('session') ?? '';
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    fetchSession(session)
+      .catch(() => {
+        if (!cancelled) navigate('/', { replace: true });
+      });
+    return () => { cancelled = true; };
+  }, [session, navigate]);
+
+  return null;
+}
+
 function AppShell() {
   return (
     <WizardProvider>
+      <SessionGuard />
       <AppHeader />
       <div className="console">
         <div className="pane-workflow">
