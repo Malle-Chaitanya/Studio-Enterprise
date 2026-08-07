@@ -6,7 +6,7 @@ import { config } from '../config.js';
 const PROJECT = 'studio-enterprise-migration';
 const ENGINE = 'gemini-enterprise-17847887_1784788734248';
 const LOCATION = 'us-central1';
-const KEEP = '16616657889081712680';
+const KEEP = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : '11138074654162485859';
 const APPLY = process.argv.includes('--apply');
 
 const raw = config.GOOGLE_SA_KEY_JSON?.trim() ? config.GOOGLE_SA_KEY_JSON : readFileSync(config.GOOGLE_SA_KEY_FILE!, 'utf8');
