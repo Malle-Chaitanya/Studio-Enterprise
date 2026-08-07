@@ -11,7 +11,7 @@ import {
 import { clientCredsToken } from '../auth/microsoft.js';
 import { resolveSystemUserEmail } from '../services/dataverse.js';
 import { getSaToken } from '../auth/google.js';
-import { defaultDestination } from '../services/gemini.js';
+import { defaultDestination, effectiveGeminiProject } from '../services/gemini.js';
 import { findCandidates } from '../services/graphSearch.js';
 import { resolveShareUrlSmart } from '../services/graphFiles.js';
 import { migrateSharePointDriveItem } from '../services/knowledgeDataStoreExecutor.js';
@@ -329,14 +329,17 @@ migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
     // Fail BEFORE writing anything, and say what is actually wrong. Discovering this
     // on the write meant a half-saved connector and a UI blaming the Google
     // connection, which was never the problem.
-    const access = await preflightSecretAccess(session.geminiProject, saToken, serviceAccountEmail());
+    // Secrets MUST go to the project the agent will be deployed into, or the deployed
+    // container cannot read them. Apply the same override resolveDestination uses.
+    const secretsProject = effectiveGeminiProject(session.geminiProject);
+    const access = await preflightSecretAccess(secretsProject, saToken, serviceAccountEmail());
     if (!access.ok) return void res.status(403).json({ error: access.code, detail: access.detail });
 
     const secretIds: string[] = [];
     const secretIdByField: Record<string, string> = {};
     for (const { field, value } of creds) {
       const secretId = connectorSecretId(connectorId, field);
-      await upsertSecret(saToken, session.geminiProject, secretId, value);
+      await upsertSecret(saToken, secretsProject, secretId, value);
       secretIds.push(secretId);
       secretIdByField[field] = secretId;
     }
@@ -349,7 +352,7 @@ migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
       connectorId,
       fields: creds.map((c) => c.field),
       secretIds: secretIdByField,
-      project: session.geminiProject,
+      project: secretsProject,
     });
 
     // Still recorded on the session plan: that's what the in-flight migration reads.
@@ -390,11 +393,12 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
   if (ids.length === 0) return void res.json({ connectors: [] });
 
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const destProject = effectiveGeminiProject(session.geminiProject);
   const saved = await listConnectorCredentials(appUserId);
   // Only credentials stored in the project we are migrating INTO are usable — the
   // deployed container resolves secrets from its own project. See the GET route above.
   const savedIds = new Set(
-    saved.filter((s) => !!session.geminiProject && s.project === session.geminiProject).map((s) => s.connectorId),
+    saved.filter((s) => !!destProject && s.project === destProject).map((s) => s.connectorId),
   );
 
   const connectors = ids.map((id) => {
@@ -447,6 +451,7 @@ migrateRouter.get('/connector-credentials', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const destProject = effectiveGeminiProject(session.geminiProject);
   const saved = await listConnectorCredentials(appUserId);
   // Secrets live in the project they were saved against. Migrating into a DIFFERENT
   // project cannot read them, so a record from another project must NOT read as
@@ -459,7 +464,7 @@ migrateRouter.get('/connector-credentials', async (req, res) => {
       fields: s.fields,
       project: s.project,
       updatedAt: s.updatedAt,
-      matchesDestination: !!session.geminiProject && s.project === session.geminiProject,
+      matchesDestination: !!destProject && s.project === destProject,
     })),
   });
 });
@@ -500,7 +505,10 @@ migrateRouter.post('/ms-connector-credentials', async (req, res) => {
 
   try {
     const saToken = await getSaToken(session.gEmail);
-    const access = await preflightSecretAccess(session.geminiProject, saToken, serviceAccountEmail());
+    // Secrets MUST go to the project the agent will be deployed into, or the deployed
+    // container cannot read them. Apply the same override resolveDestination uses.
+    const secretsProject = effectiveGeminiProject(session.geminiProject);
+    const access = await preflightSecretAccess(secretsProject, saToken, serviceAccountEmail());
     if (!access.ok) return void res.status(403).json({ error: access.code, detail: access.detail });
 
     const secretIds: string[] = [];
@@ -515,7 +523,7 @@ migrateRouter.post('/ms-connector-credentials', async (req, res) => {
       const value = creds[field.key];
       if (!value) continue;
       const secretId = connectorSecretId('ms_graph', field.key);
-      await upsertSecret(saToken, session.geminiProject, secretId, value);
+      await upsertSecret(saToken, secretsProject, secretId, value);
       secretIds.push(secretId);
       secretIdByField[field.key] = secretId;
     }
