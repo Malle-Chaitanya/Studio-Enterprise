@@ -458,6 +458,19 @@ export interface ResolvedPlan {
   savedConnectors?: string[];
   /** Whether MS native app registration creds were saved (Teams/SharePoint/Office365). */
   msCreds?: boolean;
+  /**
+   * Redeploy even when nothing about the SOURCE agent changed.
+   *
+   * Drift detection compares the Copilot agent against the last migration, so an agent
+   * whose source is untouched is skipped as "already exists". That is right for the
+   * source, and wrong for everything else: when the DEPLOYMENT changes — a fixed tool
+   * name, a new connector wiring, a corrected instruction — there is otherwise no way
+   * to get the change onto an already-migrated agent short of editing the Copilot agent
+   * to fake a difference (hit repeatedly on 2026-08-07).
+   *
+   * Creates a new Reasoning Engine; the previous one is not deleted automatically.
+   */
+  forceRedeploy?: boolean;
 }
 
 /** Result of mapping one AgentIR to a Gemini agent definition. */

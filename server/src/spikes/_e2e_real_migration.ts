@@ -25,7 +25,9 @@ import type { Session } from '../sessionStore.js';
 
 const AGENT_NAME = process.argv[2] ?? 'CloudFuze Studio Migrate';
 const ENV_URL = process.argv[3] ?? 'https://orga243378d.crm.dynamics.com';
-const PROJECT_OVERRIDE = process.argv[4] ?? process.env.E2E_PROJECT ?? '';
+const PROJECT_OVERRIDE = (process.argv[4] && !process.argv[4].startsWith('--')) ? process.argv[4] : (process.env.E2E_PROJECT ?? '');
+/** Redeploy even when the source is unchanged — needed to pick up OUR fixes. */
+const FORCE = process.argv.includes('--force');
 
 await connectMongo();
 const session = (await getDb()
@@ -60,7 +62,9 @@ const plan = await resolveScope(
 // when the cached session predates the credential save.
 const extra = (process.env.E2E_CONNECTORS ?? '').split(',').map((x) => x.trim()).filter(Boolean);
 plan.savedConnectors = [...new Set([...(session.plan?.savedConnectors ?? []), ...extra])];
+plan.forceRedeploy = FORCE;
 console.log(`connectors wired: ${plan.savedConnectors.join(', ') || '(none)'}`);
+if (FORCE) console.log('force: redeploying even if the source is unchanged');
 console.log(`plan: ${plan.totalAgents} agent(s)\n`);
 
 let done = false;

@@ -1034,7 +1034,13 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             const existing = await getAdkDeployment(appUserId, row.envUrl, row.sourceId, dest);
             if (existing) {
               const priorSnapshot = await getMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest);
-              if (!priorSnapshot) {
+              // An explicit force wins over every skip below. Drift only knows about the
+              // SOURCE agent, so without this there is no way to push a change that
+              // originates on OUR side — a corrected tool name, a newly wired connector —
+              // onto an agent that is already migrated.
+              if (plan.forceRedeploy) {
+                emitLog('warn', `  ${row.name}: forced redeploy — deploying again even though the source is unchanged.`);
+              } else if (!priorSnapshot) {
                 // Migrated before drift-tracking existed — record a baseline now
                 // rather than guess whether it changed; drift detection starts
                 // for real from the NEXT re-run.
@@ -1047,8 +1053,10 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                 usedAdk = true;
                 return { created: true, agentId: existing.agentId, alreadyExists: true };
               }
-              const drift = detectDrift(priorSnapshot, row.mapped!.ir, savedConnectors);
-              if (!drift.changed) {
+              const drift = priorSnapshot
+                ? detectDrift(priorSnapshot, row.mapped!.ir, savedConnectors)
+                : { changed: true, reasons: ['no prior snapshot'] };
+              if (!drift.changed && !plan.forceRedeploy) {
                 usedAdk = true;
                 return { created: true, agentId: existing.agentId, alreadyExists: true };
               }
@@ -1056,7 +1064,15 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               // deploy flow a fresh agent uses, so the ADK agent actually picks
               // up the change (redeploy is the only way; ADK create has no
               // in-place update — see adkDeployments.ts).
-              emitLog('warn', `  ${row.name}: source changed since last migration (${drift.reasons.join(', ')}) — redeploying via ADK.`);
+              // Do not claim the source changed when it did not — a forced redeploy is a
+              // decision we made, and saying otherwise sends someone hunting for an edit
+              // in Copilot Studio that never happened.
+              emitLog(
+                'warn',
+                drift.changed
+                  ? `  ${row.name}: source changed since last migration (${drift.reasons.join(', ')}) — redeploying via ADK.`
+                  : `  ${row.name}: source unchanged, but a redeploy was requested — redeploying via ADK.`,
+              );
               result.fidelity.push({
                 component: 'resync',
                 status: 'mapped',
