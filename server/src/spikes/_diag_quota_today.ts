@@ -1,0 +1,15 @@
+import 'dotenv/config';
+import { MongoClient } from 'mongodb';
+import { config } from '../config.js';
+import { countCreatesToday, configuredDailyCap, currentQuotaDayStartUtc, nextQuotaResetUtc } from '../services/quota.js';
+import { connectMongo } from '../db/mongo.js';
+await connectMongo();
+const now = new Date();
+console.log(`quota day started : ${currentQuotaDayStartUtc(now).toISOString()}`);
+console.log(`next reset        : ${nextQuotaResetUtc(now).toISOString()}`);
+console.log(`configured cap    : ${configuredDailyCap() ?? 'UNSET (pre-flight informs only, never blocks)'}`);
+console.log(`creates today     : ${await countCreatesToday('studio-enterprise-migration', now)}`);
+const c = await MongoClient.connect(config.MONGO_HOST);
+console.log(`total results     : ${await c.db(config.CSGE_DB).collection('migrationResults').countDocuments({})}`);
+await c.close();
+process.exit(0);

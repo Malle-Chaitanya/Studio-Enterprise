@@ -1135,9 +1135,24 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // Scope the SharePoint/OneDrive tools to THIS agent's own folder. The
             // specs are shared across agents, so the scope has to be applied per agent
             // rather than baked in when they were built.
-            const scopedConnectors = liveConnectorSpecs.map((c) =>
-              /sharepoint|onedrive/i.test(c.kind) && spScopeUri ? { ...c, scopeUri: spScopeUri } : c,
-            );
+            // Which operations did THIS agent invoke on each connector? The specs are
+            // built once per run from the saved credentials, but the operations are a
+            // property of the individual agent, so they are attached here rather than
+            // there. They shape the tool's description only — the tool can still call
+            // anything the credentials permit.
+            const opsByConnector = new Map<string, string[]>();
+            for (const tool of row.mapped!.ir.agentTools ?? []) {
+              if (!tool.connectorId || !tool.operationId) continue;
+              const list = opsByConnector.get(tool.connectorId) ?? [];
+              if (!list.includes(tool.operationId)) list.push(tool.operationId);
+              opsByConnector.set(tool.connectorId, list);
+            }
+            const scopedConnectors = liveConnectorSpecs.map((c) => {
+              const withOps = opsByConnector.has(c.id) ? { ...c, operations: opsByConnector.get(c.id) } : c;
+              return /sharepoint|onedrive/i.test(withOps.kind) && spScopeUri
+                ? { ...withOps, scopeUri: spScopeUri }
+                : withOps;
+            });
 
             // Copilot topics become ADK sub-agents INSIDE this deployment. Not one
             // Reasoning Engine per topic: that would multiply cost and burn the ~7/day

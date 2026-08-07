@@ -108,6 +108,16 @@ def _build_live_connector_tool(conn: dict, project: str):
     auth_header_tpl = conn.get("authHeaderTemplate") or ""
     conn_name = conn.get("name") or kind or "connector"
     auth_kind = conn.get("authKind") or "bearer"
+    # The operations the SOURCE agent actually invoked, extracted from Copilot Studio.
+    # Telling the model which ones this agent was built around is the difference between
+    # a generic REST tool and one that knows what this agent is for.
+    _ops = [o for o in (conn.get("operations") or []) if isinstance(o, str)]
+    operations_hint = (
+        "\nThe source agent used these operations — prefer them when they fit the request:\n"
+        + "".join(f"  - {o}\n" for o in _ops)
+        if _ops
+        else ""
+    )
     token_url_tpl = conn.get("tokenUrlTemplate") or ""
     scope = conn.get("scope") or ""
     basic_user_field = conn.get("basicUserField") or ""
@@ -463,6 +473,35 @@ def _build_live_connector_tool(conn: dict, project: str):
         except Exception as e:  # noqa: BLE001
             return {"error": f"{conn_name} request failed: {e}"}
 
+    # Name the tool AFTER ITS CONNECTOR. Every generic connector used to return a
+    # function literally called `call_external_api`, so an agent with two of them —
+    # Jira and HubSpot, which is a normal pairing — sent Gemini two identical
+    # FunctionDeclarations and was rejected with "Duplicate function declaration
+    # found: call_external_api". Same class of bug as the DiscoveryEngineSearchTool
+    # collision documented above, and it only appears once a SECOND generic connector
+    # is configured, so adding a connector broke agents that previously worked.
+    #
+    # The docstring is per-connector for a second reason: `call_external_api` on "the
+    # configured external system" tells the model nothing about WHICH system or what
+    # paths are valid, so it had to guess. Naming the product and its base URL is what
+    # makes the tool usable.
+    safe = re.sub(r"[^a-z0-9]+", "_", (kind or conn_name).lower()).strip("_") or "external"
+    call_external_api.__name__ = f"call_{safe}_api"[:56]
+    call_external_api.__doc__ = (
+        f"Call the {conn_name} REST API on the user's behalf.\n"
+        f"\n"
+        f"Requests are sent to {base_url_tpl or 'the connector base URL'} with the caller's\n"
+        f"credentials already applied — never include tokens in the path.\n"
+        f"{operations_hint}"
+        f"\n"
+        f"Args:\n"
+        f"    path: path (and query string) appended to the base URL.\n"
+        f"    method: HTTP method, e.g. GET or POST.\n"
+        f"    body: JSON request body as a string, for POST/PUT.\n"
+        f"\n"
+        f"Returns:\n"
+        f"    dict with `status` and `body`, or `error`.\n"
+    )
     return call_external_api
 
 

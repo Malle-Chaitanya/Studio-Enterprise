@@ -99,6 +99,9 @@ export interface LiveConnectorSpec {
   kind: string;
   name: string;
   secretIds: Record<string, string>;
+  /** Operations the source agent invoked, e.g. ListIssues. Advisory: it shapes the
+   *  tool's description, it does not restrict what the tool can call. */
+  operations?: string[];
   baseUrlTemplate?: string;
   authHeaderTemplate?: string;
   /** How the container obtains an Authorization header — see registry AuthKind. */

@@ -93,6 +93,10 @@ export interface AdkSpec {
     kind: string;
     name?: string;
     secretIds: Record<string, string>;
+    /** Operations the SOURCE agent invoked on this connector (e.g. `ListIssues`).
+     *  Advisory only — it shapes the generated tool's description so the model knows
+     *  what this agent was built to do; it does not restrict what the tool may call. */
+    operations?: string[];
     /** Registry templates for the generic REST tool, e.g. 'https://{subdomain}.example.com'. */
     baseUrlTemplate?: string;
     authHeaderTemplate?: string;
