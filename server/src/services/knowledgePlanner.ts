@@ -196,9 +196,10 @@ function manualStepsFor(strategy: KnowledgeStrategy, s: KnowledgeSourceIR): stri
   switch (strategy) {
     case 'reconnect':
       return [
-        `Create a Gemini native ${s.classification?.geminiTarget === 'onedrive-connector' ? 'OneDrive' : 'SharePoint'} federated connector against ${ref ?? 'the same source'}.`,
-        'Configure Workforce Identity Federation (Entra→Google) so document ACLs are enforced — without it, access is not trimmed.',
-        'Validate a permission-trimmed query before cutover.',
+        `Create a Gemini native ${s.classification?.geminiTarget === 'onedrive-connector' ? 'OneDrive' : 'SharePoint'} connector against ${ref ?? 'the same source'}.`,
+        'CONFIRMED BROKEN as of 2026-08-06 (SharePoint): the connector can be fully healthy/authenticated and still return zero content — see knowledgeClassifier.ts module docstring. Escalated to Google Cloud Support; check its status before relying on this path.',
+        'If this source is one specific known file, use copy mode instead (proven working) — see migrateSharePointDriveItem.',
+        'Once the connector is confirmed fixed: configure Workforce Identity Federation (Entra→Google) for per-user ACL trimming — this governs WHOSE access applies to results, not whether results are returned at all.',
       ];
     case 'rebuild-as-tool':
       return [

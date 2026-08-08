@@ -37,7 +37,7 @@ async function main() {
   if (!targetEnv || !botId) throw new Error(`"${NAME_MATCH}" not found`);
   console.log(`Found bot ${botId} in env ${targetEnv.name}`);
 
-  const plan = await resolveScope(s, { kind: 'agents', env: targetEnv.url, botIds: [botId] }, { prefixWithEnv: false });
+  const plan = await resolveScope(s, { kind: 'agents', env: targetEnv.url, botIds: [botId] }, {});
 
   console.log('\nRunning live migration with auto-attach-on-unique-match wired...');
   let finalResult: MigrationResult | null = null;

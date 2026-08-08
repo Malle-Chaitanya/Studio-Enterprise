@@ -3,15 +3,30 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   fetchThirdPartyConnectors,
   fetchKnowledgeSourceConnectors,
+  fetchConnectorsNeeded,
   saveConnectorCredentials,
   saveMsConnectorCredentials,
   fetchSavedConnectors,
   fetchConnectorRequirements,
-  fetchConnectorsNeeded,
   type DetectedConnector,
   type ConnectorDef,
   type ConnectorRequirement,
 } from '../api.ts';
+
+/** Merge per-environment scan results into one list, summing flowCount and
+ *  de-duplicating flowNames for connectors detected in more than one environment. */
+function mergeDetectedConnectors(perEnvResults: DetectedConnector[][]): DetectedConnector[] {
+  const merged = new Map<string, DetectedConnector>();
+  for (const list of perEnvResults) {
+    for (const c of list) {
+      const existing = merged.get(c.connectorId);
+      merged.set(c.connectorId, existing
+        ? { ...existing, flowCount: existing.flowCount + c.flowCount, flowNames: [...new Set([...existing.flowNames, ...c.flowNames])] }
+        : c);
+    }
+  }
+  return [...merged.values()];
+}
 
 // ── Shared input styles ───────────────────────────────────────────────────────
 
@@ -30,8 +45,8 @@ const inputStyle: React.CSSProperties = {
 // ── MS Native connector section ───────────────────────────────────────────────
 
 const MS_NATIVE_FIELDS = [
-  { key: 'tenant_id',     label: 'Tenant ID',      type: 'text'     as const, hint: 'Azure Portal → Azure Active Directory → Properties → Directory (tenant) ID' },
-  { key: 'client_id',     label: 'App (Client) ID', type: 'text'    as const, hint: 'Azure Portal → App registrations → your app → Application (client) ID' },
+  { key: 'tenant_id',     label: 'Tenant ID',      type: 'password' as const, hint: 'Azure Portal → Azure Active Directory → Properties → Directory (tenant) ID' },
+  { key: 'client_id',     label: 'App (Client) ID', type: 'password' as const, hint: 'Azure Portal → App registrations → your app → Application (client) ID' },
   { key: 'client_secret', label: 'Client Secret',   type: 'password' as const, hint: 'Azure Portal → App registrations → Certificates & secrets → New client secret' },
 ];
 
@@ -59,13 +74,35 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
 
   if (detectedMsIds.length === 0) return null;
 
-  const allFilled = MS_NATIVE_FIELDS.every((f) => values[f.key]?.trim());
+  // A connector in the ms_graph group can still declare fields of its OWN on top of the
+  // shared 3 (e.g. Dynamics 365 needs org_url — see registry.ts's credentialGroup doc
+  // comment). Those never belonged to the shared Azure app, so they must be collected
+  // per-connector and saved to that connector's own scope, not the shared one — otherwise
+  // they were never asked for anywhere and the connector's base URL template is left with
+  // a literal unresolved "{org_url}" at runtime.
+  const ownFieldsById = new Map(
+    detectedMsIds
+      .map((id) => [id, (reqs?.get(id)?.fields ?? []).filter((f) => !f.shared)] as const)
+      .filter(([, fields]) => fields.length > 0),
+  );
+  const ownValueKey = (id: string, fieldKey: string) => `${id}::${fieldKey}`;
+
+  const allFilled =
+    MS_NATIVE_FIELDS.every((f) => values[f.key]?.trim()) &&
+    [...ownFieldsById.entries()].every(([id, fields]) => fields.every((f) => values[ownValueKey(id, f.key)]?.trim()));
 
   const handleSave = async () => {
     setSaving(true);
     setError('');
     try {
       await saveMsConnectorCredentials(session, values);
+      for (const [id, fields] of ownFieldsById) {
+        await saveConnectorCredentials(
+          session,
+          id,
+          fields.map((f) => ({ field: f.key, value: values[ownValueKey(id, f.key)] })),
+        );
+      }
       setSaved(true);
     } catch {
       setError('Failed to save. Check that Google is connected and try again.');
@@ -76,7 +113,7 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
 
   return (
     <div className="card" style={{ padding: '18px 20px', marginBottom: 12, opacity: saved ? 0.7 : 1, transition: 'opacity 0.2s' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 8 }}>
         <span style={{ fontSize: 22 }}>🔷</span>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -91,14 +128,16 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
               return m ? <span key={id} style={{ marginRight: 8 }}>{m.icon} {m.name}</span> : null;
             })}
           </div>
-          <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6, marginBottom: 0 }}>
-            Create a single <strong>Azure App Registration</strong> in your tenant with the permissions
-            these connectors need. The migrated Gemini agents will use these credentials to call
-            Microsoft Graph at runtime.
-          </p>
         </div>
         {saved && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Saved</span>}
       </div>
+      {/* Flush-left with the rest of the card body (needs/permissions/inputs below) —
+          not indented under the icon, so the left edge stays consistent top to bottom. */}
+      <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 0, marginBottom: 12 }}>
+        Create one <strong>app registration</strong> in Azure and give it the permissions listed
+        below. Your new Gemini agents will use it to securely access Microsoft data like
+        SharePoint and Teams.
+      </p>
 
       {!saved && (
         <>
@@ -143,6 +182,44 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
             ))}
           </div>
 
+          {/* Per-connector own fields on top of the shared app (e.g. Dynamics' org_url) —
+              one small sub-block per connector that declares any, right below the shared form. */}
+          {[...ownFieldsById.entries()].map(([id, fields]) => (
+            <div key={id} style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                {MS_CONNECTOR_LABELS[id]?.name ?? id} also needs:
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {fields.map((field) => (
+                  <div key={field.key}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <label style={{ fontSize: 12, fontWeight: 600 }}>{field.label}</label>
+                      {field.hint && (
+                        <button
+                          type="button"
+                          onClick={() => setShowHint(showHint === ownValueKey(id, field.key) ? null : ownValueKey(id, field.key))}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 13, padding: 0 }}
+                        >ⓘ</button>
+                      )}
+                    </div>
+                    {showHint === ownValueKey(id, field.key) && field.hint && (
+                      <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 8px', marginBottom: 6 }}>
+                        {field.hint}
+                      </div>
+                    )}
+                    <input
+                      type={field.type === 'password' ? 'password' : 'text'}
+                      value={values[ownValueKey(id, field.key)] ?? ''}
+                      onChange={(e) => setValues((v) => ({ ...v, [ownValueKey(id, field.key)]: e.target.value }))}
+                      placeholder={field.placeholder ?? ''}
+                      style={inputStyle}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
           {error && <div style={{ fontSize: 12, color: '#dc2626', marginTop: 8 }}>{error}</div>}
 
           <div style={{ marginTop: 14 }}>
@@ -156,10 +233,22 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
             </a>
             <button className="wbtn primary" style={{ fontSize: 12, padding: '6px 16px' }}
               disabled={saving || !allFilled} onClick={handleSave}>
-              {saving ? 'Saving…' : 'Save credentials'}
+              {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
         </>
+      )}
+
+      {saved && (
+        <button className="wbtn" style={{ fontSize: 11, padding: '4px 12px', marginTop: 6 }}
+          onClick={() => {
+            setSaved(false);
+            // Never let a typed client_secret linger in state longer than needed —
+            // same posture as ConnectorSetup.tsx's SharePoint form.
+            setValues({ tenant_id: '', client_id: '', client_secret: '' });
+          }}>
+          Edit
+        </button>
       )}
     </div>
   );
@@ -188,15 +277,19 @@ function PermissionsPanel({ req }: { req?: ConnectorRequirement }) {
       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
         Permissions to grant{req.adminConsentRequired ? ' (admin consent required)' : ''}
       </div>
-      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
+      {/* Plain stacked lines, not a bulleted <ul> — list-style-position: inside
+          pushed the marker+text a few px right of "Permissions to grant" and the
+          note below it, so the left edges inside the box didn't line up. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
         {req.requiredPermissions.map((p) => (
-          <li key={p}><code style={{ fontSize: 11 }}>{p}</code></li>
+          <code key={p} style={{ fontSize: 11 }}>{p}</code>
         ))}
-      </ul>
+      </div>
       {req.adminConsentRequired && (
         <div style={{ fontSize: 11, color: '#b45309', marginTop: 6 }}>
-          Add these as <strong>Application</strong> permissions (not Delegated — there is no
-          signed-in user when an agent calls the API), then click <strong>Grant admin consent</strong>.
+          In Azure, add these under <strong>Application permissions</strong> — not
+          <strong> Delegated</strong>, since the agent runs on its own with no one signed in.
+          Then click <strong>Grant admin consent</strong>.
         </div>
       )}
       {req.permissionsHint && (
@@ -283,7 +376,7 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
         </div>
         {c.confidence === 'heuristic' && !saved && (
           <span
-            title="Copilot Studio stores this as a generic federated source, so we inferred the product from its text. Skip it if this agent does not actually use it."
+            title="Copilot Studio doesn't say exactly which service this is, so we guessed from the description. Skip it if this agent doesn't actually use it."
             style={{ fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', borderRadius: 4, padding: '2px 6px', whiteSpace: 'nowrap' }}
           >
             LIKELY
@@ -300,9 +393,9 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
       )}
       {c.confidence === 'heuristic' && !saved && (
         <div style={{ fontSize: 11, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px', marginBottom: 10 }}>
-          Copilot Studio records this as a generic federated knowledge source — it does not
-          name the product. We inferred <strong>{c.def.name}</strong> from the source text.
-          If that is wrong, skip it and it will be flagged for review instead.
+          Copilot Studio doesn't name the exact service here, so we guessed
+          <strong> {c.def.name}</strong> from the description. If that's wrong, skip it below
+          and we'll flag it for review instead.
         </div>
       )}
       {!saved && !skipped && (
@@ -337,7 +430,7 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
           <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
             <button className="wbtn primary" style={{ fontSize: 12, padding: '6px 16px' }}
               disabled={saving || !allFilled} onClick={handleSave}>
-              {saving ? 'Saving…' : 'Save credentials'}
+              {saving ? 'Saving…' : 'Save'}
             </button>
             <button className="wbtn" style={{ fontSize: 12, padding: '6px 16px' }}
               disabled={saving} onClick={() => setSkipped(true)}>
@@ -354,6 +447,163 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
       {saved && (
         <button className="wbtn" style={{ fontSize: 11, padding: '4px 12px', marginTop: 6 }}
           onClick={() => { setSaved(false); setValues(Object.fromEntries(def.credentials.map((f) => [f.key, '']))); }}>
+          Edit
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Shared-credential-group card ──────────────────────────────────────────────
+
+interface GroupSectionProps {
+  session: string;
+  /** Every detected connector in this group (e.g. Confluence + Jira on 'atlassian'). */
+  members: (DetectedConnector & { def: ConnectorDef })[];
+  reqs: Map<string, ConnectorRequirement>;
+}
+
+/**
+ * One shared card for connectors whose credentials come from a `credentialGroup`
+ * (registry.ts) instead of their own `credentials` list — e.g. Confluence and Jira
+ * both read from the single Atlassian API token. `ConnectorCard` renders inputs
+ * from `def.credentials`, which the registry deliberately leaves empty for these
+ * ("supplied by the credential group") — so without this component the card had
+ * nothing to render and looked permanently inert, with no way to enter the
+ * Atlassian email/token pair at all.
+ *
+ * Mirrors `MsNativeSection` below, but driven by whatever `fetchConnectorRequirements`
+ * resolves (registry.ts's `connectorCredentialFields`) instead of a hardcoded field
+ * list — so any future credential group gets this UI for free, not just Microsoft's.
+ *
+ * Saves once per detected member (not just the first): the secret VALUE lands in the
+ * group's shared Secret Manager scope either way (`connectorSecretId` resolves group
+ * fields to the group scope regardless of which connectorId the save call used), but
+ * the orchestrator looks up a specific connector's resolved credentials by matching its
+ * literal id in `resolvedConnectors` (built only from `session.plan.savedConnectors` —
+ * see orchestrator.ts's `confluenceConnector = resolvedConnectors.find(c => c.connectorId
+ * === 'shared_confluence')`). Saving only the first member would silently leave a
+ * same-group sibling (e.g. Confluence when Jira happened to sort first) out of that
+ * list — credentials present in Secret Manager, but never wired into that agent's crawl.
+ */
+function GroupSection({ session, members, reqs }: GroupSectionProps) {
+  const firstReq = reqs.get(members[0].connectorId);
+  const group = firstReq?.group;
+  // Group-owned fields only (shared: true) — a member's OWN fields (e.g. a future
+  // connector with both group creds and its own extra field) still belong on that
+  // member's individual ConnectorCard, not duplicated here.
+  const fields = (firstReq?.fields ?? []).filter((f) => f.shared);
+
+  const alreadySupplied = members.some((m) => {
+    const r = reqs.get(m.connectorId);
+    return r?.configured || r?.credentialAlreadySupplied;
+  });
+
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(fields.map((f) => [f.key, ''])));
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(alreadySupplied);
+  const [error, setError] = useState('');
+  const [showHint, setShowHint] = useState<string | null>(null);
+
+  if (fields.length === 0) return null; // nothing this group actually needs to ask for
+
+  const allFilled = fields.every((f) => values[f.key]?.trim());
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      // One call per detected member — see the doc comment above for why the first
+      // member alone isn't enough (orchestrator matches connectorId literally).
+      // Same secret values every time (harmless re-write), but each call records
+      // its OWN connectorId onto session.plan.savedConnectors.
+      const creds = fields.map((f) => ({ field: f.key, value: values[f.key] }));
+      for (const m of members) {
+        await saveConnectorCredentials(session, m.connectorId, creds);
+      }
+      setSaved(true);
+    } catch {
+      setError('Failed to save. Check Google is connected and try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', marginBottom: 12, opacity: saved ? 0.7 : 1, transition: 'opacity 0.2s' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
+        <span style={{ fontSize: 22 }}>{members[0].def.icon}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <strong style={{ fontSize: 15 }}>{group?.name ?? members.map((m) => m.def.name).join(' + ')}</strong>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+            Used by: {members.map((m) => m.def.name).join(', ')}
+            {members.some((m) => (m.agentNames?.length ?? 0) > 0) && (
+              <> — {[...new Set(members.flatMap((m) => m.agentNames ?? []))].join(', ')}</>
+            )}
+          </div>
+        </div>
+        {saved && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Saved</span>}
+      </div>
+
+      {!saved && (
+        <>
+          {members.map((m) => (
+            <PermissionsPanel key={m.connectorId} req={reqs.get(m.connectorId)} />
+          ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {fields.map((field) => (
+              <div key={field.key}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600 }}>{field.label}</label>
+                  {field.hint && (
+                    <button type="button" onClick={() => setShowHint(showHint === field.key ? null : field.key)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 13, padding: 0 }}>ⓘ</button>
+                  )}
+                </div>
+                {showHint === field.key && field.hint && (
+                  <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 8px', marginBottom: 6 }}>
+                    {field.hint}
+                  </div>
+                )}
+                <input
+                  type={field.type === 'password' ? 'password' : 'text'}
+                  value={values[field.key] ?? ''}
+                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                  placeholder={field.placeholder ?? ''}
+                  style={inputStyle}
+                />
+              </div>
+            ))}
+          </div>
+          {error && <div style={{ fontSize: 12, color: '#dc2626', marginTop: 8 }}>{error}</div>}
+          {/* Explanatory text on its own line — it used to double as the setupUrl link
+              label, which wrapped it across 2-3 lines inside the button row below and
+              left Save vertically centered against a paragraph instead of one line. */}
+          {group?.setupHint && (
+            <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 10, marginBottom: 0, lineHeight: 1.5 }}>
+              {group.setupHint}
+            </p>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
+            {group?.setupUrl && (
+              <a href={group.setupUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: 'var(--brand)' }}>
+                Get credentials ↗
+              </a>
+            )}
+            <button className="wbtn primary" style={{ fontSize: 12, padding: '6px 16px', marginLeft: 'auto' }}
+              disabled={saving || !allFilled} onClick={handleSave}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </>
+      )}
+
+      {saved && (
+        <button className="wbtn" style={{ fontSize: 11, padding: '4px 12px', marginTop: 6 }}
+          onClick={() => { setSaved(false); setValues(Object.fromEntries(fields.map((f) => [f.key, '']))); }}>
           Edit
         </button>
       )}
@@ -380,8 +630,8 @@ function UnsupportedConnectorCard({ c }: { c: DetectedConnector }) {
             {c.flowNames.length ? `: ${c.flowNames.slice(0, 3).join(', ')}` : ''}
           </div>
           <div style={{ fontSize: 12, color: '#b45309', marginTop: 6 }}>
-            Not supported yet — this connector has no entry in our registry, so the migrated
-            agent will not be able to call it. It is recorded in the migration report as a gap.
+            We don't support this connector yet, so the new agent won't be able to use it.
+            This will show up as a gap in your migration report.
           </div>
         </div>
       </div>
@@ -414,62 +664,42 @@ export function ConnectorConfig() {
 
     (async () => {
       try {
-        // 1. Scan PA flows for third-party connector dependencies.
-        const flowConnectors = await fetchThirdPartyConnectors(session);
+        // Environments the user actually selected agents from (SelectData) —
+        // both scans below run once PER environment and merge, instead of
+        // assuming everything lives in one "default" Dataverse org. A tenant
+        // can have agents (and their PA flows / knowledge sources) spread
+        // across several environments.
+        const agentSelection: Array<{ env: string; botIds: string[] }> =
+          JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
+        const envsWithAgents = agentSelection.filter((sel) => sel.botIds.length > 0);
 
-        // 2. Scan knowledge sources for connectors (e.g. Confluence) using the
-        //    agents selected on the SelectData step (stored in sessionStorage).
-        // Hoisted: the agents chosen on SelectData drive BOTH the knowledge-connector
-        // scan below and the SharePoint-as-knowledge detection further down.
-        let agentSelection: Array<{ env: string; botIds: string[] }> = [];
+        // 1. Scan PA flows for third-party connector dependencies, once per
+        //    selected environment.
+        let flowConnectors: DetectedConnector[] = [];
         try {
-          agentSelection = JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
+          const flowResults = await Promise.all(
+            envsWithAgents.map((sel) => fetchThirdPartyConnectors(session, sel.env)),
+          );
+          flowConnectors = mergeDetectedConnectors(flowResults);
         } catch {
-          /* no selection recorded — fall back to scanning nothing extra */
+          // non-fatal — knowledge connectors still shown
         }
 
+        // 2. Scan knowledge sources for connectors (e.g. Confluence) using the
+        //    same per-environment agent selection (envsWithAgents/agentSelection
+        //    hoisted above — reused below for the SharePoint-as-knowledge scan too).
         let knowledgeConnectors: DetectedConnector[] = [];
         try {
-          const ksPromises = agentSelection
-            .filter((sel) => sel.botIds.length > 0)
-            .map((sel) => fetchKnowledgeSourceConnectors(session, sel.env, sel.botIds));
-          const ksResults = await Promise.all(ksPromises);
-          // Merge: sum flowCount across environments, deduplicate by connectorId.
-          const merged = new Map<string, DetectedConnector>();
-          for (const list of ksResults) {
-            for (const c of list) {
-              const existing = merged.get(c.connectorId);
-              if (existing) {
-                merged.set(c.connectorId, {
-                  ...existing,
-                  flowCount: existing.flowCount + c.flowCount,
-                  flowNames: [...new Set([...existing.flowNames, ...c.flowNames])],
-                });
-              } else {
-                merged.set(c.connectorId, c);
-              }
-            }
-          }
-          knowledgeConnectors = [...merged.values()];
+          const ksResults = await Promise.all(
+            envsWithAgents.map((sel) => fetchKnowledgeSourceConnectors(session, sel.env, sel.botIds)),
+          );
+          knowledgeConnectors = mergeDetectedConnectors(ksResults);
         } catch {
           // non-fatal — flow connectors still shown
         }
 
         // Merge flow + knowledge connectors (deduplicate by connectorId).
-        const allById = new Map<string, DetectedConnector>();
-        for (const c of [...flowConnectors, ...knowledgeConnectors]) {
-          const existing = allById.get(c.connectorId);
-          if (existing) {
-            allById.set(c.connectorId, {
-              ...existing,
-              flowCount: existing.flowCount + c.flowCount,
-              flowNames: [...new Set([...existing.flowNames, ...c.flowNames])],
-            });
-          } else {
-            allById.set(c.connectorId, c);
-          }
-        }
-        const all = [...allById.values()];
+        const all = mergeDetectedConnectors([flowConnectors, knowledgeConnectors]);
 
         // SharePoint/OneDrive used as a KNOWLEDGE source needs the same Azure app as the
         // action connectors — the migrator crawls it through Microsoft Graph and the
@@ -478,7 +708,14 @@ export function ConnectorConfig() {
         // with nothing to fill in and no way to supply credentials.
         let knowledgeMsIds: string[] = [];
         try {
-          const needed = await fetchConnectorsNeeded(session, agentSelection[0]?.env ?? '');
+          // Scoped + per-environment like the two scans above — the previous call
+          // omitted botIds (scanning every agent in the environment, not just the
+          // selected ones) and only checked agentSelection[0]?.env, silently missing
+          // SharePoint/OneDrive needs in any other selected environment.
+          const neededResults = await Promise.all(
+            envsWithAgents.map((sel) => fetchConnectorsNeeded(session, sel.env, sel.botIds)),
+          );
+          const needed = neededResults.flat();
           if (needed.some((n) => n.kind === 'sharepoint-connector')) knowledgeMsIds.push('shared_sharepointonline');
           if (needed.some((n) => n.kind === 'onedrive-connector')) knowledgeMsIds.push('shared_onedrive');
         } catch {
@@ -522,14 +759,35 @@ export function ConnectorConfig() {
 
   const totalFound = connectors.length + msIds.length;
 
+  // Bucket callable third-party connectors by shared credential group (e.g. Confluence
+  // + Jira both resolve to req.group.id === 'atlassian') vs. standalone — a connector
+  // only lands in a group bucket once `requirements` has resolved its `group`, so on
+  // the (rare) requirements-fetch failure it falls back to its own ConnectorCard
+  // instead of vanishing.
+  const callableConnectors = connectors.filter(
+    (c): c is DetectedConnector & { def: ConnectorDef } => !!c.def && !c.unsupported,
+  );
+  const groupedConnectors = new Map<string, (DetectedConnector & { def: ConnectorDef })[]>();
+  const standaloneConnectors: (DetectedConnector & { def: ConnectorDef })[] = [];
+  for (const c of callableConnectors) {
+    const groupId = requirements.get(c.connectorId)?.group?.id;
+    if (groupId) {
+      const list = groupedConnectors.get(groupId) ?? [];
+      list.push(c);
+      groupedConnectors.set(groupId, list);
+    } else {
+      standaloneConnectors.push(c);
+    }
+  }
+
   return (
     <div className="card wide">
       <div className="step-head">
         <h2>Connector Credentials</h2>
         <p className="lead">
-          Your agents connect to external services via Power Automate flows.
-          Enter API credentials so the migrated Gemini agents can call them directly.
-          Credentials are stored securely in Google Secret Manager — never in logs.
+          Some of your agents use outside services — like SharePoint files or automated
+          workflows. Add login details for those below so your new Gemini agents can keep
+          using them.
         </p>
       </div>
 
@@ -557,8 +815,8 @@ export function ConnectorConfig() {
 
       {!loading && !error && totalFound === 0 && (
         <div className="infobox">
-          No third-party connector dependencies detected. Your agents use only
-          built-in Microsoft services or don't call external APIs via Power Automate.
+          No outside connections found for the agents you selected — they only use built-in
+          Microsoft features and don't rely on any external service.
         </div>
       )}
 
@@ -569,21 +827,27 @@ export function ConnectorConfig() {
             Skip any connector to flag it for manual review in the migration report.
           </p>
 
-          {/* MS native: one shared App Registration card for all MS connectors */}
+          {/* MS native: one shared App Registration card for all MS connectors
+              (also covers SharePoint/OneDrive used as a knowledge source — see
+              knowledgeMsIds above, which folds those into detectedMsIds). */}
           <MsNativeSection session={session} detectedMsIds={msIds} reqs={requirements} />
 
-          {/* Third-party: one card per connector we can actually call */}
-          {connectors
-            .filter((c): c is DetectedConnector & { def: ConnectorDef } => !!c.def && !c.unsupported)
-            .map((c) => (
-              <ConnectorCard
-                key={c.connectorId}
-                c={c}
-                session={session}
-                alreadySaved={savedIds.has(c.connectorId)}
-                req={requirements.get(c.connectorId)}
-              />
-            ))}
+          {/* Shared-credential-group connectors: one card per group (e.g. Confluence + Jira
+              share the single Atlassian token) instead of one empty, un-fillable card each. */}
+          {[...groupedConnectors.entries()].map(([groupId, members]) => (
+            <GroupSection key={groupId} session={session} members={members} reqs={requirements} />
+          ))}
+
+          {/* Third-party: one card per connector we can actually call, not sharing credentials */}
+          {standaloneConnectors.map((c) => (
+            <ConnectorCard
+              key={c.connectorId}
+              c={c}
+              session={session}
+              alreadySaved={savedIds.has(c.connectorId)}
+              req={requirements.get(c.connectorId)}
+            />
+          ))}
 
           {/* Detected but not callable — shown, never hidden */}
           {connectors
@@ -596,7 +860,14 @@ export function ConnectorConfig() {
 
       <div className="wizard-actions" style={{ marginTop: 20 }}>
         <button className="wbtn" onClick={() => navigate(`/select-data?session=${session}`)}>← Back</button>
-        <button className="wbtn primary" onClick={() => navigate(`/connectors?session=${session}`)}>Continue →</button>
+        {/* Straight to Migrate, not /connectors — that page re-scans EVERY agent in
+         *  every accessible environment unfiltered by selection, which is exactly
+         *  the SharePoint detection this step already covers (scoped to the agents
+         *  actually selected). Chaining into it here just asked the same question
+         *  twice. /connectors still exists as a standalone full-environment-audit
+         *  utility (reachable from SelectMap's inline link), just not forced into
+         *  this linear flow anymore. */}
+        <button className="wbtn primary" onClick={() => navigate(`/migrate?session=${session}`)}>Continue →</button>
       </div>
     </div>
   );

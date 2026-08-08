@@ -11,6 +11,8 @@ import {
   DEFAULT_APP_USER_ID,
   findLatestConnectedSession,
   getSession,
+  type Session,
+  unsetFieldsOnMatchingSessions,
   unsetSessionFields,
   updateSession,
 } from '../sessionStore.js';
@@ -108,7 +110,17 @@ function putState(data: { msSessionId?: string; popup?: boolean }): string {
   const sig = createHmac('sha256', config.MS_CLIENT_SECRET).update(payload).digest('base64url');
   return `${payload}.${sig}`;
 }
-function takeState(state: string | undefined): { msSessionId?: string; popup?: boolean } | null {
+/**
+ * `expired: true` is distinguished from a fully-null result so callers can
+ * still tell popup vs full-page mode apart when only the age check failed —
+ * the signed payload (including the popup flag) was otherwise perfectly
+ * valid. Without this, an expired popup-mode state silently fell back to a
+ * full-page redirect, navigating the popup instead of closing it, and the
+ * opener's connectViaPopup() promise never resolved.
+ */
+function takeState(
+  state: string | undefined,
+): { msSessionId?: string; popup?: boolean; expired?: boolean } | null {
   if (!state || !state.includes('.')) return null;
   const [payload, sig] = state.split('.');
   const expected = createHmac('sha256', config.MS_CLIENT_SECRET).update(payload).digest('base64url');
@@ -119,8 +131,9 @@ function takeState(state: string | undefined): { msSessionId?: string; popup?: b
       p?: number;
       t: number;
     };
-    if (Date.now() - t > STATE_TTL_MS) return null;
-    return { msSessionId: s || undefined, popup: p === 1 };
+    const popup = p === 1;
+    if (Date.now() - t > STATE_TTL_MS) return { popup, expired: true };
+    return { msSessionId: s || undefined, popup };
   } catch {
     return null;
   }
@@ -155,7 +168,8 @@ authRouter.get('/resume', async (_req, res) => {
 
 // ── Microsoft ────────────────────────────────────────────────────────────────
 authRouter.get('/microsoft/start', (req, res) => {
-  res.redirect(ms.buildAuthUrl(putState({ popup: req.query.popup === '1' })));
+  const session = req.query.session as string | undefined;
+  res.redirect(ms.buildAuthUrl(putState({ msSessionId: session, popup: req.query.popup === '1' })));
 });
 
 export async function msCallback(req: Request, res: Response): Promise<void> {
@@ -166,7 +180,10 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
     if (popup) return void popupResult(res, 'ms-auth-error', { error });
     return void res.redirect(web(`/?error=${encodeURIComponent(error)}`));
   }
-  if (!st) return void res.redirect(web('/?error=state_expired'));
+  if (!st || st.expired) {
+    if (popup) return void popupResult(res, 'ms-auth-error', { error: 'state_expired' });
+    return void res.redirect(web('/?error=state_expired'));
+  }
 
   try {
     const tokens = await ms.exchangeCode(code);
@@ -175,8 +192,12 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
     const tenantId = ms.tenantIdFromToken(adminToken);
     const msEmail = ms.emailFromToken(adminToken);
 
+    // getOrgName calls Microsoft Graph, so it needs a Graph-scoped token —
+    // adminToken here is scoped to api.powerapps.com and would 401 on every call.
     const [orgName, environments] = await Promise.all([
-      ms.getOrgName(adminToken, tenantId.slice(0, 8)),
+      ms.graphTokenFromRefresh(tenantId, refreshToken).then((graphToken) =>
+        graphToken ? ms.getOrgName(graphToken, tenantId.slice(0, 8)) : tenantId.slice(0, 8),
+      ),
       ms.discoverEnvironments(tenantId),
     ]);
 
@@ -205,8 +226,7 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
     // the Dynamics resource, isn't required for extraction, and caused a noisy
     // AADSTS65001 warning on every callback.
 
-    const sessionId = await createSession({
-      step: 'ms_done',
+    const msFields = {
       tenantId,
       orgName,
       msEmail,
@@ -218,7 +238,20 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
       topicCount: counts.topics,
       ksCount: counts.knowledgeSources,
       flowCount: counts.flows,
-    });
+    };
+
+    // Reconnecting after a source-only disconnect re-attaches to the SAME
+    // session doc (so a surviving Google connection isn't orphaned) instead
+    // of minting a new one — mirrors how google/start already links back via
+    // msSessionId. Falls back to a fresh session if the linked id is gone.
+    const existing = st.msSessionId ? await getSession(st.msSessionId) : undefined;
+    let sessionId: string;
+    if (existing) {
+      sessionId = st.msSessionId!;
+      await updateSession(sessionId, { step: existing.gEmail ? 'ready' : 'ms_done', ...msFields });
+    } else {
+      sessionId = await createSession({ step: 'ms_done', ...msFields });
+    }
 
     // Land back on the platform screen so the user sees "1 cloud connected".
     if (popup) return void popupResult(res, 'ms-auth-success', { session: sessionId });
@@ -235,7 +268,10 @@ authRouter.get('/microsoft/callback', msCallback);
 authRouter.get('/google/start', async (req, res) => {
   const session = req.query.session as string;
   const popup = req.query.popup === '1';
-  if (!(await getSession(session))) return void res.redirect(web('/?error=session_expired'));
+  if (!(await getSession(session))) {
+    if (popup) return void popupResult(res, 'google-auth-error', { error: 'session_expired' });
+    return void res.redirect(web('/?error=session_expired'));
+  }
 
   // The client's own admin signs in via OAuth. Their email + discovered Gemini
   // project drive the run; privileged writes use CloudFuze's service account
@@ -251,12 +287,14 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
     if (popup) return void popupResult(res, 'google-auth-error', { error });
     return void res.redirect(web(`/?error=${encodeURIComponent(error)}`));
   }
-  if (!st?.msSessionId || !(await getSession(st.msSessionId))) {
-    return void res.redirect(web('/?error=session_expired'));
+  if (!st || st.expired || !st.msSessionId || !(await getSession(st.msSessionId))) {
+    const errMsg = !st || st.expired ? 'state_expired' : 'session_expired';
+    if (popup) return void popupResult(res, 'google-auth-error', { error: errMsg });
+    return void res.redirect(web(`/?error=${errMsg}`));
   }
 
   try {
-    const gToken = await google.exchangeCode(code);
+    const { accessToken: gToken, refreshToken: gRefreshToken } = await google.exchangeCode(code);
     const gEmail = await google.getUserEmail(gToken);
     const geminiProject = await google.discoverGeminiProject(gToken);
 
@@ -265,7 +303,15 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
     // hardcoded id. Precise, actionable reason on failure.
     const { saOk, saReason } = await verifySaReachable(geminiProject, gEmail);
 
-    await updateSession(st.msSessionId, { step: 'ready', gEmail, gToken, geminiProject, saOk, saReason });
+    await updateSession(st.msSessionId, {
+      step: 'ready',
+      gEmail,
+      gToken,
+      ...(gRefreshToken ? { gRefreshToken } : {}),
+      geminiProject,
+      saOk,
+      saReason,
+    });
     // Back to the platform screen — now showing "2 of 2 clouds connected".
     if (popup) return void popupResult(res, 'google-auth-success', { session: st.msSessionId });
     res.redirect(web(`/home?session=${st.msSessionId}`));
@@ -302,20 +348,56 @@ authRouter.get('/session/:id', async (req, res) => {
 /**
  * Disconnect a connected platform.
  *   - google:    clears the Google/Gemini connection, keeps the source session.
- *   - microsoft: clears the source — this is the whole tenant context, so the
- *                session is deleted and the caller must reconnect from scratch.
+ *   - microsoft: clears the source fields only. If a Google connection is still
+ *                on the doc, the doc survives (step: 'google_only') so Gemini
+ *                stays connected — reconnecting Copilot Studio re-attaches to
+ *                this same doc (see msCallback). Only deleted outright when
+ *                nothing is left connected at all.
  */
 authRouter.post('/disconnect', async (req, res) => {
   const { session, platform } = req.body as { session?: string; platform?: string };
   const s = await getSession(session ?? '');
   if (!s) return void res.status(404).json({ error: 'session_not_found' });
+  const appUserId = s.appUserId ?? DEFAULT_APP_USER_ID;
 
   if (platform === 'google') {
-    await unsetSessionFields(session!, ['gEmail', 'geminiProject', 'saOk']);
+    const fields: (keyof Session)[] = ['gEmail', 'gToken', 'gRefreshToken', 'geminiProject', 'saOk'];
+    await unsetSessionFields(session!, fields);
+    // Also clear this same Google account on any other duplicate session doc for this
+    // app user (see unsetFieldsOnMatchingSessions) — otherwise a stale duplicate keeps
+    // reporting it connected and the Login screen's resume picks it back up.
+    if (s.gEmail) await unsetFieldsOnMatchingSessions(appUserId, { gEmail: s.gEmail }, fields);
+    if (!s.dvToken) {
+      // Nothing left connected on this doc at all — end it, same as the microsoft
+      // branch below. Previously this never checked, so disconnecting Google last
+      // left a permanently orphaned, nothing-connected session doc behind.
+      await deleteSession(session!);
+      return void res.json({ ok: true, platform: 'google', sessionEnded: true });
+    }
     await updateSession(session!, { step: 'ms_done' });
-    return void res.json({ ok: true, platform: 'google' });
+    return void res.json({ ok: true, platform: 'google', sessionEnded: false });
   }
   if (platform === 'microsoft') {
+    const fields: (keyof Session)[] = [
+      'tenantId',
+      'orgName',
+      'msEmail',
+      'refreshToken',
+      'dvToken',
+      'dvDelegatedToken',
+      'dvOrgUrl',
+      'environments',
+      'botCount',
+      'topicCount',
+      'ksCount',
+      'flowCount',
+    ];
+    await unsetSessionFields(session!, fields);
+    if (s.tenantId) await unsetFieldsOnMatchingSessions(appUserId, { tenantId: s.tenantId }, fields);
+    if (s.gEmail) {
+      await updateSession(session!, { step: 'google_only' });
+      return void res.json({ ok: true, platform: 'microsoft', sessionEnded: false });
+    }
     await deleteSession(session!);
     return void res.json({ ok: true, platform: 'microsoft', sessionEnded: true });
   }

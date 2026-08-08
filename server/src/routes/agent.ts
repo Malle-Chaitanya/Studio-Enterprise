@@ -8,7 +8,11 @@ export const agentRouter = Router();
 
 /**
  * POST /api/agent/chat
- * body: { session, message, step?, pathname?, confirmed?, confirmTool?, confirmArgs?, clientState? }
+ * body: { session, message, step?, pathname?, confirmed?, confirmTool?, confirmArgs?, clientState?, systemTrigger?, actionNote? }
+ * `systemTrigger` marks an auto-fired turn (e.g. on navigation, or a significant
+ * in-page click) with no typed message — `message` may be empty in that case.
+ * `actionNote` is a short description of the click that triggered it (e.g.
+ * "Included environment 'CF_MANAGE'"), distinct from a full-page navigation.
  * SSE stream of agent tokens / ui_event / chips / done.
  */
 agentRouter.post('/chat', async (req, res) => {
@@ -17,7 +21,7 @@ agentRouter.post('/chat', async (req, res) => {
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
 
   const message = String(req.body?.message ?? '');
-  if (!message && !req.body?.confirmed) {
+  if (!message && !req.body?.confirmed && !req.body?.systemTrigger) {
     return void res.status(400).json({ error: 'message_required' });
   }
 
@@ -42,6 +46,8 @@ agentRouter.post('/chat', async (req, res) => {
         confirmTool: req.body?.confirmTool ? String(req.body.confirmTool) : undefined,
         confirmArgs: (req.body?.confirmArgs as Record<string, unknown>) ?? undefined,
         clientState: req.body?.clientState,
+        systemTrigger: !!req.body?.systemTrigger,
+        actionNote: req.body?.actionNote ? String(req.body.actionNote) : undefined,
       },
       emit,
     );

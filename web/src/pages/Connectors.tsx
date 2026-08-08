@@ -92,11 +92,6 @@ export function Connectors() {
   return (
     <div className="card wide">
       <h2>Connectors needed</h2>
-      <p className="lead">
-        Every SharePoint/OneDrive site that needs a native connector set up before it can migrate —
-        across all your environments, in one list. Set each one up once here; every agent that uses
-        it picks it up automatically.
-      </p>
 
       {error && <div className="error">{error}</div>}
 

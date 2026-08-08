@@ -156,9 +156,6 @@ The React wizard runs these steps in order (reordered so environment selection c
 | 6 | **Live Migration** | Runs the real pipeline with live SSE progress + per-agent fidelity cards. |
 | 7 | **Report** | Per-agent fidelity report, downloadable as markdown. |
 
-- **Environment prefixing:** optionally the destination display name is prefixed with
-  `[EnvName]` so agents from different environments are distinguishable in one project
-  (`destination.prefixWithEnv`).
 - Frontend↔backend: `web/src/api.ts` exposes `connectViaPopup`, `fetchProjects`,
   `fetchEngines`, `planMigration` (which carries `destination.environmentMap`).
 

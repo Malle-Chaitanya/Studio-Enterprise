@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { connectViaPopup, googleStartUrl, microsoftStartUrl } from '../api.ts';
 import { useWizard, type WizardStepId } from '../context/WizardContext.tsx';
+import { renderMarkdownLite } from '../markdownLite.tsx';
 
 interface ChatMsg {
   id: string;
   role: 'user' | 'agent' | 'system';
   text: string;
+  /** Silent page-orientation turns (no user bubble triggered them) render as a
+   *  light status line instead of a full chat bubble, so navigating around
+   *  the app doesn't read as a new heavy AI reply every time. */
+  light?: boolean;
 }
 
 const STEP_CHIPS: Record<string, string[]> = {
@@ -37,18 +43,18 @@ const nid = () => `m${Date.now()}-${++msgSeq}`;
  * Right-panel Studio Migrate AI chat. Streams SSE from /api/agent/chat and
  * applies tool events to the left workflow via WizardContext.
  */
-export function AgentChat() {
+export function AgentChat({ onClose }: { onClose?: () => void }) {
   const [params] = useSearchParams();
   const session = params.get('session') ?? '';
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const wizard = useWizard();
-  const [msgs, setMsgs] = useState<ChatMsg[]>([
-    {
-      id: 'welcome',
-      role: 'agent',
-      text: 'Hi — I can help you map users, pick environments and agents, and run a dry migration. Ask me anything or tap a suggestion below.',
-    },
-  ]);
+  const [connecting, setConnecting] = useState<null | 'microsoft' | 'google'>(null);
+  const [busyLight, setBusyLight] = useState(false);
+  // No hardcoded greeting — the first message is the same live, page-aware
+  // orientation turn used on every navigation (see the effect below), so it
+  // reflects whatever's actually on screen instead of a generic canned line.
+  const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [chips, setChips] = useState<string[]>(STEP_CHIPS['/home'] ?? []);
@@ -100,17 +106,60 @@ export function AgentChat() {
     [wizard],
   );
 
+  // OAuth popups can only be opened from the client — there's no server tool
+  // for "Connect Microsoft"/"Connect Google" (the LLM can't drive a browser
+  // popup), so these two chip labels are intercepted before ever reaching
+  // /api/agent/chat, mirroring Home.tsx's own connect handlers.
+  const connectMicrosoft = useCallback(async () => {
+    setConnecting('microsoft');
+    const r = await connectViaPopup(microsoftStartUrl(), 'ms-auth-success', 'ms-auth-error');
+    setConnecting(null);
+    if (r.ok && r.session) {
+      navigate(`/home?session=${r.session}`);
+    } else {
+      setMsgs((m) => [...m, { id: nid(), role: 'agent', text: 'Microsoft connection was cancelled or failed — try again.' }]);
+    }
+  }, [navigate]);
+
+  const connectGoogle = useCallback(async () => {
+    if (!session) {
+      setMsgs((m) => [
+        ...m,
+        { id: nid(), role: 'agent', text: 'Connect Microsoft (the source) first — Google unlocks right after.' },
+      ]);
+      return;
+    }
+    setConnecting('google');
+    const r = await connectViaPopup(googleStartUrl(session), 'google-auth-success', 'google-auth-error');
+    setConnecting(null);
+    if (!r.ok) {
+      setMsgs((m) => [...m, { id: nid(), role: 'agent', text: 'Google connection was cancelled or failed — try again.' }]);
+    }
+  }, [session]);
+
   const send = useCallback(
-    async (text: string, opts?: { confirmed?: boolean; confirmTool?: string; confirmArgs?: Record<string, unknown> }) => {
+    async (
+      text: string,
+      opts?: {
+        confirmed?: boolean;
+        confirmTool?: string;
+        confirmArgs?: Record<string, unknown>;
+        systemTrigger?: boolean;
+        actionNote?: string;
+      },
+    ) => {
       const trimmed = text.trim();
-      if (!trimmed && !opts?.confirmed) return;
+      if (!trimmed && !opts?.confirmed && !opts?.systemTrigger) return;
       if (busy) return;
+
+      const light = !!opts?.systemTrigger;
 
       if (trimmed) {
         setMsgs((m) => [...m, { id: nid(), role: 'user', text: trimmed }]);
         setInput('');
       }
       setBusy(true);
+      setBusyLight(light);
       wizard.setPendingConfirm(null);
 
       try {
@@ -125,6 +174,8 @@ export function AgentChat() {
             confirmed: opts?.confirmed,
             confirmTool: opts?.confirmTool,
             confirmArgs: opts?.confirmArgs,
+            systemTrigger: !!opts?.systemTrigger,
+            actionNote: opts?.actionNote,
             clientState: {
               envs: safeJson(`csge_envs_${session}`),
               agents: safeJson(`csge_data_${session}`),
@@ -135,7 +186,7 @@ export function AgentChat() {
 
         if (!res.ok || !res.body) {
           const err = await res.text().catch(() => 'chat_failed');
-          setMsgs((m) => [...m, { id: nid(), role: 'agent', text: `Sorry — chat failed (${err.slice(0, 120)}).` }]);
+          setMsgs((m) => [...m, { id: nid(), role: 'agent', text: `Sorry — chat failed (${err.slice(0, 120)}).`, light }]);
           return;
         }
 
@@ -166,14 +217,14 @@ export function AgentChat() {
               const snap = agentText;
               setMsgs((m) => {
                 const without = m.filter((x) => x.id !== agentId);
-                return [...without, { id: agentId, role: 'agent', text: snap }];
+                return [...without, { id: agentId, role: 'agent', text: snap, light }];
               });
             } else if (t === 'message' || t === 'reply') {
               agentText = String(data.text ?? data.message ?? agentText);
               const snap = agentText;
               setMsgs((m) => {
                 const without = m.filter((x) => x.id !== agentId);
-                return [...without, { id: agentId, role: 'agent', text: snap }];
+                return [...without, { id: agentId, role: 'agent', text: snap, light }];
               });
             } else if (t === 'ui_event' || t === 'tool_event') {
               handleUiEvent((data.event as Record<string, unknown>) ?? data);
@@ -183,11 +234,11 @@ export function AgentChat() {
             } else if (t === 'error') {
               setMsgs((m) => [
                 ...m,
-                { id: nid(), role: 'agent', text: String(data.message ?? data.error ?? 'Something went wrong.') },
+                { id: nid(), role: 'agent', text: String(data.message ?? data.error ?? 'Something went wrong.'), light },
               ]);
             } else if (t === 'done') {
               if (data.text && !agentText) {
-                setMsgs((m) => [...m, { id: agentId, role: 'agent', text: String(data.text) }]);
+                setMsgs((m) => [...m, { id: agentId, role: 'agent', text: String(data.text), light }]);
               }
             }
           }
@@ -195,7 +246,7 @@ export function AgentChat() {
       } catch (e) {
         setMsgs((m) => [
           ...m,
-          { id: nid(), role: 'agent', text: `Chat error: ${(e as Error).message}` },
+          { id: nid(), role: 'agent', text: `Chat error: ${(e as Error).message}`, light },
         ]);
       } finally {
         setBusy(false);
@@ -203,6 +254,46 @@ export function AgentChat() {
     },
     [busy, handleUiEvent, pathname, session, wizard],
   );
+
+  const orientedRef = useRef<Set<string>>(new Set());
+
+  // A session change (disconnect → reconnect gets a new id, same route) isn't
+  // a remount — clear the transcript and re-arm orientation so the chat
+  // doesn't keep showing a conversation tied to a session that's gone, or
+  // skip re-greeting because the old session already "used up" that step.
+  const prevSessionRef = useRef(session);
+  useEffect(() => {
+    if (prevSessionRef.current === session) return;
+    prevSessionRef.current = session;
+    setMsgs([]);
+    orientedRef.current.clear();
+  }, [session]);
+
+  // Auto-orient on step change AND react to in-page actions (pages call
+  // wizard.notifyAction() after things like toggling an environment or
+  // starting a migration) — but as ONE combined effect, not two independent
+  // ones. Kept separate, an action that also navigates to a new step (e.g.
+  // starting a migration lands on "migrate") fired BOTH a short action-ack
+  // AND a full step-welcome message for the same click — two agent bubbles,
+  // the second one a redundant, longer "Welcome to..." stacked under the
+  // useful one. The action ack already orients the user, so it takes
+  // priority and counts as having welcomed that step too.
+  const lastActionSentRef = useRef(0);
+  useEffect(() => {
+    if (!session) return;
+    const step = pathToStep(pathname);
+    const freshAction = wizard.lastAction && wizard.lastAction.ts !== lastActionSentRef.current;
+
+    if (freshAction) {
+      lastActionSentRef.current = wizard.lastAction!.ts;
+      orientedRef.current.add(step);
+      void send('', { systemTrigger: true, actionNote: wizard.lastAction!.text });
+      return;
+    }
+    if (orientedRef.current.has(step)) return;
+    orientedRef.current.add(step);
+    void send('', { systemTrigger: true });
+  }, [pathname, wizard.lastAction, session, send]);
 
   const onConfirm = (yes: boolean) => {
     const pending = wizard.pendingConfirm;
@@ -224,28 +315,43 @@ export function AgentChat() {
       <div className="chat-head">
         <div className="chat-avatar">✦</div>
         <div>
-          <div className="chat-title">Studio Migrate Assistant</div>
-          <div className="chat-sub">{session ? 'Connected session' : 'Sign in to unlock actions'}</div>
+          <div className="chat-title">CloudFuze AI Migrations Assistant</div>
+          <div className="chat-sub">{session ? 'Connected session' : 'Connect a platform to get started'}</div>
         </div>
+        {onClose && (
+          <button type="button" className="chat-close" onClick={onClose} title="Close assistant" aria-label="Close assistant">
+            ×
+          </button>
+        )}
       </div>
 
       <div className="chat-msgs">
+        {msgs.length === 0 && !busy && !session && (
+          <div className="cmsg agent">
+            <div className="cmsg-av">✦</div>
+            <div className="cmsg-body">
+              <div className="cmsg-bubble">Tap "Connect Microsoft" below to get started — I'll walk you through the rest.</div>
+            </div>
+          </div>
+        )}
         {msgs.map((m) => (
-          <div key={m.id} className={`cmsg ${m.role === 'user' ? 'user' : 'agent'}`}>
-            <div className="cmsg-av">{m.role === 'user' ? 'You' : 'AI'}</div>
-            <div className="cmsg-bubble" style={{ whiteSpace: 'pre-wrap' }}>
-              {m.text}
+          <div key={m.id} className={`cmsg ${m.role === 'user' ? 'user' : 'agent'} ${m.light ? 'light' : ''}`}>
+            {m.role !== 'user' && <div className="cmsg-av">✦</div>}
+            <div className="cmsg-body">
+              <div className="cmsg-bubble">{m.role === 'user' ? m.text : renderMarkdownLite(m.text)}</div>
             </div>
           </div>
         ))}
         {busy && (
-          <div className="cmsg agent">
-            <div className="cmsg-av">AI</div>
-            <div className="cmsg-bubble">
-              <div className="typing">
-                <i />
-                <i />
-                <i />
+          <div className={`cmsg agent ${busyLight ? 'light' : ''}`}>
+            <div className="cmsg-av">✦</div>
+            <div className="cmsg-body">
+              <div className="cmsg-bubble">
+                <div className="typing">
+                  <i />
+                  <i />
+                  <i />
+                </div>
               </div>
             </div>
           </div>
@@ -273,8 +379,22 @@ export function AgentChat() {
 
       <div className="chat-chips">
         {chips.map((c) => (
-          <button key={c} type="button" className="chat-chip" disabled={busy} onClick={() => void send(c)}>
-            {c}
+          <button
+            key={c}
+            type="button"
+            className="chat-chip"
+            disabled={busy || connecting !== null}
+            onClick={() => {
+              if (c === 'Connect Microsoft') return void connectMicrosoft();
+              if (c === 'Connect Google') return void connectGoogle();
+              void send(c);
+            }}
+          >
+            {connecting === 'microsoft' && c === 'Connect Microsoft'
+              ? 'Connecting…'
+              : connecting === 'google' && c === 'Connect Google'
+                ? 'Connecting…'
+                : c}
           </button>
         ))}
       </div>

@@ -266,6 +266,14 @@ body {
 .card.wide {
   max-width: 900px;
 }
+/* A card nested inside another .card (e.g. per-connector cards inside the
+   Connector Credentials page) must fill its parent's content width, not the
+   top-level 640px cap — otherwise it renders narrower than the surrounding
+   page and its own action row, looking misaligned. */
+.card .card {
+  max-width: none;
+  width: 100%;
+}
 
 .logo {
   font-size: 24px;
@@ -555,6 +563,17 @@ p.lead {
   margin-top: 16px;
 }
 
+/* Floating export/download icon, anchored to the card's top-right corner but
+   sitting half outside its border — a lightweight secondary action that
+   shouldn't compete with the primary flow buttons inside the card. Same
+   visual treatment as .mu-iconbtn (Map Users export), just repositioned. */
+.export-icon-btn {
+  position: absolute;
+  top: -16px;
+  right: -16px;
+  box-shadow: 0 4px 12px rgba(1, 41, 172, 0.18);
+}
+
 /* form controls */
 select,
 input[type='search'] {
@@ -567,6 +586,15 @@ input[type='search'] {
 }
 select:focus {
   border-color: var(--brand);
+}
+/* Highlighted/selected/hovered row inside the native dropdown list —
+   Chromium/Edge honor background-color on option:checked/:hover (Firefox/
+   Safari ignore it and keep their OS default, which is an acceptable
+   fallback). Options are otherwise left plain white. */
+select option:checked,
+select option:hover {
+  background-color: #eaf2ff;
+  color: var(--text);
 }
 
 /* ── Assessment table ───────────────────────────────────────── */
@@ -927,6 +955,140 @@ table.assess td.note {
   display: flex;
   overflow: hidden;
 }
+/* Reopen control shown when the assistant panel is closed — a round floating
+   bubble (bottom-right) with a hover popup naming the assistant, rather than
+   losing the panel entirely with no way back or a bare unlabeled tab. */
+/* Wrap is exactly the button's own footprint — the popup is an absolutely
+   positioned overlay anchored to it, not a flex sibling. (It used to be a
+   flex column that auto-grew to the popup's 220px width, which silently
+   shifted the button's real screen position by up to 172px and let the
+   whole thing drift off-screen once dragged near an edge.) */
+.chat-fab-wrap {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  width: 48px;
+  height: 48px;
+}
+.chat-fab {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: none;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--brand-h), var(--brand));
+  color: #fff;
+  font-size: 20px;
+  box-shadow: 0 4px 20px rgba(1, 41, 172, 0.35);
+}
+.chat-fab:hover {
+  box-shadow: 0 6px 24px rgba(1, 41, 172, 0.45);
+}
+.chat-fab-popup {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: 220px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 28px rgba(1, 41, 172, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  overflow: visible;
+  transition: box-shadow 0.15s ease;
+}
+.chat-fab-popup.hover {
+  box-shadow: 0 10px 32px rgba(1, 41, 172, 0.28), 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+/* Flip to whichever side still has room once the button is dragged near an
+   edge, instead of letting the popup run off-screen. */
+.chat-fab-popup.flip-x {
+  right: auto;
+  left: 0;
+}
+.chat-fab-popup.flip-y {
+  bottom: auto;
+  top: calc(100% + 10px);
+}
+.chat-fab-popup-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: #fff;
+  opacity: 0.85;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+.chat-fab-popup-close:hover {
+  opacity: 1;
+}
+/* Small triangular pointer under the popup, aimed at the FAB circle below it
+   so it reads as a callout for that specific button, not a floating card. */
+.chat-fab-popup-arrow {
+  position: absolute;
+  right: 16px;
+  bottom: -8px;
+  width: 16px;
+  height: 8px;
+  overflow: hidden;
+}
+.chat-fab-popup-arrow::after {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+.chat-fab-popup-arrow.flip-x {
+  right: auto;
+  left: 16px;
+}
+.chat-fab-popup-arrow.flip-y {
+  bottom: auto;
+  top: -8px;
+}
+.chat-fab-popup-arrow.flip-y::after {
+  top: auto;
+  bottom: -8px;
+}
+.chat-fab-popup-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, var(--brand), var(--brand-h));
+  color: #fff;
+  border-radius: 10px 10px 0 0;
+}
+.chat-fab-popup-icon {
+  font-size: 13px;
+}
+.chat-fab-popup-title {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.chat-fab-popup-desc {
+  padding: 10px 12px 12px;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+}
 .pane-workflow {
   flex: 1;
   display: flex;
@@ -940,12 +1102,13 @@ table.assess td.note {
   overflow-y: auto;
   padding: 28px 28px 48px;
   align-items: flex-start;
-  justify-content: flex-start;
+  justify-content: center;
 }
 .pane-chat {
-  width: min(400px, 38vw);
-  min-width: 300px;
-  max-width: 440px;
+  /* Width is set inline from AppShell's drag-to-resize state (see App.tsx) —
+     300–640px, persisted to localStorage. This is just the initial-paint
+     fallback for the instant before React's first render. */
+  width: 400px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -962,7 +1125,7 @@ table.assess td.note {
   border-right: 1px solid var(--border);
 }
 .divider {
-  width: 6px;
+  width: 3px;
   background: var(--border);
   cursor: col-resize;
   flex-shrink: 0;
@@ -971,10 +1134,11 @@ table.assess td.note {
   justify-content: center;
   position: relative;
   transition: background 0.15s;
+  user-select: none;
 }
 .divider:hover,
 .divider.active {
-  background: var(--brand-l);
+  background: #c3d1fd;
 }
 .divider::after {
   content: '';
@@ -1010,7 +1174,8 @@ table.assess td.note {
   display: flex;
   flex-direction: column;
   height: 100%;
-  max-width: 820px;
+  width: 100%;
+  max-width: 1100px;
 }
 .mu-head {
   display: flex;
@@ -1246,6 +1411,21 @@ table.assess td.note {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
+.chat-close {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.chat-close:hover {
+  background: var(--tint);
+  color: var(--brand);
+}
 .chat-avatar {
   width: 30px;
   height: 30px;
@@ -1275,37 +1455,58 @@ table.assess td.note {
   flex-direction: column;
   gap: 12px;
 }
+/* A small round avatar marks agent turns — just the header's "✦" mark at
+   message scale, not the old blockly "AI" badge. User turns stay avatar-free;
+   right alignment + brand-color fill already identify them. */
 .cmsg {
   display: flex;
   gap: 8px;
   max-width: 100%;
 }
+.cmsg.agent {
+  justify-content: flex-start;
+}
 .cmsg.user {
-  flex-direction: row-reverse;
+  justify-content: flex-end;
 }
 .cmsg-av {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 10px;
+  flex-shrink: 0;
+  margin-top: 2px;
 }
-.cmsg.agent .cmsg-av {
-  background: var(--brand);
-  color: #fff;
-}
-.cmsg.user .cmsg-av {
-  background: var(--tint);
-  color: var(--brand);
+.cmsg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 84%;
+  min-width: 0;
 }
 .cmsg-bubble {
   padding: 9px 12px;
   border-radius: 10px;
   font-size: 13px;
   line-height: 1.55;
+}
+/* Silent page-orientation turns — rendered as a light status line instead of
+   a full bubble so navigating the app doesn't read as a new heavy AI reply.
+   The small avatar still marks it as an assistant turn. */
+.cmsg.light .cmsg-bubble {
+  background: linear-gradient(135deg, #eef4ff, #e1ecff);
+  border: none;
+  border-left: 2px solid var(--brand-l);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--brand);
+  font-size: 12px;
+  font-style: italic;
 }
 .cmsg.agent .cmsg-bubble {
   background: var(--bg);
@@ -1317,6 +1518,30 @@ table.assess td.note {
   background: var(--brand);
   color: #fff;
   border-top-right-radius: 3px;
+  white-space: pre-wrap;
+}
+.cmsg-bubble p {
+  margin: 0 0 6px;
+}
+.cmsg-bubble ol,
+.cmsg-bubble ul {
+  margin: 0 0 6px 18px;
+  padding: 0;
+}
+.cmsg-bubble li {
+  margin-bottom: 2px;
+}
+.cmsg-bubble p:last-child,
+.cmsg-bubble ol:last-child,
+.cmsg-bubble ul:last-child {
+  margin-bottom: 0;
+}
+.cmsg-bubble a {
+  color: var(--brand);
+  text-decoration: underline;
+}
+.cmsg.user .cmsg-bubble a {
+  color: #fff;
 }
 .chat-chips {
   display: flex;
@@ -1561,8 +1786,45 @@ table.assess td.note {
 }
 .platform-cards {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
   gap: 20px;
+}
+/* Gradient bar between the two cards — reflects partial-connection state
+   (GEM_CO's pipeline-panel treatment: the line itself shows which side is
+   connected, not just each card in isolation). */
+.pcard-connector {
+  position: relative;
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.pcard-connector.src-on {
+  background: linear-gradient(to right, #3b82f6, var(--border));
+}
+.pcard-connector.tgt-on {
+  background: linear-gradient(to right, var(--border), #16a34a);
+}
+.pcard-connector.src-on.tgt-on {
+  background: linear-gradient(to right, #3b82f6, #16a34a);
+}
+/* Arrowhead at the target end, so the bar reads as a directional connector
+   rather than a plain divider line. */
+.pcard-connector::after {
+  content: '';
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--border);
+}
+.pcard-connector.tgt-on::after {
+  border-left-color: #86efac;
 }
 .platform-card {
   border: 1px solid var(--border);
@@ -1718,9 +1980,11 @@ table.assess td.note {
 }
 .pcard.blue.on {
   border-color: #93c5fd;
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.15);
 }
 .pcard.green.on {
   border-color: #86efac;
+  box-shadow: 0 4px 14px rgba(22, 163, 74, 0.15);
 }
 .pcard-icon {
   display: flex;
@@ -1743,6 +2007,9 @@ table.assess td.note {
 .pcard-status {
   font-size: 13px;
   font-weight: 600;
+  color: var(--muted);
+}
+.pcard-status.on {
   color: #16a34a;
 }
 .pcard-btn {
@@ -1761,21 +2028,19 @@ table.assess td.note {
   background: var(--tint);
 }
 
-/* Red "connect at least one" banner + disabled Continue (GEM_CO style). */
-.warn-banner {
+/* Neutral "one more step needed" notice — an expected in-progress state, not
+   an error, so it reads as a calm nudge rather than a red alarm. */
+.notice-banner {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-top: 20px;
   padding: 14px 16px;
-  border: 1px solid #fecaca;
-  background: #fef2f2;
+  border: 1px solid #c7d9fb;
+  background: var(--tint);
   border-radius: 8px;
-  color: #b91c1c;
+  color: var(--brand);
   font-size: 14px;
-}
-.warn-banner .warn-ico {
-  font-size: 15px;
 }
 .wbtn.primary:disabled {
   opacity: 0.5;
@@ -1903,6 +2168,11 @@ table.assess td.note {
   padding: 9px 12px;
   font-size: 13px;
 }
+.menv-chev {
+  display: inline-flex;
+  width: 12px;
+  flex-shrink: 0;
+}
 .menv-name {
   font-weight: 600;
   color: var(--ink);
@@ -1912,25 +2182,63 @@ table.assess td.note {
   color: var(--muted);
   margin-left: auto;
 }
+.menv-noaccess {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 3px 8px;
+  border-radius: 99px;
+}
 .magents {
-  padding: 4px 12px 10px 34px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  margin: 4px 12px 10px 34px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
 }
 .magent {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 10px;
   font-size: 12px;
-  padding: 5px 10px 5px 5px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: #fff;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--bg);
+  transition: background 0.15s;
+}
+.magent:last-child {
+  border-bottom: none;
+}
+.magent:hover {
+  background: var(--tint);
+}
+.magent-info {
+  flex: 1;
+  min-width: 0;
+}
+.magent-name {
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.magent-sub {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mavatar {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   color: #fff;
   display: flex;
@@ -1938,6 +2246,7 @@ table.assess td.note {
   justify-content: center;
   font-size: 9px;
   font-weight: 700;
+  flex-shrink: 0;
 }
 .muted-row {
   font-size: 12px;
@@ -1982,6 +2291,101 @@ table.assess td.note {
 }
 .wbtn.primary:hover {
   background: var(--brand-h);
+}
+.wbtn.danger {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wbtn.danger:hover {
+  background: #b91c1c;
+}
+
+/* ── Branded confirm dialog (replaces window.confirm for destructive actions) */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: modalFadeIn 0.15s ease;
+}
+.modal-card {
+  background: var(--surface);
+  border-radius: var(--radius-card);
+  max-width: 420px;
+  width: 100%;
+  padding: 24px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+  animation: modalScaleIn 0.2s ease;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.modal-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: #fef2f2;
+  color: #dc2626;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.modal-detail {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand);
+  font-family: var(--mono);
+  padding: 10px 12px;
+  background: var(--tint);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  word-break: break-all;
+}
+.modal-note {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes modalScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* ── Choose Pair (source → target, matches ITSM) ────────────── */
@@ -2179,35 +2583,38 @@ table.assess td.note {
 .urow {
   display: flex;
   align-items: center;
-  gap: 12px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px 16px;
-  margin-bottom: 10px;
+  gap: 10px;
+  border-bottom: 1px solid var(--bg);
+  padding: 6px 14px;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background 0.12s;
   background: #fff;
+}
+.urow:last-child {
+  border-bottom: none;
+}
+.urow:hover {
+  background: var(--bg);
 }
 .urow.on {
   background: var(--tint);
-  border-color: var(--brand-l);
 }
 .urow input[type='checkbox'] {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   accent-color: var(--brand);
   flex-shrink: 0;
 }
 .uavatar {
-  width: 40px;
-  height: 40px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 10px;
   flex-shrink: 0;
 }
 .uinfo {
@@ -2217,20 +2624,20 @@ table.assess td.note {
   flex-direction: column;
 }
 .uname {
-  font-weight: 600;
+  font-weight: 400;
   color: var(--ink);
-  font-size: 14px;
+  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .usub {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 .ucheck {
   color: var(--brand);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   flex-shrink: 0;
 }
@@ -2276,7 +2683,7 @@ table.assess td.note {
 
 .cf-skel {
   border-radius: 4px;
-  background: linear-gradient(90deg, var(--border) 25%, var(--surface) 37%, var(--border) 63%);
+  background: linear-gradient(90deg, #e4e4e7 25%, #f4f4f5 45%, #e4e4e7 65%);
   background-size: 400% 100%;
   animation: cf-shimmer 1.4s ease infinite;
 }

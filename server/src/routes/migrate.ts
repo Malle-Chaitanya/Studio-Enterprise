@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { runMigration } from '../orchestrator.js';
-import { renderReport } from '../services/report.js';
+import { renderReportExcel } from '../services/report.js';
 import { resolveScope } from '../services/scope.js';
 import { getSession, updateSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
 import {
@@ -46,9 +46,21 @@ migrateRouter.post('/plan', async (req, res) => {
   if (!scope) return void res.status(400).json({ error: 'scope_required' });
 
   try {
-    const dest = destination ?? { prefixWithEnv: false };
+    const dest = destination ?? {};
     const plan = await resolveScope(session, scope, dest);
     plan.dryRun = !!dryRun;
+    // Seed from the durable per-customer record (connectorCredentials.ts), not just
+    // whatever got saved in THIS session — otherwise a customer who already configured
+    // Confluence/Jira/Dynamics in an earlier session (and sees "✓ Saved" in the UI) gets
+    // silently skipped here, because the orchestrator only ever reads plan.savedConnectors,
+    // which starts empty on every new plan. Confirmed live 2026-08-07: a Confluence source
+    // classified correctly but never crawled because this exact gap left savedConnectors
+    // empty despite the Atlassian credential already sitting in Secret Manager.
+    const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+    const durablySaved = await listConnectorCredentials(appUserId).catch(() => []);
+    if (durablySaved.length) {
+      plan.savedConnectors = [...new Set([...(plan.savedConnectors ?? []), ...durablySaved.map((c) => c.connectorId)])];
+    }
     await updateSession(sessionId!, { plan });
     res.json({
       totalAgents: plan.totalAgents,
@@ -100,14 +112,17 @@ migrateRouter.get('/stream', async (req, res) => {
   }
 });
 
-/** Render a markdown report from client-held results (for download). */
-migrateRouter.post('/report', (req, res) => {
+/** Render an Excel (.xlsx) report from client-held results (for download). */
+migrateRouter.post('/report', async (req, res) => {
   const { orgName, results } = req.body as { orgName?: string; results?: MigrationResult[] };
   if (!Array.isArray(results)) {
     res.status(400).json({ error: 'results_required' });
     return;
   }
-  res.type('text/markdown').send(renderReport(orgName ?? 'Organization', results));
+  const buf = await renderReportExcel(orgName ?? 'Organization', results);
+  res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="migration-report.xlsx"');
+  res.send(buf);
 });
 
 /**
@@ -250,16 +265,28 @@ migrateRouter.post('/knowledge-source-confirm', async (req, res) => {
 
 // ── Third-party connector detection + credential storage ──────────────────────
 
-/** GET /api/migrate/third-party-connectors?session= */
+/**
+ * GET /api/migrate/third-party-connectors?session=&envUrl=
+ *
+ * envUrl is REQUIRED and must be one of the environments the user actually
+ * selected agents from (SelectData) — NOT session.dvOrgUrl. A tenant can have
+ * agents spread across several Dataverse environments; dvOrgUrl is only ever
+ * "whichever environment happened to be probed first at Microsoft connect
+ * time" (see routes/auth.ts), so scanning just that one silently misses PA
+ * flows that live in every other environment. The caller (ConnectorConfig)
+ * loops this once per selected environment, same pattern already used for
+ * /knowledge-connectors below.
+ */
 migrateRouter.get('/third-party-connectors', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   if (!session.tenantId) return void res.status(400).json({ error: 'ms_not_connected' });
-  if (!session.dvOrgUrl) return void res.status(400).json({ error: 'ms_env_not_selected' });
+  const envUrl = req.query.envUrl as string | undefined;
+  if (!envUrl) return void res.status(400).json({ error: 'env_url_required' });
 
   try {
-    const dvToken = await clientCredsToken(session.tenantId, session.dvOrgUrl);
-    const connectors = await detectThirdPartyConnectors(session.dvOrgUrl, dvToken);
+    const dvToken = await clientCredsToken(session.tenantId, envUrl);
+    const connectors = await detectThirdPartyConnectors(envUrl, dvToken);
     res.json({ connectors });
   } catch (err) {
     res.status(502).json({ error: 'connector_scan_failed', detail: (err as Error).message });

@@ -122,7 +122,7 @@ export interface MigrationScope {
 export interface PlanPreview {
   totalAgents: number;
   environments: { name: string; agents: string[] }[];
-  destination: { prefixWithEnv: boolean };
+  destination: Record<string, unknown>;
   dryRun?: boolean;
 }
 

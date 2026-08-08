@@ -14,10 +14,32 @@
  * Grounding (verified against current product docs):
  *  - Vertex AI Search / Gemini document data stores ingest TXT, JSON, MD, PDF,
  *    HTML, DOCX, PPTX, XLSX, XLSM — up to 200 MB/file, 100k files/import.
- *  - Gemini Enterprise has NATIVE federated connectors for SharePoint Online and
- *    OneDrive — so those "reconnect" rather than copy. BUT the connector only
- *    enforces document ACLs if Workforce Identity Federation (Entra→Google
- *    identity mapping) is configured — that is human setup, so NOT automatable.
+ *  - Gemini Enterprise has NATIVE federated/ingestion connectors for SharePoint
+ *    Online and OneDrive — so those "reconnect" rather than copy, in theory.
+ *    ⚠️ CONFIRMED BROKEN 2026-08-06 (extensive live testing, see decisions.md):
+ *    both connector modes (Federated Search + OAuth 2.0 Refresh Token, and Data
+ *    Ingestion + OAuth) return ZERO content — always, for hours — even with a
+ *    fully healthy connector (`state: ACTIVE`), a real completed Microsoft
+ *    sign-in (confirmed identity), correct delegated SharePoint API scopes
+ *    (`Sites.Search.All`, `AllSites.Read`), the signed-in user having genuine
+ *    personal access to the target file, and clean Microsoft-side sign-in logs
+ *    (no Conditional Access block). Reproduced via raw API, a custom ADK test
+ *    agent, AND the real production Assistant preview — all three agree.
+ *    Workforce Identity Federation (Entra→Google identity mapping) does NOT
+ *    explain this: it is documented as a per-user ACL-*trimming* layer on top
+ *    of an otherwise-working connector, not a gate on whether search returns
+ *    any results at all — do not spend time configuring it as a fix for empty
+ *    results (the earlier version of this comment implied otherwise; that
+ *    implication was never confirmed against docs and should not be trusted).
+ *    Root cause is unresolved — escalated to Google Cloud Support with the
+ *    full evidence trail. INTERIM WORKAROUND: for a SharePoint source that
+ *    resolves to one specific, known file (has a "Knowledge URL"), use
+ *    "copy mode" instead — download via Microsoft Graph app-only credentials
+ *    (already granted for Dataverse extraction) and ground it exactly like a
+ *    locally-uploaded file (see knowledgeDataStoreExecutor.migrateSharePointDriveItem
+ *    / migrateFileToDocumentStore). This is proven working end-to-end
+ *    (verified live 2026-08-06). It does NOT cover a whole-site/library
+ *    reference with no single known file — that case has no fix yet.
  *  - Dataverse tables / SQL / Graph / custom APIs are queries, not indexable
  *    documents: they must be rebuilt as Gemini agent tools, never "indexed".
  */
@@ -222,10 +244,10 @@ const RULES: Rule[] = [
       strategy: 'reconnect',
       retrievability: 'reference-only',
       geminiTarget: 'sharepoint-connector',
-      automatable: false, // requires Workforce Identity Federation setup
+      automatable: false, // confirmed broken 2026-08-06 — see module docstring
       notes: [
-        'SharePoint reference: wire Gemini\'s native SharePoint federated connector to the same site — do NOT copy files.',
-        'NOT unattended: document-level ACL trimming works only after Entra→Google identity mapping (Workforce Identity Federation) is configured. Skipping it over-exposes documents.',
+        'SharePoint reference: Gemini\'s native SharePoint connector (federated or ingestion) is the intended target, but is confirmed BROKEN as of 2026-08-06 — returns zero content even fully healthy/authenticated (see module docstring + decisions.md). Escalated to Google Cloud Support; not yet fixed.',
+        'Interim workaround if this source resolves to one specific known file: copy mode (download via Graph, ground like an uploaded file) — proven working. No fix yet for a whole-site/library reference.',
       ],
     }),
   },
@@ -265,6 +287,35 @@ const RULES: Rule[] = [
         description ? `Space description: "${description.slice(0, 200)}"` : 'Space names extracted from the botcomponent name field.',
         'Requires Atlassian credentials (email + API token + Confluence site URL) entered in the Connectors step.',
         'Only the exact spaces the agent author selected in Copilot Studio will be crawled — no other spaces.',
+      ],
+    }),
+  },
+  {
+    // FederatedStructuredSearchSource with no Confluence-matching description.
+    // Copilot Studio only reuses this generic kind for TWO known connector
+    // types (see the Confluence rule immediately above) — SharePoint
+    // federated search, or Confluence. The Confluence rule already claimed
+    // the positive-match case (description contains "Confluence items");
+    // anything else with this kind is, by elimination, the SharePoint case —
+    // confirmed live 2026-08-07: a customer agent's FederatedStructuredSearchSource
+    // sources (opaque skillConfiguration ids, null description) named after
+    // real files ("TestingPermissions", "daily_queries.txt") that OTHER agents
+    // in the same tenant reference via SharePointSearchSource with a real URL
+    // for the exact same SharePoint folder — same underlying source, different
+    // Copilot Studio configuration style. Flagged as an INFERENCE, not a
+    // certainty, since this style carries no resolvable URL in the YAML at
+    // all (only the opaque id) — unlike SharePointSearchSource/
+    // SharePointKnowledgeSource, which do and hit the dedicated rule above.
+    test: (k, input) => k.includes('federatedstructured') && !(input.description ?? '').toLowerCase().includes('confluence'),
+    build: () => ({
+      strategy: 'reconnect',
+      retrievability: 'reference-only',
+      geminiTarget: 'sharepoint-connector',
+      automatable: false,
+      notes: [
+        'Ambiguous "FederatedStructuredSearchSource" kind with no Confluence-matching description — Copilot Studio reuses this generic kind for SharePoint federated search or Confluence; inferred SharePoint by elimination, not confirmed.',
+        'This connector-configuration style carries only an opaque skillConfiguration id, not a resolvable URL — verify the actual site/file in Copilot Studio\'s Knowledge Details screen. The automated copy-mode workaround (Graph download by URL) cannot run without one; this source needs manual URL entry or a name-based search-and-confirm step before it can be grounded automatically.',
+        'Gemini\'s native SharePoint connector is confirmed BROKEN as of 2026-08-06 regardless (see the dedicated SharePoint rule above).',
       ],
     }),
   },

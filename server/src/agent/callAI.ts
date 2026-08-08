@@ -25,6 +25,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** Called with each new chunk of assistant text as it streams in. */
+export type DeltaHandler = (chunk: string) => void;
+
 /**
  * Resolve LLM for the Studio Migrate chat agent.
  * Prefer the same credentials as GEM_CO (AZURE_OPENAI_*), then OpenAI, then
@@ -109,6 +112,31 @@ export async function callAI(
   return callOpenAI(messages, tools, cfg.apiKey, opts?.model || cfg.model, opts?.maxTokens ?? 2048);
 }
 
+/**
+ * Same contract as callAI, but invokes `onDelta` with each chunk of assistant
+ * text as it arrives so the caller can forward it to the client over SSE.
+ */
+export async function callAIStream(
+  messages: ChatMessage[],
+  tools: unknown[],
+  onDelta: DeltaHandler,
+  opts?: { model?: string; maxTokens?: number },
+): Promise<AiResult> {
+  const cfg = agentProvider();
+  if (!cfg) throw new Error('agent_llm_not_configured');
+
+  if (cfg.provider === 'gemini') {
+    return callGeminiStream(messages, tools, cfg.apiKey, opts?.model || cfg.model, opts?.maxTokens ?? 2048, onDelta);
+  }
+  if (cfg.provider === 'azure') {
+    return callAzureOpenAIStream(messages, tools, cfg, opts?.maxTokens ?? 2048, onDelta);
+  }
+  if (cfg.provider === 'anthropic') {
+    throw new Error('agent_llm_anthropic_tools_unsupported — set AGENT_LLM_PROVIDER=openai|azure|gemini');
+  }
+  return callOpenAIStream(messages, tools, cfg.apiKey, opts?.model || cfg.model, opts?.maxTokens ?? 2048, onDelta);
+}
+
 async function callOpenAI(
   messages: ChatMessage[],
   tools: unknown[],
@@ -182,14 +210,136 @@ async function callAzureOpenAI(
   return { content: msg?.content ?? null, tool_calls: msg?.tool_calls, model: json.model };
 }
 
-/** Gemini generateContent with functionDeclarations (OpenAI tool shape → Gemini). */
-async function callGemini(
+async function callOpenAIStream(
   messages: ChatMessage[],
   tools: unknown[],
   apiKey: string,
   model: string,
   maxTokens: number,
+  onDelta: DeltaHandler,
 ): Promise<AiResult> {
+  return streamChatCompletion(
+    'https://api.openai.com/v1/chat/completions',
+    { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    {
+      model,
+      messages: messages.filter((m) => m && m.role),
+      tools: tools.length ? tools : undefined,
+      tool_choice: tools.length ? 'auto' : undefined,
+      max_tokens: maxTokens,
+    },
+    onDelta,
+  );
+}
+
+async function callAzureOpenAIStream(
+  messages: ChatMessage[],
+  tools: unknown[],
+  cfg: { apiKey: string; azureEndpoint?: string; azureDeployment?: string; model: string },
+  maxTokens: number,
+  onDelta: DeltaHandler,
+): Promise<AiResult> {
+  const endpoint = (cfg.azureEndpoint || '').replace(/\/$/, '');
+  const deployment = cfg.azureDeployment || cfg.model;
+  const url = `${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=2024-06-01`;
+  return streamChatCompletion(
+    url,
+    { 'api-key': cfg.apiKey, 'Content-Type': 'application/json' },
+    {
+      messages: messages.filter((m) => m && m.role),
+      tools: tools.length ? tools : undefined,
+      tool_choice: tools.length ? 'auto' : undefined,
+      max_tokens: maxTokens,
+    },
+    onDelta,
+  );
+}
+
+/**
+ * Shared SSE reader for OpenAI-compatible chat-completions streaming
+ * (`stream: true`). Accumulates `delta.content` (forwarded to `onDelta` as it
+ * arrives) and `delta.tool_calls` fragments (OpenAI splits a single tool call
+ * across many chunks, keyed by `index`) into one final AiResult.
+ */
+async function streamChatCompletion(
+  url: string,
+  headers: Record<string, string>,
+  body: Record<string, unknown>,
+  onDelta: DeltaHandler,
+): Promise<AiResult> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ ...body, stream: true }),
+  });
+  if (!res.ok || !res.body) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`LLM stream error ${res.status}: ${t.slice(0, 400)}`);
+  }
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let content = '';
+  let model: string | undefined;
+  const toolCalls = new Map<number, { id: string; name: string; args: string }>();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      let json: {
+        model?: string;
+        choices?: {
+          delta?: {
+            content?: string | null;
+            tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[];
+          };
+        }[];
+      };
+      try {
+        json = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+      model = json.model ?? model;
+      const delta = json.choices?.[0]?.delta;
+      if (delta?.content) {
+        content += delta.content;
+        onDelta(delta.content);
+      }
+      for (const tc of delta?.tool_calls ?? []) {
+        const entry = toolCalls.get(tc.index) ?? { id: '', name: '', args: '' };
+        if (tc.id) entry.id = tc.id;
+        if (tc.function?.name) entry.name += tc.function.name;
+        if (tc.function?.arguments) entry.args += tc.function.arguments;
+        toolCalls.set(tc.index, entry);
+      }
+    }
+  }
+
+  const tool_calls: ToolCall[] | undefined = toolCalls.size
+    ? Array.from(toolCalls.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([, v], i) => ({
+          id: v.id || `call_${i}`,
+          type: 'function' as const,
+          function: { name: v.name, arguments: v.args },
+        }))
+    : undefined;
+
+  return { content: content || null, tool_calls, model };
+}
+
+/** Builds the Gemini `contents`/`systemInstruction`/`tools` request body shared by callGemini and callGeminiStream. */
+function buildGeminiRequest(messages: ChatMessage[], tools: unknown[], maxTokens: number): Record<string, unknown> {
   const system = messages.find((m) => m.role === 'system')?.content ?? '';
   const contents: { role: string; parts: unknown[] }[] = [];
   for (const m of messages) {
@@ -244,7 +394,18 @@ async function callGemini(
   if (functionDeclarations.length) {
     body.tools = [{ functionDeclarations }];
   }
+  return body;
+}
 
+/** Gemini generateContent with functionDeclarations (OpenAI tool shape → Gemini). */
+async function callGemini(
+  messages: ChatMessage[],
+  tools: unknown[],
+  apiKey: string,
+  model: string,
+  maxTokens: number,
+): Promise<AiResult> {
+  const body = buildGeminiRequest(messages, tools, maxTokens);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   const res = await fetch(url, {
     method: 'POST',
@@ -282,6 +443,76 @@ async function callGemini(
     tool_calls: tool_calls.length ? tool_calls : undefined,
     model,
   };
+}
+
+/** Gemini streamGenerateContent (SSE) — same request shape as callGemini, streamed. */
+async function callGeminiStream(
+  messages: ChatMessage[],
+  tools: unknown[],
+  apiKey: string,
+  model: string,
+  maxTokens: number,
+  onDelta: DeltaHandler,
+): Promise<AiResult> {
+  const body = buildGeminiRequest(messages, tools, maxTokens);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok || !res.body) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Gemini stream error ${res.status}: ${t.slice(0, 400)}`);
+  }
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let content = '';
+  const tool_calls: ToolCall[] = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload) continue;
+      let json: {
+        candidates?: {
+          content?: {
+            parts?: { text?: string; functionCall?: { name?: string; args?: Record<string, unknown> } }[];
+          };
+        }[];
+      };
+      try {
+        json = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+      const parts = json.candidates?.[0]?.content?.parts ?? [];
+      for (const p of parts) {
+        if (p.text) {
+          content += p.text;
+          onDelta(p.text);
+        }
+        if (p.functionCall?.name) {
+          tool_calls.push({
+            id: `gem_${Date.now()}_${tool_calls.length}`,
+            type: 'function',
+            function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args ?? {}) },
+          });
+        }
+      }
+    }
+  }
+
+  return { content: content || null, tool_calls: tool_calls.length ? tool_calls : undefined, model };
 }
 
 function safeParse(s: string): Record<string, unknown> {

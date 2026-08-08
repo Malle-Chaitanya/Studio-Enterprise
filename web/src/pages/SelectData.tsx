@@ -5,6 +5,11 @@ import { useWizardOptional } from '../context/WizardContext.tsx';
 import { avatarColor } from '../icons.tsx';
 import type { AgentBrief, EnvironmentInfo } from '../types.ts';
 
+// DEMO ONLY — pins default selection to the two agents used in the recorded
+// demo, so the picker opens pre-checked to just those instead of "all". Not a
+// permanent product behavior; revert once the recording is done.
+const DEMO_AGENT_NAMES = ['migration knowledge advisor', 'knowledge assistant'];
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
@@ -55,7 +60,8 @@ export function SelectData() {
       for (const e of acc) {
         const ags = await fetchAgents(session, e.url).catch(() => []);
         map[e.url] = ags;
-        sel[e.url] = new Set(ags.map((a) => a.botid));
+        const demoMatches = ags.filter((a) => DEMO_AGENT_NAMES.includes(a.name.trim().toLowerCase()));
+        sel[e.url] = new Set((demoMatches.length ? demoMatches : ags).map((a) => a.botid));
       }
       setAgentsByEnv(map);
       setSelected(sel);
@@ -69,13 +75,24 @@ export function SelectData() {
       s.has(botId) ? s.delete(botId) : s.add(botId);
       return { ...prev, [env]: s };
     });
-  const selectAll = (env: string) =>
+  const selectAll = (env: string) => {
     setSelected((prev) => ({ ...prev, [env]: new Set((agentsByEnv[env] ?? []).map((a) => a.botid)) }));
-  const deselectAll = (env: string) => setSelected((prev) => ({ ...prev, [env]: new Set() }));
+    const name = envs.find((e) => e.url === env)?.name ?? env;
+    wizard?.notifyAction(`Selected all agents in "${name}"`);
+  };
+  const deselectAll = (env: string) => {
+    setSelected((prev) => ({ ...prev, [env]: new Set() }));
+    const name = envs.find((e) => e.url === env)?.name ?? env;
+    wizard?.notifyAction(`Deselected all agents in "${name}"`);
+  };
 
   const totalSelected = useMemo(
     () => Object.values(selected).reduce((n, s) => n + s.size, 0),
     [selected],
+  );
+  const totalAgents = useMemo(
+    () => Object.values(agentsByEnv).reduce((n, a) => n + a.length, 0),
+    [agentsByEnv],
   );
 
   // The filter's own options: the REAL, distinct owners of the fetched
@@ -115,17 +132,18 @@ export function SelectData() {
   };
 
   return (
-    <div className="card wide">
-      <h2>Select Agents</h2>
-      <p className="lead">
-        Choose which agents to migrate. Owner and access are shown when Dataverse returns them.
-        Personal/private agents stay selectable.
-      </p>
+    <div className="mu-page" style={{ maxWidth: 'none', width: '100%' }}>
+      <div className="mu-head">
+        <div>
+          <div className="mu-title">Select Agents</div>
+          <div className="mu-sub">Choose which agents to migrate from each environment.</div>
+        </div>
+      </div>
 
-      {loading && <p className="lead">Loading agents…</p>}
+      {loading && <p className="mu-note">Loading agents…</p>}
 
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-        <div className="usearch-wrap" style={{ flex: 1, minWidth: 180 }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div className="usearch-wrap" style={{ flex: 1, minWidth: 180, marginBottom: 0 }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" strokeLinecap="round">
             <circle cx="11" cy="11" r="7" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -154,79 +172,73 @@ export function SelectData() {
         </select>
       </div>
 
-      {envs.map((e) => {
-        const agents = (agentsByEnv[e.url] ?? []).filter(match);
-        const sel = selected[e.url] ?? new Set<string>();
-        const total = agentsByEnv[e.url]?.length ?? 0;
-        return (
-          <div key={e.url} style={{ marginBottom: 24 }}>
-            <div className="dlist-head">
-              <span className="signed">
-                <span className="dot" />
-                {e.name} · {sel.size} of {total} agents
-              </span>
-              <span style={{ display: 'flex', gap: 16 }}>
-                <button type="button" className="dlink" onClick={() => selectAll(e.url)}>
-                  Select All
-                </button>
-                <button type="button" className="dlink" onClick={() => deselectAll(e.url)}>
-                  Deselect All
-                </button>
-              </span>
-            </div>
-            {agents.map((a) => {
-              const on = sel.has(a.botid);
-              const access = a.accessLabel || 'Unknown';
-              const accessClass =
-                access === 'Org-wide' ? 'org' : access === 'Private' ? 'private' : '';
-              return (
-                <label key={a.botid} className={`urow ${on ? 'on' : ''}`}>
-                  <input type="checkbox" checked={on} onChange={() => toggle(e.url, a.botid)} />
-                  <span className="uavatar" style={{ background: avatarColor(a.name) }}>
-                    {initials(a.name)}
-                  </span>
-                  <span className="uinfo" style={{ flex: 1 }}>
-                    <span className="uname">
-                      {a.name}
-                      {access === 'Private' && <span className="badge-owner">personal</span>}
-                    </span>
-                    <span className="usub">
-                      {a.ownerDisplayName || a.ownerEmail || 'Owner unknown'}
-                      {a.ownerEmail && a.ownerDisplayName ? ` · ${a.ownerEmail}` : ''}
-                      {' · '}
-                      {e.name}
-                    </span>
-                  </span>
-                  <span className={`access-pill ${accessClass}`}>{access}</span>
-                  {on && <span className="ucheck">✓</span>}
-                </label>
-              );
-            })}
-          </div>
-        );
-      })}
+      <div className="mu-selected">
+        <strong>{totalSelected}</strong> of {totalAgents} agents selected
+      </div>
 
-      <button type="button" className="btn primary" style={{ marginTop: 8 }} disabled={totalSelected === 0} onClick={cont}>
-        Continue with {totalSelected} agent{totalSelected === 1 ? '' : 's'} →
-      </button>
-      <button type="button" className="wbtn" style={{ marginTop: 12 }} onClick={() => navigate(`/map?session=${session}`)}>
-        ← Back
-      </button>
-      <button
-        type="button"
-        className="wbtn"
-        style={{ marginTop: 8, marginLeft: 8 }}
-        disabled={totalSelected === 0}
-        onClick={() => {
-          const payload = envs
-            .map((e) => ({ env: e.url, name: e.name, botIds: [...(selected[e.url] ?? [])] }))
-            .filter((u) => u.botIds.length);
-          sessionStorage.setItem(`csge_data_${session}`, JSON.stringify(payload));
-          navigate(`/migrate?session=${session}`);
-        }}
-      >
-        Skip connectors → Migrate
-      </button>
+      <div className="mu-list" style={{ padding: 14 }}>
+        {envs.map((e) => {
+          const agents = (agentsByEnv[e.url] ?? []).filter(match);
+          const sel = selected[e.url] ?? new Set<string>();
+          const total = agentsByEnv[e.url]?.length ?? 0;
+          return (
+            <div key={e.url} style={{ marginBottom: 20 }}>
+              <div className="dlist-head">
+                <span className="signed">
+                  <span className="dot" />
+                  {e.name} · {sel.size} of {total} agents
+                </span>
+                <span style={{ display: 'flex', gap: 16 }}>
+                  <button type="button" className="dlink" onClick={() => selectAll(e.url)}>
+                    Select All
+                  </button>
+                  <button type="button" className="dlink" onClick={() => deselectAll(e.url)}>
+                    Deselect All
+                  </button>
+                </span>
+              </div>
+              {agents.map((a) => {
+                const on = sel.has(a.botid);
+                const access = a.accessLabel || 'Unknown';
+                const accessClass =
+                  access === 'Org-wide' ? 'org' : access === 'Private' ? 'private' : '';
+                return (
+                  <label key={a.botid} className={`urow ${on ? 'on' : ''}`}>
+                    <input type="checkbox" checked={on} onChange={() => toggle(e.url, a.botid)} />
+                    <span className="uavatar" style={{ background: avatarColor(a.name) }}>
+                      {initials(a.name)}
+                    </span>
+                    <span className="uinfo" style={{ flex: 1 }}>
+                      <span className="uname">
+                        {a.name}
+                        {access === 'Private' && <span className="badge-owner">personal</span>}
+                      </span>
+                    </span>
+                    <span className={`access-pill ${accessClass}`}>{access}</span>
+                    {on && <span className="ucheck">✓</span>}
+                  </label>
+                );
+              })}
+            </div>
+          );
+        })}
+        {!loading && envs.length === 0 && <div className="mu-empty">No environments selected.</div>}
+      </div>
+
+      <div className="mu-footer">
+        <button type="button" className="wbtn" onClick={() => navigate(`/map?session=${session}`)}>
+          ← Back
+        </button>
+        <button
+          type="button"
+          className="wbtn primary"
+          style={{ marginLeft: 'auto' }}
+          disabled={totalSelected === 0}
+          onClick={cont}
+        >
+          Continue with {totalSelected} agent{totalSelected === 1 ? '' : 's'} →
+        </button>
+      </div>
     </div>
   );
 }

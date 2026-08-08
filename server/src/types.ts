@@ -371,8 +371,6 @@ export interface GeminiDestination {
 
 /** Destination-mapping options (how source environments map into Gemini). */
 export interface DestinationOptions {
-  /** Prefix each agent's display name with its source environment for traceability. */
-  prefixWithEnv: boolean;
   /**
    * Per-source-environment target (env url → Gemini destination). This is the
    * real routing map: each Copilot environment's agents are created under its

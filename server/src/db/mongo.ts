@@ -8,14 +8,10 @@ import { connectDb, getDb } from './core.js';
  * connect once on startup, then idempotently create every collection + index.
  *
  * All migration-scoped collections carry `appUserId` for multi-tenancy, exactly
- * like GEM_CO. Session expiry uses a Mongo TTL index instead of a setInterval
- * sweep.
+ * like GEM_CO.
  */
 
 const CSGE_DB = config.CSGE_DB;
-
-/** Session lifetime — matches the old in-memory TTL (1 hour). */
-const SESSION_TTL_SECONDS = 60 * 60;
 
 /**
  * Connect to the csge database and ensure all collections + indexes exist.
@@ -51,15 +47,12 @@ async function ensureCollections(): Promise<void> {
   );
 
   // 3. migrationSessions — DB-backed replacement for the in-memory sessionStore.
-  //    _id is the session id. TTL index expires docs SESSION_TTL_SECONDS after
-  //    createdAt, replacing the old setInterval sweep.
+  //    _id is the session id. A cloud connection is meant to persist until the
+  //    user explicitly disconnects it, so there is no expiry — drop any TTL
+  //    index left over from an earlier version of this collection.
   await ensure('migrationSessions');
   await db.collection('migrationSessions').createIndex({ appUserId: 1 });
   try { await db.collection('migrationSessions').dropIndex('createdAt_1'); } catch {}
-  await db.collection('migrationSessions').createIndex(
-    { createdAt: 1 },
-    { expireAfterSeconds: SESSION_TTL_SECONDS },
-  );
 
   // 4. environmentsCache — discovered environments + inventory counts per tenant.
   await ensure('environmentsCache');
@@ -161,6 +154,18 @@ async function ensureCollections(): Promise<void> {
     { unique: true },
   );
 
+  // 15. pendingGroundingRechecks — a file-grounding attempt that timed out
+  //     before Discovery Engine confirmed indexing (observed live to take
+  //     6-10+ minutes past import). services/groundingRecheck.ts sweeps this
+  //     on an interval and auto-repairs the deployed agent once indexing
+  //     actually completes — see db/repos/pendingGroundingRechecks.ts.
+  await ensure('pendingGroundingRechecks');
+  await db.collection('pendingGroundingRechecks').createIndex(
+    { appUserId: 1, envUrl: 1, sourceId: 1, fileName: 1 },
+    { unique: true },
+  );
+  await db.collection('pendingGroundingRechecks').createIndex({ nextCheckAt: 1 });
+
   // Seed default app users if empty (parity with GEM_CO).
   const userCount = await db.collection('appUsers').countDocuments();
   if (userCount === 0) {
@@ -172,5 +177,5 @@ async function ensureCollections(): Promise<void> {
     logger.info('Seeded 2 default app users');
   }
 
-  logger.info('All 14 collections verified with indexes (multi-tenant scoped)');
+  logger.info('All 15 collections verified with indexes (multi-tenant scoped)');
 }

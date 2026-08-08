@@ -5,8 +5,9 @@ import { logger } from './logger.js';
 
 /**
  * DB-backed session store (collection: migrationSessions). Sessions now survive
- * restarts and are shared across instances. Expiry is handled by a Mongo TTL
- * index on `createdAt` (see db/mongo.ts) rather than an in-process sweep.
+ * restarts and are shared across instances. A connected session has no expiry —
+ * it represents a live cloud connection and is meant to persist until the user
+ * explicitly disconnects (see /api/auth/disconnect), not time out on its own.
  *
  * The public API is now async (createSession/getSession/updateSession return
  * Promises) — callers await them. When the DB is unreachable we fall back to an
@@ -14,6 +15,9 @@ import { logger } from './logger.js';
  * "run without persistence" behavior.
  */
 export interface Session {
+  /** Free-form progress marker. 'google_only' means the Microsoft/source side
+   *  was disconnected while a Google connection survived on this same doc —
+   *  see POST /api/auth/disconnect and msCallback's reconnect-reattach logic. */
   step: string;
   createdAt: number;
   /** Owning app user (multi-tenant scope). Defaults until login is wired. */
@@ -37,6 +41,12 @@ export interface Session {
    *  Gemini project. Privileged Gemini writes use CloudFuze's service account,
    *  which the client grants access to (IAM on their project, or DWD). */
   gToken?: string;
+  /** Google OAuth refresh token — lets the server mint a fresh gToken once the
+   *  ~1hr access token dies, instead of degrading to "just the one already-
+   *  connected project" (see destination.ts /projects). Present only for
+   *  sessions connected after 2026-08-07; older sessions have none and need a
+   *  one-time reconnect to pick one up. */
+  gRefreshToken?: string;
   geminiProject?: string;
   saOk?: boolean;
   /** Why saOk is false (e.g. "add our SA to Domain-Wide Delegation") — shown to the client. */
@@ -55,7 +65,6 @@ export interface Session {
 /** Used until real login is wired; every session/run is scoped to this. */
 export const DEFAULT_APP_USER_ID = 'default';
 
-const TTL_MS = 60 * 60 * 1000; // must match SESSION_TTL_SECONDS in db/mongo.ts
 const COLL = 'migrationSessions';
 
 // In-memory fallback (only used when Mongo is unreachable).
@@ -80,16 +89,21 @@ function toSession(doc: SessionDoc | null): Session | undefined {
 }
 
 /**
- * Latest still-valid session for an app user that already has a source (Microsoft)
- * connection. Lets login "resume" prior cloud connections instead of losing them.
+ * Latest session for an app user with at least one platform still connected
+ * (Microsoft's dvToken OR Google's gEmail) — either alone counts, since
+ * disconnecting one platform (see /api/auth/disconnect) can leave a
+ * `google_only` doc with no dvToken. Lets login/hard-refresh "resume" whatever
+ * is actually still connected instead of losing track of a surviving side.
  */
 export async function findLatestConnectedSession(appUserId: string): Promise<string | null> {
-  const cutoff = Date.now() - TTL_MS;
   if (isDbConnected()) {
     try {
       const doc = await getDb()
         .collection<SessionDoc>(COLL)
-        .find({ appUserId, dvToken: { $exists: true, $ne: '' }, createdAt: { $gt: cutoff } })
+        .find({
+          appUserId,
+          $or: [{ dvToken: { $exists: true, $ne: '' } }, { gEmail: { $exists: true, $ne: '' } }],
+        })
         .sort({ createdAt: -1 })
         .limit(1)
         .next();
@@ -101,7 +115,7 @@ export async function findLatestConnectedSession(appUserId: string): Promise<str
   let latestId: string | null = null;
   let latestAt = 0;
   for (const [id, s] of fallback) {
-    if (s.appUserId === appUserId && s.dvToken && s.createdAt > latestAt && s.createdAt > cutoff) {
+    if (s.appUserId === appUserId && (s.dvToken || s.gEmail) && s.createdAt > latestAt) {
       latestId = id;
       latestAt = s.createdAt;
     }
@@ -138,25 +152,12 @@ export async function getSession(id: string | undefined): Promise<Session | unde
   if (isDbConnected()) {
     try {
       const doc = await getDb().collection<SessionDoc>(COLL).findOne({ _id: id });
-      const s = toSession(doc);
-      if (!s) return undefined;
-      // Defensive TTL check in case the background TTL monitor hasn't swept yet.
-      if (Date.now() - s.createdAt > TTL_MS) {
-        await getDb().collection<SessionDoc>(COLL).deleteOne({ _id: id }).catch(() => {});
-        return undefined;
-      }
-      return s;
+      return toSession(doc);
     } catch (e) {
       logger.warn(`getSession DB read failed, using memory: ${(e as Error).message}`);
     }
   }
-  const s = fallback.get(id);
-  if (!s) return undefined;
-  if (Date.now() - s.createdAt > TTL_MS) {
-    fallback.delete(id);
-    return undefined;
-  }
-  return s;
+  return fallback.get(id);
 }
 
 export async function updateSession(id: string, patch: Partial<Session>): Promise<void> {
@@ -185,6 +186,43 @@ export async function unsetSessionFields(id: string, fields: (keyof Session)[]):
   }
   const s = fallback.get(id);
   if (s) {
+    for (const f of fields) delete s[f];
+    fallback.set(id, s);
+  }
+}
+
+/**
+ * Clear the same platform fields on every OTHER session doc for this app user that
+ * carries the same real identity (tenantId for Microsoft, gEmail for Google).
+ *
+ * Each fresh "Connect Microsoft/Google" popup mints a new session doc rather than
+ * reusing one, and connected sessions never expire — so a tenant/account that's been
+ * connected and reconnected several times across testing ends up duplicated across
+ * many docs. Without this, /api/auth/disconnect only cleared the ONE doc the user
+ * was looking at; findLatestConnectedSession (used by the Login screen's "resume
+ * most recent connected session") would then silently reattach to one of the other
+ * still-connected duplicates, making an explicit disconnect look like it didn't
+ * stick on the very next refresh/login.
+ */
+export async function unsetFieldsOnMatchingSessions(
+  appUserId: string,
+  match: Partial<Pick<Session, 'tenantId' | 'gEmail'>>,
+  fields: (keyof Session)[],
+): Promise<void> {
+  const filter: Record<string, unknown> = { appUserId, ...match };
+  const unset: Record<string, ''> = Object.fromEntries(fields.map((f) => [f as string, '']));
+  if (isDbConnected()) {
+    try {
+      await getDb().collection<SessionDoc>(COLL).updateMany(filter, { $unset: unset });
+      return;
+    } catch (e) {
+      logger.warn(`unsetFieldsOnMatchingSessions DB write failed: ${(e as Error).message}`);
+    }
+  }
+  for (const [id, s] of fallback) {
+    if (s.appUserId !== appUserId) continue;
+    if (match.tenantId !== undefined && s.tenantId !== match.tenantId) continue;
+    if (match.gEmail !== undefined && s.gEmail !== match.gEmail) continue;
     for (const f of fields) delete s[f];
     fallback.set(id, s);
   }

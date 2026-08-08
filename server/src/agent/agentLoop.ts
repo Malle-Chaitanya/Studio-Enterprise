@@ -1,4 +1,4 @@
-import { agentLlmConfigured, callAI, type ChatMessage } from './callAI.js';
+import { agentLlmConfigured, callAI, callAIStream, type ChatMessage } from './callAI.js';
 import { buildSystemPrompt } from './systemPrompt.js';
 import { AGENT_TOOLS } from './tools.js';
 import { executeTool, type ToolExecContext, type UiEvent } from './toolExecutor.js';
@@ -21,10 +21,53 @@ export interface AgentChatInput {
   confirmTool?: string;
   confirmArgs?: Record<string, unknown>;
   clientState?: ToolExecContext['clientState'];
+  /** True when the client fired this turn automatically (navigation or a significant click), not from a typed/tapped message. */
+  systemTrigger?: boolean;
+  /** Short description of the in-page click that triggered this turn (e.g. "Included environment 'CF_MANAGE'") — distinct from a page navigation. */
+  actionNote?: string;
 }
+
+/** Short, static per-step orientation used when there's no LLM to generate one. */
+const STEP_BLURBS: Record<string, string> = {
+  connect:
+    'Connect your Microsoft (Copilot Studio) and Google (Gemini Enterprise) admin accounts — both are needed before you can pick environments or agents.',
+  pair: 'Pick which connected Microsoft tenant pairs with which connected Google Gemini Enterprise project for this migration run.',
+  'map-users':
+    "Map each Copilot Studio user to their Gemini Enterprise account so ownership and sharing carry over. \"Auto-map users\" handles most matches instantly.",
+  map: "Choose which Copilot Studio environments to migrate and map each to a target Gemini Enterprise project & app. You'll pick the agents next.",
+  'select-data':
+    'Select which agents to migrate from the chosen environments — everything is preserved losslessly, even fields Gemini doesn\'t map yet.',
+  connectors:
+    'Review every SharePoint/OneDrive knowledge connector that needs setup on the Gemini side, across all agents, in one list.',
+  migrate: 'Run a dry run to preview the migration safely, or start a live migration to create and publish the agents in Gemini Enterprise.',
+};
+
+function orientBlurb(step?: string): string {
+  return (step && STEP_BLURBS[step]) || "Here's this step of the migration wizard — ask me anything or use a suggestion chip below.";
+}
+
+/** Human title per WizardStepId — keeps the LLM from having to guess what a step id like "select-data" means. */
+const STEP_TITLES: Record<string, string> = {
+  connect: 'Connect Platforms',
+  pair: 'Choose Migration Pair',
+  'map-users': 'Map Users',
+  map: 'Select & Map Environments',
+  'select-data': 'Select Agents',
+  connectors: 'Connectors needed',
+  migrate: 'Review & run',
+};
 
 /** Rule-based fallback when no LLM is configured — still drives key chips/tools. */
 async function ruleBasedTurn(input: AgentChatInput, emit: SseEmit): Promise<void> {
+  if (input.systemTrigger) {
+    // No LLM to react to a click with — refresh chips silently rather than
+    // spam a bland "Got it" on every action.
+    if (!input.actionNote) emit({ type: 'message', text: orientBlurb(input.step) });
+    emit({ type: 'chips', chips: defaultChips(input.pathname) });
+    emit({ type: 'done' });
+    return;
+  }
+
   const msg = (input.message || '').toLowerCase();
   const events: UiEvent[] = [];
   const ctx: ToolExecContext = {
@@ -114,6 +157,43 @@ function defaultChips(pathname?: string): string[] {
 }
 
 /**
+ * Contextual quick-reply chips: a cheap LLM call reads the assistant's last
+ * reply + current step and proposes 3 short next-step labels, so chips track
+ * the actual conversation instead of just the URL. Falls back to the static
+ * per-step defaults if the LLM is unavailable or returns something unusable.
+ */
+async function generateChips(input: AgentChatInput, lastReply: string): Promise<string[]> {
+  const fallback = defaultChips(input.pathname);
+  if (!agentLlmConfigured() || !lastReply.trim()) return fallback;
+  try {
+    const prompt: ChatMessage[] = [
+      {
+        role: 'system',
+        content:
+          'You suggest quick-reply chip labels for a Copilot Studio -> Gemini Enterprise migration assistant chat. ' +
+          'Reply with ONLY a JSON array of exactly 3 short strings (max 5 words each) — no prose, no markdown fences.',
+      },
+      {
+        role: 'user',
+        content:
+          `Current step: ${input.step ?? input.pathname ?? 'unknown'}\n` +
+          `Assistant's last reply: ${lastReply.slice(0, 500)}\n` +
+          'Suggest 3 short next-step chip labels the user is likely to want next.',
+      },
+    ];
+    const result = await callAI(prompt, [], { maxTokens: 80 });
+    const raw = (result.content || '').trim().replace(/^```(json)?\s*|\s*```$/g, '');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length && parsed.every((s) => typeof s === 'string' && s.trim())) {
+      return parsed.slice(0, 3).map((s) => s.trim());
+    }
+  } catch (e) {
+    logger.warn(`chip generation failed, using defaults: ${(e as Error).message}`);
+  }
+  return fallback;
+}
+
+/**
  * Run one agent turn, streaming SSE events via `emit`.
  */
 export async function runAgentTurn(input: AgentChatInput, emit: SseEmit): Promise<void> {
@@ -138,7 +218,7 @@ export async function runAgentTurn(input: AgentChatInput, emit: SseEmit): Promis
     history.push({ role: 'user', content: 'confirmed' });
     history.push({ role: 'assistant', content: r.message });
     await saveHistory(appUserId, input.sessionId, history);
-    emit({ type: 'chips', chips: defaultChips(input.pathname) });
+    emit({ type: 'chips', chips: await generateChips(input, r.message) });
     emit({ type: 'done' });
     return;
   }
@@ -159,6 +239,21 @@ export async function runAgentTurn(input: AgentChatInput, emit: SseEmit): Promis
     llmEnabled: true,
   });
 
+  // On an auto-fired trigger there's no typed question — ask the model to
+  // either react to the click that happened, or orient on the new step,
+  // instead of echoing a blank/sentinel message.
+  const effectiveMessage = input.systemTrigger
+    ? input.actionNote
+      ? `The user just did this in the UI (they didn't type anything): "${input.actionNote}". In ONE short ` +
+        `sentence, acknowledge it and add the next useful thing only if it's genuinely non-obvious. Do NOT ` +
+        `call any tools, don't ask a question back, and don't just repeat the action verbatim.`
+      : `The user just navigated here — they didn't type anything. In ONE short sentence (max ~20 words), ` +
+        `welcome them to the "${(input.step && STEP_TITLES[input.step]) || input.step || input.pathname || 'this step'}" ` +
+        `step and say what it's for. This is a short orientation only — do NOT call any tools (no listing ` +
+        `environments/agents, no live data) and don't ask a question back; the user can ask for specifics ` +
+        `or tap a chip afterward.`
+    : input.message;
+
   const messages: ChatMessage[] = [
     { role: 'system', content: system },
     ...history.slice(-20).map(
@@ -167,7 +262,7 @@ export async function runAgentTurn(input: AgentChatInput, emit: SseEmit): Promis
         content: h.content,
       }),
     ),
-    { role: 'user', content: input.message },
+    { role: 'user', content: effectiveMessage },
   ];
 
   const ctx: ToolExecContext = {
@@ -178,17 +273,22 @@ export async function runAgentTurn(input: AgentChatInput, emit: SseEmit): Promis
     emit: (ev) => emit({ type: 'ui_event', event: ev }),
   };
 
-  let finalText = '';
+  let streamedText = '';
+  const onDelta = (chunk: string) => {
+    streamedText += chunk;
+    emit({ type: 'delta', text: chunk });
+  };
+
+  let paused = false;
   try {
     for (let i = 0; i < MAX_ITERATIONS; i++) {
-      const result = await callAI(messages, AGENT_TOOLS);
+      const result = await callAIStream(messages, AGENT_TOOLS, onDelta);
       if (result.tool_calls?.length) {
         messages.push({
           role: 'assistant',
           content: result.content,
           tool_calls: result.tool_calls,
         });
-        let paused = false;
         for (const tc of result.tool_calls) {
           const tr = await executeTool(tc.function.name, tc.function.arguments, ctx);
           messages.push({
@@ -199,14 +299,12 @@ export async function runAgentTurn(input: AgentChatInput, emit: SseEmit): Promis
           });
           if (tr.pause) {
             paused = true;
-            finalText = result.content || 'I need your confirmation before continuing.';
             break;
           }
         }
         if (paused) break;
         continue;
       }
-      finalText = result.content || '';
       break;
     }
   } catch (e) {
@@ -217,14 +315,22 @@ export async function runAgentTurn(input: AgentChatInput, emit: SseEmit): Promis
     return;
   }
 
-  if (!finalText) finalText = 'Done.';
-  emit({ type: 'message', text: finalText });
-  const nextHist: HistoryMessage[] = [
-    ...history,
-    { role: 'user' as const, content: input.message },
-    { role: 'assistant' as const, content: finalText },
-  ].slice(-40);
-  await saveHistory(appUserId, input.sessionId, nextHist);
-  emit({ type: 'chips', chips: defaultChips(input.pathname) });
+  if (paused && !streamedText) {
+    const fallback = 'I need your confirmation before continuing.';
+    streamedText = fallback;
+    emit({ type: 'delta', text: fallback });
+  }
+  const finalText = streamedText || 'Done.';
+  // Don't persist the synthetic navigation prompt/reply — it would pollute
+  // conversation history with a message the user never actually sent.
+  if (!input.systemTrigger) {
+    const nextHist: HistoryMessage[] = [
+      ...history,
+      { role: 'user' as const, content: input.message },
+      { role: 'assistant' as const, content: finalText },
+    ].slice(-40);
+    await saveHistory(appUserId, input.sessionId, nextHist);
+  }
+  emit({ type: 'chips', chips: await generateChips(input, finalText) });
   emit({ type: 'done', text: finalText });
 }

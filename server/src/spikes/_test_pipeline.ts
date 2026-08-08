@@ -36,7 +36,7 @@ async function main() {
   const plan: ResolvedPlan = {
     units: [{ envUrl: unit.envUrl, envName: unit.envName, bots }],
     totalAgents: bots.length,
-    destination: { prefixWithEnv: false },
+    destination: {},
     dryRun: MODE === 'dry',
   };
 

@@ -1,23 +1,18 @@
 import { config, llmEnabled } from '../config.js';
 import { logger } from '../logger.js';
-import { buildProceduresInstruction } from './topicsEmit.js';
 import type { ResolvedConnector } from './connectorToolBuilder.js';
 import { buildLiveConnectorSpecs, buildLiveConnectorInstruction } from './connectorToolBuilder.js';
-import type { TopicsMigrationPlan } from './topicsMigration.js';
 import type { AgentIR, FidelityNote, MappedAgent } from '../types.js';
 
 /**
  * Maps an AgentIR to a Gemini Enterprise agent definition.
  *
- * The instruction is synthesized with fidelity in mind:
- *   1. The agent's REAL instructions lead, verbatim — and that's ALL that goes
- *      into the instruction text. Nothing else is folded in.
- *   2. When a topics plan is supplied, topics are still COMPILED into
- *      followable "Conversation procedures" (via topicsEmit) for the report,
- *      but that compiled text is surfaced as a `needs-review` FidelityNote,
- *      not appended to the instruction — mixing topic-derived guidance into
- *      the same free-text field as the author's own instructions risked
- *      shifting the agent's tone away from what the source author wrote.
+ * The instruction is synthesized with fidelity in mind: the agent's REAL
+ * instructions lead, verbatim — and that's ALL that goes into the instruction
+ * text. Nothing else is folded in. Topics are migrated separately, as ADK
+ * sub-agents inside the same Reasoning Engine (see orchestrator.ts's
+ * topicSubAgents) — not folded into this instruction text; this module only
+ * records that fact as a fidelity note.
  * An optional LLM pass can polish the result; it is off by default and the
  * deterministic output is already high fidelity.
  */
@@ -137,15 +132,6 @@ async function refineWithLlm(instruction: string, ir: AgentIR): Promise<string> 
 
 export interface MapOptions {
   /**
-   * Compiled topics plan (from `planTopicsMigration`). When provided, its
-   * capabilities are compiled and reported via a `topics` FidelityNote
-   * (status `needs-review`) — but deliberately NOT folded into the
-   * instruction text, so the agent's tone stays faithful to the source
-   * instructions alone. The orchestrator computes the plan once and passes
-   * it here (and stages it), so it isn't recomputed.
-   */
-  topicsPlan?: TopicsMigrationPlan;
-  /**
    * Resolved third-party / MS-native connector contexts. When provided, a
    * structured `## External Connector Access` block is appended to the agent
    * instruction so the Gemini agent knows the base URLs, auth headers, and
@@ -157,34 +143,6 @@ export interface MapOptions {
 export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAgent> {
   const { instruction, notes } = synthesizeInstruction(ir);
   let refined = await refineWithLlm(instruction, ir);
-
-  // ── Topics: compiled, but deliberately NOT folded into the instruction ─────
-  // Topics are still fully captured in AgentIR.topics and compiled into a
-  // procedures plan (planTopicsMigration), but that compiled text used to be
-  // appended to the live instruction as a "## Conversation procedures"
-  // section. That mixed source-authored persona rules with topic-derived
-  // guidance in one field, which could shift the agent's tone away from the
-  // author's instructions. The instruction is now exactly the source
-  // instructions (see synthesizeInstruction above); compiled topics surface
-  // only in the fidelity report as needs-review, for a human to apply
-  // deliberately (e.g. as Gemini's own topic/procedure resources) rather than
-  // silently baked into free text.
-  if (opts?.topicsPlan) {
-    const procedures = buildProceduresInstruction(opts.topicsPlan);
-    if (procedures) {
-      const s = opts.topicsPlan.summary;
-      notes.push({
-        component: 'topics',
-        status: 'needs-review',
-        detail:
-          `${s.capabilities} topic(s) compiled into conversation procedures ` +
-          `(${s.byFidelity.full} full, ${s.byFidelity.high} high, ${s.byFidelity.partial} partial; ` +
-          `${s.needsReview} need review, ${s.deterministicTools} deterministic tool(s) to rebuild) ` +
-          `but NOT added to the instruction — review and apply separately so it doesn't shift the ` +
-          `agent's tone away from the source instructions.`,
-      });
-    }
-  }
 
   // ── Connector instruction block ────────────────────────────────────────────
   // Credential-free on purpose. The old block pasted each connector's base URL and

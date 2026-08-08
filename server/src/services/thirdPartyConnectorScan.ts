@@ -4,9 +4,9 @@
  * found across all flows in the environment.
  *
  * Only connectors with entries in the CONNECTOR_REGISTRY are returned —
- * Microsoft connectors ARE returned here (action path); SKIP_CONNECTOR_IDS applies to
- * the knowledge path only
- * and excluded because they use a separate Azure App Registration path.
+ * Microsoft connectors ARE returned here too (this is the ACTION path; a
+ * SharePoint/OneDrive *document* knowledge source is a separate concern,
+ * handled by knowledgeClassifier.ts, not this registry).
  */
 
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
@@ -94,13 +94,13 @@ export async function detectThirdPartyConnectors(
 
       // Two skips used to live here, both wrong for the ACTION path:
       //
-      // 1. SKIP_CONNECTOR_IDS dropped every Microsoft connector. That list exists for
-      //    the KNOWLEDGE path — SharePoint/OneDrive *documents* migrate as data stores,
-      //    so they must not also be treated as knowledge connectors. But "send a Teams
-      //    message" or "read a Planner task" is an ACTION, and those need a live Graph
-      //    tool. Skipping by id made every Microsoft action connector invisible to the
-      //    UI, so no credentials were ever collected for them. Now: skip only ids we
-      //    have no registry entry for, since a registry entry IS the statement that we
+      // 1. A SKIP_CONNECTOR_IDS list (since removed) dropped every Microsoft connector.
+      //    That existed for the KNOWLEDGE path — SharePoint/OneDrive *documents* migrate
+      //    as data stores, so they must not also be treated as knowledge connectors. But
+      //    "send a Teams message" or "read a Planner task" is an ACTION, and those need a
+      //    live Graph tool. Skipping by id made every Microsoft action connector invisible
+      //    to the UI, so no credentials were ever collected for them. Now: skip only ids
+      //    we have no registry entry for, since a registry entry IS the statement that we
       //    can call it.
       //
       // 2. Unknown ids were dropped silently, so a customer using a connector we do not
