@@ -473,17 +473,60 @@ export interface RegisterResult {
 export async function registerAdkAgent(
   dest: GeminiDestination,
   saToken: string,
-  args: { reasoningEngine: string; displayName: string; description: string },
+  args: {
+    reasoningEngine: string;
+    displayName: string;
+    description: string;
+    /**
+     * Existing agent to UPDATE instead of creating a new one. Supply this on every
+     * re-migration of an agent we have already migrated.
+     *
+     * Agents support PATCH, and repointing one at a freshly deployed Reasoning Engine
+     * works (verified live 2026-08-08). That matters twice over:
+     *   - agents.create is capped by an undocumented daily quota, and re-running a
+     *     migration used to burn one every time; PATCH consumes none, so a redeploy is
+     *     free and the quota is reserved for genuinely new agents.
+     *   - creating unconditionally left a second agent with the same display name on
+     *     every re-run. Seven copies of one agent accumulated on 2026-08-07 before it
+     *     was noticed, each with its own always-on billable engine.
+     */
+    existingAgentId?: string;
+  },
 ): Promise<RegisterResult> {
   await geminiWriteLimiter.acquire(); // pace writes to avoid 429 bursts (same limiter as low-code path)
+  const body = {
+    displayName: args.displayName,
+    description: args.description,
+    adkAgentDefinition: { provisionedReasoningEngine: { reasoningEngine: args.reasoningEngine } },
+  };
+
+  if (args.existingAgentId) {
+    const res = await fetch(
+      `${assistantBase(dest)}/agents/${args.existingAgentId}?updateMask=displayName,description,adkAgentDefinition`,
+      {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+    const text = await res.text();
+    if (res.ok) {
+      const j = JSON.parse(text) as { name?: string; state?: string };
+      logger.info({ agentId: args.existingAgentId }, 'adk: updated existing agent in place (no creation quota used)');
+      return { registered: true, agentId: j.name?.split('/').pop() ?? args.existingAgentId, state: j.state };
+    }
+    // Fall through to create — the agent may have been deleted in the console, and a
+    // failed update must not leave the migration with nothing.
+    logger.warn(
+      { agentId: args.existingAgentId, status: res.status },
+      'adk: agent update failed, falling back to create',
+    );
+  }
+
   const res = await fetch(`${assistantBase(dest)}/agents`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      displayName: args.displayName,
-      description: args.description,
-      adkAgentDefinition: { provisionedReasoningEngine: { reasoningEngine: args.reasoningEngine } },
-    }),
+    body: JSON.stringify(body),
   });
   const text = await res.text();
   if (!res.ok) return { registered: false, error: `${res.status}: ${text.replace(/\s+/g, ' ').slice(0, 300)}` };
@@ -522,6 +565,10 @@ export async function publishAgentToGallery(
     liveConnectors?: AdkSpec['liveConnectors'];
     /** Migrated topics as in-deployment sub-agents (see AdkSpec.subAgents). */
     subAgents?: AdkSpec['subAgents'];
+    /** Agent id from a previous migration of this same source agent. Present → the
+     *  existing agent is repointed at the new Reasoning Engine instead of a second
+     *  agent being created. */
+    existingAgentId?: string;
   },
 ): Promise<{
   ok: boolean;
@@ -612,6 +659,9 @@ export async function publishAgentToGallery(
     reasoningEngine: dep.reasoningEngine,
     displayName: spec.displayName,
     description: spec.description,
+    // Update in place when this agent was migrated before — no creation quota, no
+    // duplicate. See registerAdkAgent.
+    existingAgentId: opts?.existingAgentId,
   });
   if (!reg.registered) {
     // Deploy succeeded, registration did not — delete the Reasoning Engine.

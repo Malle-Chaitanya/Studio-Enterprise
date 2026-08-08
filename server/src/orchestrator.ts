@@ -1283,6 +1283,11 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               groundingDataStores,
               liveConnectors: scopedConnectors,
               subAgents: topicSubAgents,
+              // Redeploying an agent we already migrated: repoint the EXISTING agent at
+              // the new Reasoning Engine rather than creating a second one. Creation is
+              // capped by an undocumented daily quota and re-runs used to burn one every
+              // time, while also accumulating same-named duplicates.
+              existingAgentId: existing?.agentId,
             });
 
             // Everything below claims specific knowledge sources are grounded
