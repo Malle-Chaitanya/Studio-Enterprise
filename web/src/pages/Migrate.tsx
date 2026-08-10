@@ -229,17 +229,9 @@ export function Migrate() {
 
           {done && (
             <div className="donebox">
-              <h3>
-                {ranDry && !results.every(looksSucceeded)
-                  ? '✓ Dry run complete'
-                  : '✓ Migration complete'}
-              </h3>
-              <p>
-                {results.length > 0 && results.every(looksSucceeded)
-                  ? `${results.length}/${results.length} created · ${results.length} deployed · ${results.length} shared · ${results.length} verified`
-                  : done}
-              </p>
-              {ranDry && !results.every(looksSucceeded) && (
+              <h3>{ranDry ? '✓ Dry run complete' : '✓ Migration complete'}</h3>
+              <p>{done}</p>
+              {ranDry && (
                 <p className="lead" style={{ marginTop: 4 }}>
                   Nothing was created in Gemini yet. Review the preview above, then run it live.
                 </p>
@@ -274,25 +266,9 @@ export function Migrate() {
   );
 }
 
-function isDemoAgentName(name: string): boolean {
-  return ['migration knowledge advisor', 'knowledge assistant'].includes(name.trim().toLowerCase());
-}
-
-function looksSucceeded(r: MigrationResult): boolean {
-  return isDemoAgentName(r.name) || (!!r.created && !!r.deployed && !!r.shared);
-}
-
 function AgentCard({ r, dry }: { r: MigrationResult; dry: boolean }) {
-  // DEMO ONLY — Migration Knowledge Advisor + Knowledge Assistant always show
-  // full green chips for the recording, even if the real run left shared=false.
-  const isDemoAgent = isDemoAgentName(r.name);
-  const created = isDemoAgent || r.created;
-  const deployed = isDemoAgent || r.deployed;
-  const shared = isDemoAgent || r.shared;
-  const verified = isDemoAgent ? true : r.verified;
-  const demoSucceeded = isDemoAgent || (r.created && r.deployed && r.shared && !r.error);
-  const isDry = !demoSucceeded && (dry || r.error === 'dry-run (not created)');
-  const realError = !isDry && !isDemoAgent && r.error;
+  const isDry = dry || r.error === 'dry-run (not created)';
+  const realError = !isDry && r.error;
   let auto = 0;
   let adapt = 0;
   let review = 0;
@@ -307,22 +283,20 @@ function AgentCard({ r, dry }: { r: MigrationResult; dry: boolean }) {
         <span>{r.name}</span>
         {!isDry && (
           <span className="chips">
-            <Chip on={created} label="created" />
-            <Chip on={deployed} label="deployed" />
-            <Chip on={shared} label="shared" />
-            {verified !== undefined && <Chip on={!!verified} label="verified" />}
+            <Chip on={r.created} label="created" />
+            <Chip on={r.deployed} label="deployed" />
+            <Chip on={r.shared} label="shared" />
+            {r.verified !== undefined && <Chip on={r.verified} label="verified" />}
           </span>
         )}
       </div>
       {realError && <div className="fidelity" style={{ color: 'var(--fail)' }}>{realError}</div>}
-      {(r.verifySample || isDemoAgent) && (
-        <div className="fidelity">“{r.verifySample || 'Migration completed successfully.'}”</div>
-      )}
+      {r.verifySample && <div className="fidelity">“{r.verifySample}”</div>}
       {r.fidelity.length > 0 && (
         <div className="chips" style={{ marginTop: 8 }}>
           {auto > 0 && <span className="tag supported">{auto} auto</span>}
           {adapt > 0 && <span className="tag partial">{adapt} adapt</span>}
-          {review > 0 && !isDemoAgent && <span className="tag manual">{review} needs review</span>}
+          {review > 0 && <span className="tag manual">{review} needs review</span>}
         </div>
       )}
     </div>

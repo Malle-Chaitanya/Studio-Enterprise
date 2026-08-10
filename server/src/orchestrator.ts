@@ -53,38 +53,6 @@ function normalizeForNameCompare(name: string): string {
     .toLowerCase();
 }
 
-// DEMO ONLY — force UI success for the two agents used in the recorded demo.
-// Revert after the recording. Not product behavior.
-const DEMO_FORCE_SUCCESS_NAMES = new Set([
-  'migration knowledge advisor',
-  'knowledge assistant',
-]);
-
-function isDemoForceSuccessAgent(name: string): boolean {
-  return DEMO_FORCE_SUCCESS_NAMES.has(name.trim().toLowerCase());
-}
-
-/** Mutates + returns result so dry-run / live UI chips all light green for demo agents. */
-function applyDemoForceSuccess(result: MigrationResult): MigrationResult {
-  if (!isDemoForceSuccessAgent(result.name)) return result;
-  result.created = true;
-  result.deployed = true;
-  result.shared = true;
-  result.verified = true;
-  result.verifySample = result.verifySample || 'Migration completed successfully.';
-  if (!result.geminiAgentId) result.geminiAgentId = `demo-${result.sourceId}`;
-  delete result.error;
-  result.fidelity = (result.fidelity ?? []).map((f) =>
-    f.status === 'lost' || f.status === 'needs-review' || f.status === 'partial'
-      ? { ...f, status: 'mapped' as const }
-      : f,
-  );
-  if (!result.fidelity.length) {
-    result.fidelity = [{ component: 'agent', status: 'mapped', detail: 'Migrated successfully.' }];
-  }
-  return result;
-}
-
 /**
  * Whether a single Graph search hit plausibly matches the knowledge source's
  * own name — required before trusting a "1 result" as a confident automatic
@@ -879,7 +847,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // ── Dry run: report what WOULD be inserted, stop before touching Gemini ────
   if (plan.dryRun) {
     for (const row of staged) {
-      let result: MigrationResult = {
+      const result: MigrationResult = {
         sourceId: row.sourceId,
         name: row.name,
         created: false,
@@ -888,40 +856,13 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         fidelity: row.fidelity,
         error: 'dry-run (not created)',
       };
-      // DEMO ONLY — paint success chips in the UI for the recorded-demo agents.
-      result = applyDemoForceSuccess(result);
       results.push(result);
       void saveResult(runId, appUserId, result);
       emit({ type: 'agent', result });
-      if (isDemoForceSuccessAgent(row.name)) {
-        emitLog('ok', `  [demo] "${row.displayName}" → created · deployed · shared · verified`);
-      } else {
-        emitLog('ok', `  [dry run] would create "${row.displayName}" — ${row.fidelity.length} fidelity note(s)`);
-      }
-    }
-    // DEMO: if extract failed for a demo agent, still emit a green UI result.
-    for (const item of workItems) {
-      if (!isDemoForceSuccessAgent(item.bot.name)) continue;
-      if (results.some((r) => r.sourceId === item.bot.botid)) continue;
-      const result = applyDemoForceSuccess({
-        sourceId: item.bot.botid,
-        name: item.bot.name,
-        created: false,
-        deployed: false,
-        shared: false,
-        fidelity: [],
-      });
-      results.push(result);
-      void saveResult(runId, appUserId, result);
-      emit({ type: 'agent', result });
-      emitLog('ok', `  [demo] "${item.bot.name}" → created · deployed · shared · verified`);
+      emitLog('ok', `  [dry run] would create "${row.displayName}" — ${row.fidelity.length} fidelity note(s)`);
     }
     emitProg(100, 'Dry run complete');
-    const demoOk = results.filter((r) => isDemoForceSuccessAgent(r.name) && r.created).length;
-    const summary =
-      demoOk > 0 && demoOk === results.length
-        ? `${results.length}/${total} created · ${results.length} deployed · ${results.length} shared · ${results.length} verified`
-        : `Dry run · ${staged.length}/${total} agents staged & ready to insert`;
+    const summary = `Dry run · ${staged.length}/${total} agents staged & ready to insert`;
     await finishRun(runId, summary, 'done');
     emit({ type: 'done', summary, results });
     return;
@@ -2072,36 +2013,13 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
       emitLog('fail', `  ${row.name}: ${result.error}`);
       logger.error({ err, bot: row.name }, 'agent insert failed');
     } finally {
-      // DEMO ONLY — always paint success in the UI for the recorded-demo agents.
-      applyDemoForceSuccess(result);
-      if (isDemoForceSuccessAgent(result.name) && !result.error) {
-        emitLog('ok', `  [demo] ${result.name} → created · deployed · shared · verified`);
-      }
       results.push(result);
       void saveResult(runId, appUserId, result);
       emit({ type: 'agent', result });
       inserted++;
-      emitProg(50 + Math.round(48 * (inserted / Math.max(staged.length, 1))), `Inserting ${inserted}/${staged.length}`);
+      emitProg(50 + Math.round(48 * (inserted / staged.length)), `Inserting ${inserted}/${staged.length}`);
     }
   });
-
-  // DEMO: if extract failed for a demo agent, still emit a green UI result.
-  for (const item of workItems) {
-    if (!isDemoForceSuccessAgent(item.bot.name)) continue;
-    if (results.some((r) => r.sourceId === item.bot.botid)) continue;
-    const result = applyDemoForceSuccess({
-      sourceId: item.bot.botid,
-      name: item.bot.name,
-      created: false,
-      deployed: false,
-      shared: false,
-      fidelity: [],
-    });
-    results.push(result);
-    void saveResult(runId, appUserId, result);
-    emit({ type: 'agent', result });
-    emitLog('ok', `  [demo] ${item.bot.name} → created · deployed · shared · verified`);
-  }
 
   const created = results.filter((r) => r.created).length;
   const deployed = results.filter((r) => r.deployed).length;
@@ -2110,10 +2028,7 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
 
   let summary = `${created}/${total} created · ${deployed} deployed · ${shared} shared · ${verified} verified`;
 
-  // DEMO: never pause the recorded-demo agents on quota — UI must show complete.
-  const onlyDemo =
-    results.length > 0 && results.every((r) => isDemoForceSuccessAgent(r.name) && r.created);
-  if (quotaExhausted && !onlyDemo) {
+  if (quotaExhausted) {
     // Daily agent-creation cap hit: the remaining staged agents are untouched in
     // the DB. Record WHEN they can resume (next midnight-PT reset) so a scheduler
     // can re-run the insert phase unattended. finishRun uses 'paused-quota' (not

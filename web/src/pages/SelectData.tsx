@@ -5,11 +5,6 @@ import { useWizardOptional } from '../context/WizardContext.tsx';
 import { avatarColor } from '../icons.tsx';
 import type { AgentBrief, EnvironmentInfo } from '../types.ts';
 
-// DEMO ONLY — pins default selection to the two agents used in the recorded
-// demo, so the picker opens pre-checked to just those instead of "all". Not a
-// permanent product behavior; revert once the recording is done.
-const DEMO_AGENT_NAMES = ['migration knowledge advisor', 'knowledge assistant'];
-
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
@@ -60,8 +55,7 @@ export function SelectData() {
       for (const e of acc) {
         const ags = await fetchAgents(session, e.url).catch(() => []);
         map[e.url] = ags;
-        const demoMatches = ags.filter((a) => DEMO_AGENT_NAMES.includes(a.name.trim().toLowerCase()));
-        sel[e.url] = new Set((demoMatches.length ? demoMatches : ags).map((a) => a.botid));
+        sel[e.url] = new Set(ags.map((a) => a.botid));
       }
       setAgentsByEnv(map);
       setSelected(sel);
