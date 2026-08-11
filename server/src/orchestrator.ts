@@ -10,6 +10,7 @@ import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
+import { readinessFor } from './connectors/readiness.js';
 import { REGISTRY_BY_ID } from './connectors/registry.js';
 import { needsAclAcknowledgement, aclDisclosureFor, aclDisclosureSummary } from './services/aclDisclosure.js';
 import { migrateSharePointToDataStore } from './services/sharePointMigrator.js';
@@ -1602,6 +1603,31 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                   (wanted.length ? ` Operations the source agent used: ${wanted.join(', ')}.` : ''),
               });
               emitLog('warn', `  ${row.name}: "${missingId}" is not a supported connector — its tools were NOT migrated.`);
+            }
+
+            // Beyond "is there a registry entry", report per OPERATION whether we can
+            // actually reproduce the call the source agent made. A connector can be
+            // registered and still have operations we cannot rebuild (SharePoint's
+            // HttpRequest tunnel, Google Drive's dataset abstraction), and an
+            // unregistered one can be fully reproducible (Dataverse). Reporting only at
+            // connector granularity gets both cases wrong.
+            for (const [connectorId, ops] of opsByConnector) {
+              if (!usedConnectorIds.has(connectorId)) continue;
+              const readiness = readinessFor(connectorId, ops.map((o) => o.id));
+              if (!readiness) continue; // no captured API for this connector — already covered above
+              for (const blockedOp of readiness.blocked) {
+                result.fidelity.push({
+                  component: `connector:${connectorId}:${blockedOp.operationId}`,
+                  status: 'lost',
+                  detail:
+                    `This agent calls "${blockedOp.operationId}" on ${readiness.displayName}, which the ` +
+                    `migrated agent cannot reproduce. ${blockedOp.reason}`,
+                });
+                emitLog(
+                  'warn',
+                  `  ${row.name}: ${connectorId}.${blockedOp.operationId} cannot be reproduced — reported as lost.`,
+                );
+              }
             }
 
             const applicable = liveConnectorSpecs.filter((c) => usedConnectorIds.has(c.id));
