@@ -227,6 +227,60 @@ stated honestly in the report until fixed.
 
 ---
 
+## Status — 2026-08-12 (overnight run)
+
+Steps 0 through 3b are done, and the answers changed the plan. Recorded here rather than
+rewritten into the table above so the original sequencing stays readable next to what
+actually happened.
+
+| # | Step | Outcome |
+|---|---|---|
+| 0 | Land + green the gate | **Done.** typecheck exits 0 in both packages, `vitest` landed (44 tests), everything pushed to `business`. The last item — extraction truncating at 1000 components — turned out to be five truncating reads, not one; all five now page. |
+| 1 | ACL-loss acknowledgement gate | **Done, unproven.** Blocks between phases with `acl_acknowledgement_required` unless the plan carries `acknowledgeAclLoss`; dry runs exempt, because a dry run writes nothing and is how a customer discovers the problem. 13 unit tests. No live run has hit the gate, so ledger grade **T**, not P. |
+| 2 | Connector × operation census | **Done — ledger §1.10.** 19 of 65 agents use a connector. Four ids in live use are absent from the 34-entry registry, including Dataverse itself in 5 of 12 agents. The registry was built from product names; the real ids differ. |
+| 3 | Swagger coverage | **Done — ledger §1.11.** 23 used operations, 23 resolved to verb + path, 0 missed. Indexes captured for 12 connectors (1134 operations) and committed as fixtures. The `https://service.powerapps.com` audience the plan flagged as an unheld grant works with the app-only token we already mint — no new consent was needed. |
+| 3b | The binding question | **Answered, and the answer is better than the plan feared.** The swagger path after `{connectionId}` is, for most connectors, literally the vendor's own path — HubSpot `/crm/v3/objects/companies`, Confluence `/ex/confluence/{cloudId}/wiki/api/v2/pages`, Dataverse `/api/data/v9.1.0/{entityName}`, Teams `/v1.0/...` (Graph verbatim). Host substitution is the whole transform. Where it is not — Google Drive, OneDrive, Office 365 dataset abstractions, and SharePoint's `HttpRequest` tunnel — we refuse by name instead of guessing. |
+
+### What this does to step 4 (the bake-off)
+
+The bake-off was scheduled to decide between a hand-written module system, ADK
+`OpenAPIToolset`, and Integration Connectors. Two of its inputs are now settled:
+
+- A hand-written module per connector is **not** justified as the default. The census says
+  hand-registering does not converge on what customers use, and the coverage probe says the
+  mapping is mechanical. `operationBinding.ts` reduces the hand-maintained surface to one
+  table of *where a vendor lives and what credential it wants* — roughly 15 lines per
+  connector, versus a module.
+- `OpenAPIToolset` fed the raw Power Apps swagger would point the agent at the APIM proxy,
+  which the migrated agent cannot reach. If it is used at all, it must be fed a REWRITTEN
+  spec (vendor host, `{connectionId}` stripped) — which is exactly what `bindOperation`
+  produces. That makes the bake-off a narrower question: hand-rolled Python function tools
+  versus an ADK toolset over a rewritten spec, with Integration Connectors as the
+  third option for per-user auth.
+
+Still open and still worth the bake-off: **which of the three can carry per-user (Invoker)
+auth**, which is D7 and unaffected by any of tonight's findings.
+
+### Next step, precisely
+
+Make the deployed agent actually call a bound operation. Concretely:
+
+1. Thread `boundOperations` (method, URL template, parameters, auth kind, `contextRequired`)
+   into `LiveConnectorSpec` — `bindOperation` already returns exactly this shape.
+2. In `scripts/adk_deploy.py`, build one function tool per bound operation, with the real
+   signature, instead of one generic REST tool per connector whose path the model invents.
+   Keep the generic tool as the fallback so a connector with no capture still deploys.
+3. Resolve `contextRequired` in the container: `dataverseOrgUrl` is on the session;
+   Atlassian's `cloudId` comes from `https://<site>/_edge/tenant_info`.
+4. Redeploy ONE agent (the confluence agent — one connector, one operation) and ask it a
+   question that forces the tool. That single run moves rows 6-8 of ledger §2b from T/U to
+   **P**, and is the first end-to-end proof that a migrated agent reproduces a Copilot call.
+
+Step 4 was deliberately not done in an unattended session: it creates and replaces
+resources in the customer's Google project.
+
+---
+
 ## Sequencing — REVISED after CEO review
 
 Decided 2026-08-11: **safety and evidence before breadth.** Both reviewers independently

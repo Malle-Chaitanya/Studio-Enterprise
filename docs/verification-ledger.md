@@ -337,6 +337,39 @@ produced evidence.
 
 ---
 
+## 2b. Work landed overnight 2026-08-11/12 — graded
+
+Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
+and produced output, **T** if the compiler and the unit tests have seen it, **U** if
+nothing has exercised it.
+
+| # | Change | Where | Evidence | Grade |
+|---|--------|-------|----------|-------|
+| 1 | ACL-loss acknowledgement gate — a run that would drop source permissions stops between phases unless the plan carries `acknowledgeAclLoss`; dry runs exempt | `services/aclDisclosure.ts`, `orchestrator.ts`, `routes/migrate.ts`, `web/pages/Migrate.tsx` | 13 unit tests over the disclosure logic (fires on copy-and-index / confluence-crawler / dataverse-snapshot, silent on `reconnect` and public sites); typecheck clean both packages | **T** |
+| 2 | Five silently-truncating reads now page (`@odata.nextLink`) | `dataverse.ts`, `knowledgeConnectorScan.ts`, `thirdPartyConnectorScan.ts`, `sharePointMigrator.ts` | typecheck + 23 tests; **no tenant here exceeds one page**, so the loop itself is unexercised | **T** |
+| 3 | Connector × operation census across both environments | `spikes/_diag_connectors_by_agent.ts` | §1.10 — output pasted | **P** |
+| 4 | Swagger coverage: 23 used operations, 23 resolved, 0 missed | `spikes/_probe_swagger_coverage.ts` | §1.11 — output pasted | **P** |
+| 5 | Captured operation indexes for 12 connectors (1134 operations) | `connectors/fixtures/*.ops.json` | written by `spikes/_dump_connector_op_index.ts` against the live swagger; the 21 binding tests read these files, so a bad capture fails the suite | **P** (the capture) |
+| 6 | `operationBinding.ts` — swagger operation → real vendor request, or a named refusal | `connectors/operationBinding.ts` | 21 tests including every connector × operation pair the census observed | **T** |
+| 7 | Readiness surfaced at detection and in the UI | `connectors/readiness.ts`, `knowledgeConnectorScan.ts`, `web/pages/ConnectorConfig.tsx` | typecheck both packages; **never opened in a browser** | **U** |
+| 8 | Per-operation `lost` fidelity notes in the insert phase | `orchestrator.ts` | typecheck; no live run produced one | **U** |
+| 9 | Build copies `fixtures/` into `dist/` | `scripts/copyAssets.mjs` | `npm run build` → `copied src/connectors/fixtures -> dist/connectors/fixtures`; built server boots (module init clean, `EADDRINUSE` only because the dev server holds :8080) | **P** |
+
+Nothing in this table changes what gets DEPLOYED. The tool builder and
+`scripts/adk_deploy.py` are untouched, so a migrated agent still gets the same generic REST
+tool it got yesterday. Rows 5-8 make the pipeline able to *say* what it can and cannot
+reproduce; making it actually reproduce a bound operation is the next step and is written
+up in the plan.
+
+### 2c. The one thing that would move rows 6-8 to P
+
+A deployed agent that calls a bound operation and returns the vendor's real answer. That
+needs a redeploy into the customer's Google project, which was deliberately not done in an
+unattended session. Until then the honest claim is: *the mapping is proven, the execution
+is not.*
+
+---
+
 ## 3. Things previously believed, corrected by today's run
 
 Recording these because the plan document asserted them and they were partly wrong.
