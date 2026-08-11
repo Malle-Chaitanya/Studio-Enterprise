@@ -97,7 +97,9 @@ async function ensureCollections(): Promise<void> {
   //    `staged`; phase 2 reads them and flips each to `inserted`/`failed`.
   await ensure('stagedAgents');
   await db.collection('stagedAgents').createIndex({ runId: 1, sourceId: 1 }, { unique: true });
-  await db.collection('stagedAgents').createIndex({ runId: 1, status: 1 });
+  // appUserId leads the read index: every read is tenant-scoped (see listStaged), so the
+  // index must be too, or the scoping is enforced in code and paid for in a collection scan.
+  await db.collection('stagedAgents').createIndex({ appUserId: 1, runId: 1, status: 1 });
 
   // 10. adkDeployments — tracks already-deployed ADK Reasoning Engines so a
   //     re-run reuses them instead of deploying a second, billable one (Vertex
