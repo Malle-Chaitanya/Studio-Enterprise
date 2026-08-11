@@ -25,7 +25,6 @@ export function ChoosePair() {
   return (
     <div className="card wide">
       <h2>Choose Migration Pair</h2>
-      <p className="lead">Select the source and destination for your migration.</p>
 
       <div className="pair-row">
         <div className="pair-card">

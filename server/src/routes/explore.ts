@@ -123,14 +123,19 @@ export interface ConnectorNeeded {
 }
 
 /**
- * GET /api/explore/connectors-needed?session=…&env=…
- * Scans EVERY agent in one environment and returns ONE deduplicated list of
- * sites that need a native connector, each with every agent that references
- * it. Built so an admin never has to open agents one at a time just to find
- * out which SharePoint/OneDrive sites need setting up — this is the "batch"
- * view instead of a per-agent drill-down (see .claude/memory/decisions.md).
+ * GET /api/explore/connectors-needed?session=…&env=…&botIds=…
+ * Scans agents in one environment and returns ONE deduplicated list of sites
+ * that need a native connector, each with every agent that references it.
+ * Built so an admin never has to open agents one at a time just to find out
+ * which SharePoint/OneDrive sites need setting up — this is the "batch" view
+ * instead of a per-agent drill-down (see .claude/memory/decisions.md).
  * Bounded concurrency (mapPoolCollect) — never an unbounded fan-out at
  * Dataverse, per this project's code-style rule.
+ *
+ * botIds (optional, comma-separated): scan only these agents instead of
+ * every bot in the environment — used by ConnectorConfig to scope this same
+ * scan to whichever agents the user actually selected on SelectData, instead
+ * of the unfiltered whole-environment sweep the standalone Connectors page uses.
  */
 exploreRouter.get('/connectors-needed', async (req, res) => {
   const session = await getSession(req.query.session as string);

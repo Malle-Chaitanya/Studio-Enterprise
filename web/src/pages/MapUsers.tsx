@@ -69,12 +69,6 @@ export function MapUsers() {
       const merged = { ...(map.users ?? {}), ...overlay };
       setUserMap(merged);
       sessionStorage.setItem(`csge_usermap_${session}`, JSON.stringify(merged));
-      // Pre-select only users we could actually map. Selecting all 285 tenant users by
-      // default made the screen read as "285 of 285 selected · 281 need mapping" — an
-      // instruction to hand-map hundreds of accounts that have no Google counterpart and
-      // are irrelevant to the agents being migrated. Users can still Select all.
-      const mappable = ms.filter((u) => merged[u.email]);
-      setSelected(new Set((mappable.length ? mappable : []).map((u) => u.email)));
       if (!ms.length) {
         setStatus('No Microsoft users returned — check Graph User.Read.All consent, or type emails manually after adding rows.');
       }
@@ -304,16 +298,7 @@ export function MapUsers() {
       <div className="mu-head">
         <div>
           <div className="mu-title">Map Users</div>
-          <div className="mu-sub">
-            Map Microsoft identities to their Google Workspace destination.{' '}
-            {counts.autoMatched > 0 && <span className="mu-ok">{counts.autoMatched} auto-mapped</span>}
-            {counts.unmapped > 0 && (
-              <span className="mu-fail">
-                {counts.autoMatched > 0 ? ' · ' : ''}
-                {counts.unmapped} need mapping
-              </span>
-            )}
-          </div>
+          <div className="mu-sub">Map Microsoft identities to their Google Workspace destination.</div>
         </div>
         <div className="mu-actions">
           <label className="mu-iconbtn" title="Import CSV">
@@ -335,30 +320,10 @@ export function MapUsers() {
       </div>
 
       {loading && (
-        <>
-          <p className="mu-note" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="cf-spinner" aria-hidden="true" />
-            Loading directory… this reads every user in the Microsoft tenant, so it can take a moment.
-          </p>
-          {/* Skeleton rows: the table rendered empty while loading, which reads as
-              "no users found" rather than "still fetching". */}
-          <div className="card" style={{ padding: 0, overflow: 'hidden', marginTop: 8 }}>
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <div
-                key={i}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '10px 14px', borderBottom: '1px solid var(--border)',
-                  opacity: 1 - i * 0.13,
-                }}
-              >
-                <div className="cf-skel" style={{ width: 24, height: 24, borderRadius: '50%' }} />
-                <div className="cf-skel" style={{ width: '38%', height: 12 }} />
-                <div className="cf-skel" style={{ width: '22%', height: 12, marginLeft: 'auto' }} />
-              </div>
-            ))}
-          </div>
-        </>
+        <p className="mu-note" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="cf-spinner" aria-hidden="true" />
+          Loading directory… this reads every user in the Microsoft tenant, so it can take a moment.
+        </p>
       )}
       {error && <p className="mu-note fail">{error}</p>}
       {googleUsersError && <p className="mu-note fail">{googleUsersError}</p>}
@@ -376,7 +341,21 @@ export function MapUsers() {
           <div>Microsoft</div>
           <div>Google Workspace</div>
         </div>
-        {pageRows.map((u) => {
+        {loading &&
+          [42, 34, 40, 30, 36, 32].map((nameWidth, i) => (
+            <div key={i} className="mu-row">
+              <div className="cf-skel" style={{ width: 16, height: 16, borderRadius: 4 }} />
+              <div className="mu-who">
+                <span className="cf-skel" style={{ width: 26, height: 26, borderRadius: '50%' }} />
+                <span className="cf-skel" style={{ width: `${nameWidth}%`, height: 12 }} />
+              </div>
+              <div className="mu-dest">
+                <span className="cf-skel" style={{ width: 22, height: 22, borderRadius: '50%' }} />
+                <span className="cf-skel" style={{ width: '45%', height: 12 }} />
+              </div>
+            </div>
+          ))}
+        {!loading && pageRows.map((u) => {
           const on = selected.has(u.email);
           const dest = userMap[u.email] || '';
           return (
@@ -395,7 +374,15 @@ export function MapUsers() {
                       {initials(dest.split('@')[0])}
                     </span>
                     <span className="mu-email">{dest}</span>
-                    <button type="button" className="mdelete" title="Clear mapping" onClick={() => setDest(u.email, '')}>
+                    <button
+                      type="button"
+                      className="mdelete"
+                      title="Clear mapping"
+                      onClick={() => {
+                        setDest(u.email, '');
+                        wizard?.notifyAction(`Cleared the mapping for ${u.email}`);
+                      }}
+                    >
                       ✕
                     </button>
                   </>

@@ -37,7 +37,8 @@ export async function resumeSession(): Promise<string | null> {
   }
 }
 
-export const microsoftStartUrl = () => '/api/auth/microsoft/start';
+export const microsoftStartUrl = (session?: string) =>
+  session ? `/api/auth/microsoft/start?session=${session}` : '/api/auth/microsoft/start';
 export const googleStartUrl = (session: string) => `/api/auth/google/start?session=${session}`;
 
 /**
@@ -227,8 +228,6 @@ export interface ConnectorNeeded {
   agentNames: string[];
 }
 
-/** Scans every agent in one environment and returns a single deduplicated list
- *  of sites needing a connector — the batch view, no per-agent drill-down. */
 /**
  * SharePoint/OneDrive sites that need a connector.
  *
@@ -412,7 +411,6 @@ export async function planMigration(
   session: string,
   scope: MigrationScope,
   destination: {
-    prefixWithEnv: boolean;
     projects?: Record<string, string>;
     environmentMap?: Record<string, GeminiDest>;
   },
@@ -470,8 +468,9 @@ export interface DetectedConnector {
   confidence?: 'certain' | 'heuristic';
 }
 
-export async function fetchThirdPartyConnectors(session: string): Promise<DetectedConnector[]> {
-  const res = await fetch(`/api/migrate/third-party-connectors?session=${session}`);
+/** Scan Power Automate flows for third-party connector references in ONE environment. */
+export async function fetchThirdPartyConnectors(session: string, envUrl: string): Promise<DetectedConnector[]> {
+  const res = await fetch(`/api/migrate/third-party-connectors?session=${session}&envUrl=${encodeURIComponent(envUrl)}`);
   if (!res.ok) throw new Error('connector_scan_failed');
   return ((await res.json()) as { connectors: DetectedConnector[] }).connectors;
 }

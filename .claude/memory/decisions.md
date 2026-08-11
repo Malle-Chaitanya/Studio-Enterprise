@@ -6,6 +6,76 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
+## 2026-08-08 — Close the `/api/auth/resume` orphan gap; two Connect Platforms UX fixes
+
+- **Decision**: Three follow-ups to the same day's earlier disconnect-flow fix. (1)
+  `sessionStore.ts`'s `findLatestConnectedSession` now matches a session with **either**
+  `dvToken` (Microsoft) **or** `gEmail` (Google) present, not `dvToken` alone — closes the
+  known limitation flagged in the entry above: a `google_only` doc (Microsoft disconnected,
+  Google survives) was invisible to `GET /api/auth/resume`, so a hard refresh or fresh login
+  silently lost track of the still-connected Gemini side. (2) `Home.tsx`'s "← Back" button
+  (which called `navigate('/')`, landing on the real Login/Sign-In screen) is removed —
+  Connect Platforms is the first step after login, so there's no earlier wizard step to
+  return to, and the header's "Sign out" already covers intentionally leaving the app. (3)
+  The "Connect Copilot Studio (source) to proceed" banner, shown whenever the source isn't
+  connected, is restyled from a red/alarm banner (`.warn-banner`, now renamed
+  `.notice-banner`) to a neutral blue informational one — this is an expected "one more step"
+  state, not an error condition. New `IcoInfo`/`IcoLogout` icons added to `icons.tsx`
+  (replacing the warning-triangle icon on the notice banner and the `⎋` glyph on the header's
+  Sign out button, respectively).
+- **Why**: user-reported, live-observed UX issues after testing the earlier disconnect fix:
+  disconnecting one platform and then hard-refreshing/re-logging-in looked like BOTH
+  connections were lost even though only one was ever disconnected (the resume-gap this was
+  already flagged as, now actually fixed); the Back button unexpectedly dropping the user on
+  what looks like a logged-out screen mid-workflow; and the red warning banner reading as an
+  error rather than a normal in-progress state.
+- **Impact**: No `AgentIR`/schema-shape change — `findLatestConnectedSession`'s query is
+  broader but additive (a `$or`, not a new field). No other caller of `warn-banner` existed
+  (grepped before renaming), so the CSS rename is safe. `IcoWarn` remains in `icons.tsx`
+  (unused by this page now, kept in case another surface still wants a real warning triangle).
+## 2026-08-08 — Disconnecting the Microsoft source no longer deletes a surviving Google connection
+
+- **Decision**: `POST /api/auth/disconnect` for `platform: 'microsoft'` no longer unconditionally
+  `deleteSession()`s the whole document. It now unsets only the Microsoft-side fields (`tenantId`,
+  `orgName`, `msEmail`, `refreshToken`, `dvToken`, `dvDelegatedToken`, `dvOrgUrl`, `environments`,
+  `botCount`, `topicCount`, `ksCount`, `flowCount`). If the doc still has `gEmail` (Google/Gemini
+  survives), the doc is kept alive with `step: 'google_only'` and the response reports
+  `sessionEnded: false`; the doc is only deleted (`sessionEnded: true`, unchanged behavior) when
+  nothing is left connected at all. To make this durable across a reconnect, `GET /microsoft/start`
+  now accepts an optional `?session=` and threads it through the signed OAuth state
+  (`msSessionId`, mirroring the pattern Google's OAuth leg already used in the other direction);
+  `msCallback` re-attaches to that existing session doc via `updateSession` instead of always
+  minting a new one via `createSession`. `web/src/pages/Home.tsx`'s `confirmDisconnect()` no longer
+  treats "microsoft disconnected" as automatically meaning "navigate away to a blank connect
+  screen" — it only does that when `sessionEnded` is true; otherwise it refreshes the session
+  summary in place (same as the existing Google-disconnect path), so "Manage Platforms" correctly
+  keeps showing Gemini Enterprise as connected. The disconnect confirmation dialog's copy for
+  Microsoft now branches on whether Google is still connected.
+- **Why**: user-reported UX bug — disconnecting only Copilot Studio (source) was wiping the
+  Google/Gemini connection too and resetting the whole "Connect Platforms" screen to "No platforms
+  connected yet," even though the user only asked to disconnect one side. Root cause: the session
+  document was the sole owner of BOTH platforms' credentials, and "disconnect source" was
+  implemented as "delete the whole tenant context." An `architect` design pass confirmed no other
+  route/consumer assumed a session doc must always have `dvToken` to exist, so decoupling the two
+  platforms' lifecycles on the same doc was safe without a bigger schema split.
+- **Impact**: `Session.step` (already a free-form string, no other code branches on specific
+  values) gains one new legal value, `'google_only'` — additive, non-breaking. No `AgentIR`
+  impact; this is entirely pre-pipeline (auth/session). **Known, accepted limitation, not fixed in
+  this pass**: `GET /api/auth/resume` (used to resume the last connected session on login) queries
+  `{ appUserId, dvToken: { $exists: true, $ne: '' } }` — a surviving `google_only` doc has no
+  `dvToken` and won't be picked up by it. Practically harmless as long as the same browser tab
+  stays open (the session id lives in the URL), but if the user logs out/closes the tab before
+  reconnecting Microsoft, that doc becomes silently unreachable (orphaned, holding a live Google
+  refresh token) rather than resumed. Not fixed here because broadening that query changes what
+  "latest connected session" means for the login-resume flow generally — a separate decision, not
+  a drive-by tweak. Also considered and **rejected**: splitting the session doc into independent
+  per-platform collections (fully decoupled lifecycles) — bigger diff touching every route that
+  reads flat `session.gToken`/`session.dvToken`, and multi-tenant `appUserId` scoping isn't wired
+  to real login yet anyway (`DEFAULT_APP_USER_ID` is still a placeholder everywhere) — revisit once
+  real per-user login lands.
+
+---
+
 ## 2026-08-05 — Fix low-code path granting googleSearch regardless of source webBrowsing capability
 
 - **Decision**: `mapper.ts`'s `tools: [{ name: 'googleSearch' }]` (was unconditional for every low-code

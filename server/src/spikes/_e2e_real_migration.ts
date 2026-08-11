@@ -54,7 +54,7 @@ console.log(`  savedConnectors: ${JSON.stringify(session.plan?.savedConnectors ?
 const plan = await resolveScope(
   session,
   { kind: 'agents', env: ENV_URL, botIds: [bot.botid] },
-  { prefixWithEnv: false },
+  {},
 );
 // Carry over connector credentials the customer saved in the UI — the orchestrator reads
 // these to decide which live tools to wire.

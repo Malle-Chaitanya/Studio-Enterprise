@@ -14,18 +14,23 @@ ADK_STAGING_BUCKET); it is auto-created if missing.
         --spec '{"name":"...","displayName":"...","instruction":"...","model":"gemini-2.5-flash","tools":["googleSearch"]}' \
         --staging-bucket gs://my-bucket
 
-If spec.groundingDataStores is set (one or more Discovery Engine data store
-resource paths — a public-website store from adkDeployer.ts
-createWebsiteGroundingDataStore, and/or "document"/connector stores for
-locally-uploaded files or SharePoint/Dataverse sources), grounding is wired as
-the agent's ONLY tool(s), taking priority over `tools`. A single store uses
-the built-in VertexAiSearchTool directly. Multiple stores use hand-rolled
-FunctionTools instead (see _make_search_tool) — NOT N VertexAiSearchTool
-instances combined via bypass_multi_tools_limit, which deploys fine but
-crashes every query with "Duplicate function declaration found:
-discovery_engine_search" (confirmed live 2026-08-05 — ADK's auto-wrap gives
-every instance the same hardcoded function name; see the comment on
-_make_search_tool for the full writeup and upstream issue links).
+If spec.groundingDataStores is set (a list of {resourcePath, sourceName} —
+sourceName is the REAL human-readable file/site name, not a synthetic id; a
+public-website store from adkDeployer.ts createWebsiteGroundingDataStore,
+and/or "document"/connector stores for locally-uploaded files or
+SharePoint/Dataverse sources), grounding is wired as the agent's ONLY
+tool(s), taking priority over `tools`. A single store uses the built-in
+VertexAiSearchTool directly. Multiple stores use hand-rolled FunctionTools
+instead (see _make_search_tool) — NOT N VertexAiSearchTool instances combined
+via bypass_multi_tools_limit, which deploys fine but crashes every query with
+"Duplicate function declaration found: discovery_engine_search" (confirmed
+live 2026-08-05 — ADK's auto-wrap gives every instance the same hardcoded
+function name; see the comment on _make_search_tool for the full writeup and
+upstream issue links). Each hand-rolled tool is named/documented after its
+real sourceName (see _sanitize_tool_name) — confirmed live 2026-08-06 that
+without this, the model cites its own generic tool name
+("search_knowledge_source_1") back to the end user instead of a real,
+recognizable source name.
 """
 import argparse
 import json
@@ -291,6 +296,32 @@ def _build_live_connector_tool(conn: dict, project: str):
                 rest = rest[1:]
             return site.get("id"), "/".join(rest)
 
+        def _scoped_path(folder: str, user_path: str) -> str:
+            """Join a model-supplied relative path onto the scoped folder, rejecting
+            any attempt to escape it. The tool signature only documents "a path inside
+            the connected folder" as a convention — nothing stops the calling model
+            from passing "../../other-site" instead, so this is enforced here rather
+            than trusted from the docstring.
+
+            Checked by containment (resolved candidate must equal `folder` or sit
+            under it), not just by pattern-matching for ".." — a bare ".." against a
+            single-segment folder normalizes straight to ".", which slips past a
+            ".."-prefix check while still resolving outside the intended scope.
+            """
+            import posixpath
+            folder = (folder or "").strip("/")
+            candidate = posixpath.normpath(posixpath.join(folder, user_path.strip("/").lstrip("/")))
+            candidate = "" if candidate == "." else candidate.strip("/")
+            escapes = (
+                posixpath.isabs(user_path)
+                or candidate == ".."
+                or candidate.startswith("../")
+                or (folder and candidate != folder and not candidate.startswith(folder + "/"))
+            )
+            if escapes:
+                raise ValueError(f"path '{user_path}' escapes the connected SharePoint folder")
+            return candidate
+
         def sharepoint_list_files(subfolder: str = "") -> dict:
             """List files and folders in the company's SharePoint folder this agent is
             connected to. Only this folder and things inside it are accessible.
@@ -306,7 +337,7 @@ def _build_live_connector_tool(conn: dict, project: str):
                 site_id, folder = _resolve_scope(token)
                 if not site_id:
                     return {"error": "no SharePoint scope configured for this agent"}
-                path = "/".join([p for p in [folder, subfolder.strip("/")] if p])
+                path = _scoped_path(folder, subfolder)
                 url = (
                     f"/sites/{site_id}/drive/root:/{path}:/children"
                     if path else f"/sites/{site_id}/drive/root/children"
@@ -345,7 +376,7 @@ def _build_live_connector_tool(conn: dict, project: str):
                 site_id, folder = _resolve_scope(token)
                 if not site_id:
                     return {"error": "no SharePoint scope configured for this agent"}
-                full = "/".join([p for p in [folder, file_path.strip("/")] if p])
+                full = _scoped_path(folder, file_path)
                 meta = _graph(f"/sites/{site_id}/drive/root:/{full}", token)
                 size = meta.get("size") or 0
                 if size > MAX_BYTES:
@@ -777,59 +808,19 @@ class ReasoningEngineAgentWrapper:
 # __name__ is set explicitly before wrapping, so the FunctionDeclaration ADK
 # sends to Gemini is genuinely distinct per store — the collision is
 # structurally impossible this way, not just avoided.
-def _store_label(data_store_id):
-    """Human name for a data store, derived from its id.
+def _sanitize_tool_name(source_name, fallback):
+    """Turn a real source name ("Slack to Teams- Migration Guide.pdf") into a
+    valid Python identifier for the function name Gemini sees and can call.
+    Falls back to a generic name only if nothing usable survives sanitizing —
+    e.g. a source name that's ALL punctuation/non-ASCII."""
+    import re
 
-    Store ids are built from the source name at creation time
-    (`…/dataStores/cf-<agent>-file-migrate-agent-prd-full`), so the name is already
-    in there — no extra plumbing from the server is needed to recover it.
-
-    This matters more than it looks. Every hand-rolled search tool used to be named
-    `search_knowledge_source_1..N` with one identical docstring, so the model had no
-    way to tell two knowledge sources apart: it called the same tool repeatedly and
-    never touched the others (seen live 2026-08-07 — three calls to source 1, zero to
-    source 2). It also read those names out to end users, exposing our plumbing.
-    """
-    tail = data_store_id.rstrip("/").split("/")[-1]
-    for prefix in ("cf-", "csge-"):
-        if tail.startswith(prefix):
-            tail = tail[len(prefix):]
-    # Store ids are keyed by the Copilot BOTID (so two same-named agents cannot collide),
-    # which puts 36 characters of GUID in front of the only meaningful part. Left in, it
-    # pushed the real name past the length cap and produced sibling tools truncated to
-    # `…tbl_cr88d_fa` / `…tbl_cr88d_cf` — indistinguishable, and different from the name
-    # the description advertised, so the model called a tool that did not exist
-    # (live 2026-08-07: "Tool '…_tbl_cr88d_faqentries' not found").
-    tail = re.sub(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-?", "", tail)
-    tail = re.sub(r"-(file|ds|store|datastore)(-|$)", "-", tail)
-    tail = re.sub(r"-[0-9a-f]{6,}$", "", tail)          # trailing hash/uid
-    words = [w for w in re.split(r"[-_]+", tail) if w]
-    return " ".join(words).strip() or "knowledge source"
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", source_name).strip("_").lower()
+    slug = re.sub(r"^[0-9]", "_", slug)  # identifiers can't start with a digit
+    return f"search_{slug}"[:64] if slug else fallback
 
 
-def _tool_name_for(label, used):
-    """A distinct, valid Python identifier for a store's search tool.
-
-    Distinctness is not cosmetic: ADK sends one FunctionDeclaration per tool and
-    Gemini rejects duplicates outright — the collision documented above.
-    """
-    base = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "knowledge"
-    # Truncate from the LEFT, keeping the tail. What distinguishes two stores is at the
-    # end ("…cr88d_faqentries" vs "…cr88d_cficpprofiles"); cutting from the right removes
-    # exactly the part that tells them apart.
-    if len(base) > 48:
-        base = base[-48:].lstrip("_")
-    name = f"search_{base}"
-    if name in used:
-        i = 2
-        while f"{name}_{i}" in used:
-            i += 1
-        name = f"{name}_{i}"
-    used.add(name)
-    return name
-
-
-def _make_search_tool(data_store_id, tool_name, label=None):
+def _make_search_tool(data_store_id, tool_name, source_name):
     from google.adk.tools import FunctionTool
 
     # `serving_config` is a plain string — the ONLY thing this closure
@@ -892,13 +883,17 @@ def _make_search_tool(data_store_id, tool_name, label=None):
         return results
 
     def _search(query: str) -> dict:
-        """Search this agent's attached knowledge source for information relevant to the query.
+        f"""Search the "{source_name}" knowledge source for information relevant to the query.
+
+        When citing information from this tool's results in your response, cite it
+        as "{source_name}" — never mention this tool/function's own name.
 
         Args:
           query: The search query.
 
         Returns:
-          A dict with the search status and any matching results (title, url, content).
+          A dict with the search status, the source name to cite, and any matching
+          results (title, url, content).
         """
         from google.api_core.exceptions import GoogleAPICallError
         from google.cloud import discoveryengine_v1beta as discoveryengine
@@ -921,9 +916,9 @@ def _make_search_tool(data_store_id, tool_name, label=None):
                     results = _run_search(discoveryengine, client, query, "DOCUMENTS")
                 else:
                     raise
-            return {"status": "success", "results": results}
+            return {"status": "success", "source": source_name, "results": results}
         except GoogleAPICallError as e:
-            return {"status": "error", "error_message": str(e)}
+            return {"status": "error", "source": source_name, "error_message": str(e)}
 
     _search.__name__ = tool_name
     # The docstring IS the tool description Gemini uses to choose between tools, so it
@@ -1013,14 +1008,18 @@ def main():
             # branch below hand-rolls distinct tools instead. Live-verified in this
             # combination (indexed grounding + confluence_live_search) 2026-08-06.
             tools.append(VertexAiSearchTool(
-                data_store_id=grounding_data_stores[0],
+                data_store_id=grounding_data_stores[0]["resourcePath"],
                 bypass_multi_tools_limit=bool(live_connectors),
             ))
         elif len(grounding_data_stores) > 1:
-            used_names = set()
-            for ds in grounding_data_stores:
-                label = _store_label(ds)
-                tools.append(_make_search_tool(ds, _tool_name_for(label, used_names), label))
+            seen_names = set()
+            for i, entry in enumerate(grounding_data_stores):
+                fallback = f"search_knowledge_source_{i + 1}"
+                tool_name = _sanitize_tool_name(entry.get("sourceName") or "", fallback)
+                if tool_name in seen_names:  # two sources sanitizing to the same slug — keep names distinct (see 2026-08-05 duplicate-name incident)
+                    tool_name = fallback
+                seen_names.add(tool_name)
+                tools.append(_make_search_tool(entry["resourcePath"], tool_name, entry.get("sourceName") or fallback))
         elif "googleSearch" in (spec.get("tools") or []):
             # ONLY when google_search can stand alone. Gemini rejects a built-in search
             # tool mixed with function tools ("Multiple tools are supported only when

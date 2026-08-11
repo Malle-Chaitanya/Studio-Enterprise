@@ -15,7 +15,8 @@
       "Bash(npx tsc --noEmit)",
       "Bash(git push origin business)",
       "Bash(git push origin HEAD)",
-      "WebFetch(domain:adk.dev)"
+      "WebFetch(domain:adk.dev)",
+      "Bash(/c/Users/ChaitanyaMalle/.claude/skills/gstack/browse/dist/browse text *)"
     ],
     "deny": [
       "Read(./server/.env)",

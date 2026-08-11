@@ -39,7 +39,11 @@ export function buildAuthUrl(state: string): string {
     response_mode: 'query',
     scope: MS_SCOPES,
     state,
-    prompt: 'select_account',
+    // 'consent' forces Microsoft's permissions screen on every sign-in, even
+    // if this account already approved the app before. 'select_account'
+    // (the old value) only shows the account picker and silently reuses any
+    // prior consent — customer admins never saw what they were granting.
+    prompt: 'consent',
   });
   return `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params}`;
 }

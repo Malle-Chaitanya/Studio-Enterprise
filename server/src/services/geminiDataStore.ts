@@ -74,6 +74,12 @@ export interface CreateDataStoreResult {
   created: boolean;
   dataStoreId: string;
   alreadyExists?: boolean;
+  /** The exact ID is mid-deletion on Google's side (a prior delete of the
+   *  SAME id hasn't finished propagating — can take up to a couple of hours
+   *  per Google's own error text). Confirmed live 2026-08-06. Recreating with
+   *  the same ID will keep failing until that window passes — the caller
+   *  should retry with a DIFFERENT id instead of waiting. */
+  beingDeleted?: boolean;
   error?: string;
 }
 
@@ -132,6 +138,9 @@ export async function createDataStore(
   const text = await res.text();
   if (res.status === 409 || text.includes('already exists')) {
     return { created: false, dataStoreId: opts.dataStoreId, alreadyExists: true };
+  }
+  if (res.status === 400 && /is being deleted/i.test(text)) {
+    return { created: false, dataStoreId: opts.dataStoreId, beingDeleted: true, error: `${res.status}: ${text.slice(0, 200)}` };
   }
   return { created: false, dataStoreId: opts.dataStoreId, error: `${res.status}: ${text.slice(0, 200)}` };
 }
@@ -313,8 +322,36 @@ export async function getOperation(saToken: string, operationName: string): Prom
 }
 
 /**
+ * Real, ground-truth check: does this data store actually return the document
+ * in a search right now? Confirmed live 2026-08-06 that `awaitImport`'s poll
+ * can exhaust its budget while the import is still genuinely in progress
+ * (`op.done` never true) — `reconcileImport` then has no stats to work with
+ * and reports the upload as "unaccounted for," i.e. failed, even though the
+ * document finishes indexing moments later and IS fully searchable. A search
+ * beats a merely-inconclusive operation-status poll — it's what a real user's
+ * query would see, not a proxy for it.
+ */
+export async function verifyDocumentsIndexed(project: string, saToken: string, dataStoreId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${collectionBase(project)}/dataStores/${dataStoreId}/servingConfigs/default_config:search`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '', contentSearchSpec: { searchResultMode: 'DOCUMENTS' } }),
+    });
+    if (!res.ok) return false;
+    const json = (await res.json()) as { results?: unknown[] };
+    return (json.results?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Poll an import operation to completion, then reconcile the TRUTHFUL indexed
- * count from the operation result (not from `attemptedUploads`).
+ * count from the operation result (not from `attemptedUploads`). If the poll
+ * budget runs out WITHOUT the operation ever reporting done (genuinely
+ * inconclusive, not a real failure), fall back to a direct search check
+ * before accepting "failed" — see verifyDocumentsIndexed above for why.
  */
 export async function awaitImport(
   saToken: string,
@@ -325,7 +362,9 @@ export async function awaitImport(
   let op: ImportOperation | null = null;
   for (let i = 0; i < maxPolls; i++) {
     op = await getOperation(saToken, operationName);
-    if (op?.done) break;
+    if (op?.done) {
+      break;
+    }
     await sleep(intervalMs);
   }
   const recon = reconcileImport(op, attemptedUploads);

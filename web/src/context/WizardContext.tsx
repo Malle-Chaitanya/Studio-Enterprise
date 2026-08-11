@@ -16,6 +16,7 @@ export type WizardStepId =
   | 'map-users'
   | 'map'
   | 'select-data'
+  | 'connector-config'
   | 'connectors'
   | 'migrate'
   | 'report';
@@ -26,6 +27,11 @@ export const STEP_ROUTES: Record<WizardStepId, string> = {
   'map-users': '/map-users',
   map: '/map',
   'select-data': '/select-data',
+  // The real step in the linear flow now (SelectData -> here -> Migrate) —
+  // scoped to the agents actually selected. 'connectors' stays mapped to the
+  // older, unfiltered full-environment-audit page, which is no longer forced
+  // into this chain but remains reachable standalone (see ConnectorConfig.tsx).
+  'connector-config': '/connector-config',
   connectors: '/connectors',
   migrate: '/migrate',
   report: '/migrate',
@@ -58,6 +64,10 @@ interface WizardContextValue {
   emitToolEvent: (ev: WizardToolEvent) => void;
   pendingConfirm: { tool: string; args: Record<string, unknown>; message: string } | null;
   setPendingConfirm: (c: { tool: string; args: Record<string, unknown>; message: string } | null) => void;
+  /** Latest significant in-page action (not a navigation) for the chat to react to. Debounced internally. */
+  lastAction: { text: string; ts: number } | null;
+  /** Call after a meaningful click (toggle, connect, start migration…) — NOT every click. Debounced ~700ms so a burst of clicks becomes one notification. */
+  notifyAction: (text: string) => void;
 }
 
 const WizardContext = createContext<WizardContextValue | null>(null);
@@ -77,6 +87,13 @@ export function WizardProvider({ children }: { children: ReactNode }) {
   const mappingListeners = useRef(new Set<MappingListener>());
   const selectionListeners = useRef(new Set<SelectionListener>());
   const migrateListeners = useRef(new Set<MigrateListener>());
+
+  const [lastAction, setLastAction] = useState<{ text: string; ts: number } | null>(null);
+  const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notifyAction = useCallback((text: string) => {
+    if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+    actionTimerRef.current = setTimeout(() => setLastAction({ text, ts: Date.now() }), 700);
+  }, []);
 
   const navigateToStep = useCallback(
     (step: WizardStepId | string) => {
@@ -191,6 +208,8 @@ export function WizardProvider({ children }: { children: ReactNode }) {
       emitToolEvent,
       pendingConfirm,
       setPendingConfirm,
+      lastAction,
+      notifyAction,
     }),
     [
       session,
@@ -207,6 +226,8 @@ export function WizardProvider({ children }: { children: ReactNode }) {
       lastToolEvent,
       emitToolEvent,
       pendingConfirm,
+      lastAction,
+      notifyAction,
     ],
   );
 

@@ -134,8 +134,8 @@ export function ConnectorSetup({ session, siteUrl }: { session: string; siteUrl:
             )}{' '}
             If this tenant was already onboarded, leave Client ID/Secret blank — the stored credential is reused automatically.
           </p>
-          <input className="usearch" style={{ marginBottom: 6 }} placeholder="Tenant ID (required)" value={tenantId} onChange={(e) => setTenantId(e.target.value)} />
-          <input className="usearch" style={{ marginBottom: 6 }} placeholder="Client ID (new tenant only)" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+          <input className="usearch" style={{ marginBottom: 6 }} type="password" placeholder="Tenant ID (required)" value={tenantId} onChange={(e) => setTenantId(e.target.value)} />
+          <input className="usearch" style={{ marginBottom: 6 }} type="password" placeholder="Client ID (new tenant only)" value={clientId} onChange={(e) => setClientId(e.target.value)} />
           <input className="usearch" style={{ marginBottom: 6 }} type="password" placeholder="Client Secret (new tenant only)" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
           {submitError && <p className="kswarn">{submitError}</p>}
           <button className="btn primary" disabled={submitting} onClick={submit}>

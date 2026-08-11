@@ -197,6 +197,70 @@ export async function deleteAgent(dest: GeminiDestination, saToken: string, agen
   return { ok: false, error: `${res.status}: ${(await res.text()).slice(0, 200)}` };
 }
 
+/**
+ * Grant chat/use access on a single agent to specific users/groups —
+ * `roles/discoveryengine.agentUser`, the only per-agent role Gemini
+ * Enterprise exposes (confirmed live: no editor/owner tier exists for
+ * sharing; only the original creator can ever edit). This is the automated
+ * equivalent of the manual "User permissions" console step: read-modify-write
+ * the agent's IAM policy (getIamPolicy for the current etag, then
+ * setIamPolicy with the new bindings appended) — Google requires the etag
+ * round-trip, skipping it is what caused the old "unauthorized_client"-style
+ * failures during manual testing.
+ *
+ * Best-effort per principal: one bad email must not block the others or the
+ * rest of the migration. Never grants a broader role than agentUser — this
+ * is a read/chat-only grant, never editor-equivalent (doesn't exist here).
+ */
+export async function grantAgentAccess(
+  dest: GeminiDestination,
+  saToken: string,
+  agentId: string,
+  grants: { users: string[]; groups: string[] },
+): Promise<{ granted: string[]; failed: { principal: string; error: string }[] }> {
+  const members = [
+    ...grants.users.filter(Boolean).map((e) => `user:${e.toLowerCase()}`),
+    ...grants.groups.filter(Boolean).map((e) => `group:${e.toLowerCase()}`),
+  ];
+  if (!members.length) return { granted: [], failed: [] };
+
+  const agentPath = `${agentBase(dest)}/${agentId}`;
+  // GET, not POST — confirmed live: POST always 404s (wrong verb, routes to
+  // nothing), which is what made an earlier probe wrongly conclude no IAM
+  // policy exists on agents at all. GET returns the real policy every time.
+  const getRes = await withBackoff(() =>
+    fetch(`${agentPath}:getIamPolicy`, { method: 'GET', headers: { Authorization: `Bearer ${saToken}` } }),
+  );
+  if (!getRes.ok && getRes.status !== 404) {
+    const error = `getIamPolicy ${getRes.status}: ${(await getRes.text()).slice(0, 200)}`;
+    return { granted: [], failed: members.map((m) => ({ principal: m, error })) };
+  }
+  // 404 (no policy yet) starts from an empty policy — same as a real empty GET.
+  const existing = getRes.ok ? ((await getRes.json()) as { bindings?: { role: string; members: string[] }[]; etag?: string }) : {};
+  const bindings = existing.bindings ?? [];
+  const role = 'roles/discoveryengine.agentUser';
+  const binding = bindings.find((b) => b.role === role);
+  const already = new Set(binding?.members ?? []);
+  const toAdd = members.filter((m) => !already.has(m));
+  if (!toAdd.length) return { granted: members, failed: [] };
+
+  if (binding) binding.members = [...already, ...toAdd];
+  else bindings.push({ role, members: toAdd });
+
+  const setRes = await withBackoff(() =>
+    fetch(`${agentPath}:setIamPolicy`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ policy: { bindings, etag: existing.etag } }),
+    }),
+  );
+  if (!setRes.ok) {
+    const error = `setIamPolicy ${setRes.status}: ${(await setRes.text()).slice(0, 200)}`;
+    return { granted: [], failed: members.map((m) => ({ principal: m, error })) };
+  }
+  return { granted: members, failed: [] };
+}
+
 /** Confirm an engine is reachable (used during connect + before routing to it). */
 export async function engineReachable(dest: GeminiDestination, saToken: string): Promise<boolean> {
   try {

@@ -10,6 +10,7 @@ import { exploreRouter } from './routes/explore.js';
 import { agentRouter } from './routes/agent.js';
 import { identityRouter } from './routes/identity.js';
 import { migrateRouter } from './routes/migrate.js';
+import { runPendingGroundingRechecks } from './services/groundingRecheck.js';
 
 const app = express();
 
@@ -50,6 +51,18 @@ async function start(): Promise<void> {
       logger.warn('No Google service account configured — Gemini operations will fail.');
     }
   });
+
+  // Background self-repair: Discovery Engine indexing can take much longer
+  // than any single migration request can block on (observed live: 6-10+
+  // min past import). This sweep picks up where an ADK file-grounding
+  // attempt timed out and auto-repoints the deployed agent once indexing
+  // actually completes — see services/groundingRecheck.ts. Best-effort and
+  // never throws; a Mongo outage just means nothing is due this tick.
+  if (serviceAccountConfigured()) {
+    setInterval(() => {
+      runPendingGroundingRechecks().catch((e) => logger.warn(`grounding recheck sweep failed: ${(e as Error).message}`));
+    }, 5 * 60_000);
+  }
 }
 
 void start();

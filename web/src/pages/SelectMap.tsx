@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchEngines, fetchEnvironments, fetchProjects, type DestEngine, type DestProject, type GeminiDest } from '../api.ts';
+import { useWizardOptional } from '../context/WizardContext.tsx';
 import { GeminiIcon, MsIcon } from '../icons.tsx';
 import type { EnvironmentInfo } from '../types.ts';
 
@@ -17,6 +18,7 @@ export function SelectMap() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const session = params.get('session') ?? '';
+  const wizard = useWizardOptional();
 
   const [envs, setEnvs] = useState<EnvironmentInfo[]>([]);
   const [included, setIncluded] = useState<Set<string>>(new Set());
@@ -93,12 +95,16 @@ export function SelectMap() {
     }
   };
 
-  const toggleInclude = (url: string) =>
+  const toggleInclude = (url: string) => {
     setIncluded((prev) => {
       const s = new Set(prev);
-      s.has(url) ? s.delete(url) : s.add(url);
+      const nowIncluded = !s.has(url);
+      nowIncluded ? s.add(url) : s.delete(url);
+      const name = envs.find((e) => e.url === url)?.name ?? url;
+      wizard?.notifyAction(`${nowIncluded ? 'Included' : 'Excluded'} environment "${name}" for migration`);
       return s;
     });
+  };
   const onProject = async (env: string, project: string): Promise<void> => {
     setSel((s) => ({ ...s, [env]: { project, engine: '' } }));
     // Always re-fetch when the user picks a project (don't stick on a prior empty cache).
@@ -137,34 +143,16 @@ export function SelectMap() {
   const projLabel = (p: DestProject) => {
     // The injected "connected" fallback entry already reads "<id> (connected)".
     if (p.displayName.includes('(connected)')) return p.displayName;
-    // Show the real name the customer gave the project, with projectId + org for
-    // context: "CloudFuze-Ent2 (cloudfuze-ent2 · cloudfuze.com)".
-    const name = p.displayName || p.projectId || p.projectNumber;
-    const ctx = [p.projectId !== name ? p.projectId : '', p.org].filter(Boolean).join(' · ');
-    return ctx ? `${name} (${ctx})` : name;
+    // Just the project's own name — no projectId/org context in the dropdown.
+    return p.displayName || p.projectId || p.projectNumber;
   };
 
   return (
     <div className="card wide">
       <h2>Select &amp; Map Environments</h2>
-      <p className="lead">
-        Choose which Copilot Studio environments to migrate, and map each to a target{' '}
-        <strong>Gemini Enterprise project &amp; app</strong> (discovered from your connected account).
-        You’ll pick the agents next.
-      </p>
-      <p className="lead" style={{ marginTop: -8, marginBottom: 4 }}>
-        Have SharePoint/OneDrive knowledge sources?{' '}
-        <button className="dlink" style={{ padding: 0 }} onClick={() => navigate(`/connectors?session=${session}`)}>
-          See every connector that needs setup →
-        </button>{' '}
-        — one flat list across all agents, no drilling in one at a time.
-      </p>
-      <p className="lead" style={{ marginTop: 0, marginBottom: 16 }}>
-        Or{' '}
-        <button className="dlink" style={{ padding: 0 }} onClick={() => navigate(`/explore?session=${session}`)}>
-          assess agents individually →
-        </button>{' '}
-        for a detailed, per-agent compatibility breakdown.
+      <p className="lead" style={{ marginBottom: 16 }}>
+        Choose which source environments to migrate and map each one to the Google Cloud
+        project and Gemini Enterprise app its agents will be created in.
       </p>
 
       {error && <div className="error">{error}</div>}

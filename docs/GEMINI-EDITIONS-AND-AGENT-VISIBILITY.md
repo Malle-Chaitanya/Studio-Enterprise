@@ -198,3 +198,33 @@ this settings screen — it needs the Google Support / roadmap answer already tr
 endpoint rather than plain `discoveryengine.googleapis.com`. Check with `gcloud services
 list --enabled` on `studio-enterprise-migration` before/after enabling the API on that
 screen.
+
+---
+
+## 9. Addendum (2026-08-06) — granular per-user/group sharing DOES exist (correction)
+
+This doc previously implied the only sharing lever is `Agent.sharingConfig.scope: ALL_USERS`
+(what `shareAgent()` in `services/gemini.ts` sets). **That's outdated.** Google's official
+[Share agents from Google Cloud console](https://docs.cloud.google.com/gemini/enterprise/docs/share-custom-agents)
+page (Standard/Plus/PAYG/Frontline — explicitly excludes Business) documents admins granting
+per-user, per-group, or Workforce Identity Pool access to an agent, not just org-wide.
+
+Two open caveats before relying on this for a client commitment:
+- That page scopes itself to **"agents created using Agent Designer."** Migrated agents are
+  API-created and — per `docs/LIMITATIONS-EDITING-AGENTS.md` §1 — can't even be opened in
+  Agent Designer. **Unconfirmed whether a migrated agent is even offered as a target** in that
+  sharing flow. Cheap to close: try it live on one of studio's migrated agents.
+- The documented mechanism is **console-UI only** — no REST endpoint found for it, separate
+  from the `sharingConfig` field on the `Agent` resource. Automating it today would mean
+  browser automation, not an API call — don't build on that without a Google-confirmed REST
+  path.
+
+Separately, the [Agent Gallery](https://docs.cloud.google.com/gemini/enterprise/docs/agent-gallery)
+docs confirm a real admin-approval flow ("a request is sent to your administrator to review"),
+distinct from both of the above — a third, separate lever, gated by the "Enable agent sharing
+without admin approval" feature control noted in `.claude/memory/gemini-editions-agent-visibility.md`.
+
+**Practical read:** don't promise clients "fully automated per-person/group sharing" yet. What's
+proven automatable via API today is still just the org-wide `ALL_USERS` toggle. File one Support/
+partner question covering both this and the §6 PRIVATE→ENABLED gap before scoping this as a
+buildable feature.

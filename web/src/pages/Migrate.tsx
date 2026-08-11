@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchSession, migrateStreamUrl, planMigration, type GeminiDest } from '../api.ts';
 import { useWizardOptional } from '../context/WizardContext.tsx';
+import { IcoDownload } from '../icons.tsx';
 import type {
   MigrationResult,
   MigrationScope,
@@ -33,7 +34,6 @@ export function Migrate() {
   // Per-environment destination {project, engine, assistant} chosen in Select & Map.
   const [dest, setDest] = useState<Record<string, GeminiDest>>({});
   const [dryRun, setDryRun] = useState(true);
-  const [prefixWithEnv, setPrefixWithEnv] = useState(false);
 
   const [started, setStarted] = useState(false);
   const [ranDry, setRanDry] = useState(true);
@@ -105,7 +105,7 @@ export function Migrate() {
       units: units.map((u) => ({ env: u.env, botIds: u.botIds })),
     };
     setBusy(true);
-    const p = await planMigration(session, scope, { prefixWithEnv, environmentMap: dest }, dry).catch(() => null);
+    const p = await planMigration(session, scope, { environmentMap: dest }, dry).catch(() => null);
     setBusy(false);
     if (!p) {
       setStatus('Could not build the migration plan.');
@@ -122,11 +122,11 @@ export function Migrate() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orgName: summary?.orgName ?? 'Organization', results }),
     });
-    const md = await res.text();
-    const url = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }));
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'migration-report.md';
+    a.download = 'migration-report.xlsx';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -134,14 +134,15 @@ export function Migrate() {
   const behLabel: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, fontSize: 14 };
 
   return (
-    <div className="card wide">
+    <div className="card wide" style={{ position: 'relative' }}>
+      {done && (
+        <button type="button" className="mu-iconbtn primary export-icon-btn" title="Download report" onClick={downloadReport}>
+          <IcoDownload s={13} />
+        </button>
+      )}
       {!started && (
         <>
           <h2>Review &amp; run</h2>
-          <p className="lead">
-            Your selected agents and target projects are ready. Run a dry run first to preview, then
-            migrate live.
-          </p>
 
           {totalAgents === 0 ? (
             <>
@@ -173,10 +174,6 @@ export function Migrate() {
                   Dry run (preview only — nothing created in Gemini)
                   <span className="chip">recommended first</span>
                 </label>
-                <label style={behLabel}>
-                  <input type="checkbox" checked={prefixWithEnv} onChange={(e) => setPrefixWithEnv(e.target.checked)} />
-                  Prefix agent names with their source environment
-                </label>
               </div>
 
               {!dryRun && !summary?.saOk && (
@@ -187,10 +184,17 @@ export function Migrate() {
               )}
 
               <div className="wizard-actions">
-                <button className="wbtn" onClick={() => navigate(`/connectors?session=${session}`)}>
+                <button className="wbtn" onClick={() => navigate(`/connector-config?session=${session}`)}>
                   ← Back
                 </button>
-                <button className="wbtn primary" disabled={!canStart || busy} onClick={() => run(dryRun)}>
+                <button
+                  className="wbtn primary"
+                  disabled={!canStart || busy}
+                  onClick={() => {
+                    wizard?.notifyAction(dryRun ? 'Started a dry run' : 'Started the live migration');
+                    void run(dryRun);
+                  }}
+                >
                   {busy ? 'Preparing…' : dryRun ? 'Start Dry Run →' : 'Start Migration →'}
                 </button>
               </div>
@@ -210,7 +214,7 @@ export function Migrate() {
                 ? 'Dry run running…'
                 : 'Migration running…'}
           </h2>
-          <div className="lead" style={{ marginBottom: 12 }}>{status}</div>
+          {!done && <div className="lead" style={{ marginBottom: 12 }}>{status}</div>}
           <div className="progbar" style={{ marginBottom: 20 }}>
             <div className="progfill" style={{ width: `${pct}%` }} />
           </div>
@@ -232,34 +236,28 @@ export function Migrate() {
                   Nothing was created in Gemini yet. Review the preview above, then run it live.
                 </p>
               )}
-              <div className="actions" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
-                {ranDry && (
-                  <button
-                    className="btn primary"
-                    style={{ width: 'auto' }}
-                    onClick={() => run(false)}
-                    disabled={!summary?.saOk || busy}
-                  >
-                    Start Live Migration →
-                  </button>
-                )}
-                <button className="btn google" style={{ width: 'auto' }} onClick={downloadReport}>
-                  Download report
-                </button>
-                {!ranDry && (
-                  <a className="btn google" style={{ width: 'auto' }} href="https://business.gemini.google" target="_blank" rel="noreferrer">
-                    Open Gemini Enterprise →
-                  </a>
-                )}
-              </div>
               {ranDry && !summary?.saOk && (
                 <p className="lead" style={{ marginTop: 10, color: 'var(--fail)' }}>
                   Live migration needs a verified service account (Google connected).
                 </p>
               )}
-              <button className="wbtn" style={{ marginTop: 14 }} onClick={() => navigate(`/select-data?session=${session}`)}>
-                ← Back to agents
-              </button>
+              <div className="wizard-actions" style={{ marginTop: 14 }}>
+                <button className="wbtn" onClick={() => navigate(`/select-data?session=${session}`)}>
+                  ← Back to agents
+                </button>
+                {ranDry && (
+                  <button
+                    className="wbtn primary"
+                    onClick={() => {
+                      wizard?.notifyAction('Started the live migration after a dry run');
+                      void run(false);
+                    }}
+                    disabled={!summary?.saOk || busy}
+                  >
+                    Start Live Migration →
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </>
@@ -283,34 +281,17 @@ function AgentCard({ r, dry }: { r: MigrationResult; dry: boolean }) {
     <div className="agentrow">
       <div className="head">
         <span>{r.name}</span>
-        <span className="chips">
-          {isDry ? (
-            <span className="chip" style={{ background: 'var(--tint)', color: 'var(--brand)', borderColor: 'var(--brand-l)' }}>
-              ▶ ready to migrate
-            </span>
-          ) : (
-            <>
-              <Chip on={r.created} label="created" />
-              <Chip on={r.deployed} label="deployed" />
-              {r.permissionHandoff ? (
-                <span className="chip warn">handoff</span>
-              ) : (
-                <Chip on={r.shared} label="shared" />
-              )}
-              {r.verified !== undefined && <Chip on={r.verified} label="verified" />}
-            </>
-          )}
-        </span>
+        {!isDry && (
+          <span className="chips">
+            <Chip on={r.created} label="created" />
+            <Chip on={r.deployed} label="deployed" />
+            <Chip on={r.shared} label="shared" />
+            {r.verified !== undefined && <Chip on={r.verified} label="verified" />}
+          </span>
+        )}
       </div>
       {realError && <div className="fidelity" style={{ color: 'var(--fail)' }}>{realError}</div>}
       {r.verifySample && <div className="fidelity">“{r.verifySample}”</div>}
-      {r.permissionHandoff && (
-        <div className="fidelity">
-          Permission handoff: {r.permissionHandoff.grantUsers.length} user(s),{' '}
-          {r.permissionHandoff.grantGroups.length} group(s),{' '}
-          {r.permissionHandoff.unresolved.length} unresolved
-        </div>
-      )}
       {r.fidelity.length > 0 && (
         <div className="chips" style={{ marginTop: 8 }}>
           {auto > 0 && <span className="tag supported">{auto} auto</span>}

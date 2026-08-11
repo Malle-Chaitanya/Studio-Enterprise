@@ -33,7 +33,11 @@ export function Login() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-      if (res.ok || res.status === 404) {
+      // No real auth backend exists yet (see note above) — only a 401 means
+      // actual bad credentials. Everything else (404 "not implemented", a
+      // transient 5xx from the dev proxy, etc.) proceeds, same as the catch
+      // block below for a fully unreachable server.
+      if (res.status !== 401) {
         { const sid = await resumeSession(); navigate(sid ? `/home?session=${sid}` : '/home'); }
         return;
       }
@@ -53,14 +57,14 @@ export function Login() {
         <div className="login-logo">
           <img src="/assets/logo.png" alt="CloudFuze" style={{ height: 34, objectFit: 'contain' }} />
           <div className="login-logo-divider" />
-          <span className="login-logo-text">Studio Migrate</span>
+          <span className="login-logo-text">CloudFuze AI Migrations</span>
         </div>
         <div className="login-content">
           <div className="login-tag">Enterprise AI Agent Migration</div>
           <div className="login-title">
             <span>CloudFuze</span>
             <br />
-            Studio Migrate
+            AI Migrations
           </div>
           <div className="login-desc">
             Migrate AI agents from Microsoft Copilot Studio to Google Gemini Enterprise — fully

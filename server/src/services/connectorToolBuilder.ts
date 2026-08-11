@@ -330,112 +330,12 @@ export function buildConnectorInstructionBlock(connectors: ResolvedConnector[]):
 
 // ── MS-native connector definition ───────────────────────────────────────────
 
-/** MS native connector IDs and their Graph/Dataverse scopes — what App Registration needs. */
-export const MS_NATIVE_CONNECTORS = [
-  {
-    id: 'shared_teams',
-    name: 'Microsoft Teams',
-    icon: '🟣',
-    description: 'Send/read messages, create meetings, manage channels',
-    scopes: ['https://graph.microsoft.com/Chat.ReadWrite', 'https://graph.microsoft.com/Channel.ReadBasic.All'],
-  },
-  {
-    id: 'shared_office365',
-    name: 'Office 365 / Exchange',
-    icon: '📧',
-    description: 'Send emails, read calendar, manage contacts',
-    scopes: ['https://graph.microsoft.com/Mail.ReadWrite', 'https://graph.microsoft.com/Calendars.ReadWrite'],
-  },
-  {
-    id: 'shared_sharepointonline',
-    name: 'SharePoint Online',
-    icon: '📂',
-    description: 'Read/write documents, lists, site content',
-    scopes: ['https://graph.microsoft.com/Sites.ReadWrite.All', 'https://graph.microsoft.com/Files.ReadWrite.All'],
-  },
-  {
-    id: 'shared_onedrive',
-    name: 'OneDrive',
-    icon: '☁️',
-    description: 'Read/write files in OneDrive',
-    scopes: ['https://graph.microsoft.com/Files.ReadWrite.All'],
-  },
-  {
-    id: 'shared_dynamicscrmonline',
-    name: 'Dynamics 365 / Dataverse',
-    icon: '💎',
-    description: 'Read/write CRM records, cases, accounts, contacts',
-    scopes: ['https://[org].crm.dynamics.com/user_impersonation'],
-  },
-  {
-    id: 'shared_planner',
-    name: 'Microsoft Planner',
-    icon: '📋',
-    description: 'Read/write tasks and plans',
-    scopes: ['https://graph.microsoft.com/Tasks.ReadWrite'],
-  },
-  {
-    id: 'shared_excelonline',
-    name: 'Excel Online',
-    icon: '📊',
-    description: 'Read/write Excel workbook data',
-    scopes: ['https://graph.microsoft.com/Files.ReadWrite.All'],
-  },
-];
-
 /** Fields collected for any MS App Registration connector. */
 export const MS_APP_REG_FIELDS = [
   { key: 'tenant_id',     label: 'Tenant ID',     type: 'text'     as const, hint: 'Azure Portal → Azure AD → Properties → Directory (tenant) ID' },
   { key: 'client_id',     label: 'App (Client) ID', type: 'text'   as const, hint: 'Azure Portal → App registrations → your app → Application (client) ID' },
   { key: 'client_secret', label: 'Client Secret',  type: 'password' as const, hint: 'Azure Portal → App registrations → Certificates & secrets → New client secret' },
 ];
-
-/** Build the MS Graph auth instruction block for an agent. */
-export function buildMsNativeInstructionBlock(
-  connectorIds: string[],
-  fields: Record<string, string>,
-): string {
-  const matched = MS_NATIVE_CONNECTORS.filter((c) => connectorIds.includes(c.id));
-  if (matched.length === 0 || !fields.client_id) return '';
-
-  const tenantId = fields.tenant_id ?? 'common';
-  const clientId = fields.client_id ?? '';
-  const clientSecret = fields.client_secret ?? '';
-
-  const lines: string[] = [
-    '',
-    '---',
-    '',
-    '## Microsoft 365 Connector Access',
-    '',
-    'You have a registered Azure App that can call Microsoft Graph on behalf of users.',
-    '',
-    '**Token acquisition:**',
-    '```',
-    `POST https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
-    `  client_id=${clientId}`,
-    `  client_secret=${clientSecret}`,
-    '  grant_type=client_credentials',
-    '  scope=https://graph.microsoft.com/.default',
-    '```',
-    '',
-    'Use the returned `access_token` as `Authorization: Bearer <token>` on all Graph calls.',
-    '',
-    '**Configured connectors:**',
-  ];
-
-  for (const c of matched) {
-    lines.push(`- ${c.icon} **${c.name}** — ${c.description}`);
-  }
-
-  lines.push('');
-  lines.push('**Base URL**: `https://graph.microsoft.com/v1.0`');
-  lines.push('');
-  lines.push('> **Security**: Never reveal the client secret. Acquire tokens server-side only.');
-  lines.push('');
-
-  return lines.join('\n');
-}
 
 /**
  * Which connectors does THIS agent actually use?

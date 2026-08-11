@@ -232,8 +232,13 @@ export function buildAuthUrl(state: string): string {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 }
 
-/** Exchange an authorization code for a Google access token (identity/discovery only). */
-export async function exchangeCode(code: string): Promise<string> {
+/** Exchange an authorization code for a Google access token (identity/discovery only).
+ *  buildAuthUrl already requests `access_type: offline`, so Google returns a
+ *  refresh_token here too — callers MUST persist it (Session.gRefreshToken) and
+ *  use refreshGoogleToken below once the ~1hr access token dies. Without it, a
+ *  session older than an hour silently loses the ability to enumerate the
+ *  admin's Cloud projects (see decisions.md, 2026-08-07 project-discovery gap). */
+export async function exchangeCode(code: string): Promise<{ accessToken: string; refreshToken?: string }> {
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -245,11 +250,38 @@ export async function exchangeCode(code: string): Promise<string> {
       redirect_uri: config.GOOGLE_REDIRECT_URI,
     }),
   });
-  const json = (await res.json()) as { access_token?: string; error?: string };
+  const json = (await res.json()) as { access_token?: string; refresh_token?: string; error?: string };
   if (!res.ok || !json.access_token) {
     throw new Error(`Google token error (${res.status}): ${json.error ?? 'unknown'}`);
   }
-  return json.access_token;
+  return { accessToken: json.access_token, refreshToken: json.refresh_token };
+}
+
+/** Exchange a stored Google refresh token for a fresh ~1hr access token. Google
+ *  only returns a NEW refresh_token on rare rotation — the caller's existing one
+ *  keeps working otherwise, so we don't overwrite it unless a new one comes back. */
+export async function refreshGoogleToken(refreshToken: string): Promise<string | null> {
+  try {
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: config.GOOGLE_CLIENT_ID,
+        client_secret: config.GOOGLE_CLIENT_SECRET,
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+      }),
+    });
+    const json = (await res.json()) as { access_token?: string; error?: string };
+    if (!res.ok || !json.access_token) {
+      logger.warn(`Google token refresh failed (${res.status}): ${json.error ?? 'unknown'}`);
+      return null;
+    }
+    return json.access_token;
+  } catch (err) {
+    logger.warn({ err }, 'Google token refresh errored');
+    return null;
+  }
 }
 
 /** The service-account email a CLIENT must grant access to (IAM or DWD). */

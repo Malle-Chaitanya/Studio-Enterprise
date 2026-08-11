@@ -25,6 +25,15 @@ const API = (url: string, path: string) => `${url}/api/data/v9.2/${path}`;
  */
 const combinedSelectUnsupported = new Map<string, boolean>();
 
+/**
+ * Environments where `bots?$select=description` alone is known to 400
+ * ("Could not find a property named 'description' on type '...bot'").
+ * Confirmed live 2026-08-07: some Dataverse solution versions simply don't
+ * have this column on `bot` at all (not a permissions or combined-select
+ * issue) — once seen, skip the doomed per-bot retry for the rest of this run.
+ */
+const descriptionColumnUnsupported = new Map<string, boolean>();
+
 interface BotComponent {
   botcomponentid: string;
   name: string;
@@ -974,10 +983,13 @@ export async function extractAgent(
   // real description; for Microsoft prebuilt/managed agents it's empty (the
   // description is template-defined and not exposed via the Dataverse API).
   let configDescription = '';
-  // The NEW Copilot Studio experience stores the Overview "Description" on the
-  // bot record's own `description` column (not in configuration/GptComponentMetadata),
-  // so we read it too — otherwise authored descriptions from new-experience agents
-  // are silently dropped.
+  // Some Copilot Studio experiences/solution versions store the Overview
+  // "Description" on the bot record's own `description` column (not in
+  // configuration/GptComponentMetadata) — worth reading when it exists.
+  // Confirmed live 2026-08-07: this column does NOT exist at all on `bot` in
+  // at least one real environment (a 400 "Could not find a property named
+  // 'description'", not a permissions issue) — descriptionColumnUnsupported
+  // remembers that per-environment so we stop retrying a doomed query.
   let botDescription = '';
   let gotCombined = false;
   // Some Dataverse orgs/solution versions reject the combined
@@ -1005,10 +1017,15 @@ export async function extractAgent(
     // column that isn't selectable for one doesn't also cost us the other —
     // dropping either one silently would lose an authored description
     // (classic experience lives in `configuration`, new experience in
-    // `description`), which the lossless-extraction principle doesn't allow.
+    // `description`, where that column exists), which the lossless-extraction
+    // principle doesn't allow. Skip the description fetch entirely once this
+    // environment is known not to have the column — it can only 400 again.
+    const descPromise: Promise<{ description?: string }> = descriptionColumnUnsupported.get(url)
+      ? Promise.resolve({})
+      : dvGet<{ description?: string }>(url, token, `bots(${bot.botid})?$select=description`);
     const [confResult, descResult] = await Promise.allSettled([
       dvGet<{ configuration?: string }>(url, token, `bots(${bot.botid})?$select=configuration`),
-      dvGet<{ description?: string }>(url, token, `bots(${bot.botid})?$select=description`),
+      descPromise,
     ]);
     if (confResult.status === 'fulfilled') {
       configDescription = parseConfigDescription(confResult.value.configuration);
@@ -1018,7 +1035,8 @@ export async function extractAgent(
     if (descResult.status === 'fulfilled') {
       if (descResult.value.description) botDescription = String(descResult.value.description).trim();
     } else {
-      logger.warn(`description-only fetch failed for "${bot.name}": ${(descResult.reason as Error)?.message ?? descResult.reason}`);
+      descriptionColumnUnsupported.set(url, true);
+      logger.warn(`"description" column not present on bot entity for this Dataverse environment — skipping for the rest of this run: ${(descResult.reason as Error)?.message ?? descResult.reason}`);
     }
   }
 

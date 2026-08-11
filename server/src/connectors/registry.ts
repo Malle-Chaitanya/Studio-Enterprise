@@ -350,7 +350,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     docsUrl: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/',
     credentialGroup: 'atlassian',
     requiredPermissions: ['read:jira-work'],
-    permissionsHint: 'The token inherits the account permissions — it can read every project that account can see.',
+    permissionsHint: 'The token has the same access as the account that created it — it can read every project that account can see.',
     credentials: [], // supplied by the atlassian credential group
     baseUrlTemplate: '{base_url}/rest/api/3',
     // Atlassian Basic auth is base64(email:apiToken). The old 'Basic {api_key}' sent the
@@ -481,7 +481,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     icon: '📁',
     docsUrl: 'https://developers.google.com/drive/api/reference/rest/v3',
     requiredPermissions: ['https://www.googleapis.com/auth/drive.readonly'],
-    permissionsHint: 'Either share each Drive folder with the service account client_email, or enable domain-wide delegation in the Workspace admin console and authorize this scope for the client id.',
+    permissionsHint: 'Either share each Drive folder with the service account\'s email address, or turn on domain-wide delegation in your Google Workspace admin console and approve this permission there.',
     credentials: [
       { key: 'service_account_json', label: 'Service Account JSON key', type: 'password',
         placeholder: '{"type":"service_account","project_id":...}',
@@ -580,7 +580,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     docsUrl: 'https://developer.atlassian.com/cloud/confluence/rest/v1/intro/',
     credentialGroup: 'atlassian',
     requiredPermissions: ['read:confluence-content.all'],
-    permissionsHint: 'The token inherits the account permissions — it can read every space that account can see.',
+    permissionsHint: 'The token has the same access as the account that created it — it can read every space that account can see.',
     credentials: [], // supplied by the atlassian credential group
     // Space selection comes from the agent's Copilot Studio config (extracted
     // automatically) — the user doesn't enter space keys here.
@@ -650,10 +650,11 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
   },
 
   // ── Microsoft 365 (Graph) ────────────────────────
-  // One Azure App Registration covers all of these. They stay in SKIP_CONNECTOR_IDS
-  // for the KNOWLEDGE path (SharePoint/OneDrive documents are migrated as data
-  // stores, not API calls). These entries serve the ACTION path: an agent that must
-  // send a Teams message or read a Planner task calls Graph live.
+  // One Azure App Registration covers all of these. SharePoint/OneDrive DOCUMENTS
+  // still migrate as data stores (knowledgeClassifier.ts's separate knowledge-source
+  // path, not this registry) — these entries are for the ACTION/live-tool path: an
+  // agent that must send a Teams message, read a Planner task, or call SharePoint's
+  // API live (buildLiveConnectorSpecs) calls Graph directly.
   //
   // Auth is client_credentials against the tenant's token endpoint. A customer
   // cannot hand over a Graph access token — those are minted by this exchange and
@@ -670,7 +671,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     credentialGroup: 'ms_graph',
     requiredPermissions: ['Chat.ReadWrite.All', 'ChannelMessage.Send', 'Team.ReadBasic.All', 'User.Read.All'],
     adminConsentRequired: true,
-    permissionsHint: 'Teams messages need Chat.ReadWrite.All; posting to a channel needs ChannelMessage.Send.',
+    permissionsHint: 'Reading and sending chat messages needs Chat.ReadWrite.All. Posting in a channel needs ChannelMessage.Send.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
@@ -688,7 +689,6 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     credentialGroup: 'ms_graph',
     requiredPermissions: ['Sites.Read.All', 'Files.Read.All'],
     adminConsentRequired: true,
-    permissionsHint: 'Use Sites.ReadWrite.All / Files.ReadWrite.All only if the agent must write. Sites.Read.All grants read of EVERY site in the tenant — there is no per-site application permission.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
@@ -706,7 +706,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     credentialGroup: 'ms_graph',
     requiredPermissions: ['Files.Read.All', 'User.Read.All'],
     adminConsentRequired: true,
-    permissionsHint: 'Files.Read.All covers every user OneDrive in the tenant.',
+    permissionsHint: 'This lets the agent read files from every employee\'s OneDrive in your organization.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
@@ -724,7 +724,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     credentialGroup: 'ms_graph',
     requiredPermissions: ['Mail.Read', 'Mail.Send', 'Calendars.Read'],
     adminConsentRequired: true,
-    permissionsHint: 'Mail.Send lets the agent send as any mailbox — scope it with an application access policy in Exchange Online.',
+    permissionsHint: 'Mail.Send lets the agent send email as any mailbox in your organization. Use an Exchange Online access policy to limit which mailboxes it can use.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
@@ -742,7 +742,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     credentialGroup: 'ms_graph',
     requiredPermissions: ['Tasks.ReadWrite.All', 'Group.Read.All'],
     adminConsentRequired: true,
-    permissionsHint: 'Planner tasks live in groups, so Group.Read.All is needed to resolve plans.',
+    permissionsHint: 'Planner tasks belong to Microsoft 365 Groups, so Group.Read.All is needed to find and read the plans.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
@@ -750,24 +750,5 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     scope: 'https://graph.microsoft.com/.default',
   },
 ];
-/** IDs to SKIP — first-party MS connectors handled separately as MS-native. */
-export const SKIP_CONNECTOR_IDS = new Set([
-  'shared_teams',
-  'shared_office365',
-  'shared_sharepointonline',
-  'shared_onedrive',
-  'shared_planner',
-  'shared_excelonline',
-  'shared_microsoftforms',
-  'shared_onenote',
-  'shared_visualstudioonline',
-  'shared_powerbi',
-  'shared_azureblob',
-  'shared_azureeventhubs',
-  'shared_azureservicebus',
-  'shared_azurequeues',
-  'shared_azuretables',
-  'shared_azuread',
-]);
 
 export const REGISTRY_BY_ID = new Map(CONNECTOR_REGISTRY.map((c) => [c.id, c]));

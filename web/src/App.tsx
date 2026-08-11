@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Outlet, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchSession } from './api.ts';
 import { AgentChat } from './components/AgentChat.tsx';
 import { WizardProvider } from './context/WizardContext.tsx';
+import { IcoLogout } from './icons.tsx';
 import { ChoosePair } from './pages/ChoosePair.tsx';
 import { Connect } from './pages/Connect.tsx';
 import { ConnectorConfig } from './pages/ConnectorConfig.tsx';
@@ -56,24 +57,58 @@ function AppHeader() {
       <img src="/assets/logo.png" alt="CloudFuze" className="hlogo-img" onClick={() => navigate('/home')} />
       <span className="hdivider" />
       <span className="applogo" style={{ cursor: 'pointer' }} onClick={() => navigate('/home')}>
-        CloudFuze <span>Studio Migrate</span>
+        CloudFuze <span>AI Migrations</span>
       </span>
       <span className="hstatus">
         <span className="statusdot" />
-        Idle
+        Online
         <span className="hdivider" style={{ margin: '0 2px' }} />
         <span className="havatar">CF</span>
         <button className="hsignout" onClick={signOut}>
-          ⎋ Sign out
+          <IcoLogout s={13} />
+          Sign out
         </button>
       </span>
     </header>
   );
 }
 
+const CHAT_WIDTH_KEY = 'csge_chat_width';
+const CHAT_COLLAPSED_KEY = 'csge_chat_collapsed';
+const CHAT_FAB_POS_KEY = 'csge_chat_fab_pos';
+const MIN_CHAT_WIDTH = 300;
+const MAX_CHAT_WIDTH = 640;
+const DEFAULT_CHAT_WIDTH = 400;
+const FAB_SIZE = 48;
+const FAB_MARGIN = 20;
+const POPUP_WIDTH = 220;
+const POPUP_HEIGHT = 130;
+
+function loadChatWidth(): number {
+  const saved = Number(localStorage.getItem(CHAT_WIDTH_KEY));
+  return saved >= MIN_CHAT_WIDTH && saved <= MAX_CHAT_WIDTH ? saved : DEFAULT_CHAT_WIDTH;
+}
+
+type FabPos = { x: number; y: number };
+
+function loadFabPos(): FabPos | null {
+  try {
+    const raw = localStorage.getItem(CHAT_FAB_POS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<FabPos>;
+    return typeof p.x === 'number' && typeof p.y === 'number' ? { x: p.x, y: p.y } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Dual-panel shell: workflow left, AI chat right (GEM_CO parity). No
  *  progress/step chrome here — each page's own header carries its context,
- *  matching GEM_CO's minimal per-screen header. */
+ *  matching GEM_CO's minimal per-screen header. The divider between them is
+ *  drag-to-resize, same mechanism as GEM_CO's `.drag-divider` (mousedown →
+ *  document-level mousemove/mouseup so dragging keeps working even if the
+ *  pointer leaves the thin divider strip). */
+
 /**
  * Send someone back to the login page when the session in the URL is gone.
  *
@@ -104,20 +139,164 @@ function SessionGuard() {
 }
 
 function AppShell() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dividerRef = useRef<HTMLDivElement>(null);
+  const widthRef = useRef(loadChatWidth());
+  const [chatWidth, setChatWidth] = useState(widthRef.current);
+  const [chatCollapsed, setChatCollapsed] = useState(() => localStorage.getItem(CHAT_COLLAPSED_KEY) === '1');
+  const [fabHover, setFabHover] = useState(false);
+  // The intro callout dismisses per-shell-mount (not persisted) — a fresh
+  // page load is a reasonable moment to remind the user what the FAB does.
+  const [popupDismissed, setPopupDismissed] = useState(false);
+  // null = default bottom-right corner (CSS-anchored); set once the user
+  // drags the bubble, then persisted so it stays put across reloads.
+  const [fabPos, setFabPos] = useState<FabPos | null>(loadFabPos);
+  const fabDragRef = useRef<{ startX: number; startY: number; origX: number; origY: number; dragged: boolean } | null>(null);
+
+  const handleFabMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const origin = fabPos ?? { x: rect.width - FAB_SIZE - FAB_MARGIN, y: rect.height - FAB_SIZE - FAB_MARGIN };
+      fabDragRef.current = { startX: e.clientX, startY: e.clientY, origX: origin.x, origY: origin.y, dragged: false };
+      document.body.style.userSelect = 'none';
+
+      const onMove = (ev: MouseEvent) => {
+        const drag = fabDragRef.current;
+        const r = containerRef.current?.getBoundingClientRect();
+        if (!drag || !r) return;
+        const dx = ev.clientX - drag.startX;
+        const dy = ev.clientY - drag.startY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.dragged = true;
+        setFabPos({
+          x: Math.max(0, Math.min(r.width - FAB_SIZE, drag.origX + dx)),
+          y: Math.max(0, Math.min(r.height - FAB_SIZE, drag.origY + dy)),
+        });
+      };
+      const onUp = () => {
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if (fabDragRef.current?.dragged) {
+          setFabPos((p) => {
+            if (p) localStorage.setItem(CHAT_FAB_POS_KEY, JSON.stringify(p));
+            return p;
+          });
+        }
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+    [fabPos],
+  );
+
+  const closeChat = useCallback(() => {
+    setChatCollapsed(true);
+    localStorage.setItem(CHAT_COLLAPSED_KEY, '1');
+  }, []);
+  const openChat = useCallback(() => {
+    setChatCollapsed(false);
+    localStorage.setItem(CHAT_COLLAPSED_KEY, '0');
+  }, []);
+
+  const handleFabClick = useCallback(() => {
+    // A drag ends with a click on the same element — swallow it so dropping
+    // the bubble somewhere doesn't also pop the chat open.
+    if (fabDragRef.current?.dragged) {
+      fabDragRef.current = null;
+      return;
+    }
+    fabDragRef.current = null;
+    openChat();
+  }, [openChat]);
+
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dividerRef.current?.classList.add('active');
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev: MouseEvent) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      // Chat pane hugs the right edge — its width is the distance from the
+      // cursor to that edge. Keep at least 360px for the workflow pane.
+      const max = Math.min(MAX_CHAT_WIDTH, rect.width - 360);
+      const next = Math.max(MIN_CHAT_WIDTH, Math.min(max, rect.right - ev.clientX));
+      widthRef.current = next;
+      setChatWidth(next);
+    };
+    const onUp = () => {
+      dividerRef.current?.classList.remove('active');
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      localStorage.setItem(CHAT_WIDTH_KEY, String(widthRef.current));
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
+  // The popup (220x~130) is anchored to the button but rendered outside the
+  // wrap's own tiny box, so it can overflow the console on whichever side
+  // the button has been dragged closest to. Flip to the opposite side once
+  // there isn't room, rather than letting it run off-screen.
+  const consoleRect = containerRef.current?.getBoundingClientRect();
+  const fabAnchorX = fabPos?.x ?? (consoleRect ? consoleRect.width - FAB_SIZE - FAB_MARGIN : 0);
+  const fabAnchorY = fabPos?.y ?? (consoleRect ? consoleRect.height - FAB_SIZE - FAB_MARGIN : 0);
+  const popupFlipX = fabAnchorX + FAB_SIZE - POPUP_WIDTH < 8;
+  const popupFlipY = fabAnchorY - POPUP_HEIGHT - 10 < 8;
+
   return (
     <WizardProvider>
       <SessionGuard />
       <AppHeader />
-      <div className="console">
+      <div className="console" ref={containerRef}>
         <div className="pane-workflow">
           <div className="shell">
             <Outlet />
           </div>
         </div>
-        <div className="divider" aria-hidden />
-        <div className="pane-chat">
-          <AgentChat />
-        </div>
+        {chatCollapsed ? (
+          <div className="chat-fab-wrap" style={fabPos ? { left: fabPos.x, top: fabPos.y, right: 'auto', bottom: 'auto' } : undefined}>
+            {!popupDismissed && (
+              <div className={`chat-fab-popup ${fabHover ? 'hover' : ''} ${popupFlipX ? 'flip-x' : ''} ${popupFlipY ? 'flip-y' : ''}`}>
+                <button
+                  type="button"
+                  className="chat-fab-popup-close"
+                  onClick={() => setPopupDismissed(true)}
+                  aria-label="Dismiss"
+                >
+                  ×
+                </button>
+                <div className="chat-fab-popup-head">
+                  <span className="chat-fab-popup-icon">✦</span>
+                  <span className="chat-fab-popup-title">CloudFuze AI Migrations Assistant</span>
+                </div>
+                <div className="chat-fab-popup-desc">Ask about mapping, agents, or migration — I'm here to help.</div>
+                <div className={`chat-fab-popup-arrow ${popupFlipX ? 'flip-x' : ''} ${popupFlipY ? 'flip-y' : ''}`} aria-hidden />
+              </div>
+            )}
+            <button
+              type="button"
+              className="chat-fab"
+              onMouseDown={handleFabMouseDown}
+              onClick={handleFabClick}
+              onMouseEnter={() => setFabHover(true)}
+              onMouseLeave={() => setFabHover(false)}
+              aria-label="Open assistant"
+            >
+              ✦
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="divider" ref={dividerRef} onMouseDown={handleDividerMouseDown} aria-hidden />
+            <div className="pane-chat" style={{ width: chatWidth }}>
+              <AgentChat onClose={closeChat} />
+            </div>
+          </>
+        )}
       </div>
     </WizardProvider>
   );

@@ -1,13 +1,13 @@
 import { Router } from 'express';
 import { config } from '../config.js';
-import { getSaToken } from '../auth/google.js';
+import { getSaToken, refreshGoogleToken } from '../auth/google.js';
 import { listEnginesResult, listProjects } from '../services/destination.js';
 import { logger } from '../logger.js';
 import { engineReachable } from '../services/gemini.js';
 import { setUpSharePointConnector, getConnectorOperation, getConnectorDataStores, type SharePointConnectorCreds } from '../services/geminiConnector.js';
 import { putEntraSecret, getEntraSecret } from '../services/secretManager.js';
 import { connectorCollectionId, normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
-import { getSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
+import { getSession, updateSession, DEFAULT_APP_USER_ID, type Session } from '../sessionStore.js';
 import { chatWithAdkAgent, createAdkSession } from '../services/adkAgentChat.js';
 import { listAdkDeployments } from '../db/repos/adkDeployments.js';
 import { getEntraAppCredential, upsertEntraAppCredential } from '../db/repos/entraAppCredentials.js';
@@ -27,16 +27,37 @@ export const destinationRouter = Router();
  */
 
 /**
+ * Google's OAuth access token dies after ~1hr with no refresh built into the
+ * connect flow's own client (see auth/google.ts exchangeCode doc). Rather than
+ * let project/engine discovery silently degrade once that happens, mint a
+ * fresh token up front on every call when we have a refresh token stored —
+ * cheap (one token endpoint round trip) and guarantees the list reflects live
+ * IAM grants instead of a snapshot from whenever the admin last connected.
+ * Sessions connected before 2026-08-07 have no gRefreshToken and fall back to
+ * the (possibly stale) session.gToken unchanged — those need one reconnect to
+ * pick up a refresh token; every session after keeps refreshing silently.
+ */
+async function freshGoogleUserToken(sessionId: string, session: Session): Promise<string | undefined> {
+  if (!session.gRefreshToken) return session.gToken;
+  const fresh = await refreshGoogleToken(session.gRefreshToken);
+  if (!fresh) return session.gToken;
+  if (fresh !== session.gToken) await updateSession(sessionId, { gToken: fresh });
+  return fresh;
+}
+
+/**
  * GET /api/destination/projects?session=…
  * Google Cloud projects the admin can access. Uses the stored OAuth token when
  * present; otherwise returns an empty list + the session's known project so the
  * UI can fall back to manual entry / the connected project.
  */
 destinationRouter.get('/projects', async (req, res) => {
-  const session = await getSession(req.query.session as string);
+  const sessionId = req.query.session as string;
+  const session = await getSession(sessionId);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
 
-  const projects = await listProjects(session.gToken);
+  const userToken = await freshGoogleUserToken(sessionId, session);
+  const projects = await listProjects(userToken);
   // Always surface the currently-connected/discovered project so the customer has
   // at least one selectable destination even without OAuth project enumeration.
   const current = session.geminiProject;
@@ -56,7 +77,8 @@ destinationRouter.get('/projects', async (req, res) => {
  * hasGeminiApp is probed on the projects list.
  */
 destinationRouter.get('/engines', async (req, res) => {
-  const session = await getSession(req.query.session as string);
+  const sessionId = req.query.session as string;
+  const session = await getSession(sessionId);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   const project = (req.query.project as string) || session.geminiProject || '';
   if (!project) return void res.status(400).json({ error: 'project_required' });
@@ -77,8 +99,9 @@ destinationRouter.get('/engines', async (req, res) => {
       logger.warn(`engines: SA token failed for ${project}: ${lastError}`);
     }
 
-    if (!engines.length && session.gToken) {
-      const oauthResult = await listEnginesResult(project, session.gToken);
+    const userToken = await freshGoogleUserToken(sessionId, session);
+    if (!engines.length && userToken) {
+      const oauthResult = await listEnginesResult(project, userToken);
       if (oauthResult.engines.length) {
         engines = oauthResult.engines;
         via = 'oauth';

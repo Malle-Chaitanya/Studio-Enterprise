@@ -1,6 +1,6 @@
 import type { GeminiDestination, KnowledgeSourceIR } from '../types.js';
 import { config } from '../config.js';
-import { resolvePrimaryKey, resolveDataverseTables, exportTableRows, type DataverseRow } from './dataverseTableExport.js';
+import { resolvePrimaryKey, resolveTableSearchTarget, exportTableRows, type DataverseRow } from './dataverseTableExport.js';
 import { resolveTableAttributes, buildBqSchema, exportTableRowsForBigQuery } from './dataverseTableSchema.js';
 import { ensureBigQueryApiEnabled, ensureBqDataset, ensureBqTable, loadRowsToBqTable, awaitBqJob } from './bigqueryUpload.js';
 import {
@@ -108,41 +108,43 @@ export async function migrateDataverseSnapshot(
   source: KnowledgeSourceIR,
   /** Explicit table to snapshot. Set by the caller when one source names several
    *  tables; omitted, the table is resolved from the source itself. */
-  entitySetOverride?: string,
 ): Promise<DataverseSnapshotResult> {
-  let entitySetName = (entitySetOverride ?? '').trim();
-  if (!entitySetName) {
-    // What extraction captured is an opaque skillConfiguration key, not a table name
-    // (see resolveDataverseTables). Resolve properly instead of handing that key to
-    // EntityDefinitions, which is what made every Dataverse snapshot index 0 rows.
-    const resolved = await resolveDataverseTables(
-      envUrl,
-      dvToken,
-      source.name ?? '',
-      [...(source.references ?? []), ...(source.reference ? [source.reference] : [])],
-    );
-    if (!resolved.entitySetNames.length) {
-      return {
-        attempted: 0,
-        succeeded: 0,
-        failed: 0,
-        error:
-          `could not resolve any Dataverse table for "${source.name}"` +
-          (resolved.unresolved.length ? ` — tried: ${resolved.unresolved.join(', ')}` : '') +
-          '. Copilot Studio records only an opaque key for this source, so the table is matched by display name.',
-      };
-    }
-    entitySetName = resolved.entitySetNames[0];
+  const capturedRef = (source.references?.[0] ?? source.reference ?? '').trim();
+  if (!capturedRef) {
+    return { attempted: 0, succeeded: 0, failed: 0, error: 'no table reference captured for this source' };
   }
 
-  const pk = await resolvePrimaryKey(envUrl, dvToken, entitySetName);
-  if (!pk) {
+  // The captured reference is a "Dataverse table search" config record's NAME,
+  // not the target table's EntitySetName — resolve the real linkage first
+  // (dvtablesearch -> dvtablesearchentity -> EntityDefinitions). See
+  // resolveTableSearchTarget's doc comment for why this indirection exists.
+  const { target, unconfigured } = await resolveTableSearchTarget(envUrl, dvToken, capturedRef);
+  let entitySetName: string;
+  let pk: string;
+  if (target) {
+    entitySetName = target.entitySetName;
+    pk = target.primaryKeyAttr;
+  } else if (unconfigured) {
     return {
       attempted: 0,
       succeeded: 0,
       failed: 0,
-      error: `could not resolve "${entitySetName}" as a Dataverse table (EntityDefinitions lookup failed)`,
+      error: `Dataverse table-search source has no table selected in Copilot Studio — nothing to migrate (this is a gap in the source agent's configuration, not an extraction failure)`,
     };
+  } else {
+    // Fall back to treating the captured reference as a literal EntitySetName,
+    // in case some other source shape ever reaches this path directly.
+    entitySetName = capturedRef;
+    const fallbackPk = await resolvePrimaryKey(envUrl, dvToken, entitySetName);
+    if (!fallbackPk) {
+      return {
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        error: `could not resolve "${entitySetName}" as a Dataverse table or table-search config (EntityDefinitions lookup failed)`,
+      };
+    }
+    pk = fallbackPk;
   }
 
   const threshold = config.BQ_SNAPSHOT_ROW_THRESHOLD;
@@ -403,12 +405,28 @@ export async function migrateFileToDocumentStore(
   agentSourceId: string,
   file: { name: string; bytes: Buffer; mimeType: string },
 ): Promise<FileGroundingResult> {
-  const dataStoreId = sanitizeDataStoreId(`${agentSourceId}-file-${file.name}`);
-  const created = await createDataStore(project, saToken, {
+  let dataStoreId = sanitizeDataStoreId(`${agentSourceId}-file-${file.name}`);
+  let created = await createDataStore(project, saToken, {
     dataStoreId,
     displayName: `${file.name} (ADK file grounding — ${agentSourceId})`,
     kind: 'document',
   });
+  // The exact ID was JUST deleted (manual cleanup, console testing) and
+  // Google's own deletion process for that ID can take up to a couple of
+  // hours to finish — confirmed live 2026-08-06 ("please wait for deletion
+  // to complete before recreating with the same ID"). Waiting isn't
+  // acceptable mid-migration, so retry ONCE with a fresh, differently-named
+  // ID instead of fighting Google's own cleanup window. Truncate the base
+  // (not just append) so the suffix survives sanitizeDataStoreId's 63-char cap.
+  if (created.beingDeleted) {
+    const suffix = `-r${Date.now().toString(36)}`;
+    dataStoreId = dataStoreId.slice(0, 63 - suffix.length) + suffix;
+    created = await createDataStore(project, saToken, {
+      dataStoreId,
+      displayName: `${file.name} (ADK file grounding — ${agentSourceId})`,
+      kind: 'document',
+    });
+  }
   if (!created.created && !created.alreadyExists) {
     return { attempted: 1, succeeded: 0, failed: 1, dataStoreId, error: created.error };
   }

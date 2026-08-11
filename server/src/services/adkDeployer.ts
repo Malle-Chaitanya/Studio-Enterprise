@@ -67,8 +67,16 @@ export interface AdkSpec {
    * Discovery Engine read access on the project (see
    * ensureReasoningEngineDiscoveryAccess below) — without it, the deployed
    * agent 403s at query time even though deployment itself succeeds.
+   *
+   * `sourceName` is the human-readable knowledge-source name (file name /
+   * site name) — carried through so adk_deploy.py's per-store tool is named
+   * and documented after the REAL source, not a generic
+   * "search_knowledge_source_N". Confirmed live 2026-08-06: without this,
+   * the model cites the tool's own name back to the end user verbatim
+   * ("Source: search_knowledge_source_1") instead of a real file name —
+   * a real fidelity/UX gap for a customer-facing citation, not cosmetic.
    */
-  groundingDataStores?: string[];
+  groundingDataStores?: { resourcePath: string; sourceName: string }[];
   /**
    * Live third-party action connectors (Track B). Each entry becomes a REAL
    * Python function tool inside the deployed Reasoning Engine that calls the
@@ -195,10 +203,22 @@ function sanitize(name: string): string {
  */
 export function buildAdkSpec(
   ir: AgentIR,
-  opts?: { model?: string; instruction?: string; groundingDataStores?: string[] },
+  opts?: { model?: string; instruction?: string; groundingDataStores?: { resourcePath: string; sourceName: string }[] },
 ): AdkSpec {
   const tools: string[] = [];
-  if (ir.capabilities?.webBrowsing) tools.push('googleSearch');
+  // googleSearch is only a safe stand-in for an agent that never had company
+  // knowledge to begin with. adk_deploy.py attaches googleSearch whenever
+  // groundingDataStores ends up empty (its `elif "googleSearch" in tools`
+  // branch) — so if this agent DOES have knowledge sources and grounding
+  // simply failed/isn't ready yet, keeping googleSearch here silently swaps
+  // "answer from your company data" for "answer from the open web" with no
+  // disclosure. Confirmed live 2026-08-06: Employee Onboarding Helper, with
+  // its HR PDF ungrounded, answered a leave-policy question by citing
+  // Factorialhr/BambooHR/AIHR — plausible-sounding, but not this company's
+  // actual policy. Honesty over overclaiming: only keep googleSearch when
+  // this agent genuinely never had knowledge sources configured; otherwise
+  // it gets no tools at all and should say it doesn't have the information.
+  if (ir.capabilities?.webBrowsing && !ir.knowledgeSources.length) tools.push('googleSearch');
   // Fidelity is being brought up in STAGES (behavior must not silently change):
   //   Stage 1 (now):  name + description + the REAL migrated instruction only.
   //   Stage 2 (next): fold in topic procedures (pass the enriched instruction via opts.instruction).
@@ -569,6 +589,38 @@ export async function registerAdkAgent(
 }
 
 /**
+ * Repoint an ALREADY-registered agent at a freshly-deployed Reasoning Engine,
+ * instead of registering a brand-new agent. `registerAdkAgent` above always
+ * POSTs a new agent — calling it again for an agent that already exists would
+ * create a genuine second, duplicate gallery entry (Discovery Engine's
+ * `agents.create` has no dedup-by-displayName, unlike low-code's). Use this
+ * whenever a REPAIR/redeploy is for an agent we already know the id of
+ * (`existing.agentId` from adkDeployments) — confirmed live 2026-08-06 that a
+ * PATCH on `adkAgentDefinition.provisionedReasoningEngine.reasoningEngine`
+ * cleanly updates the same agent in place, no duplicate, no new quota spend.
+ */
+export async function updateAdkAgentReasoningEngine(
+  dest: GeminiDestination,
+  saToken: string,
+  agentId: string,
+  reasoningEngine: string,
+): Promise<RegisterResult> {
+  await geminiWriteLimiter.acquire();
+  const res = await fetch(
+    `${assistantBase(dest)}/agents/${agentId}?updateMask=adkAgentDefinition.provisionedReasoningEngine.reasoningEngine`,
+    {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adkAgentDefinition: { provisionedReasoningEngine: { reasoningEngine } } }),
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) return { registered: false, error: `${res.status}: ${text.replace(/\s+/g, ' ').slice(0, 300)}` };
+  const j = JSON.parse(text) as { name?: string; state?: string };
+  return { registered: true, agentId: j.name?.split('/').pop() ?? agentId, state: j.state };
+}
+
+/**
  * Full "publish to gallery" for one migrated agent: IR → ADK spec → deploy
  * Reasoning Engine → register → ENABLED. Returns the gallery-visible agent id.
  * OPT-IN per agent (billable). Falls back to caller's low-code path on failure.
@@ -591,7 +643,13 @@ export async function publishAgentToGallery(
      *  low-code vs ADK so the SAME resolved stores can feed either path).
      *  orchestrator.ts needs the per-source success/failure detail for its
      *  own fidelity reporting, so resolution stays the caller's job. */
-    groundingDataStores?: string[];
+    groundingDataStores?: { resourcePath: string; sourceName: string }[];
+    /** When set, this is a REPAIR/redeploy of an agent that already exists
+     *  (its Discovery Engine agent id, from adkDeployments) — repoint it at
+     *  the freshly-deployed Reasoning Engine via PATCH instead of registering
+     *  a new one, so this never creates a second, duplicate gallery agent.
+     *  Omit only for a genuinely first-time deploy. */
+    existingAgentId?: string;
     /** Configured third-party connectors to wire as LIVE API tools on this agent
      *  (see AdkSpec.liveConnectors). Built by
      *  connectorToolBuilder.buildLiveConnectorSpecs from the customer's saved
@@ -599,10 +657,6 @@ export async function publishAgentToGallery(
     liveConnectors?: AdkSpec['liveConnectors'];
     /** Migrated topics as in-deployment sub-agents (see AdkSpec.subAgents). */
     subAgents?: AdkSpec['subAgents'];
-    /** Agent id from a previous migration of this same source agent. Present → the
-     *  existing agent is repointed at the new Reasoning Engine instead of a second
-     *  agent being created. */
-    existingAgentId?: string;
   },
 ): Promise<{
   ok: boolean;
@@ -632,17 +686,21 @@ export async function publishAgentToGallery(
   // the one that did not. `ir.name` is kept only for the human-readable display name.
   const agentSourceId = sanitize(ir.sourceId || ir.name);
 
-  const groundingDataStores: string[] = [...(opts?.groundingDataStores ?? [])];
+  const groundingDataStores: { resourcePath: string; sourceName: string }[] = [...(opts?.groundingDataStores ?? [])];
   if (opts?.websiteSource) {
     const grounding = await createWebsiteGroundingDataStore(dest.project, saToken, agentSourceId, opts.websiteSource);
     if (!grounding.ok) return { ok: false, error: `website grounding data store: ${grounding.error}` };
-    if (grounding.resourcePath) groundingDataStores.push(grounding.resourcePath);
+    if (grounding.resourcePath) groundingDataStores.push({ resourcePath: grounding.resourcePath, sourceName: opts.websiteSource.name });
   }
-  // Web browsing is also dropped when the agent has live connector tools or sub-agents,
+  // Withheld whenever this agent HAD knowledge sources at all — including when grounding
+  // for them failed or is not ready — so the fidelity note fires for that case too, not
+  // only when grounding succeeded. Mirrors buildAdkSpec's condition exactly.
+  //
+  // Web browsing is ALSO dropped when the agent has live connector tools or sub-agents,
   // because Gemini refuses a built-in search tool alongside function tools. That case is
-  // decided inside the worker (it knows the final tool list), so the flag is OR'd with
-  // what the worker reports back rather than guessed twice in two places.
-  let googleSearchDropped = groundingDataStores.length > 0 && !!ir.capabilities?.webBrowsing;
+  // decided inside the worker (it knows the final tool list), so this stays mutable and is
+  // OR'd with what the worker reports rather than being guessed twice in two places.
+  let googleSearchDropped = ir.knowledgeSources.length > 0 && !!ir.capabilities?.webBrowsing;
 
   // Best-effort — a missing grant means degraded (ungrounded) search, not a
   // failed deployment. Caller reports this honestly via fidelity notes.
@@ -737,13 +795,16 @@ export async function publishAgentToGallery(
     existingAgentId: opts?.existingAgentId,
   });
   if (!reg.registered) {
-    // Deploy succeeded, registration did not — delete the Reasoning Engine.
+    // Deploy succeeded, registration/repoint did not — delete the Reasoning Engine.
     //
-    // Otherwise every failed migration leaves an always-on, billable engine attached to
-    // nothing. Seen live 2026-08-07: resolveDestination picked an engine with no
-    // assistant, registration 404'd, and the deployed engine had to be deleted by hand.
-    // Best-effort: if the delete fails we still report the register error, and say the
-    // engine was left behind so someone can remove it.
+    // Otherwise every failed migration (or failed repair-redeploy) leaves an
+    // always-on, billable engine attached to nothing. Seen live 2026-08-07 in
+    // BOTH forms: a fresh register 404 (no assistant on the picked engine) and
+    // a stale existingAgentId repoint 404 (the tracked agent id had been
+    // deleted out-of-band) — in both cases the deployed engine had to be
+    // deleted by hand. Best-effort: if the delete fails we still report the
+    // register error, and say the engine was left behind so someone can
+    // remove it.
     const cleanup = await deleteReasoningEngine(location, dep.reasoningEngine);
     logger.warn(
       { agent: ir.name, reasoningEngine: dep.reasoningEngine, cleaned: cleanup },
