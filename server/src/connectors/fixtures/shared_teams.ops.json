@@ -1,0 +1,4330 @@
+{
+  "connectorId": "shared_teams",
+  "displayName": "Microsoft Teams",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/teams",
+  "securityDefinitions": {},
+  "connectionAuth": {
+    "token": {
+      "type": "oauthSetting",
+      "identityProvider": "aadcertificate",
+      "resource": "https://graph.microsoft.com",
+      "scopes": [
+        "User.Read.All",
+        "Group.ReadWrite.All",
+        "Group.Read.All"
+      ]
+    },
+    "token:TenantId": {
+      "type": "string"
+    }
+  },
+  "operationCount": 170,
+  "operations": {
+    "CreateTeamsMeeting": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/me/calendars/{calendarid}/events",
+      "summary": "Create a Teams meeting",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "calendarid",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetSupportedTimeZones": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/outlook/supportedTimeZones",
+      "summary": "Get supported time zones",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetAllTeams": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/me/joinedTeams",
+      "summary": "List joined teams",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetAllAssociatedTeams": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/teamwork/associatedTeams",
+      "summary": "List associated teams",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetTeamwork": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/me/teamwork",
+      "summary": "API to test connections",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetChannelsForGroup": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/groups/{groupId}/channels",
+      "summary": "List channels",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateChannel": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/groups/{groupId}/channels",
+      "summary": "Create a channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetChannel": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{groupId}/channels/{channelId}",
+      "summary": "Get details for a specific channel in a team",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateChannelProperties": {
+      "method": "PATCH",
+      "path": "/{connectionId}/beta/teams/{groupId}/channels/{channelId}",
+      "summary": "Update channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveChannel": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/channels/{channelId}/archive",
+      "summary": "Archive a channel",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetAllChannelsForTeam": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{groupId}/allChannels",
+      "summary": "List all channels",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetTagsInternal": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{groupId}/tags",
+      "summary": "List all tags for a team",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateTagInternal": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{groupId}/tags",
+      "summary": "Create a tag for a team",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "AddMemberToTagInternal": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{groupId}/tags/{tagId}/members",
+      "summary": "Add a member to a team tag",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetTagMembersInternal": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{groupId}/tags/{tagId}/members",
+      "summary": "List the members of a team tag",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteTagMemberInternal": {
+      "method": "DELETE",
+      "path": "/{connectionId}/beta/teams/{groupId}/tags/{tagId}/members/{tagMemberId}",
+      "summary": "Delete a member from a team tag",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "tagMemberId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetChats": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/actions/listchats/chattypes/{chatType}/topic/{topic}/expandmembers/false",
+      "summary": "List chats",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "PostFeedNotification": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/feednotification/poster/{poster}/notificationType/{notificationType}",
+      "summary": "Post a feed notification",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "AtMentionTag": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{groupId}/tags/{tagId}",
+      "summary": "Get an @mention token for a team tag",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "PostMessageToChannelV2": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{groupId}/channels/{channelId}/messages",
+      "summary": "Post a message (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMessagesFromChannel": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{groupId}/channels/{channelId}/messages",
+      "summary": "Get messages in a channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMessageDetails": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/messages/{messageId}/messageType/{threadType}",
+      "summary": "Get message details",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListRepliesToMessage": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/channels/{channelId}/messages/{messageId}/replies",
+      "summary": "List replies of a channel message",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "important"
+        }
+      ]
+    },
+    "ListMembers": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/listmembers/threadType/{threadType}",
+      "summary": "List chat or channel members",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PostMessageToChannelV3": {
+      "method": "POST",
+      "path": "/{connectionId}/v3/beta/teams/{groupId}/channels/{channelId}/messages",
+      "summary": "Post a message (V3)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PostReplyToMessage": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{groupId}/channels/{channelId}/messages/{messageId}/replies",
+      "summary": "Post a reply to a message",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PostReplyToMessageV2": {
+      "method": "POST",
+      "path": "/{connectionId}/v2/beta/teams/{groupId}/channels/{channelId}/messages/{messageId}/replies",
+      "summary": "Post a reply to a message (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "OnNewChannelMessage": {
+      "method": "GET",
+      "path": "/{connectionId}/trigger/beta/teams/{groupId}/channels/{channelId}/messages",
+      "summary": "When a new channel message is added",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnNewChannelMessageMentioningMe": {
+      "method": "GET",
+      "path": "/{connectionId}/trigger/beta/teams/{groupId}/channels/{channelId}/messages_mentioningme",
+      "summary": "When I am mentioned in a channel message",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "WebhookAtMentionTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/subscriptions/atmentiontrigger/threadType/{threadType}",
+      "summary": "When I'm @mentioned",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "requestBody",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "WebhookMessageReactionTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/subscriptions/messagereactiontrigger/threadType/{threadType}",
+      "summary": "When someone reacted to a message in chat",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "reactionKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "frequency",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "runningPolicy",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "requestBody",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "CallEventTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/subscriptions/calleventtrigger",
+      "summary": "When a call event occurs",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "scopeType",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "TranscriptTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/subscriptions/transcripttrigger",
+      "summary": "When a transcript is available",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "scopeType",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "RecordingTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/subscriptions/recordingtrigger",
+      "summary": "When a recording is available",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "scopeType",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "WebhookChatMessageTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/subscriptions/chatmessagetrigger",
+      "summary": "When a new chat message is added",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "ChatMessageSubscriptionRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "WebhookKeywordTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/subscriptions/keywordtrigger/threadType/{threadType}",
+      "summary": "When keywords are mentioned",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$search",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "requestBody",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "WebhookNewMessageTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/subscriptions/newmessagetrigger/threadType/{threadType}",
+      "summary": "When a new message is added to a chat or channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "requestBody",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteWorkflowsMiddleTierSubscriptions": {
+      "method": "DELETE",
+      "path": "/{connectionId}/workflows/graphsubscriptions/{subscriptionIds}",
+      "summary": "Delete Workflows MT Subscriptions",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscriptionIds",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "RenewWorkflowsMiddleTierSubscriptions": {
+      "method": "PATCH",
+      "path": "/{connectionId}/workflows/graphsubscriptions/{subscriptionIds}",
+      "summary": "Renew Workflows MT Subscriptions",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscriptionIds",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "renewEncryptionCert",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteWorkflowSubscription": {
+      "method": "DELETE",
+      "path": "/{connectionId}/workflows/subscribe/{subscriptionIds}",
+      "summary": "Delete Workflow Subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscriptionIds",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "RenewWorkflowSubscription": {
+      "method": "PATCH",
+      "path": "/{connectionId}/workflows/subscribe/{subscriptionIds}",
+      "summary": "Renew Workflow Subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscriptionIds",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "renewEncryptionCert",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "InvokeChannelAgent": {
+      "method": "POST",
+      "path": "/{connectionId}/workflows/connector/actions/invokeChannelAgent",
+      "summary": "Invoke Channel Agent API to post prompt to Channel Agent on behalf of user",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "input",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetChannelAgentOperation": {
+      "method": "GET",
+      "path": "/{connectionId}/workflows/connector/actions/getChannelAgentOperation/{operationId}",
+      "summary": "Get Channel Agent Operation",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "operationId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteWebHookSubscription": {
+      "method": "DELETE",
+      "path": "/{connectionId}/beta/subscriptions/{subscriptionIds}",
+      "summary": "Delete WebHook Subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscriptionIds",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "RenewWebHookSubscription": {
+      "method": "PATCH",
+      "path": "/{connectionId}/beta/subscriptions/{subscriptionIds}",
+      "summary": "Update subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscriptionIds",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "PostMessageToChannel": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/groups/{groupId}/channels/{channelId}/chatThreads",
+      "summary": "Post a message",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PostUserNotification": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/actions/notification/recipienttypes/user",
+      "summary": "Post a message as the Flow bot to a user",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "PostNotificationRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PostChannelNotification": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/actions/notification/recipienttypes/channel",
+      "summary": "Post a message as the Flow bot to a channel",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "PostNotificationRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PostUserAdaptiveCard": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/actions/adaptivecard/recipienttypes/user",
+      "summary": "Post your own adaptive card as the Flow bot to a user",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "PostAdaptiveCardRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PostChannelAdaptiveCard": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/actions/adaptivecard/recipienttypes/channel",
+      "summary": "Post your own adaptive card as the Flow bot to a channel",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "PostAdaptiveCardRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetUnifiedActionSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/actions/{actionType}/posters/{poster}/recipienttypes/{recipientType}/schema",
+      "summary": "Get unified action input metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetPostToConversationResponseSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/actions/{actionType}/posters/{poster}/recipienttypes/{recipientType}/response/schema",
+      "summary": "Get response schema",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetAdaptiveCardInputMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/actions/adaptivecard/recipienttypes/{recipientType}/$metadata.json/inputs",
+      "summary": "Get adaptive card input metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetNotificationInputMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/actions/notification/recipienttypes/{recipientType}/$metadata.json/inputs",
+      "summary": "Get notification input metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "SubscribeUserMessageWithOptions": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/actions/messagewithoptions/recipienttypes/user/$subscriptions",
+      "summary": "Post a choice of options as the Flow bot to a user",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "UserMessageWithOptionsSubscriptionRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "SubscribeUserFlowContinuation": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/actions/flowcontinuation/recipienttypes/user/$subscriptions",
+      "summary": "Post an Adaptive Card to a Teams user and wait for a response",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "UserFlowContinuationSubscriptionRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "SubscribeChannelFlowContinuation": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/actions/flowcontinuation/recipienttypes/channel/$subscriptions",
+      "summary": "Post an Adaptive Card to a Teams channel and wait for a response",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "ChannelFlowContinuationSubscriptionRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UnsubscribeMessageWithOptions": {
+      "method": "DELETE",
+      "path": "/{connectionId}/flowbot/actions/messagewithoptions/recipienttypes/{recipientType}/$subscriptions/{subscriptionId}",
+      "summary": "Unsubscribe from a choice of options",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "subscriptionId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UnsubscribeFlowContinuation": {
+      "method": "DELETE",
+      "path": "/{connectionId}/flowbot/actions/flowcontinuation/recipienttypes/{recipientType}/$subscriptions/{subscriptionId}",
+      "summary": "Unsubscribe from a flow continuation",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "subscriptionId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMessageWithOptionsInputMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/actions/messagewithoptions/recipienttypes/{recipientType}/$metadata.json/inputs",
+      "summary": "Get message with options input metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetFlowContinuationInputMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/actions/flowcontinuation/recipienttypes/{recipientType}/$metadata.json/inputs",
+      "summary": "Get flow continuation input metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMessageWithOptionsSubscriptionInputMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/actions/messagewithoptions/recipienttypes/{recipientType}/$metadata.json/subscriptioninputs",
+      "summary": "Get message with options subscription input metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetFlowContinuationSubscriptionInputMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/actions/flowcontinuation/recipienttypes/{recipientType}/$metadata.json/subscriptioninputs",
+      "summary": "Get flow continuation subscription input metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMessageWithOptionsSubscriptionOutputMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/actions/messagewithoptions/recipienttypes/{recipientType}/$metadata.json/subscriptionoutputs",
+      "summary": "Get message with options subscription output metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetFlowContinuationSubscriptionOutputMetadata": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/actions/flowcontinuation/recipienttypes/{recipientType}/$metadata.json/subscriptionoutputs",
+      "summary": "Get flow continuation subscription output metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFlowContinuationSubscriptionWithPosterOutputMetadata": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/actions/flowcontinuation/posters/{poster}/recipienttypes/{recipientType}/$metadata.json/subscriptionoutputs",
+      "summary": "Get flow continuation subscription output metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetSelectedMessageTriggerOutputsMetadata": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/triggers/selectedmessage/$metadata.json/selectedmessageoutputs",
+      "summary": "Get selected message hybrid trigger output metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetComposeMessageTriggerOutputsMetadata": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/triggers/composemessage/$metadata.json/composemessageoutputs",
+      "summary": "Get compose message hybrid trigger output metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetCardResponseTriggerOutputsMetadata": {
+      "method": "POST",
+      "path": "/{connectionId}/flowbot/triggers/cardresponse/$metadata.json/cardresponseoutputs",
+      "summary": "Get compose message hybrid trigger output metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTeam": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}",
+      "summary": "Get a team",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "AtMentionUser": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/users/{userId}",
+      "summary": "Get an @mention token for a user",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "AtMentionBot": {
+      "method": "POST",
+      "path": "/{connectionId}/custom/teams/bots",
+      "summary": "Get an @mention token for a bot",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "botMention",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListTimeOffReasons": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/timeOffReasons",
+      "summary": "Shifts: List all Time Off reasons",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListShifts": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/shifts",
+      "summary": "Shifts: List all shifts",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "startTime",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "endTime",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetShift": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/shifts/{shiftId}",
+      "summary": "Shifts: Get a shift",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "shiftId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteShift": {
+      "method": "DELETE",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/shifts/{shiftId}",
+      "summary": "Shifts: Delete a shift",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "shiftId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListOpenShifts": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/openShifts",
+      "summary": "Shifts: List all Open Shifts",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "startTime",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "endTime",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateOpenShift": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/openShifts",
+      "summary": "Shifts: Create a new Open Shift",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "request",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetOpenShift": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/openShifts/{openShiftId}",
+      "summary": "Shifts: Get an open shift",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "openShiftId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateOpenShift": {
+      "method": "PUT",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/openShifts/{openShiftId}",
+      "summary": "Shifts: Update an Open Shift",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "openShiftId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "request",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteOpenShift": {
+      "method": "DELETE",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/openShifts/{openShiftId}",
+      "summary": "Shifts: Delete an open shift",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "openShiftId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListSchedulingGroups": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/schedulinggroups",
+      "summary": "Shifts: List all scheduling groups",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetSchedulingGroup": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/schedulinggroups/{schedulingGroupId}",
+      "summary": "Shifts: Get a scheduling group",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "schedulingGroupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListTimeOffRequests": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/timeOffRequests",
+      "summary": "Shifts: List all Time Off requests",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "state",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "TimeOffRequestApprove": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/timeOffRequests/{timeOffRequestId}/approve",
+      "summary": "Shifts: Approve a Time Off request",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "timeOffRequestId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "request",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "TimeOffRequestDecline": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/timeOffRequests/{timeOffRequestId}/decline",
+      "summary": "Shifts: Decline a Time Off request",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "timeOffRequestId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "request",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListOfferShiftRequests": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/offerShiftRequests",
+      "summary": "Shifts: List all Offer Shift requests",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "state",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "OfferShiftRequestApprove": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/offerShiftRequests/{offerShiftRequestId}/approve",
+      "summary": "Shifts: Approve an Offer Shift request",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "offerShiftRequestId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "request",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "OfferShiftRequestDecline": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/offerShiftRequests/{offerShiftRequestId}/decline",
+      "summary": "Shifts: Decline an Offer Shift request",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "offerShiftRequestId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "request",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListSwapShiftsChangeRequests": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/swapShiftsChangeRequests",
+      "summary": "Shifts: List all Swap Shifts requests",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "state",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "SwapShiftsChangeRequestApprove": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/swapShiftsChangeRequests/{swapShiftsChangeRequestId}/approve",
+      "summary": "Shifts: Approve a Swap Shifts request",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "swapShiftsChangeRequestId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "request",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "SwapShiftsChangeRequestDecline": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/swapShiftsChangeRequests/{swapShiftsChangeRequestId}/decline",
+      "summary": "Shifts: Decline a Swap Shifts request",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "swapShiftsChangeRequestId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "request",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListOpenShiftChangeRequests": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/openShiftChangeRequests",
+      "summary": "Shifts: List all Open Shift requests",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "state",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "OpenShiftChangeRequestApprove": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/openShiftChangeRequests/{openShiftChangeRequestId}/approve",
+      "summary": "Shifts: Approve an Open Shift request",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "openShiftChangeRequestId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "request",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "OpenShiftChangeRequestDecline": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule/openShiftChangeRequests/{openShiftChangeRequestId}/decline",
+      "summary": "Shifts: Decline an Open Shift request",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "openShiftChangeRequestId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "request",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetSchedule": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teams/{teamId}/schedule",
+      "summary": "Shifts: Get a schedule's details",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "ForASelectedMessage": {
+      "method": "GET",
+      "path": "/{connectionId}/hybridtriggers/onselectedmessage",
+      "summary": "For a selected message",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "inputsAdaptiveCard",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "taskModuleWidth",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "taskModuleHeight",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ForASelectedMessageV2": {
+      "method": "GET",
+      "path": "/{connectionId}/hybridtriggers/onselectedmessagev2",
+      "summary": "For a selected message (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "inputsAdaptiveCard",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "taskModuleWidth",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "taskModuleHeight",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ComposeAMessage": {
+      "method": "GET",
+      "path": "/{connectionId}/hybridtriggers/oncomposemessage",
+      "summary": "From the compose box",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "inputsAdaptiveCard",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "taskModuleWidth",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "taskModuleHeight",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ComposeAMessageV2": {
+      "method": "GET",
+      "path": "/{connectionId}/hybridtriggers/composeamessagev2",
+      "summary": "From the compose box (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "inputsAdaptiveCard",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "taskModuleWidth",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "taskModuleHeight",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "TeamsCardTrigger": {
+      "method": "GET",
+      "path": "/{connectionId}/hybridtriggers/teamscardtrigger",
+      "summary": "For adaptive card responses",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "inputsAdaptiveCard",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "CardTypeId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnGroupMembershipRemoval": {
+      "method": "GET",
+      "path": "/{connectionId}/trigger/v1.0/groups/removal",
+      "summary": "When a new team member is removed",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnGroupMembershipAdd": {
+      "method": "GET",
+      "path": "/{connectionId}/trigger/v1.0/groups/delta",
+      "summary": "When a new team member is added",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CreateChat": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/chats",
+      "summary": "Create a chat",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMessagesFromChat": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/chats/{chatId}/messages",
+      "summary": "Get messages in a chat",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "PostMessageToSelf": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/chats/48:notes/messages",
+      "summary": "Post a message to myself",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateATeam": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams",
+      "summary": "Create a team",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetTeamsAsyncResult": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/teamsasyncresult",
+      "summary": "Get Teams async result",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ListTeamMembers": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/teams/{teamId}/members",
+      "summary": "List team members",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "AddMemberToTeam": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/{teamId}/members",
+      "summary": "Add a member to a team",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "AddMemberToTeamInternal": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{teamId}/members",
+      "summary": "Add a member to a team",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "RemoveMemberFromTeam": {
+      "method": "DELETE",
+      "path": "/{connectionId}/v1.0/teams/{teamId}/members/{membershipId}",
+      "summary": "Remove a member from a team",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "membershipId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "AddMemberToChannel": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/channels/{channelId}/members",
+      "summary": "Add a member to a channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "RemoveMemberFromChannel": {
+      "method": "DELETE",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/channels/{channelId}/members/{membershipId}",
+      "summary": "Remove a direct member from a channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "membershipId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "JoinMemberToChannel": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/{groupId}/channels/{channelId}/joinedUsers",
+      "summary": "Join a member to a channel",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PostMessageToConversation": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/teams/conversation/message/poster/{poster}/location/{location}",
+      "summary": "Post message in a chat or channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReplyWithMessageToConversation": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/conversation/replyWithMessage/poster/{poster}/location/{location}",
+      "summary": "Reply with a message in a channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PostCardToConversation": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/conversation/adaptivecard/poster/{poster}/location/{location}",
+      "summary": "Post card in a chat or channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PostCardAndWaitForResponse": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/conversation/gatherinput/poster/{poster}/location/{location}/$subscriptions",
+      "summary": "Post adaptive card and wait for a response",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReplyWithCardToConversation": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/conversation/replyWithAdaptivecard/poster/{poster}/location/{location}",
+      "summary": "Reply with an adaptive card in a channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateCardInConversation": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/conversation/updateAdaptivecard/poster/{poster}/location/{location}",
+      "summary": "Update an adaptive card in a chat or channel",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMessageDetailsInputSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/getmessagedetailsinputschema/threadType/{threadType}",
+      "summary": "Get message details response schema",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMessageDetailsResponseSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/getmessagedetailsresponseschema/threadType/{threadType}",
+      "summary": "Get message details input metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "ListMembersInputSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/listmembersinputschema/threadType/{threadType}",
+      "summary": "List members input schema",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetWebhookTriggerRequestSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/webhookTrigger/inputSchema/threadType/{threadType}",
+      "summary": "Input schema for webhook trigger",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetWebhookTriggerResponseSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/webhookTrigger/triggerType/{triggerType}/responseSchema/threadType/{threadType}",
+      "summary": "Response schema for webhook trigger",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMessageLocations": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/messageType/{messageType}/poster/{poster}",
+      "summary": "Conversation location for where to post",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetFeedNotificationInputSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/flowbot/getfeednotificationinputschema/poster/{poster}/notificationType/{notificationType}",
+      "summary": "Get feed notification input metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetVirtualAgentBots": {
+      "method": "GET",
+      "path": "/{connectionId}/teams/proxy/pva/bots",
+      "summary": "Gets all Microsoft Copilot Studio agents",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "HttpRequest": {
+      "method": "POST",
+      "path": "/{connectionId}/httprequest",
+      "summary": "Send a Microsoft Graph HTTP request",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Uri",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "Method",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "Body",
+          "in": "body",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "ContentType",
+          "in": "header",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "CustomHeader1",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader2",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader3",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader4",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader5",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetInstalledAppsForChat": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/chats/{chatId}/installedApps",
+      "summary": "Get @mentionable bots in a chat",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "chatId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "AddMemberToChat": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/chats/{chatId}/members",
+      "summary": "Add a user to a chat",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "RemoveMemberFromChat": {
+      "method": "DELETE",
+      "path": "/{connectionId}/v1.0/chats/{chatId}/members/{membershipId}",
+      "summary": "Remove a member from a chat",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "membershipId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetOnlineMeeting": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/onlineMeetings/lookup",
+      "summary": "Get an online meeting",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "lookupType",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "lookupValue",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListMeetingTranscripts": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/onlineMeetings/{meetingId}/transcripts",
+      "summary": "List meeting transcripts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMeetingTranscript": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/onlineMeetings/{meetingId}/transcripts/{transcriptId}",
+      "summary": "Get meeting transcript",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMeetingTranscriptContent": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/onlineMeetings/{meetingId}/transcripts/{transcriptId}/content",
+      "summary": "Get meeting transcript content",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "ListMeetingRecordings": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/onlineMeetings/{meetingId}/recordings",
+      "summary": "List meeting recordings",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMeetingRecording": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/onlineMeetings/{meetingId}/recordings/{recordingId}",
+      "summary": "Get meeting recording",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMeetingRecordingContent": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/onlineMeetings/{meetingId}/recordings/{recordingId}/content",
+      "summary": "Get meeting recording content",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "ListSections": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/me/teamwork/sections",
+      "summary": "List sections",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CreateSection": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/me/teamwork/sections",
+      "summary": "Create a section",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetSection": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/me/teamwork/sections/{sectionId}",
+      "summary": "Get a section",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateSection": {
+      "method": "PATCH",
+      "path": "/{connectionId}/beta/me/teamwork/sections/{sectionId}",
+      "summary": "Update a section",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteSection": {
+      "method": "DELETE",
+      "path": "/{connectionId}/beta/me/teamwork/sections/{sectionId}",
+      "summary": "Delete a section",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "ListSectionItems": {
+      "method": "GET",
+      "path": "/{connectionId}/beta/me/teamwork/sections/{sectionId}/items",
+      "summary": "List section items",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "AddSectionItem": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/me/teamwork/sections/{sectionId}/items",
+      "summary": "Add an item to a section",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "RemoveSectionItem": {
+      "method": "DELETE",
+      "path": "/{connectionId}/beta/me/teamwork/sections/{sectionId}/items/{sectionItemId}",
+      "summary": "Remove an item from a section",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "MoveSectionItem": {
+      "method": "POST",
+      "path": "/{connectionId}/beta/me/teamwork/sections/{sectionId}/items/{sectionItemId}/move",
+      "summary": "Move a section item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetSubscriptionScopeSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/internalparameters/triggers/subscriptionscope/{scopeType}/schema",
+      "summary": "Get subscription scope input schema",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "scopeType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTags": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/tags",
+      "summary": "List all tags for a team",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateTag": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/tags",
+      "summary": "Create a tag for a team",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetTag": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/tags/{tagId}",
+      "summary": "Get a team tag",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateTag": {
+      "method": "PATCH",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/tags/{tagId}",
+      "summary": "Update a team tag",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteTag": {
+      "method": "DELETE",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/tags/{tagId}",
+      "summary": "Delete a team tag",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "AddMemberToTag": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/tags/{tagId}/members",
+      "summary": "Add a member to a team tag",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetTagMembers": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/tags/{tagId}/members",
+      "summary": "List the members of a team tag",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteTagMember": {
+      "method": "DELETE",
+      "path": "/{connectionId}/v1.0/teams/{groupId}/tags/{tagId}/members/{tagMemberId}",
+      "summary": "Delete a member from a team tag",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "tagMemberId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListCallRecordings": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/adhocCalls/{callId}/recordings",
+      "summary": "List call recordings",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetCallRecording": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/adhocCalls/{callId}/recordings/{recordingId}",
+      "summary": "Get call recording",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetCallRecordingContent": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/adhocCalls/{callId}/recordings/{recordingId}/content",
+      "summary": "Get call recording content",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "ListCallTranscripts": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/adhocCalls/{callId}/transcripts",
+      "summary": "List call transcripts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetCallTranscript": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/adhocCalls/{callId}/transcripts/{transcriptId}",
+      "summary": "Get call transcript",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetCallTranscriptContent": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/adhocCalls/{callId}/transcripts/{transcriptId}/content",
+      "summary": "Get call transcript content",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetAllAdhocCallRecordings": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/adhocCalls/getAllRecordings",
+      "summary": "Get all ad-hoc call recordings",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "startDateTime",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "endDateTime",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "$skiptoken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$deltatoken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetAllAdhocCallTranscripts": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/me/adhocCalls/getAllTranscripts",
+      "summary": "Get all ad-hoc call transcripts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "startDateTime",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "endDateTime",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "$skiptoken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$deltatoken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListAiInsights": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/copilot/me/onlineMeetings/{meetingId}/aiInsights",
+      "summary": "List AI insights",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetAiInsight": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/copilot/me/onlineMeetings/{meetingId}/aiInsights/{aiInsightId}",
+      "summary": "Get AI insight",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "WebhookResponse": {
+      "method": "POST",
+      "path": "/whr",
+      "summary": "Proxy endpoint to validate subscriptions and forward notifications",
+      "deprecated": true,
+      "parameters": []
+    },
+    "WebhookLifecycleNotification": {
+      "method": "POST",
+      "path": "/whlifecycle",
+      "summary": "Proxy endpoint to validate and handle lifecycle notifications",
+      "deprecated": true,
+      "parameters": []
+    }
+  }
+}

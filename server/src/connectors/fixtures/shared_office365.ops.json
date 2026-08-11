@@ -1,0 +1,5277 @@
+{
+  "connectorId": "shared_office365",
+  "displayName": "Office 365 Outlook",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/office365",
+  "securityDefinitions": {},
+  "connectionAuth": {
+    "Token": {
+      "type": "oauthSetting",
+      "identityProvider": "aadcertificate",
+      "resource": "https://graph.microsoft.com",
+      "scopes": []
+    }
+  },
+  "operationCount": 143,
+  "operations": {
+    "CalendarGetTable": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets/calendars/tables/{table}",
+      "summary": "Get calendar metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ContactGetTable": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets/contacts/tables/{table}",
+      "summary": "Get folder metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnUpcomingEvents": {
+      "method": "GET",
+      "path": "/{connectionId}/Events/OnUpcomingEvents",
+      "summary": "When an upcoming event is starting soon",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "lookAheadTimeInMinutes",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "OnUpcomingEventsV2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/Events/OnUpcomingEvents",
+      "summary": "When an upcoming event is starting soon (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "lookAheadTimeInMinutes",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "OnUpcomingEventsV3": {
+      "method": "GET",
+      "path": "/{connectionId}/v3/Events/OnUpcomingEvents",
+      "summary": "When an upcoming event is starting soon (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "lookAheadTimeInMinutes",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetEventsCalendarView": {
+      "method": "GET",
+      "path": "/{connectionId}/Events/CalendarView",
+      "summary": "Get calendar view of events",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "calendarId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "startDateTimeOffset",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "endDateTimeOffset",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateOnChangedEventPokeSubscription": {
+      "method": "POST",
+      "path": "/{connectionId}/{table}/EventSubscriptionPoke/$subscriptions",
+      "summary": "When an event is added, updated or deleted in a calendar - Outlook subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "incomingDays",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "pastDays",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateGraphOnChangedEventPokeSubscription": {
+      "method": "POST",
+      "path": "/{connectionId}/{table}/GraphEventSubscriptionPoke/$subscriptions",
+      "summary": "When an event is added, updated or deleted in a calendar - Graph subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "incomingDays",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "pastDays",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteEventSubscription": {
+      "method": "DELETE",
+      "path": "/{connectionId}/EventSubscription/$subscriptions/{id}",
+      "summary": "Delete event subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "options",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "RenewEventSubscription": {
+      "method": "PATCH",
+      "path": "/{connectionId}/EventSubscription/$subscriptions/{id}",
+      "summary": "Update web hook",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "options",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "OnFilePickerOpen": {
+      "method": "GET",
+      "path": "/{connectionId}/OnFilePickerOpen",
+      "summary": "When the file picker is opened for the first time",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "operation",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "top",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "skip",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "OnFilePickerBrowse": {
+      "method": "GET",
+      "path": "/{connectionId}/OnFilePickerBrowse",
+      "summary": "When the file picker is open and being browsed",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "operation",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "top",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "skip",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "GetEmails": {
+      "method": "GET",
+      "path": "/{connectionId}/Mail",
+      "summary": "Get emails",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "fetchOnlyUnread",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "searchQuery",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "top",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "SendEmail": {
+      "method": "POST",
+      "path": "/{connectionId}/Mail",
+      "summary": "Send an email",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "emailMessage",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetOutlookCategoryNames": {
+      "method": "GET",
+      "path": "/{connectionId}/Categories",
+      "summary": "Get Outlook category names",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "DraftEmail": {
+      "method": "POST",
+      "path": "/{connectionId}/Draft",
+      "summary": "Draft an email message",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "draftMessage",
+          "in": "body",
+          "required": true,
+          "type": "object",
+          "visibility": "important"
+        },
+        {
+          "name": "messageId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "draftType",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "comment",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateDraftEmail": {
+      "method": "PATCH",
+      "path": "/{connectionId}/Draft",
+      "summary": "Updates an email Draft message",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "draftMessage",
+          "in": "body",
+          "required": true,
+          "type": "object",
+          "visibility": "important"
+        },
+        {
+          "name": "messageId",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "SendDraftEmail": {
+      "method": "POST",
+      "path": "/{connectionId}/Draft/Send/{messageId}",
+      "summary": "Send a Draft message",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "AssignCategory": {
+      "method": "POST",
+      "path": "/{connectionId}/Mail/Category",
+      "summary": "Assigns an Outlook category",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "category",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "AssignCategoryBulk": {
+      "method": "POST",
+      "path": "/{connectionId}/Mail/Category/Bulk/{categoryName}",
+      "summary": "Assign a category to multiple emails",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageIds",
+          "in": "body",
+          "required": true,
+          "type": "array",
+          "visibility": "important"
+        },
+        {
+          "name": "categoryName",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "GetEmailsV2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/Mail",
+      "summary": "Get emails (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyUnread",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "fetchOnlyFlagged",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "searchQuery",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "top",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        }
+      ]
+    },
+    "SendEmailV2": {
+      "method": "POST",
+      "path": "/{connectionId}/v2/Mail",
+      "summary": "Send an email (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "emailMessage",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetEmail": {
+      "method": "GET",
+      "path": "/{connectionId}/Mail/{messageId}",
+      "summary": "Get email",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "internetMessageId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteEmail": {
+      "method": "DELETE",
+      "path": "/{connectionId}/Mail/{messageId}",
+      "summary": "Delete email",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetEmailV2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/Mail/{messageId}",
+      "summary": "Get email (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "internetMessageId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "required": false,
+          "type": "object"
+        },
+        {
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetEmailsV3": {
+      "method": "GET",
+      "path": "/{connectionId}/v3/Mail",
+      "summary": "Get emails (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyUnread",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "fetchOnlyFlagged",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "searchQuery",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "top",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        }
+      ]
+    },
+    "Move": {
+      "method": "POST",
+      "path": "/{connectionId}/Mail/Move/{messageId}",
+      "summary": "Move email",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "MoveV2": {
+      "method": "POST",
+      "path": "/{connectionId}/v2/Mail/Move/{messageId}",
+      "summary": "Move email (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "Flag": {
+      "method": "POST",
+      "path": "/{connectionId}/Mail/Flag/{messageId}",
+      "summary": "Flag email",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "MarkAsRead": {
+      "method": "POST",
+      "path": "/{connectionId}/Mail/MarkAsRead/{messageId}",
+      "summary": "Mark as read",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ReplyTo": {
+      "method": "POST",
+      "path": "/{connectionId}/Mail/ReplyTo/{messageId}",
+      "summary": "Reply to email",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "comment",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "replyAll",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "ReplyToV2": {
+      "method": "POST",
+      "path": "/{connectionId}/v2/Mail/ReplyTo/{messageId}",
+      "summary": "Reply to email (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "replyParameters",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "ReplyToV3": {
+      "method": "POST",
+      "path": "/{connectionId}/v3/Mail/ReplyTo/{messageId}",
+      "summary": "Reply to email (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "replyParameters",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "GetAttachment": {
+      "method": "GET",
+      "path": "/{connectionId}/Mail/{messageId}/Attachments/{attachmentId}",
+      "summary": "Get attachment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "attachmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnNewEmail": {
+      "method": "GET",
+      "path": "/{connectionId}/Mail/OnNewEmail",
+      "summary": "When a new email arrives",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnNewEmailV2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/Mail/OnNewEmail",
+      "summary": "When a new email arrives (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnNewEmailV3": {
+      "method": "GET",
+      "path": "/{connectionId}/v3/Mail/OnNewEmail",
+      "summary": "When a new email arrives (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnFlaggedEmail": {
+      "method": "GET",
+      "path": "/{connectionId}/Mail/OnFlaggedEmail",
+      "summary": "When an email is flagged",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnFlaggedEmailV2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/Mail/OnFlaggedEmail",
+      "summary": "When an email is flagged (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "OnFlaggedEmailV3": {
+      "method": "GET",
+      "path": "/{connectionId}/v3/Mail/OnFlaggedEmail",
+      "summary": "When an email is flagged (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "OnFlaggedEmailV4": {
+      "method": "GET",
+      "path": "/{connectionId}/v4/Mail/OnFlaggedEmail",
+      "summary": "When an email is flagged (V4)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "OnNewMentionMeEmail": {
+      "method": "GET",
+      "path": "/{connectionId}/Mail/OnNewMentionMeEmail",
+      "summary": "When a new email mentioning me arrives",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageIdToFireOnFirstTriggerRun",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "OnNewMentionMeEmailV2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/Mail/OnNewMentionMeEmail",
+      "summary": "When a new email mentioning me arrives (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageIdToFireOnFirstTriggerRun",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "OnNewMentionMeEmailV3": {
+      "method": "GET",
+      "path": "/{connectionId}/v3/Mail/OnNewMentionMeEmail",
+      "summary": "When a new email mentioning me arrives (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageIdToFireOnFirstTriggerRun",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "SetAutomaticRepliesSetting": {
+      "method": "POST",
+      "path": "/{connectionId}/AutomaticRepliesSetting",
+      "summary": "Set up automatic replies",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "clientSetting",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMailTips": {
+      "method": "GET",
+      "path": "/{connectionId}/MailTips",
+      "summary": "Get mail tips for a mailbox",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetSensitivityLabels": {
+      "method": "GET",
+      "path": "/{connectionId}/SensitivityLabels",
+      "summary": "Get sensitivity labels",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CreateOnNewEmailSubscription": {
+      "method": "POST",
+      "path": "/{connectionId}/MailSubscription/$subscriptions",
+      "summary": "When a new email arrives (webhook)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "hasAttachment",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateOnNewEmailPokeSubscription": {
+      "method": "POST",
+      "path": "/{connectionId}/MailSubscriptionPoke/$subscriptions",
+      "summary": "Create a webhook subscription for the trigger when a new email arrives",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateGraphOnNewEmailPokeSubscription": {
+      "method": "POST",
+      "path": "/{connectionId}/GraphMailSubscriptionPoke/$subscriptions",
+      "summary": "Create a Graph webhook subscription for the trigger when a new email arrives",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateOnNewMentionMeEmailPokeSubscription": {
+      "method": "POST",
+      "path": "/{connectionId}/MentionMeMailSubscriptionPoke/$subscriptions",
+      "summary": "When a new mentioning me email arrives - Outlook subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateGraphOnNewMentionMeEmailPokeSubscription": {
+      "method": "POST",
+      "path": "/{connectionId}/GraphMentionMeMailSubscriptionPoke/$subscriptions",
+      "summary": "When a new mentioning me email arrives - Graph subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateOnFlaggedEmailPokeSubscription": {
+      "method": "POST",
+      "path": "/{connectionId}/FlaggedMailSubscriptionPoke/$subscriptions",
+      "summary": "Create an Outlook webhook subscription for the trigger when an email is flagged",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateGraphOnFlaggedEmailPokeSubscription": {
+      "method": "POST",
+      "path": "/{connectionId}/GraphFlaggedMailSubscriptionPoke/$subscriptions",
+      "summary": "Create a Graph webhook subscription for the trigger when an email is flagged",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchOnlyWithAttachment",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteOnNewEmailSubscription": {
+      "method": "DELETE",
+      "path": "/{connectionId}/MailSubscription/$subscriptions/{id}",
+      "summary": "Delete mail subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "options",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "RenewOnNewEmailSubscription": {
+      "method": "PATCH",
+      "path": "/{connectionId}/MailSubscription/$subscriptions/{id}",
+      "summary": "Update web hook",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "options",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "subscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetDataSetsMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "SendMailWithOptions": {
+      "method": "POST",
+      "path": "/{connectionId}/mailwithoptions/$subscriptions",
+      "summary": "Send email with options",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "optionsEmailSubscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "SendApprovalMail": {
+      "method": "POST",
+      "path": "/{connectionId}/approvalmail/$subscriptions",
+      "summary": "Send approval email",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "approvalEmailSubscription",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteApprovalMailSubscription": {
+      "method": "DELETE",
+      "path": "/{connectionId}/approvalmail/$subscriptions/{id}",
+      "summary": "Delete approval email subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteOptionsMailSubscription": {
+      "method": "DELETE",
+      "path": "/{connectionId}/mailwithoptions/$subscriptions/{id}",
+      "summary": "Delete options email subscription",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "SharedMailboxSendEmail": {
+      "method": "POST",
+      "path": "/{connectionId}/SharedMailbox/Mail",
+      "summary": "Send an email from a shared mailbox",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "emailMessage",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "SharedMailboxSendEmailV2": {
+      "method": "POST",
+      "path": "/{connectionId}/v2/SharedMailbox/Mail",
+      "summary": "Send an email from a shared mailbox (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "emailMessage",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "SharedMailboxOnNewEmail": {
+      "method": "GET",
+      "path": "/{connectionId}/SharedMailbox/Mail/OnNewEmail",
+      "summary": "When a new email arrives in a shared mailbox",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "hasAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "SharedMailboxOnNewEmailV2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/SharedMailbox/Mail/OnNewEmail",
+      "summary": "When a new email arrives in a shared mailbox (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "cc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "toOrCc",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "importance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "hasAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeAttachments",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "subjectFilter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "TestConnection": {
+      "method": "GET",
+      "path": "/{connectionId}/testconnection",
+      "summary": "Tests the connection",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CalendarGetTables": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/tables",
+      "summary": "Get calendars",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CalendarGetItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/tables/{table}/items",
+      "summary": "Get events (V1)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CalendarPostItem": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/calendars/tables/{table}/items",
+      "summary": "Create event (V1)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CalendarGetItem": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/tables/{table}/items/{id}",
+      "summary": "Get event (V1)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CalendarDeleteItem": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/calendars/tables/{table}/items/{id}",
+      "summary": "Delete event",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CalendarPatchItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/calendars/tables/{table}/items/{id}",
+      "summary": "Update event (V1)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "V3CalendarGetItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v3/tables/{table}/items",
+      "summary": "Get events (V3)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "V3CalendarPostItem": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/calendars/v3/tables/{table}/items",
+      "summary": "Create event (V3)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "V4CalendarGetItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v4/tables/{table}/items",
+      "summary": "Get events (V4)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "V4CalendarPostItem": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/calendars/v4/tables/{table}/items",
+      "summary": "Create event (V4)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "V2CalendarGetItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v2/tables/{table}/items",
+      "summary": "Get events (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "V2CalendarPostItem": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/calendars/v2/tables/{table}/items",
+      "summary": "Create event (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetEventsCalendarViewV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v2/tables/items/calendarview",
+      "summary": "Get calendar view of events (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "calendarId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "startDateTimeOffset",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "endDateTimeOffset",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "search",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetEventsCalendarViewV3": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v3/tables/items/calendarview",
+      "summary": "Get calendar view of events (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "calendarId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "startDateTimeUtc",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "endDateTimeUtc",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "search",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "V2CalendarGetItem": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v2/tables/{table}/items/{id}",
+      "summary": "Get event (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "V2CalendarPatchItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/calendars/v2/tables/{table}/items/{id}",
+      "summary": "Update event (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "V3CalendarGetItem": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v3/tables/{table}/items/{id}",
+      "summary": "Get event (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "V3CalendarPatchItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/calendars/v3/tables/{table}/items/{id}",
+      "summary": "Update event (V3)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "V4CalendarPatchItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/calendars/v4/tables/{table}/items/{id}",
+      "summary": "Update event (V4)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CalendarGetOnNewItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/tables/{table}/onnewitems",
+      "summary": "When a new event is created (V1)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CalendarGetOnUpdatedItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/tables/{table}/onupdateditems",
+      "summary": "When an event is modified (V1)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetOnNewItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/onnewitems",
+      "summary": "When a new item is created in a table",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleCalendarGetOnUpdatedItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/onupdateditems",
+      "summary": "When an item is modified",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CalendarGetOnNewItemsV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v2/tables/{table}/onnewitems",
+      "summary": "When a new event is created (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CalendarGetOnNewItemsV3": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v3/tables/{table}/onnewitems",
+      "summary": "When a new event is created (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CalendarGetOnUpdatedItemsV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v2/tables/{table}/onupdateditems",
+      "summary": "When an event is modified (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CalendarGetOnUpdatedItemsV3": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v3/tables/{table}/onupdateditems",
+      "summary": "When an event is modified (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CalendarGetOnChangedItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/tables/{table}/onchangeditems",
+      "summary": "When an event is added, updated or deleted",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "incomingDays",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "pastDays",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CalendarGetOnChangedItemsV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v2/tables/{table}/onchangeditems",
+      "summary": "When an event is added, updated or deleted (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "incomingDays",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "pastDays",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CalendarGetOnChangedItemsV3": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/calendars/v3/tables/{table}/onchangeditems",
+      "summary": "When an event is added, updated or deleted (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "incomingDays",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "pastDays",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ContactGetTables": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/contacts/tables",
+      "summary": "Get contact folders",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ContactGetTablesV2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/datasets/contacts/tables",
+      "summary": "Get contact folders (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ContactGetItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/contacts/tables/{table}/items",
+      "summary": "Get contacts",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ContactPostItem": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/contacts/tables/{table}/items",
+      "summary": "Create contact",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ContactGetItem": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/contacts/tables/{table}/items/{id}",
+      "summary": "Get contact",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ContactDeleteItem": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/contacts/tables/{table}/items/{id}",
+      "summary": "Delete contact",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ContactPatchItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/contacts/tables/{table}/items/{id}",
+      "summary": "Update contact",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetDataSets": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets",
+      "summary": "Get datasets",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ExportEmail": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/api/beta/me/messages/{messageId}/$value",
+      "summary": "Export email",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ExportEmail_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/beta/me/messages/{messageId}/$value",
+      "summary": "Export email (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "Flag_V2": {
+      "method": "PATCH",
+      "path": "/{connectionId}/codeless/v1.0/me/messages/{messageId}/flag",
+      "summary": "Flag email (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "MarkAsRead_V2": {
+      "method": "PATCH",
+      "path": "/{connectionId}/codeless/v1.0/me/messages/{messageId}/markAsRead",
+      "summary": "Mark as read or unread (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "MarkAsRead_V3": {
+      "method": "PATCH",
+      "path": "/{connectionId}/codeless/v3/v1.0/me/messages/{messageId}/markAsRead",
+      "summary": "Mark as read or unread (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteEmail_V2": {
+      "method": "DELETE",
+      "path": "/{connectionId}/codeless/v1.0/me/messages/{messageId}",
+      "summary": "Delete email (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "GetAttachment_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/v1.0/me/messages/{messageId}/attachments/{attachmentId}",
+      "summary": "Get Attachment (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "attachmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "extractSensitivityLabel",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "fetchSensitivityLabelMetadata",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "RespondToEvent": {
+      "method": "POST",
+      "path": "/{connectionId}/codeless/api/v2.0/me/events/{event_id}/{response}",
+      "summary": "Respond to an event invite",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "event_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "response",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "RespondToEvent_V2": {
+      "method": "POST",
+      "path": "/{connectionId}/codeless/v1.0/me/events/{event_id}/{response}",
+      "summary": "Respond to an event invite (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "event_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "response",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "ForwardEmail": {
+      "method": "POST",
+      "path": "/{connectionId}/codeless/api/v2.0/me/messages/{message_id}/forward",
+      "summary": "Forward an email",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "message_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ForwardEmail_V2": {
+      "method": "POST",
+      "path": "/{connectionId}/codeless/v1.0/me/messages/{message_id}/forward",
+      "summary": "Forward an email (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "message_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mailboxAddress",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "extractSensitivityLabel",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "fetchSensitivityLabelMetadata",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "important"
+        }
+      ]
+    },
+    "GetRoomLists": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/api/beta/me/findroomlists",
+      "summary": "Get room lists",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetRoomLists_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/beta/me/findRoomLists",
+      "summary": "Get room lists (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetRooms": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/api/beta/me/findrooms",
+      "summary": "Get rooms",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetRooms_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/beta/me/findRooms",
+      "summary": "Get rooms (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetRoomsInRoomList": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/api/beta/me/findrooms(roomlist='{room_list}')",
+      "summary": "Get rooms in room list",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "room_list",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetRoomsInRoomList_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/beta/me/findRooms(RoomList='{room_list}')",
+      "summary": "Get rooms in room list (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "room_list",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "FindMeetingTimes": {
+      "method": "POST",
+      "path": "/{connectionId}/codeless/api/v2.0/me/findmeetingtimes",
+      "summary": "Find meeting times",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "FindMeetingTimes_V2": {
+      "method": "POST",
+      "path": "/{connectionId}/codeless/beta/me/findMeetingTimes",
+      "summary": "Find meeting times (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "SetAutomaticRepliesSetting_V2": {
+      "method": "PATCH",
+      "path": "/{connectionId}/codeless/v1.0/me/mailboxSettings",
+      "summary": "Set up automatic replies (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMailTips_V2": {
+      "method": "POST",
+      "path": "/{connectionId}/codeless/v1.0/me/getMailTips",
+      "summary": "Get mail tips for a mailbox (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CalendarGetTables_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/v1.0/me/calendars",
+      "summary": "Get calendars (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "internal"
+        },
+        {
+          "name": "top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "internal"
+        },
+        {
+          "name": "orderBy",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CalendarDeleteItem_V2": {
+      "method": "DELETE",
+      "path": "/{connectionId}/codeless/v1.0/me/calendars/{calendar}/events/{event}",
+      "summary": "Delete event (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "calendar",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "event",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ContactGetItem_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/v1.0/me/contactFolders/{folder}/contacts/{id}",
+      "summary": "Get contact (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folder",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ContactDeleteItem_V2": {
+      "method": "DELETE",
+      "path": "/{connectionId}/codeless/v1.0/me/contactFolders/{folder}/contacts/{id}",
+      "summary": "Delete contact (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folder",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ContactPatchItem_V2": {
+      "method": "PATCH",
+      "path": "/{connectionId}/codeless/v1.0/me/contactFolders/{folder}/contacts/{id}",
+      "summary": "Update contact (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folder",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ContactGetItems_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/v1.0/me/contactFolders/{folder}/contacts",
+      "summary": "Get contacts (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folder",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ContactPostItem_V2": {
+      "method": "POST",
+      "path": "/{connectionId}/codeless/v1.0/me/contactFolders/{folder}/contacts",
+      "summary": "Create contact (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folder",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateMyContactPhoto": {
+      "method": "PUT",
+      "path": "/{connectionId}/codeless/v1.0/me/contactFolders/{folder}/contacts/{id}/photo/$value",
+      "summary": "Update my contact's photo",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folder",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "Content-Type",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "HttpRequest": {
+      "method": "POST",
+      "path": "/{connectionId}/codeless/httprequest",
+      "summary": "Send an HTTP request",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Uri",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "Method",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "Body",
+          "in": "body",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "ContentType",
+          "in": "header",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "CustomHeader1",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader2",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader3",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader4",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader5",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "mcp_EmailsManagement": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/EmailsManagement",
+      "summary": "Email Management MCP Server (deprecated)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "mcp_MeetingManagement": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/MeetingManagement",
+      "summary": "Meeting Management MCP Server (deprecated)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "mcp_ContactsManagement": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/ContactsManagement",
+      "summary": "Contact Management MCP Server",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "ReceiveResponseGet": {
+      "method": "GET",
+      "path": "/RecordResponse",
+      "summary": "Receives response from user",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "state",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "sig",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "showConfirm",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "ReceiveResponsePost": {
+      "method": "POST",
+      "path": "/RecordResponse",
+      "summary": "Receives response from user",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "state",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "sig",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "fromConfirm",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "ReceiveMailFromSubscription": {
+      "method": "POST",
+      "path": "/MailSubscriptionReceive",
+      "summary": "Receive mail",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "state",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "subscriptionPayload",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "validationtoken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "ReceiveMailFromSubscriptionV2": {
+      "method": "POST",
+      "path": "/{subscribedConnectionId}/MailSubscriptionReceive",
+      "summary": "Receive mail (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "state",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "subscriptionPayload",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "validationtoken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "subscribedConnectionId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ReceiveEventFromSubscription": {
+      "method": "POST",
+      "path": "/EventSubscriptionReceive",
+      "summary": "Receive event",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "state",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "subscriptionPayload",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "validationtoken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "ReceiveEventFromSubscriptionV2": {
+      "method": "POST",
+      "path": "/{subscribedConnectionId}/EventSubscriptionReceive",
+      "summary": "Receive event (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "state",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "subscriptionPayload",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "validationtoken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "subscribedConnectionId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

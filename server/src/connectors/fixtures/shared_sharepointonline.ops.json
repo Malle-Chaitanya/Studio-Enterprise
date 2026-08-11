@@ -1,0 +1,4865 @@
+{
+  "connectorId": "shared_sharepointonline",
+  "displayName": "SharePoint",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/sharepointonline",
+  "securityDefinitions": {},
+  "connectionAuth": {
+    "token": {
+      "type": "oauthSetting",
+      "identityProvider": "sharepointonlinecertificateV2",
+      "resource": "https://graph.microsoft.com/",
+      "scopes": []
+    },
+    "token:TenantId": {
+      "type": "string"
+    },
+    "gateway": {
+      "type": "gatewaySetting"
+    },
+    "authType": {
+      "type": "string"
+    },
+    "username": {
+      "type": "securestring"
+    },
+    "password": {
+      "type": "securestring"
+    }
+  },
+  "operationCount": 141,
+  "operations": {
+    "GetDataSetsMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ODataStyleGetTable": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets('{dataset}')/tables('{table}')",
+      "summary": "Get list metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetTable": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets/{dataset}/tables/{table}",
+      "summary": "Get list metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "contentTypeId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetItemHybridTriggerSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets/{dataset}/tables/{table}/hybridtrigger/item",
+      "summary": "For a Selected Item",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetItemChangesMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets/{dataset}/tables/{table}/items/changes",
+      "summary": "Get metadata about the return type of the GetItemChanges operation",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetDataSets": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets",
+      "summary": "Get datasets",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ODataStyleGetTables": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables",
+      "summary": "Get lists",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ODataStyleGetFileItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/getfileitems",
+      "summary": "Get files (properties only)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "viewScopeOption",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items",
+      "summary": "Get items",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "viewScopeOption",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStylePostItem": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items",
+      "summary": "Create item",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetItem": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items({id})",
+      "summary": "Get item",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleDeleteItem": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items({id})",
+      "summary": "Delete item",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "ODataStylePatchItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items({id})",
+      "summary": "Update item",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetFileItem": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items({id})/getfileitem",
+      "summary": "Get file properties",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStylePatchFileItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items({id})/patchfileitem",
+      "summary": "Update file properties",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetOnChangedItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/onchangeditems",
+      "summary": "When an item or a file is modified",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetOnDeletedFileItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/ondeletedfileitems",
+      "summary": "When a file is deleted",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "ODataStyleGetOnDeletedItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/ondeleteditems",
+      "summary": "When an item is deleted",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ODataStyleGetOnNewFileItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/onnewfileitems",
+      "summary": "When a file is created (properties only)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetOnNewItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/onnewitems",
+      "summary": "When an item is created",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetOnNewItemsFromForm": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/onnewitemsfromform",
+      "summary": "When a form is submitted (preview)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "form",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetOnUpdatedFileClassifiedTimes": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/onupdatedfileclassifiedtimes",
+      "summary": "When a file is classified by a Microsoft Syntex model",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetOnUpdatedFileItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/onupdatedfileitems",
+      "summary": "When a file is created or modified (properties only)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStyleGetOnUpdatedItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/onupdateditems",
+      "summary": "When an item is created or modified",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetAgreementsSolutionTemplates": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/agreements/templates",
+      "summary": "Agreements Solution - Get Templates",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateAgreementsSolutionDocument": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/agreements/templates/{template}/createnewdocument",
+      "summary": "Agreements Solution - Generate document within Agreements Solution workspace",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "template",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "documentName",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "GetAgreementsSolutionTemplateFields": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/agreements/templates/{template}/fields",
+      "summary": "Agreements Solution - Get template fields",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "template",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetAllTables": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/alltables",
+      "summary": "Get all lists and libraries",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ApproveHubSiteJoin": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/approvehubsitejoin",
+      "summary": "Approve hub site join request",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "joiningSiteId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CancelHubSiteJoinApproval": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/cancelhubsitejoinapproval",
+      "summary": "Cancel hub site join request",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "approvalCorrelationId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateSharingLink": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/codeless/_api/v2.0/sites/root/lists/{table}/items/{id}/driveItem/createLink",
+      "summary": "Create sharing link for a file or folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "permission",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "AddItemPermission": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/codeless/_api/v2.0/sites/root/lists/{table}/items/{id}/driveItem/invite",
+      "summary": "Add permission for a file or folder",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "permission",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListItemPermissions": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/codeless/_api/v2.0/sites/root/lists/{table}/items/{id}/driveItem/permissions",
+      "summary": "List permissions for a file or folder",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "DeleteItemPermission": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/{dataset}/codeless/_api/v2.0/sites/root/lists/{table}/items/{id}/driveItem/permissions/{permissionId}",
+      "summary": "Remove permission from a file or folder",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "permissionId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateItemPermission": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/{dataset}/codeless/_api/v2.0/sites/root/lists/{table}/items/{id}/driveItem/permissions/{permissionId}",
+      "summary": "Update permission for a file or folder",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "permissionId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "permission",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "RenderItemAttachmentThumbnailByParameterSyntex": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/codeless/_api/v2.1/{siteId}/{listId}/{itemId}/{fileName}/thumbnails/{thumbnailId}/{size}/content",
+      "summary": "Render item attachment thumbnail, with key-as-parameter syntax",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "siteId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "listId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "itemId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "fileName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "thumbnailId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "size",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prefer",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "RenderItemThumbnail": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/codeless/_api/v2.1/drives/{driveId}/items/{itemId}/thumbnails/{thumbnailId}/{size}/content",
+      "summary": "Render item thumbnail",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "driveId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "itemId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "thumbnailId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "size",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prefer",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "cb",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "s",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "RenderItemAttachmentThumbnail": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/codeless/_api/v2.1/sites/{siteId}/lists/{listId}/items/{itemId}/attachments/{fileName}/thumbnails/{thumbnailId}/{size}/content",
+      "summary": "Render item attachment thumbnail",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "siteId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "listId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "itemId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "fileName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "thumbnailId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "size",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prefer",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CopyFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/copyFile",
+      "summary": "Copy file (deprecated)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CopyFileAsync": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/copyFileAsync",
+      "summary": "Copy file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "parameters",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CopyFolderAsync": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/copyFolderAsync",
+      "summary": "Copy folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "parameters",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ExtractFolderV2": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/extractFolderV2",
+      "summary": "Extract folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CreateFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/files",
+      "summary": "Create file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetFileMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/files/{id}",
+      "summary": "Get file metadata",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateFile": {
+      "method": "PUT",
+      "path": "/{connectionId}/datasets/{dataset}/files/{id}",
+      "summary": "Update file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteFile": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/{dataset}/files/{id}",
+      "summary": "Delete file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileContent": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/files/{id}/content",
+      "summary": "Get file content",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ContinueUpload": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/{dataset}/files/{id}/continueupload",
+      "summary": "Continue chunked file upload",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "uploadId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "RenameFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/files/{id}/rename",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "newName",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListRootFolder": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/folders",
+      "summary": "List root folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateFolder": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/folders",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListFolder": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/folders/{id}",
+      "summary": "List folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListRootFolderV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/foldersV2",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "nextPageMarker",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "useFlatListing",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ListFolderV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/foldersV2/{id}",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "nextPageMarker",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "useFlatListing",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetFileMetadataByPath": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/GetFileByPath",
+      "summary": "Get file metadata using path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetFileContentByPath": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/GetFileContentByPath",
+      "summary": "Get file content using path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetFolderMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/GetFolder",
+      "summary": "Get folder metadata",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFolderMetadataByPath": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/GetFolderByPath",
+      "summary": "Get folder metadata using path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetMoveCopyJobProgress": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/getMoveCopyProgress",
+      "summary": "Get move-copy job progress",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "job",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "HttpRequest": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/httprequest",
+      "summary": "Send an HTTP request to SharePoint",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "parameters",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "OnHubSiteJoinApproval": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/hubsiteid/{hubSiteId}/onhubsitejoinapproval",
+      "summary": "When a site has requested to join a hub site",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "hubSiteId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "JoinHubSite": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/joinhubsite",
+      "summary": "Join hub site",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "hubSiteId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "approvalToken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "approvalCorrelationId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "MoveFileAsync": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/moveFileAsync",
+      "summary": "Move file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "parameters",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MoveFolderAsync": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/moveFolderAsync",
+      "summary": "Move folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "parameters",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "NotifyHubSiteJoinApprovalStarted": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/notifyhubsitejoinapprovalstarted",
+      "summary": "Set hub site join status to pending",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "approvalCorrelationId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListAllRootFolders": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/rootfolders",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListAllRootFoldersV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/rootfoldersV2",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "nextPageMarker",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetTables": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables",
+      "summary": "Get lists",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateNewDocumentSet": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/createnewdocumentset",
+      "summary": "Create new document set",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "parameters",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateNewFolder": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/createnewfolder",
+      "summary": "Create new folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "parameters",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetDocGenForms": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/docgenforms",
+      "summary": "Get document generation forms",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetDocGenFormFields": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/docgenforms/{form}/fields",
+      "summary": "Get document generation form fields",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "form",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "SearchForUser": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/entities/{entityId}/searchforuser",
+      "summary": "Resolve person",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "entityId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "searchValue",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetEntityValues": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/entities/{id}",
+      "summary": "Get entity values",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetEntitiesForUser": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/entitiesfor/user",
+      "summary": "Returns User fields for a list",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetTableForms": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/forms",
+      "summary": "Get list forms",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTableForm": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/forms/{form}",
+      "summary": "Get form metadata (preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "form",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "SubmitDocGenForm": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/forms/{form}/submitdocgenform",
+      "summary": "Generate a document from a form (preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "form",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetDocumentSetContentTypesInLibrary": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/getdocumentsetcontenttypesinlib",
+      "summary": "Get document set content types in a document library",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/getfileitems",
+      "summary": "Get files (properties only)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "viewScopeOption",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ForASelectedFileHybridTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/hybridtrigger/foraselectedfile",
+      "summary": "For a Selected File Hybrid Trigger. The actual API is not called at runtime",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetListImageFields": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/imagefields",
+      "summary": "Get list image fields",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items",
+      "summary": "Get items",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "viewScopeOption",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "PostItem": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items",
+      "summary": "Create item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetItem": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}",
+      "summary": "Get item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteItem": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}",
+      "summary": "Delete item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "PatchItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}",
+      "summary": "Update item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateApprovalRequest": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/approval",
+      "summary": "Create an approval request for an item or file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "approvalType",
+          "in": "query",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "approvalSchema",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetItemChanges": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/changes",
+      "summary": "Get changes for an item or a file (properties only)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "since",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "until",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "includeDrafts",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CheckIfFileIsPublished": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/checkiffileispublished",
+      "summary": "Check if the scheduled version of the item is published",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "scheduledVersion",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CheckInFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/checkinfile",
+      "summary": "Check in file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "parameter",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CheckOutFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/checkoutfile",
+      "summary": "Check out file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "DiscardFileCheckOut": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/discardfilecheckout",
+      "summary": "Discard check out",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "GetFileItem": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/getfileitem",
+      "summary": "Get file properties",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GrantAccess": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/grantaccess",
+      "summary": "Grant access to an item or a folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "parameter",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PatchFileItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/patchfileitem",
+      "summary": "Update file properties",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "PatchFileItemWithPredictedValues": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/patchfileitemwithpredictedvalues",
+      "summary": "Update file properties using AI Builder model results",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "parameters",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "SetApprovalStatus": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/setapprovalstatus",
+      "summary": "Set content approval status",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "approvalAction",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "comments",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "entityTag",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "SetSignoffStatus": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/setsignoffstatus",
+      "summary": "Set request sign-off status",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "status",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UnshareItem": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}/unshare",
+      "summary": "Stop sharing an item or a file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "GetItemAttachments": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{itemId}/attachments",
+      "summary": "Get attachments",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "itemId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateAttachment": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{itemId}/attachments",
+      "summary": "Add attachment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "itemId",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "displayName",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteAttachment": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{itemId}/attachments/{attachmentId}",
+      "summary": "Delete attachment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "itemId",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "attachmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetAttachmentContent": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{itemId}/attachments/{attachmentId}/$value",
+      "summary": "Get attachment content",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "itemId",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "attachmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetItemImageFieldValue": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{itemId}/imagefields/{fieldName}",
+      "summary": "Get item image field content",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "itemId",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "fieldName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateItemImageFieldValue": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{itemId}/imagefields/{fieldName}",
+      "summary": "Update item image field",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "itemId",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "fieldName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ClearItemImageFieldValue": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{itemId}/imagefields/{fieldName}",
+      "summary": "Clear item image field",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "itemId",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "fieldName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetOnChangedItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/onchangeditems",
+      "summary": "When an item or a file is modified",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetOnDeletedFileItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/ondeletedfileitems",
+      "summary": "When a file is deleted",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "GetOnDeletedItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/ondeleteditems",
+      "summary": "When an item is deleted",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetOnNewFileItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/onnewfileitems",
+      "summary": "When a file is created (properties only)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetOnNewItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/onnewitems",
+      "summary": "When an item is created",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetOnNewItemsFromForm": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/onnewitemsfromform",
+      "summary": "When a form is submitted (preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "form",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetOnRecurrenceDigest": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/onrecurrencedigest",
+      "summary": "Recurring digest of updates (preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "update",
+          "in": "query",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "add",
+          "in": "query",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "runSchedule",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "startTime",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetOnUpdatedFileClassifiedTimes": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/onupdatedfileclassifiedtimes",
+      "summary": "When a file is classified by a Microsoft Syntex model",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetOnUpdatedFileItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/onupdatedfileitems",
+      "summary": "When a file is created or modified (properties only)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetOnUpdatedItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/onupdateditems",
+      "summary": "When an item is created or modified",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetContentAssemblyTemplates": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/templates",
+      "summary": "Get document library templates",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateContentAssemblyDocument": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/templates/{template}/createnewdocument",
+      "summary": "Generate document using Microsoft Syntex (preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "template",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "fileName",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetContentAssemblyPlaceholders": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/templates/{template}/placeholders",
+      "summary": "Get placeholders from template",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "template",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTableViews": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/views",
+      "summary": "Get list views",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTablesForApproval": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tablesfor/approval",
+      "summary": "Get libraries where Content Approval is supported",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTablesForLibraries": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tablesfor/libraries",
+      "summary": "Get libraries",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTablesForLightweightApproval": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tablesfor/lightweightapproval",
+      "summary": "Get lists and libraries where lightweight approvals is enabled",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTablesForListsAndLibraries": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tablesfor/listsandlibraries",
+      "summary": "Get lists and libraries",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnNewFiles": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/triggers/batch/onnewfile",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "maxFileCount",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "OnUpdatedFiles": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/triggers/batch/onupdatedfile",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "maxFileCount",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "checkBothCreatedAndModifiedDateTime",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnNewFile": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/triggers/onnewfile",
+      "summary": "When a file is created in a folder (deprecated)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnUpdatedFile": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/triggers/onupdatedfile",
+      "summary": "When a file is created or modified in a folder (deprecated)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeFileContent",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetApprovalSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/getApprovalSchema",
+      "summary": "Get the appropriate creation schema for the approval request type",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "approvalType",
+          "in": "query",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "GetDayOfWeekOptions": {
+      "method": "GET",
+      "path": "/{connectionId}/getDayOfWeekOptions",
+      "summary": "When to send updates",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetApprovalTypes": {
+      "method": "GET",
+      "path": "/{connectionId}/getApprovalTypes",
+      "summary": "Get available approval request types",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetFileCheckInTypeOptions": {
+      "method": "GET",
+      "path": "/{connectionId}/getFileCheckInTypeOptions",
+      "summary": "Get file checkin type options",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetItemAccessRoleOptions": {
+      "method": "GET",
+      "path": "/{connectionId}/getItemAccessRoleOptions",
+      "summary": "Get item access role options",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetMoveCopyNameConflictBehaviorOptions": {
+      "method": "GET",
+      "path": "/{connectionId}/getMoveCopyNameConflictBehaviorOptions",
+      "summary": "Get move-copy name conflict behavior options",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "isMove",
+          "in": "query",
+          "required": true,
+          "type": "boolean"
+        }
+      ]
+    },
+    "GetPermissionsRoleOptions": {
+      "method": "GET",
+      "path": "/{connectionId}/getPermissionsRoleOptions",
+      "summary": "Get permissions role options",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetSharingLinkScopeOptions": {
+      "method": "GET",
+      "path": "/{connectionId}/getSharingLinkScopeOptions",
+      "summary": "Get sharing link scope options",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetSharingLinkTypeOptions": {
+      "method": "GET",
+      "path": "/{connectionId}/getSharingLinkTypeOptions",
+      "summary": "Get sharing link type options",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetViewScopeOptions": {
+      "method": "GET",
+      "path": "/{connectionId}/getViewScopeOptions",
+      "summary": "Get SPViewScope options to use for folder querying behavior",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "TestConnection": {
+      "method": "GET",
+      "path": "/{connectionId}/testconnection",
+      "summary": "Test connection",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnTableUpdatedHook": {
+      "method": "POST",
+      "path": "/ontableupdatedhook",
+      "summary": "Endpoint for notifications from SharePoint WebHooks",
+      "deprecated": true,
+      "parameters": []
+    }
+  }
+}

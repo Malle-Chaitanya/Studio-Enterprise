@@ -1,0 +1,6491 @@
+{
+  "connectorId": "shared_powerplatformadminv2",
+  "displayName": "Power Platform for Admins V2",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/powerplatformadminv2",
+  "securityDefinitions": {
+    "oauth2": {
+      "type": "oauth2",
+      "flow": "implicit",
+      "authorizationUrl": "https://login.microsoftonline.com/common/oauth2/authorize?resource=https://api.powerplatform.com",
+      "scopes": {
+        ".default": ".default"
+      },
+      "description": "Microsoft Entra ID OAuth2"
+    }
+  },
+  "connectionAuth": {
+    "token": {
+      "type": "oauthSetting",
+      "identityProvider": "aadcertificate",
+      "resource": "https://api.powerplatform.com",
+      "scopes": [
+        ".default"
+      ]
+    },
+    "token:TenantId": {
+      "type": "string"
+    }
+  },
+  "operationCount": 189,
+  "operations": {
+    "ExecuteRecommendationAction": {
+      "method": "POST",
+      "path": "/{connectionId}/analytics/actions/{actionName}",
+      "summary": "Execute recommendation action",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetRecommendations": {
+      "method": "GET",
+      "path": "/{connectionId}/analytics/advisorRecommendations",
+      "summary": "Get recommendations",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$skipToken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetActionSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/analytics/advisorRecommendations/{scenario}/actionmetadata/{actionName}",
+      "summary": "Get action schema",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "scenario",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "x-ms-api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetScenarioActions": {
+      "method": "GET",
+      "path": "/{connectionId}/analytics/advisorRecommendations/{scenario}/actions",
+      "summary": "Get recommendation actions",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "scenario",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "x-ms-api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetRecommendationResources": {
+      "method": "GET",
+      "path": "/{connectionId}/analytics/advisorRecommendations/{scenario}/resources",
+      "summary": "Get recommendation resources",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "scenario",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$skipToken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetRecommendationScenarios": {
+      "method": "GET",
+      "path": "/{connectionId}/analytics/advisorRecommendations/scenarios",
+      "summary": "Get recommendation names",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetTenantApplicationPackage": {
+      "method": "GET",
+      "path": "/{connectionId}/appmanagement/applicationPackages",
+      "summary": "List the installable application packages for a tenant",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetEnvironmentApplicationPackage": {
+      "method": "GET",
+      "path": "/{connectionId}/appmanagement/environments/{environmentId}/applicationPackages",
+      "summary": "Get the list of application packages that are available for install",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "appInstallState",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "lcid",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "InstallApplicationPackage": {
+      "method": "POST",
+      "path": "/{connectionId}/appmanagement/environments/{environmentId}/applicationPackages/{uniqueName}/install",
+      "summary": "Start the install of application package in target environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "uniqueName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetApplicationPackageInstallStatus": {
+      "method": "GET",
+      "path": "/{connectionId}/appmanagement/environments/{environmentId}/operations/{operationId}",
+      "summary": "Get the polling status for a previously triggered installation",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "operationId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListEnvironmentGroupRoleAssignments": {
+      "method": "GET",
+      "path": "/{connectionId}/authorization/environmentGroups/{environmentGroupId}/roleAssignments",
+      "summary": "List environment group role assignments",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentGroupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateEnvironmentGroupRoleAssignment": {
+      "method": "POST",
+      "path": "/{connectionId}/authorization/environmentGroups/{environmentGroupId}/roleAssignments",
+      "summary": "Create environment group role assignment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentGroupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteEnvironmentGroupRoleAssignment": {
+      "method": "DELETE",
+      "path": "/{connectionId}/authorization/environmentGroups/{environmentGroupId}/roleAssignments/{roleAssignmentId}",
+      "summary": "Delete environment group role assignment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentGroupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "roleAssignmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListEnvironmentRoleAssignments": {
+      "method": "GET",
+      "path": "/{connectionId}/authorization/environments/{environmentId}/roleAssignments",
+      "summary": "List environment role assignments",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateEnvironmentRoleAssignment": {
+      "method": "POST",
+      "path": "/{connectionId}/authorization/environments/{environmentId}/roleAssignments",
+      "summary": "Create environment role assignment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteEnvironmentRoleAssignment": {
+      "method": "DELETE",
+      "path": "/{connectionId}/authorization/environments/{environmentId}/roleAssignments/{roleAssignmentId}",
+      "summary": "Delete environment role assignment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "roleAssignmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListRoleAssignments": {
+      "method": "GET",
+      "path": "/{connectionId}/authorization/roleAssignments",
+      "summary": "List role assignments",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateRoleAssignment": {
+      "method": "POST",
+      "path": "/{connectionId}/authorization/roleAssignments",
+      "summary": "Create role assignment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteRoleAssignment": {
+      "method": "DELETE",
+      "path": "/{connectionId}/authorization/roleAssignments/{roleAssignmentId}",
+      "summary": "Delete role assignment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "roleAssignmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListRoleDefinitions": {
+      "method": "GET",
+      "path": "/{connectionId}/authorization/roleDefinitions",
+      "summary": "List role definitions",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListConnections": {
+      "method": "GET",
+      "path": "/{connectionId}/connectivity/environments/{environmentId}/connections",
+      "summary": "List connections in environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListConnectors": {
+      "method": "GET",
+      "path": "/{connectionId}/connectivity/environments/{environmentId}/connectors",
+      "summary": "List connectors in environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetConnectorById": {
+      "method": "GET",
+      "path": "/{connectionId}/connectivity/environments/{environmentId}/connectors/{connectorId}",
+      "summary": "Get connector by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "connectorId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteCopilotAgent": {
+      "method": "DELETE",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/botAdminOperations",
+      "summary": "Delete a bot in Copilot Studio",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ReassignCopilotAgent": {
+      "method": "POST",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/botAdminOperations/reassign",
+      "summary": "Reassign the owner of the bot",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetBotQuarantineStatus": {
+      "method": "GET",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/botQuarantine",
+      "summary": "Get Bot Quarantine Status",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "SetBotAsQuarantined": {
+      "method": "POST",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/botQuarantine/SetAsQuarantined",
+      "summary": "Set Bot as Quarantined",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "SetBotAsUnquarantined": {
+      "method": "POST",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/botQuarantine/SetAsUnquarantined",
+      "summary": "Set Bot as Unquarantined",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetConnectorConsentBypass": {
+      "method": "GET",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/connectorConsentBypass",
+      "summary": "Get Connector Consent Bypass",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "SetConnectorConsentBypass": {
+      "method": "PUT",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/connectorConsentBypass",
+      "summary": "Set Connector Consent Bypass",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListMakerEvaluationTestRuns": {
+      "method": "GET",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/makerevaluation/testruns",
+      "summary": "List Maker Evaluation Test Runs",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetMakerEvaluationTestRun": {
+      "method": "GET",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/makerevaluation/testruns/{TestRunId}",
+      "summary": "Get Maker Evaluation Test Run by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "TestRunId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DownloadMakerEvaluationSnapshot": {
+      "method": "GET",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/makerevaluation/testruns/{TestRunId}/snapshot",
+      "summary": "Download Maker Evaluation Snapshot",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "TestRunId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListMakerEvaluationTestSets": {
+      "method": "GET",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/makerevaluation/testsets",
+      "summary": "List Maker Evaluation Test Sets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetMakerEvaluationTestSet": {
+      "method": "GET",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/makerevaluation/testsets/{TestSetId}",
+      "summary": "Get Maker Evaluation Test Set by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "TestSetId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "RunMakerEvaluationTestSet": {
+      "method": "POST",
+      "path": "/{connectionId}/copilotstudio/environments/{EnvironmentId}/bots/{BotId}/api/makerevaluation/testsets/{TestSetId}/run",
+      "summary": "Run Maker Evaluation Test Set",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "EnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "BotId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "TestSetId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetFinOpsMaintenanceSettings": {
+      "method": "GET",
+      "path": "/{connectionId}/dynamics/environments/{environmentId}/finopsadminsettings",
+      "summary": "Get Finance and Operations Maintenance Settings",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateFinOpsMaintenanceSettings": {
+      "method": "PUT",
+      "path": "/{connectionId}/dynamics/environments/{environmentId}/finopsadminsettings",
+      "summary": "Update Finance and Operations Maintenance Settings",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateEnvironmentManagementSettings": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/settings",
+      "summary": "Create environment management settings",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "ListEnvironmentManagementSettings": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/settings",
+      "summary": "Get environment management setting by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateEnvironmentManagementSettings": {
+      "method": "PATCH",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/settings",
+      "summary": "Update fields on the environment management setting",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateEnvironmentBackup": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/backups",
+      "summary": "Creates a backup of the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetEnvironmentBackups": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/backups",
+      "summary": "Gets the backups for the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteEnvironmentBackup": {
+      "method": "DELETE",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/backups/{backupId}",
+      "summary": "Deletes the specified backup (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "backupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetBusinessContinuityStateFullSnapshot": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/businessContinuityStateFullSnapshot",
+      "summary": "Gets business continuity snapshot for environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DisableEnvironment": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/Disable",
+      "summary": "Disables the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DisableDisasterRecovery": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/disableDisasterRecovery",
+      "summary": "Disables disaster recovery on the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "PerformDRDrill": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/disasterRecoveryDrill",
+      "summary": "Performs DR Drill for the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "EnableEnvironment": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/Enable",
+      "summary": "Enables the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "EnableDisasterRecovery": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/enableDisasterRecovery",
+      "summary": "Enables disaster recovery on the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "PerformForceFailover": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/forceFailover",
+      "summary": "Force failover for the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DisableManagedEnvironment": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/governancesetting/disablemanaged",
+      "summary": "Disables managed governance for the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "EnableManagedEnvironment": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/governancesetting/enablemanaged",
+      "summary": "Enables managed governance for the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ModifyEnvironmentSku": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/modifySku",
+      "summary": "Modifies sku for the specified environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetOperationsForEnvironment": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/operations",
+      "summary": "Lists the environment lifecycle operations for a specific environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "RecoverEnvironment": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}/recover",
+      "summary": "Recover the deleted environment (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetEnvironmentCopyCandidates": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environments/{sourceEnvironmentId}/copyCandidates",
+      "summary": "Gets copy target candidate environments (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "sourceEnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetRestoreCandidates": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environments/{sourceEnvironmentId}/restoreCandidates",
+      "summary": "Gets restore candidate environments (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "sourceEnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CopyEnvironment": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{targetEnvironmentId}/copy",
+      "summary": "Copy the environment from the specified source to the target (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "targetEnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetEnvironmentOperationByID": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environments/{targetEnvironmentId}/operations/{operationId}",
+      "summary": "Gets the status of an environment-scoped lifecycle operation (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "targetEnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "operationId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "RestoreEnvironment": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environments/{targetEnvironmentId}/Restore",
+      "summary": "Restores the specified environment to a previous backup (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "targetEnvironmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetOperationByID": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/operations/{operationId}",
+      "summary": "Gets the status of an environment lifecycle operation (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "operationId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ProvisionNewEnvironment": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/provisioning/create",
+      "summary": "Provisions a new environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "LinkDataverse": {
+      "method": "PATCH",
+      "path": "/{connectionId}/environmentmanagement/provisioning/environments/{environmentId}/link",
+      "summary": "Links a Dataverse instance to an existing environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetSupportedLocations": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/provisioning/locations",
+      "summary": "Gets the list of supported locations for environment provisioning",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetProvisioningCurrencies": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/provisioning/locations/{location}/currencies",
+      "summary": "Retrieves available currencies for environment provisioning in a location",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "location",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetProvisioningLanguages": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/provisioning/locations/{location}/languages",
+      "summary": "Retrieves available languages for environment provisioning in a location",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "location",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetProvisioningTemplates": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/provisioning/locations/{location}/templates",
+      "summary": "Retrieves available templates for environment provisioning in a location",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "location",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetEnvironmentGroupOperation": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environmentGroupOperations/{operationId}",
+      "summary": "Get operation status",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "operationId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateEnvironmentGroup": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environmentGroups",
+      "summary": "Create the environment group",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListEnvironmentGroups": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environmentGroups",
+      "summary": "List the environment groups",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetEnvironmentGroup": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environmentGroups/{groupId}",
+      "summary": "Get the environment group",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "groupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateEnvironmentGroup": {
+      "method": "PUT",
+      "path": "/{connectionId}/environmentmanagement/environmentGroups/{groupId}",
+      "summary": "Update the environment group",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "groupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteEnvironmentGroup": {
+      "method": "DELETE",
+      "path": "/{connectionId}/environmentmanagement/environmentGroups/{groupId}",
+      "summary": "Delete the environment group",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "groupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "AddEnvironmentToGroup": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environmentGroups/{groupId}/addEnvironment/{environmentId}",
+      "summary": "Add the environment to the environment group",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "groupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "RemoveEnvironmentFromGroup": {
+      "method": "POST",
+      "path": "/{connectionId}/environmentmanagement/environmentGroups/{groupId}/removeEnvironment/{environmentId}",
+      "summary": "Remove the environment from the environment group",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "groupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListEnvironmentsForUser": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environments",
+      "summary": "Retrieve a list of environments (preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "ids",
+          "in": "query",
+          "required": false,
+          "type": "array"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetEnvironmentByIdForUser": {
+      "method": "GET",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}",
+      "summary": "Retrieves a single environment by ID (preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteEnvironmentByID": {
+      "method": "DELETE",
+      "path": "/{connectionId}/environmentmanagement/environments/{environmentId}",
+      "summary": "Deletes the specified environment by ID (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ValidateOnly",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ValidateProperties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateRuleBasedPolicy": {
+      "method": "POST",
+      "path": "/{connectionId}/governance/ruleBasedPolicies",
+      "summary": "Create rule based policy",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListRuleBasedPolicies": {
+      "method": "GET",
+      "path": "/{connectionId}/governance/ruleBasedPolicies",
+      "summary": "List rule based policies",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetRuleBasedPolicyByID": {
+      "method": "GET",
+      "path": "/{connectionId}/governance/ruleBasedPolicies/{policyId}",
+      "summary": "Get rule based policy by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "policyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateRuleBasedPolicyByID": {
+      "method": "PUT",
+      "path": "/{connectionId}/governance/ruleBasedPolicies/{policyId}",
+      "summary": "Update rule based policy by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "policyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PatchRuleBasedPolicy": {
+      "method": "PATCH",
+      "path": "/{connectionId}/governance/ruleBasedPolicies/{policyId}",
+      "summary": "Patch rule based policy",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "policyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListRuleAssignmentsByPolicyId": {
+      "method": "GET",
+      "path": "/{connectionId}/governance/ruleBasedPolicies/{policyId}/assignments",
+      "summary": "List rule based policy assignments for a specific policy",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "policyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeRuleSetCounts",
+          "in": "query",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateEnviornmentGroupRuleBasedAssignment": {
+      "method": "POST",
+      "path": "/{connectionId}/governance/ruleBasedPolicies/{policyId}/environmentGroups/{groupId}/assignments",
+      "summary": "Create environment group rule based assignment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "policyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "groupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateEnvironmentRuleBasedAssignment": {
+      "method": "POST",
+      "path": "/{connectionId}/governance/ruleBasedPolicies/{policyId}/environments/{environmentId}/assignments",
+      "summary": "Create environment rule based assignment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "policyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "RemoveRuleFromRuleBasedPolicy": {
+      "method": "PATCH",
+      "path": "/{connectionId}/governance/ruleBasedPolicies/{policyId}/removeRule",
+      "summary": "Removes a rule set from an existing policy",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "policyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListRuleAssignments": {
+      "method": "GET",
+      "path": "/{connectionId}/governance/ruleBasedPolicies/assignments",
+      "summary": "List rule based policy assignments",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "includeRuleSetCounts",
+          "in": "query",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListRuleAssignmentsByEnvironmentGroupId": {
+      "method": "GET",
+      "path": "/{connectionId}/governance/ruleBasedPolicies/environmentGroups/{environmentGroupId}/assignments",
+      "summary": "List rule based policy assignments for a specific environment group",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentGroupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeRuleSetCounts",
+          "in": "query",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListRuleAssignmentsByEnvironmentId": {
+      "method": "GET",
+      "path": "/{connectionId}/governance/ruleBasedPolicies/environments/{environmentId}/assignments",
+      "summary": "List rule based policy assignments for a specific environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeRuleSetCounts",
+          "in": "query",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetRuleSet": {
+      "method": "GET",
+      "path": "/{connectionId}/governance/environmentGroups/{groupId}/ruleSets",
+      "summary": "Get Rule Set for Environment Group",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "groupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateRuleSet": {
+      "method": "POST",
+      "path": "/{connectionId}/governance/environmentGroups/{groupId}/ruleSets",
+      "summary": "Create Rule Set",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "groupId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetRuleSetListForTenant": {
+      "method": "GET",
+      "path": "/{connectionId}/governance/ruleSets",
+      "summary": "List Rule Sets for Tenant",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "$expand",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "$skiptoken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateRuleSet": {
+      "method": "PUT",
+      "path": "/{connectionId}/governance/ruleSets/{ruleSetId}",
+      "summary": "Update Rule Set",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "ruleSetId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteRuleSet": {
+      "method": "DELETE",
+      "path": "/{connectionId}/governance/ruleSets/{ruleSetId}",
+      "summary": "Delete Rule Set",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "ruleSetId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListCrossTenantConnectionReports": {
+      "method": "GET",
+      "path": "/{connectionId}/governance/crossTenantConnectionReports",
+      "summary": "List cross-tenant connection reports for a tenant",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateCrossTenantConnectionReport": {
+      "method": "POST",
+      "path": "/{connectionId}/governance/crossTenantConnectionReports",
+      "summary": "Generate or fetch a cross-tenant connection report",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetCrossTenantConnectionReport": {
+      "method": "GET",
+      "path": "/{connectionId}/governance/crossTenantConnectionReports/{reportId}",
+      "summary": "Get a cross-tenant connection report by report ID for a tenant",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "reportId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListBillingPolicies": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/billingPolicies",
+      "summary": "Get the list of billing policies for the tenant",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateBillingPolicy": {
+      "method": "POST",
+      "path": "/{connectionId}/licensing/billingPolicies",
+      "summary": "Creates the billing policy at tenant level",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetBillingPolicy": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/billingPolicies/{billingPolicyId}",
+      "summary": "Get the billing policy at tenant level by policy ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "billingPolicyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateBillingPolicy": {
+      "method": "PUT",
+      "path": "/{connectionId}/licensing/billingPolicies/{billingPolicyId}",
+      "summary": "Updates the billing policy at tenant level",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "billingPolicyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteBillingPolicy": {
+      "method": "DELETE",
+      "path": "/{connectionId}/licensing/billingPolicies/{billingPolicyId}",
+      "summary": "Delete billing policy",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "billingPolicyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListBillingPolicyEnvironments": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/billingPolicies/{billingPolicyId}/environments",
+      "summary": "Get the list of environments linked to the billing policy",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "billingPolicyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetBillingPolicyEnvironment": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/billingPolicies/{billingPolicyId}/environments/{environmentId}",
+      "summary": "Get the environment linked to the billing policy",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "billingPolicyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "AddBillingPolicyEnvironment": {
+      "method": "POST",
+      "path": "/{connectionId}/licensing/billingPolicies/{billingPolicyId}/environments/add",
+      "summary": "Link billing policy ID with environments",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "billingPolicyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "RemoveBillingPolicyEnvironment": {
+      "method": "POST",
+      "path": "/{connectionId}/licensing/billingPolicies/{billingPolicyId}/environments/remove",
+      "summary": "Unlink billing policy ID from environments",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "billingPolicyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "RefreshProvisioningStatus": {
+      "method": "POST",
+      "path": "/{connectionId}/licensing/billingPolicies/{billingPolicyId}/refreshProvisioningStatus",
+      "summary": "Refresh the billing policy provisioning status",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "billingPolicyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetCurrencyAllocationByEnvironment": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/environments/{environmentId}/allocations",
+      "summary": "Get currency allocations for the environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "PatchCurrencyAllocationByEnvironment": {
+      "method": "PATCH",
+      "path": "/{connectionId}/licensing/environments/{environmentId}/allocations",
+      "summary": "Allocate and deallocate the currencies for the environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetEnvironmentBillingPolicy": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/environments/{environmentId}/billingPolicy",
+      "summary": "Get the linked billing policy details for an environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListISVContracts": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/isvContracts",
+      "summary": "Get the list of ISV contracts for the tenant",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateISVContract": {
+      "method": "POST",
+      "path": "/{connectionId}/licensing/isvContracts",
+      "summary": "Create an ISV contract",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetISVContract": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/isvContracts/{isvContractId}",
+      "summary": "Get an ISV contract by its identifier (ID)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "isvContractId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateISVContract": {
+      "method": "PUT",
+      "path": "/{connectionId}/licensing/isvContracts/{isvContractId}",
+      "summary": "Update an ISV contract",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "isvContractId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteISVContract": {
+      "method": "DELETE",
+      "path": "/{connectionId}/licensing/isvContracts/{isvContractId}",
+      "summary": "Delete an ISV contract",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "isvContractId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetStorageWarningByCategory": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/storageWarning/{storageCategory}",
+      "summary": "Storage warning thresholds filtered by category",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "storageCategory",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetStorageWarningByCategoryAndEntity": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/storageWarning/{storageCategory}/{entityName}",
+      "summary": "Storage warning thresholds filtered by category and storage entity name",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "storageCategory",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListStorageWarnings": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/storageWarning/getAllStorageWarnings",
+      "summary": "Storage warning thresholds",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "RetrieveTemporaryCurrencyEntitlementCount": {
+      "method": "POST",
+      "path": "/{connectionId}/licensing/TemporaryCurrencyEntitlement/{currencyType}/Count",
+      "summary": "Get the temporary currency count and limit for the month by type",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "currencyType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetTenantCapacityDetails": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/tenantCapacity",
+      "summary": "Get the tenant capacity details for the tenant",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListCurrencyReports": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/tenantCapacity/currencyReports",
+      "summary": "Get the currency report for the tenant",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "includeAllocations",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "includeConsumptions",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetUserPerFlowCapacitySource": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/UserPerFlowCapacitySource",
+      "summary": "Get user per flow capacity source data with pagination and filtering options",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "startDate",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "endDate",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "pageNumber",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "userId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "flowContext",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "flowLicenseCategorization",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "resourceId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "environmentId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetUserPerFlowCapacitySourceFlowContextSummary": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/UserPerFlowCapacitySource/FlowContextSummary",
+      "summary": "Get flow context summary for user per flow capacity source",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "startDate",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "endDate",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "pageNumber",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "environmentId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetUserPerFlowCapacitySourceFlowContextSummaryForUserId": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/UserPerFlowCapacitySource/FlowContextSummary/{userId}",
+      "summary": "Get flow context summary for a specific user's per flow capacity source",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "startDate",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "endDate",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "pageNumber",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "environmentId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetUserPerFlowCapacitySourceTenantContextSummary": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/UserPerFlowCapacitySource/TenantContextSummary",
+      "summary": "Get tenant context summary for user per flow capacity source",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "startDate",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "endDate",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "environmentId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetUserPerFlowCapacitySourceUserContextSummary": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/UserPerFlowCapacitySource/UserContextSummary",
+      "summary": "Get the user per flow capacity source user context summary",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "startDate",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "endDate",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "pageNumber",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "environmentId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetUserPerFlowCapacitySourceUserContextSummaryForUserId": {
+      "method": "GET",
+      "path": "/{connectionId}/licensing/UserPerFlowCapacitySource/UserContextSummary/{userId}",
+      "summary": "Get user context summary for a specific user's per flow capacity source",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "startDate",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "endDate",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "pageNumber",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "environmentId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "Get-AdminApps": {
+      "method": "GET",
+      "path": "/{connectionId}/powerapps/environments/{environmentId}/apps",
+      "summary": "Get apps as administrator",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skiptoken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "Get-AdminApp": {
+      "method": "GET",
+      "path": "/{connectionId}/powerapps/environments/{environmentId}/apps/{app}",
+      "summary": "Get app as administrator",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "app",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListCloudFlows": {
+      "method": "GET",
+      "path": "/{connectionId}/powerautomate/environments/{environmentId}/cloudFlows",
+      "summary": "Retrieve cloud flows with filters",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "workflowId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "resourceId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "createdBy",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "ownerId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "createdOnStartDate",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "createdOnEndDate",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "modifiedOnStartDate",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "modifiedOnEndDate",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListFlowActions": {
+      "method": "GET",
+      "path": "/{connectionId}/powerautomate/environments/{environmentId}/flowActions",
+      "summary": "Retrieve flow actions with filters",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "workflowId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "parentProcessStageId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "connector",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "isTrigger",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "parameterName",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "parameterValue",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "exact",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListFlowRuns": {
+      "method": "GET",
+      "path": "/{connectionId}/powerautomate/environments/{environmentId}/flowRuns",
+      "summary": "Retrieve flow runs by workflow ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "workflowId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetWebsites": {
+      "method": "GET",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites",
+      "summary": "List Power Pages websites",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "skip",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateWebsite": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites",
+      "summary": "Create a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetWebsiteById": {
+      "method": "GET",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}",
+      "summary": "Get the Power Pages website details by specifying its unique identifier (ID)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteWebsite": {
+      "method": "DELETE",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}",
+      "summary": "Delete a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Operation-Location",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UploadCertificate": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/certificates",
+      "summary": "Upload a certificate for a website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "certType",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "file",
+          "in": "formData",
+          "required": false,
+          "type": "file"
+        },
+        {
+          "name": "password",
+          "in": "formData",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "GetCertificatesByPortal": {
+      "method": "GET",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/certificates",
+      "summary": "Get certificates associated with a website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "certType",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteCertificateByPortal": {
+      "method": "DELETE",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/certificates",
+      "summary": "Delete a certificate associated with a website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "thumbprint",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "certType",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ConvertTrialToProduction": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/convertToProduction",
+      "summary": "Convert a trial Power Pages website to production",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateWafRules": {
+      "method": "PUT",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/createWafRules",
+      "summary": "Create web application Firewall rules on a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListHostNamesForPortal": {
+      "method": "GET",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/customDomain",
+      "summary": "List custom host names for a website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateCustomDomain": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/customDomain",
+      "summary": "Add a custom domain to a website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "customDomain",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteHostNameForPortal": {
+      "method": "DELETE",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/customDomain",
+      "summary": "Delete a custom domain from a website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "hostName",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteWafCustomRules": {
+      "method": "PUT",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/deleteWafCustomRules",
+      "summary": "Deletes web application firewall custom rules on a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DisableWaf": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/disableWaf",
+      "summary": "Disable web application Firewall on a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "EnableWAF": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/enableWaf",
+      "summary": "Enable web application firewall on a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetWAFRules": {
+      "method": "GET",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/getWafRules",
+      "summary": "Get the web application firewall rules",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ruleType",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetWAFStatus": {
+      "method": "GET",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/getWafStatus",
+      "summary": "Get the web application firewall status",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetAllowedIpAddresses": {
+      "method": "GET",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/ipaddressrules",
+      "summary": "Get allowed IP addresses for a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "AddAllowedIpAddresses": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/ipaddressrules",
+      "summary": "Add allowed IP addresses on a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "RemoveAllowedIpAddresses": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/removeAllowedIpAddresses",
+      "summary": "Remove allowed IP addresses from a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "RestartWebsite": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/restart",
+      "summary": "Restart a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetSecurityScanReport": {
+      "method": "GET",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/scan/deep/getLatestCompletedReport",
+      "summary": "Get deep scan report for a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetSecurityScanScore": {
+      "method": "GET",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/scan/deep/getSecurityScore",
+      "summary": "Get deep scan score for a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "StartDeepScan": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/scan/deep/start",
+      "summary": "Start deep scan for a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "StartQuickScan": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/scan/quick/execute",
+      "summary": "Execute quick scan for a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "lcid",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "SetPortalBootstrapV5Enabled": {
+      "method": "PATCH",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/SetPortalBootstrapV5Enabled",
+      "summary": "Stamp bootstrap version five (5) status as enabled for website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "SetPortalDataModelVersion": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/setPortalDataModelVersion",
+      "summary": "Stamp data model version for website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListSslBindingsByThumbprints": {
+      "method": "GET",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/sslBindings",
+      "summary": "List SSL bindings for a website by hostname",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "hostName",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "AddSslBindingByPortal": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/sslBindings",
+      "summary": "Add an SSL binding to a website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "thumbprint",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "hostName",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteSslBindingByThumbprint": {
+      "method": "DELETE",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/sslBindings",
+      "summary": "Delete SSL binding for a website by certificate thumbprint",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "hostName",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "thumbprint",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "StartWebsite": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/start",
+      "summary": "Start a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "StopWebsite": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/stop",
+      "summary": "Stop a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ToggleAFDTrafficRouting": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/toggleAFDTrafficRouting",
+      "summary": "Toggle AFD traffic routing for a Power Pages website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "enableAFD",
+          "in": "query",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdatePortalSecurityGroup": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/updatePortalSecurityGroup",
+      "summary": "Update security group for site visibility for a website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "securityGroupId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateSiteVisibility": {
+      "method": "POST",
+      "path": "/{connectionId}/powerpages/environments/{environmentId}/websites/{id}/updateSiteVisibility",
+      "summary": "Update site visibility for a website",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "siteVisibility",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "QueryResources": {
+      "method": "POST",
+      "path": "/{connectionId}/resourcequery/resources/query",
+      "summary": "Query Power Platform resources",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ApplyAdminRole": {
+      "method": "POST",
+      "path": "/{connectionId}/usermanagement/environments/{environmentId}/user/applyAdminRole",
+      "summary": "Apply the system administrator role to the selected user",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetFlowRunActionsForDsr": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/aiFlows/{aiFlowId}/runs/{runId}/actions",
+      "summary": "Get flow run actions for DSR export",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "aiFlowId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "runId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetApprovals": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/approvals",
+      "summary": "Get approvals for DSR export",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteApproval": {
+      "method": "DELETE",
+      "path": "/{connectionId}/workflowsagent/approvals/{approvalId}",
+      "summary": "Delete an approval for DSR compliance",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "approvalId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetConnections": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/connections",
+      "summary": "Get connections for DSR export",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteConnection": {
+      "method": "DELETE",
+      "path": "/{connectionId}/workflowsagent/connections/{connectionIdentifier}",
+      "summary": "Delete a connection for DSR compliance",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "connectionIdentifier",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetConversationTranscriptsForDsr": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/conversationTranscripts",
+      "summary": "Get conversation transcripts for DSR export",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetFlowRunActionsWithEnvironment": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/environments/{environmentId}/aiFlows/{aiFlowId}/runs/{runId}/actions",
+      "summary": "Get flow run actions for DSR export (environment-scoped)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "aiFlowId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "runId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetConversationTranscriptsWithEnvironment": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/environments/{environmentId}/conversationTranscripts",
+      "summary": "Get conversation transcripts for DSR export (environment-scoped)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetFlowRunsNonSingleton": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/environments/{environmentId}/flows/{flowId}/flowRuns",
+      "summary": "Get flow runs for DSR export (environment-scoped)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "flowId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetRunHistoryDataNonSingleton": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/environments/{environmentId}/flows/{flowId}/runs/{runId}/runHistoryData",
+      "summary": "Get run history customer data for DSR export (environment-scoped)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "environmentId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "flowId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "runId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetFlows": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/flows",
+      "summary": "Get flows for DSR export",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteFlow": {
+      "method": "DELETE",
+      "path": "/{connectionId}/workflowsagent/flows/{flowId}",
+      "summary": "Delete a flow for DSR compliance",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "flowId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetFlowRunsSingleton": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/flows/{flowId}/flowRuns",
+      "summary": "Get flow runs for DSR export",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "flowId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetRunHistoryData": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/flows/{flowId}/runs/{runId}/runHistoryData",
+      "summary": "Get run history customer data for DSR export",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "flowId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "runId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetPrompts": {
+      "method": "GET",
+      "path": "/{connectionId}/workflowsagent/prompts",
+      "summary": "Get AI model prompts for DSR export",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "continuationToken",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeletePrompt": {
+      "method": "DELETE",
+      "path": "/{connectionId}/workflowsagent/prompts/{promptId}",
+      "summary": "Delete an AI model prompt for DSR compliance",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "promptId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "api-version",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "mcp_EnvironmentManagement": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/EnvironmentManagement",
+      "summary": "Environment Management MCP Server",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "mcp_Governance": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/Governance",
+      "summary": "Governance MCP Server",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

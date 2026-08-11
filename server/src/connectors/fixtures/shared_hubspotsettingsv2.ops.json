@@ -1,0 +1,310 @@
+{
+  "connectorId": "shared_hubspotsettingsv2",
+  "displayName": "HubSpot Settings V2 (Independent Publisher)",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/hubspotsettingsv2",
+  "securityDefinitions": {
+    "API Key": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization"
+    }
+  },
+  "connectionAuth": {
+    "api_key": {
+      "type": "securestring"
+    }
+  },
+  "operationCount": 12,
+  "operations": {
+    "GetLoginActivityForAHubspotAccount": {
+      "method": "GET",
+      "path": "/{connectionId}/account-info/v3/activity/login",
+      "summary": "Get login activity",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "userId",
+          "in": "query",
+          "required": false,
+          "type": "integer"
+        }
+      ]
+    },
+    "GetSecurityActivityForAHubspotAccount": {
+      "method": "GET",
+      "path": "/{connectionId}/account-info/v3/activity/security",
+      "summary": "Get security activity",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "userId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "fromTimestamp",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTheDailyApiUsageAndLimitsForAHubspotAccount": {
+      "method": "GET",
+      "path": "/{connectionId}/account-info/v3/api-usage/daily",
+      "summary": "Get API usage",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetAccountDetailsForAHubspotAccount": {
+      "method": "GET",
+      "path": "/{connectionId}/account-info/v3/details",
+      "summary": "Get account details",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetBusinessUnitsForAUser": {
+      "method": "GET",
+      "path": "/{connectionId}/business-units/v3/business-units/user/{userId}",
+      "summary": "Get business units for a user",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "SeeDetailsAboutThisAccountsTeams": {
+      "method": "GET",
+      "path": "/{connectionId}/settings/v3/users/teams",
+      "summary": "Get account teams",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "RetrievesTheRolesOnAnAccount": {
+      "method": "GET",
+      "path": "/{connectionId}/settings/v3/users/roles",
+      "summary": "Get account roles",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "RetrievesAListOfUsersFromAnAccount": {
+      "method": "GET",
+      "path": "/{connectionId}/settings/v3/users/",
+      "summary": "Get users",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "AddsAUser": {
+      "method": "POST",
+      "path": "/{connectionId}/settings/v3/users/",
+      "summary": "Add user",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "RetrievesAUser": {
+      "method": "GET",
+      "path": "/{connectionId}/settings/v3/users/{userId}",
+      "summary": "Get user",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "RemovesAUser": {
+      "method": "DELETE",
+      "path": "/{connectionId}/settings/v3/users/{userId}",
+      "summary": "Remove user",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "ModifiesAUser": {
+      "method": "PUT",
+      "path": "/{connectionId}/settings/v3/users/{userId}",
+      "summary": "Modifies a user",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,3152 @@
+{
+  "connectorId": "shared_commondataserviceforapps",
+  "displayName": "Microsoft Dataverse",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/commondataserviceforapps",
+  "securityDefinitions": {},
+  "connectionAuth": {
+    "token": {
+      "type": "oauthSetting",
+      "identityProvider": "dynamicscrmonlinecertificate",
+      "resource": "https://disco.crm.dynamics.com/",
+      "scopes": []
+    },
+    "environment": {
+      "type": "string"
+    },
+    "token:clientId": {
+      "type": "string"
+    },
+    "token:clientSecret": {
+      "type": "securestring"
+    },
+    "token:TenantId": {
+      "type": "string"
+    },
+    "token:resourceUri": {
+      "type": "string"
+    },
+    "token:grantType": {
+      "type": "string"
+    }
+  },
+  "operationCount": 93,
+  "operations": {
+    "GetOrganizations": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/$metadata.json/organizations",
+      "summary": "Get organizations",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetOrganizationsTest": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/$metadata.json/organizationsTest",
+      "summary": "Get organizations test",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetMetadataForGetEntity": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/entities/{entityName}",
+      "summary": "Get table metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "selectedEntityAttributes",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "expandEntityAttributes",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetMetadataForGetEntityWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/$metadata.json/entities/{entityName}",
+      "summary": "Get table metadata based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "selectedEntityAttributes",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "expandEntityAttributes",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForGetEntityCUDTrigger": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/entities/{entityName}/cudtrigger",
+      "summary": "Get table metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForGetEntityCUDTriggerWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/$metadata.json/entities/{entityName}/cudtrigger",
+      "summary": "Get table metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetActivityPartyAttributes": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/entities/{entityName}/activityparties",
+      "summary": "Get activity party attributes",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetActivityPartyAttributesWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetActivityPartyAttributesWithOrganization",
+      "summary": "Get activity party attributes based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetMetadataForPostEntity": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/entities/{entityName}/postitem",
+      "summary": "Get table metadata - Post",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForPostEntityWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/$metadata.json/entities/{entityName}/postitem",
+      "summary": "Get table metadata based on environment - Post",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForPatchEntity": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/entities/{entityName}/patchitem",
+      "summary": "Get table metadata - Patch",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForPatchEntityWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/$metadata.json/entities/{entityName}/patchitem",
+      "summary": "Get table metadata based on environment - Patch",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetEntityRelationships": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/entities/{entityName}/relationships",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetEntityRelationshipsWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetEntityRelationshipsWithOrganization",
+      "summary": "Get entity relationships based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetAttributeFilters": {
+      "method": "GET",
+      "path": "/{connectionId}/entities/{entityName}/attributefilters",
+      "summary": "Get attribute filters",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "attributeTypeNames",
+          "in": "header",
+          "required": false,
+          "type": "array",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetAttributeFiltersWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetAttributeFiltersWithOrganization",
+      "summary": "Get attribute filters based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetScopeFilters": {
+      "method": "GET",
+      "path": "/{connectionId}/entities/{entityName}/scopefilters",
+      "summary": "Get scope filters",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetScopeFiltersWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetScopeFiltersWithOrganization",
+      "summary": "Get scope filters based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetOptionSetMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/entities/{entityName}/attributes/{attributeMetadataId}/optionSets/{type}",
+      "summary": "Retrieves the metadata for option set attribute metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "attributeMetadataId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetOptionSetMetadataWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetOptionSetMetadataWithOrganization",
+      "summary": "Retrieves the metadata for option set attribute metadata based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetOptionSetMetadataWithEntitySetName": {
+      "method": "GET",
+      "path": "/{connectionId}/entities/{entityName}/attributes/{attributeMetadataId}/optionSets/{type}/entitysetname",
+      "summary": "Retrieves the metadata for option set attribute metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "attributeMetadataId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetOptionSetMetadataWithEntitySetNameWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetOptionSetMetadataWithEntitySetNameWithOrganization",
+      "summary": "Retrieves the metadata for option set attribute metadata based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetEntities": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.1/EntityDefinitions",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetEntitiesWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetEntitiesWithOrganization",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "SubscribeWebhookTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1/callbackregistrations",
+      "summary": "When a row is added, modified or deleted",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Consistency",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "catalog",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "category",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscriptionRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "SubscribeWebhookTriggerWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1.0/callbackregistrations",
+      "summary": "When a row is added, modified, or deleted in selected environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "Consistency",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "catalog",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "category",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "subscriptionRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListRecords": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}",
+      "summary": "List rows",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "prefer",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accept",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-odata-metadata-full",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "$expand",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchXml",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "important"
+        },
+        {
+          "name": "$skiptoken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "partitionId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateRecord": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}",
+      "summary": "Add a new row",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "prefer",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accept",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-odata-metadata-full",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListRecordsWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.1.0/{entityName}",
+      "summary": "List rows from selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "prefer",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accept",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-odata-metadata-full",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "MSCRM.IncludeMipSensitivityLabel",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "$expand",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "fetchXml",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "important"
+        },
+        {
+          "name": "$skiptoken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "partitionId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateRecordWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1.0/{entityName}",
+      "summary": "Add a new row to selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "prefer",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accept",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-odata-metadata-full",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetItem": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}({recordId})",
+      "summary": "Get a row by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "prefer",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accept",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-odata-metadata-full",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$expand",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "partitionId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteRecord": {
+      "method": "DELETE",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}({recordId})",
+      "summary": "Delete a row",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "partitionId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateRecord": {
+      "method": "PATCH",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}({recordId})",
+      "summary": "Upsert a row",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "prefer",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accept",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-odata-metadata-full",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateOnlyRecord": {
+      "method": "PATCH",
+      "path": "/{connectionId}/api/data/v9.2/{entityName}({recordId})",
+      "summary": "Update a row",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "prefer",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accept",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-odata-metadata-full",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "If-Match",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetItemWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.1.0/{entityName}({recordId})",
+      "summary": "Get a row by ID from selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "prefer",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accept",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-odata-metadata-full",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "MSCRM.IncludeMipSensitivityLabel",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$expand",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "partitionId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DeleteRecordWithOrganization": {
+      "method": "DELETE",
+      "path": "/{connectionId}/api/data/v9.1.0/{entityName}({recordId})",
+      "summary": "Delete a row from selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "partitionId",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateRecordWithOrganization": {
+      "method": "PATCH",
+      "path": "/{connectionId}/api/data/v9.1.0/{entityName}({recordId})",
+      "summary": "Upsert a row in selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "prefer",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accept",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-odata-metadata-full",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateOnlyRecordWithOrganization": {
+      "method": "PATCH",
+      "path": "/{connectionId}/api/data/v9.2.0/{entityName}({recordId})",
+      "summary": "Update a row in selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "prefer",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accept",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-odata-metadata-full",
+          "in": "header",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "If-Match",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Predict": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.0/msdyn_aimodels({modelId})/Microsoft.Dynamics.CRM.Predict",
+      "summary": "Predict",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "modelId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetPredictionSchema": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/api/data/v9.1/msdyn_aimodels({recordId})/Microsoft.Dynamics.CRM.PredictionSchema",
+      "summary": "Get schema for predict operation",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "predictionMode",
+          "in": "header",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "PredictV2": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1/msdyn_aimodels({recordId})/Microsoft.Dynamics.CRM.Predict",
+      "summary": "Predict using AI Builder models",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "Prefer",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "AddToFeedbackLoop": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1/msdyn_aimodels({recordId})/Microsoft.Dynamics.CRM.AddToFeedbackLoop",
+      "summary": "Add to feedback loop of AI Builder models (Preview)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "PredictByReference": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1/msdyn_aimodels({recordId})/Microsoft.Dynamics.CRM.PredictByReference",
+      "summary": "Predict By Reference",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "AssociateEntities": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}({recordId})/{associationEntityRelationship}/$ref",
+      "summary": "Relate rows",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "associationEntityRelationship",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DisassociateEntities": {
+      "method": "DELETE",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}({recordId})/{associationEntityRelationship}/$ref",
+      "summary": "Unrelate rows",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "associationEntityRelationship",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$id",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "AssociateEntitiesWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1.0/{entityName}({recordId})/{associationEntityRelationship}/$ref",
+      "summary": "Relate rows in selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "associationEntityRelationship",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DisassociateEntitiesWithOrganization": {
+      "method": "DELETE",
+      "path": "/{connectionId}/api/data/v9.1.0/{entityName}({recordId})/{associationEntityRelationship}/$ref",
+      "summary": "Unrelate rows in selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "associationEntityRelationship",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$id",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForUnboundActionInput": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/flow/api/data/v9.1/{actionName}/inputs",
+      "summary": "Get metadata for unbound action input",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForUnboundActionInputWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/$metadata.json/actions/unbound/{actionName}/inputs",
+      "summary": "Get metadata for unbound action input based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForBoundActionInput": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/api/data/v9.1/{entityName}/{actionName}/inputs",
+      "summary": "Get metadata for bound action input",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForBoundActionInputWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/$metadata.json/actions/bound/{entityName}/{actionName}/inputs",
+      "summary": "Get metadata for bound action input based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForBoundOrUnboundActionInput": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/api/data/v9.2/{entityName}/{actionName}/asyncinputs",
+      "summary": "Get metadata for bound or unbound action input",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForBoundOrUnboundActionResponse": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/api/data/v9.2/{entityName}/{actionName}/asyncresponse",
+      "summary": "Get metadata for bound or unbound action response",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForUnboundActionResponse": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/flow/api/data/v9.1/{actionName}/response",
+      "summary": "Get metadata for unbound action response",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForUnboundActionResponseWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/$metadata.json/actions/unbound/{actionName}/response",
+      "summary": "Get metadata for unbound action response based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForBoundActionResponse": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/api/data/v9.1/{entityName}/{actionName}/response",
+      "summary": "Get metadata for bound action response",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForBoundActionResponseWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/v1.0/$metadata.json/actions/bound/{entityName}/{actionName}/response",
+      "summary": "Get metadata for bound action response based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetUnboundActions": {
+      "method": "GET",
+      "path": "/{connectionId}/flow/api/data/v9.1/actions",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetUnboundActionsWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/$metadata.json/GetActionListEnum/GetUnboundActionsWithOrganization",
+      "summary": "Get unbound actions based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetBoundActions": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}/actions",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetBoundActionsWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/v1.0/$metadata.json/GetActionListEnum/GetBoundActionsWithOrganization",
+      "summary": "Get bound actions based on environment",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PerformUnboundAction": {
+      "method": "POST",
+      "path": "/{connectionId}/flow/api/data/v9.1/{actionName}",
+      "summary": "Perform an unbound action",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "PerformUnboundActionWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/flow/api/data/v9.1.0/{actionName}",
+      "summary": "Perform an unbound action in selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "PerformBoundAction": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}({recordId})/{actionName}",
+      "summary": "Perform a bound action",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "PerformBoundActionWithOrganization": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1.0/{entityName}({recordId})/{actionName}",
+      "summary": "Perform a bound action in selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "RecordSelected": {
+      "method": "GET",
+      "path": "/{connectionId}/hybridtriggers/entities/{entityName}/onrecordselected",
+      "summary": "When a row is selected",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ExecuteChangeset": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.1/$batch",
+      "summary": "Perform a changeset request",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "UpdateEntityFileImageFieldContent": {
+      "method": "PUT",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}({recordId})/{fileImageFieldName}",
+      "summary": "Upload a file or an image",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "content-type",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "fileImageFieldName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "x-ms-file-name",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateEntityFileImageFieldContentWithOrganization": {
+      "method": "PUT",
+      "path": "/{connectionId}/api/data/v9.1.0/{entityName}({recordId})/{fileImageFieldName}",
+      "summary": "Upload a file or an image to selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "content-type",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "fileImageFieldName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "x-ms-file-name",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetEntityFileImageFieldContent": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.1/{entityName}({recordId})/{fileImageFieldName}/$value",
+      "summary": "Download a file or an image",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Range",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "fileImageFieldName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "size",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetEntityFileImageFieldContentWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.1.0/{entityName}({recordId})/{fileImageFieldName}/$value",
+      "summary": "Download a file or an image from selected environment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Range",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "recordId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "fileImageFieldName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "size",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "FlowStepRun": {
+      "method": "GET",
+      "path": "/{connectionId}/hybridtriggers/onflowsteprun",
+      "summary": "When a flow step is run from a business process flow",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetRelevantRows": {
+      "method": "POST",
+      "path": "/{connectionId}/api/search/v1.0/query",
+      "summary": "Search rows (preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "SearchRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetCatalogs": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.2/catalogs",
+      "summary": "Get catalogs",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetCategories": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.2/catalog/{catalog}/categories",
+      "summary": "Get categories",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "catalog",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetEntitiesForActionTrigger": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.2/catalog/{catalog}/category/{category}/entitiesForActionTrigger",
+      "summary": "Get tables for action trigger",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "catalog",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "category",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetEntitiesForBackgroundOperations": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.2/catalog/{catalog}/category/{category}/entitiesForBackgroundOperations",
+      "summary": "Tables for all types of Custom APIs, including the 'none' global entity",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "catalog",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "category",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetActionsForActionTrigger": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.2/catalog/{catalog}/category/{category}/entityForActionTrigger/{entity}/actions",
+      "summary": "Get actions for action trigger",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "catalog",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "category",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "entity",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetMetadataForActionInputAndResponseForWhenAnActionIsPerformedTrigger": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/whenAnActionIsPerformedEntity/{entityName}/whenAnActionIsPerformedAction/{actionName}",
+      "summary": "Get action metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "entityName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "BusinessEventsTrigger": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.2/callbackregistrations",
+      "summary": "When an action is performed",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Consistency",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "catalog",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "category",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "subscriptionRequest",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "PerformBackgroundOperation": {
+      "method": "POST",
+      "path": "/{connectionId}/api/data/v9.2/{actionName}",
+      "summary": "Perform a background operation (preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        },
+        {
+          "name": "Consistency",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-dyn-callback-url",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "catalog",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "category",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "entityName",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "actionName",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "GetBackgroundOperations": {
+      "method": "GET",
+      "path": "/{connectionId}/api/data/v9.2/GetBackgroundOperations(catalogUniqueName='{catalog}',categoryUniqueName='{category}',entityLogicalName='{entity}')",
+      "summary": "Get async actions",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "catalog",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "category",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "entity",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetNextPageWithOrganization": {
+      "method": "GET",
+      "path": "/{connectionId}/nextLink",
+      "summary": "Follows nextLink to retrieve next page of data",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "organization",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "next",
+          "in": "query",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "InvokeMCP": {
+      "method": "POST",
+      "path": "/{connectionId}/api/mcp",
+      "summary": "Microsoft Dataverse MCP Server",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Mcp-Session-Id",
+          "in": "header",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetInvokeMCP": {
+      "method": "GET",
+      "path": "/{connectionId}/api/mcp",
+      "summary": "GET - Microsoft Dataverse MCP Server",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Mcp-Session-Id",
+          "in": "header",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "InvokeMCPPreview": {
+      "method": "POST",
+      "path": "/{connectionId}/api/mcp_preview",
+      "summary": "Microsoft Dataverse MCP Server (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Mcp-Session-Id",
+          "in": "header",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetInvokeMCPPreview": {
+      "method": "GET",
+      "path": "/{connectionId}/api/mcp_preview",
+      "summary": "GET - Microsoft Dataverse MCP Server (Preview)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Mcp-Session-Id",
+          "in": "header",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "mcp_SalesMCPServer": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/SalesMCPServer",
+      "summary": "D365 Sales MCP Server (deprecated)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "mcp_ServiceMCPServer": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/ServiceMCPServer",
+      "summary": "D365 Service MCP Server (Deprecated)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "mcp_ERPMCPServer": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/ERPMCPServer",
+      "summary": "Dynamics 365 ERP MCP (Deprecated)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "mcp_DataverseMCPServer": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/DataverseMCPServer",
+      "summary": "Dataverse MCP Server (Deprecated)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "mcp_ContactCenterMCPServer": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/ContactCenterMCPServer",
+      "summary": "Dynamics 365 Contact Center MCP (Deprecated)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "mcp_ConversationOrchestratorMCPServer": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/ConversationOrchestratorMCPServer",
+      "summary": "Dynamics 365 Conversation Orchestrator MCP (Preview)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

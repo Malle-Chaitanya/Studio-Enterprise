@@ -1,0 +1,129 @@
+{
+  "connectorId": "shared_confluence",
+  "displayName": "Confluence",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/confluence",
+  "securityDefinitions": {},
+  "connectionAuth": {
+    "DummyValue": {
+      "type": "string"
+    }
+  },
+  "operationCount": 5,
+  "operations": {
+    "GetAccessibleResources": {
+      "method": "GET",
+      "path": "/{connectionId}/oauth/token/accessible-resources",
+      "summary": "Get resources accessible to the current user",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetSpaces": {
+      "method": "GET",
+      "path": "/{connectionId}/ex/confluence/{cloudId}/wiki/api/v2/spaces",
+      "summary": "Get spaces",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "cloudId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetPages": {
+      "method": "GET",
+      "path": "/{connectionId}/ex/confluence/{cloudId}/wiki/api/v2/pages",
+      "summary": "Get pages",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "cloudId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetPagesBySpace": {
+      "method": "GET",
+      "path": "/{connectionId}/ex/confluence/{cloudId}/wiki/api/v2/spaces/{spaceId}/pages",
+      "summary": "Get pages within a space",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "cloudId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "spaceId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetPageMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/ex/confluence/{cloudId}/wiki/api/v2/pages/{pageId}/{spaceId}",
+      "summary": "Get page content and metadata",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "cloudId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "spaceId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "pageId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

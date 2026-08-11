@@ -1,0 +1,5126 @@
+{
+  "connectorId": "shared_hubspotcrmv2",
+  "displayName": "HubSpot CRM V2 (Independent Publisher)",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/hubspotcrmv2",
+  "securityDefinitions": {
+    "API Key": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization"
+    }
+  },
+  "connectionAuth": {
+    "api_key": {
+      "type": "securestring"
+    }
+  },
+  "operationCount": 188,
+  "operations": {
+    "ReadABatchOfCompaniesByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/companies/batch/read",
+      "summary": "Get companies by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfCompanies": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/companies/batch/create",
+      "summary": "Create a batch of companies",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfCompanies": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/companies/batch/update",
+      "summary": "Update a batch of companies",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfCompaniesById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/companies/batch/archive",
+      "summary": "Archive a batch of companies by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/companies",
+      "summary": "Get companies",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/companies",
+      "summary": "Create a company",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/companies/{companyId}",
+      "summary": "Get a company by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "companyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/companies/{companyId}",
+      "summary": "Archive a company by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "companyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/companies/{companyId}",
+      "summary": "Update a company by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "companyId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoCompaniesWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/companies/merge",
+      "summary": "Merge two companies",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDelete": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/companies/gdpr-delete",
+      "summary": "Delete a company to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_companies_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/companies/search",
+      "summary": "Search companies",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfContactsById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/contacts/batch/archive",
+      "summary": "Archive a batch of contacts by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfContacts": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/contacts/batch/update",
+      "summary": "Update a batch of contacts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfContacts": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/contacts/batch/create",
+      "summary": "Create a batch of contacts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfContactsByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/contacts/batch/read",
+      "summary": "Get a batch of contacts by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List16": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/contacts",
+      "summary": "Get contacts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create17": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/contacts",
+      "summary": "Create a contact",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read18": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/contacts/{contactId}",
+      "summary": "Get a contact by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "contactId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive19": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/contacts/{contactId}",
+      "summary": "Archive a contact by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "contactId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update20": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/contacts/{contactId}",
+      "summary": "Update a contact by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "contactId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoContactsWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/contacts/merge",
+      "summary": "Merge two contact",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDelete22": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/contacts/gdpr-delete",
+      "summary": "Delete a contact to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_contacts_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/contacts/search",
+      "summary": "Search for contacts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfDeals": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/deals/batch/update",
+      "summary": "Update a batch of deals",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfDealsById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/deals/batch/archive",
+      "summary": "Archive a batch of deals by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfDeals": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/deals/batch/create",
+      "summary": "Create a batch of deals",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfDealsByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/deals/batch/read",
+      "summary": "Get a batch of deals by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List28": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/deals",
+      "summary": "Get deals",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create29": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/deals",
+      "summary": "Create a deal",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read30": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/deals/{dealId}",
+      "summary": "Get a deal",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "dealId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive31": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/deals/{dealId}",
+      "summary": "Archive a deal by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dealId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update32": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/deals/{dealId}",
+      "summary": "Update a deal",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "dealId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoDealsWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/deals/merge",
+      "summary": "Merge two deals",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDelete34": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/deals/gdpr-delete",
+      "summary": "Delete a deal to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_deals_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/deals/search",
+      "summary": "Search deals",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfFees": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/fees/batch/create",
+      "summary": "Create a batch of fees",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfFees": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/fees/batch/update",
+      "summary": "Update a batch of fees",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfFeesById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/fees/batch/archive",
+      "summary": "Archive a batch of fees by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfFeesByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/fees/batch/read",
+      "summary": "Get a batch of fees by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read40": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/fees/{feeId}",
+      "summary": "Get a fee by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "feeId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive41": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/fees/{feeId}",
+      "summary": "Archive a fee by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "feeId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update42": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/fees/{feeId}",
+      "summary": "Update a fee by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "feeId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List43": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/fees",
+      "summary": "Get fees",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create44": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/fees",
+      "summary": "Create a fee",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoFeesWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/fees/merge",
+      "summary": "Merge two fees",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDelete46": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/fees/gdpr-delete",
+      "summary": "Delete a fee to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_fees_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/fees/search",
+      "summary": "Search for fees",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfGoalTargets": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets/batch/create",
+      "summary": "Create a batch of goal targets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfGoalTargetsByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets/batch/read",
+      "summary": "Get a batch of goal targets by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfGoalTargetsById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets/batch/archive",
+      "summary": "Archive a batch of goal targets by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfGoalTargets": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets/batch/update",
+      "summary": "Update a batch of goal targets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read52": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets/{goalTargetId}",
+      "summary": "Get a goal target by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "goalTargetId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive53": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets/{goalTargetId}",
+      "summary": "Archive a goal target",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "goalTargetId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update54": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets/{goalTargetId}",
+      "summary": "Update a goal target",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "goalTargetId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List55": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets",
+      "summary": "Get goal targets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create56": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets",
+      "summary": "Create a goal target",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoGoalTargetsWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets/merge",
+      "summary": "Merge two goal targets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDelete58": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets/gdpr-delete",
+      "summary": "Delete a goal target to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_goalTargets_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/goal_targets/search",
+      "summary": "Search goal targets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfLineItems": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/line_items/batch/create",
+      "summary": "Create a batch of line items",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfLineItems": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/line_items/batch/update",
+      "summary": "Update a batch of line items",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfLineItemsById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/line_items/batch/archive",
+      "summary": "Archive a batch of line items by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfLineItemsByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/line_items/batch/read",
+      "summary": "Get a batch of line items by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List64": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/line_items",
+      "summary": "Get line items",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create65": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/line_items",
+      "summary": "Create a line item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read66": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/line_items/{lineItemId}",
+      "summary": "Get line item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "lineItemId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive67": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/line_items/{lineItemId}",
+      "summary": "Archive a line item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "lineItemId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update68": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/line_items/{lineItemId}",
+      "summary": "Update a line item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "lineItemId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoLineItemsWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/line_items/merge",
+      "summary": "Merge two line items",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDelete70": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/line_items/gdpr-delete",
+      "summary": "Delete a line item to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_lineItems_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/line_items/search",
+      "summary": "Search line items",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetAPageOfOwners": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/owners/",
+      "summary": "Get owners",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "email",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "ReadAnOwnerByGivenidOruserid": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/owners/{ownerId}",
+      "summary": "Get an owner by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "ownerId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ArchiveABatchOfProductsById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/products/batch/archive",
+      "summary": "Archive a batch of products by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfProductsByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/products/batch/read",
+      "summary": "Get a batch of products by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfProducts": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/products/batch/create",
+      "summary": "Create a batch of products",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfProducts": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/products/batch/update",
+      "summary": "Update a batch of products",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List78": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/products",
+      "summary": "Get products",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create79": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/products",
+      "summary": "Create a product",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read80": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/products/{productId}",
+      "summary": "Get a product",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive81": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/products/{productId}",
+      "summary": "Archive a product",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update82": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/products/{productId}",
+      "summary": "Update a product",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoProductsWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/products/merge",
+      "summary": "Merge two products",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDelete84": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/products/gdpr-delete",
+      "summary": "Delete a product to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_products_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/products/search",
+      "summary": "Search products",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfObjectsByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}/batch/read",
+      "summary": "Get a batch of objects by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfObjectsById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}/batch/archive",
+      "summary": "Archive a batch of objects by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfObjects": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}/batch/create",
+      "summary": "Create a batch of objects",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfObjects": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}/batch/update",
+      "summary": "Update a batch of objects",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadObject": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}/{objectId}",
+      "summary": "Get an object by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "objectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ArchiveObjectId": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}/{objectId}",
+      "summary": "Archive an object",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "objectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateObjectId": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}/{objectId}",
+      "summary": "Update an object",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "objectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListObject": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}",
+      "summary": "Get objects",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateObjectId": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}",
+      "summary": "Create an object",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoObjectsWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}/merge",
+      "summary": "Merge two objects",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDeleteObjectType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}/gdpr-delete",
+      "summary": "Delete an object type to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_objectType_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/{objectType}/search",
+      "summary": "Search by object type",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfDiscounts": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/discounts/batch/update",
+      "summary": "Update a batch of discounts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfDiscounts": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/discounts/batch/create",
+      "summary": "Create a batch of discounts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfDiscountsById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/discounts/batch/archive",
+      "summary": "Archive a batch of discounts by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfDiscountsByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/discounts/batch/read",
+      "summary": "Get a batch of discounts by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read16": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/discounts/{discountId}",
+      "summary": "Get a discount",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "discountId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive17": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/discounts/{discountId}",
+      "summary": "Archive a discount",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "discountId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update18": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/discounts/{discountId}",
+      "summary": "Update a discount",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "discountId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List19": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/discounts",
+      "summary": "List discounts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create20": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/discounts",
+      "summary": "Create a discount",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoDiscountsWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/discounts/merge",
+      "summary": "Merge two discounts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDeleteDiscounts": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/discounts/gdpr-delete",
+      "summary": "Delete a discount to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_discounts_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/discounts/search",
+      "summary": "Search discounts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfFeedbackSubmissions": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions/batch/update",
+      "summary": "Update a batch of feedback submissions",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfFeedbackSubmissions": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions/batch/create",
+      "summary": "Create a batch of feedback submissions",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfFeedbackSubmissionsById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions/batch/archive",
+      "summary": "Archive a batch of feedback submissions by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfFeedbackSubmissionsByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions/batch/read",
+      "summary": "Get a batch of feedback submissions by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read28": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions/{feedbackSubmissionId}",
+      "summary": "Get a feedback submission",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "feedbackSubmissionId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive29": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions/{feedbackSubmissionId}",
+      "summary": "Archive a feedback submission",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "feedbackSubmissionId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update30": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions/{feedbackSubmissionId}",
+      "summary": "Update a feedback submission",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "feedbackSubmissionId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List31": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions",
+      "summary": "List feedback submissions",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create32": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions",
+      "summary": "Create a feedback submission",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoFeedbackSubmissionsWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions/merge",
+      "summary": "Merge two feedback submissions",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDeleteFeedback": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions/gdpr-delete",
+      "summary": "Delete a feedback submission to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_feedbackSubmissions_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/feedback_submissions/search",
+      "summary": "Search feedback submissions",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfQuotesById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/quotes/batch/archive",
+      "summary": "Archive a batch of quotes by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfQuotes": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/quotes/batch/update",
+      "summary": "Update a batch of quotes",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfQuotes": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/quotes/batch/create",
+      "summary": "Create a batch of quotes",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfQuotesByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/quotes/batch/read",
+      "summary": "Get a batch of quotes by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List40": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/quotes",
+      "summary": "List quotes",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create41": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/quotes",
+      "summary": "Create quote",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read42": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/quotes/{quoteId}",
+      "summary": "Get a quote by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "quoteId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive43": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/quotes/{quoteId}",
+      "summary": "Archive a quote by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "quoteId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update44": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/quotes/{quoteId}",
+      "summary": "Update a quote",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "quoteId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoQuotesWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/quotes/merge",
+      "summary": "Merge two quotes",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDeleteQuotes": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/quotes/gdpr-delete",
+      "summary": "Delete a quote to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_quotes_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/quotes/search",
+      "summary": "Search quotes",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfTaxes": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/taxes/batch/update",
+      "summary": "Update a batch of taxes",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfTaxes": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/taxes/batch/create",
+      "summary": "Create a batch of taxes",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfTaxesByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/taxes/batch/read",
+      "summary": "Get a batch of taxes by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfTaxesById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/taxes/batch/archive",
+      "summary": "Archive a batch of taxes by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List52": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/taxes",
+      "summary": "Get taxes",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create53": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/taxes",
+      "summary": "Create a tax",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read54": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/taxes/{taxId}",
+      "summary": "Get a tax by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "taxId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive55": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/taxes/{taxId}",
+      "summary": "Archive a tax",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "taxId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update56": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/taxes/{taxId}",
+      "summary": "Update a tax",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "taxId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoTaxesWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/taxes/merge",
+      "summary": "Merge two taxes",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDeleteTaxes": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/taxes/gdpr-delete",
+      "summary": "Delete a tax to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_taxes_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/taxes/search",
+      "summary": "Search taxes",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ArchiveABatchOfTicketsById": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/tickets/batch/archive",
+      "summary": "Archive a batch of tickets by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadABatchOfTicketsByInternalIdOrUniquePropertyValues": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/tickets/batch/read",
+      "summary": "Get a batch of tickets by ID",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateABatchOfTickets": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/tickets/batch/create",
+      "summary": "Create a batch of tickets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "UpdateABatchOfTickets": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/tickets/batch/update",
+      "summary": "Update a batch of tickets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Read64": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/tickets/{ticketId}",
+      "summary": "Get a ticket",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "ticketId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Archive65": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/tickets/{ticketId}",
+      "summary": "Archive a ticket",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "ticketId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Update66": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/tickets/{ticketId}",
+      "summary": "Update a ticket",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "ticketId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "List67": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/tickets",
+      "summary": "Get tickets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "propertiesWithHistory",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "Create68": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/tickets",
+      "summary": "Create a ticket",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "MergeTwoTicketsWithSameType": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/tickets/merge",
+      "summary": "Merge two tickets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GdprDeleteTickets": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/tickets/gdpr-delete",
+      "summary": "Delete a ticket to follow GDPR",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Post-_crm_v3_objects_tickets_search": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/tickets/search",
+      "summary": "Search tickets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListAssociationTypes": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/associations/{fromObjectType}/{toObjectType}/types",
+      "summary": "List association types",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "fromObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteSpecificLabels": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v4/associations/{fromObjectType}/{toObjectType}/batch/labels/archive",
+      "summary": "Delete specific association labels",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "fromObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ReadBatchObject": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v4/associations/{fromObjectType}/{toObjectType}/batch/read",
+      "summary": "Read batch associations",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "fromObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateBatchObject": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v4/associations/{fromObjectType}/{toObjectType}/batch/create",
+      "summary": "Create batch associations",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "fromObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Delete": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v4/associations/{fromObjectType}/{toObjectType}/batch/archive",
+      "summary": "Delete batch associations",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "fromObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateDefaultAssociations": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v4/associations/{fromObjectType}/{toObjectType}/batch/associate/default",
+      "summary": "Create default associations",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "fromObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "Delete6": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v4/objects/{objectType}/{objectId}/associations/{toObjectType}/{toObjectId}",
+      "summary": "Delete associations",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "objectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Create7": {
+      "method": "PUT",
+      "path": "/{connectionId}/crm/v4/objects/{objectType}/{objectId}/associations/{toObjectType}/{toObjectId}",
+      "summary": "Create association labels",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "objectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "array"
+        }
+      ]
+    },
+    "CreateDefault": {
+      "method": "PUT",
+      "path": "/{connectionId}/crm/v4/objects/{fromObjectType}/{fromObjectId}/associations/default/{toObjectType}/{toObjectId}",
+      "summary": "Create default association",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "fromObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "fromObjectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListAssociations": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v4/objects/{objectType}/{objectId}/associations/{toObjectType}",
+      "summary": "List associations for an object",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "objectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "objectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "toObjectType",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetAllCards": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/extensions/cards-dev/{appId}",
+      "summary": "Get all cards",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "appId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateANewCard": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/extensions/cards-dev/{appId}",
+      "summary": "Create a new card",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "appId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetACard": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/extensions/cards-dev/{appId}/{cardId}",
+      "summary": "Get a card",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "appId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "cardId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteACard": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/extensions/cards-dev/{appId}/{cardId}",
+      "summary": "Delete a card",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "appId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "cardId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateACard": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/extensions/cards-dev/{appId}/{cardId}",
+      "summary": "Update a card",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "appId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "cardId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetSampleCardDetailResponse": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/extensions/cards-dev/sample-response",
+      "summary": "Get sample card detail response",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "Get-_crm_v3_exports_export_async_tasks_taskId_status": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/exports/export/async/tasks/{taskId}/status",
+      "summary": "Get task ID status",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "StartAnExport": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/exports/export/async",
+      "summary": "Start an export",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetTheInformationOnAnyImport": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/imports/{importId}",
+      "summary": "Get the information on any import",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "importId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CancelAnActiveImport": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/imports/{importId}/cancel",
+      "summary": "Cancel an active import",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "importId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetActiveImports": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/imports/",
+      "summary": "Get active imports",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "before",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "StartANewImport": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/imports/",
+      "summary": "Start a new import",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Content-Type",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Get-_crm_v3_imports_importId_errorsGetErrors": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/imports/{importId}/errors",
+      "summary": "Get import errors",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "importId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "AddAnd_orRemoveRecordsFromAList": {
+      "method": "PUT",
+      "path": "/{connectionId}/crm/v3/lists/{listId}/memberships/add-and-remove",
+      "summary": "Add and or remove records from a list",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "listId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "AddRecordsToAList": {
+      "method": "PUT",
+      "path": "/{connectionId}/crm/v3/lists/{listId}/memberships/add",
+      "summary": "Add records to a list",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "listId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "array"
+        }
+      ]
+    },
+    "AddAllRecordsFromASourceListToADestinationList": {
+      "method": "PUT",
+      "path": "/{connectionId}/crm/v3/lists/{listId}/memberships/add-from/{sourceListId}",
+      "summary": "Add all records from a source list to a destination list",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "listId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "sourceListId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "FetchListMembershipsOrderedById": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/lists/{listId}/memberships",
+      "summary": "Fetch list memberships",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "before",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "listId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteAllRecordsFromAList": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/lists/{listId}/memberships",
+      "summary": "Delete all records from a list",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "listId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "RemoveRecordsFromAList": {
+      "method": "PUT",
+      "path": "/{connectionId}/crm/v3/lists/{listId}/memberships/remove",
+      "summary": "Remove records from a list",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "listId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "array"
+        }
+      ]
+    },
+    "SearchLists": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/lists/search",
+      "summary": "Search lists",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    }
+  }
+}

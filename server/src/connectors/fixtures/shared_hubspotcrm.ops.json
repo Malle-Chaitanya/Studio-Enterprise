@@ -1,0 +1,883 @@
+{
+  "connectorId": "shared_hubspotcrm",
+  "displayName": "HubSpot CRM (Independent Publisher)",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/hubspotcrm",
+  "securityDefinitions": {},
+  "connectionAuth": {
+    "token": {
+      "type": "oauthSetting",
+      "identityProvider": "oauth2",
+      "scopes": [
+        "crm.objects.contacts.read tickets crm.objects.marketing_events.read content actions timeline oauth forms files crm.objects.marketing_events.write crm.schemas.custom.read crm.objects.custom.read crm.objects.feedback_submissions.read crm.objects.custom.write crm.objects.line_items.write"
+      ]
+    }
+  },
+  "operationCount": 30,
+  "operations": {
+    "CompaniesList": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/companies",
+      "summary": "List companies",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "important"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CompaniesCreate": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/companies",
+      "summary": "Create a company",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CompaniesRead": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/companies/{companyId}",
+      "summary": "Get a company",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "companyId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CompaniesArchive": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/companies/{companyId}",
+      "summary": "Delete a company",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "companyId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "CompaniesUpdate": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/companies/{companyId}",
+      "summary": "Update a company",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "companyId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "properties",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ContactsList": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/contacts",
+      "summary": "List contacts",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": true,
+          "type": "integer",
+          "visibility": "important"
+        },
+        {
+          "name": "properties[]",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ContactsCreate": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/contacts",
+      "summary": "Create a contact",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ContactsRead": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/contacts/{contactId}",
+      "summary": "Get a contact",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "contactId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "ContactsArchive": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/contacts/{contactId}",
+      "summary": "Delete a contact",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "contactId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "ContactsUpdate": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/contacts/{contactId}",
+      "summary": "Update a contact",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "contactId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "properties",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DealsList": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/deals",
+      "summary": "List deals",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DealsCreate": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/deals",
+      "summary": "Create a deal",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "DealsRead": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/deals/{dealId}",
+      "summary": "Get a deal",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dealId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DealsArchive": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/deals/{dealId}",
+      "summary": "Delete a deal",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dealId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "DealsUpdate": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/deals/{dealId}",
+      "summary": "Update a deal",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dealId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ProductsList": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/products",
+      "summary": "List products",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ProductsCreate": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/products",
+      "summary": "Create a product",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ProductsRead": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/products/{productId}",
+      "summary": "Get a product",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ProductsArchive": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/products/{productId}",
+      "summary": "Delete a product",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "ProductsUpdate": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/products/{productId}",
+      "summary": "Update a product",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "properties",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "LineItemsList": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/line_items",
+      "summary": "List line items",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": true,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "LineItemsCreate": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/line_items",
+      "summary": "Create a line item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "properties",
+          "in": "body",
+          "required": true,
+          "type": "object",
+          "visibility": "important"
+        }
+      ]
+    },
+    "LineItemsRead": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/line_items/{lineItemId}",
+      "summary": "Get a line item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "lineItemId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "LineItemsArchive": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/line_items/{lineItemId}",
+      "summary": "Delete a line item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "lineItemId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "LineItemsUpdate": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/line_items/{lineItemId}",
+      "summary": "Update a line item",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "lineItemId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "TicketsList": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/tickets",
+      "summary": "List tickets",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "important"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "associations",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "important"
+        }
+      ]
+    },
+    "TicketsCreate": {
+      "method": "POST",
+      "path": "/{connectionId}/crm/v3/objects/tickets",
+      "summary": "Create a ticket",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "TicketsRead": {
+      "method": "GET",
+      "path": "/{connectionId}/crm/v3/objects/tickets/{ticketId}",
+      "summary": "Get a ticket",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "ticketId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "properties",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "archived",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "TicketsArchive": {
+      "method": "DELETE",
+      "path": "/{connectionId}/crm/v3/objects/tickets/{ticketId}",
+      "summary": "Delete a ticket",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "ticketId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        }
+      ]
+    },
+    "TicketsUpdate": {
+      "method": "PATCH",
+      "path": "/{connectionId}/crm/v3/objects/tickets/{ticketId}",
+      "summary": "Update a ticket",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "ticketId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "idProperty",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    }
+  }
+}
