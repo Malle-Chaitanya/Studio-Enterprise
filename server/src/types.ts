@@ -338,6 +338,19 @@ export interface AgentToolIR {
   description?: string;
   /** Registry connector id parsed from the connection reference, e.g. `shared_jira`. */
   connectorId?: string;
+  /**
+   * Whose credentials the action runs under, from `connectionProperties.mode`.
+   *
+   * `invoker` — the signed-in END USER's own connection, so each person sees only what
+   * they already have access to. `maker` — one shared connection the author configured,
+   * the same for everyone. `undefined` — the payload did not say.
+   *
+   * Load-bearing for access fidelity: migrating an `invoker` tool onto our app-only
+   * service credential gives every end user the service account's entire view. That must
+   * be reported, and where possible replaced with a Gemini Enterprise end-user
+   * authorization, rather than shipped silently.
+   */
+  connectionAuthMode?: 'invoker' | 'maker';
   /** The exact operation invoked, e.g. `ListIssues`, `GetIssue_V2`. */
   operationId?: string;
   /** Declared output property names, when the component lists them. */

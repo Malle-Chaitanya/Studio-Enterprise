@@ -101,6 +101,22 @@ export async function preflightSecretAccess(
   };
 }
 
+/**
+ * GCP label keys and values accept lowercase letters, digits, dashes and underscores
+ * only, and must start with a letter. Anything else is rejected for the whole request,
+ * so an id we cannot express safely is dropped rather than allowed to fail the write.
+ */
+function safeLabels(labels: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(labels)) {
+    if (!v) continue;
+    const key = k.toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 63);
+    const value = v.toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 63);
+    if (/^[a-z]/.test(key)) out[key] = value;
+  }
+  return out;
+}
+
 export interface PutSecretResult {
   ok: boolean;
   /** Full versioned resource name: projects/{project}/secrets/{id}/versions/{version}. */
@@ -118,11 +134,12 @@ export async function putEntraSecret(
   saToken: string,
   secretId: string,
   plaintext: string,
+  labels?: Record<string, string>,
 ): Promise<PutSecretResult> {
   const createRes = await fetch(`${HOST}/projects/${project}/secrets?secretId=${encodeURIComponent(secretId)}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ replication: { automatic: {} } }),
+    body: JSON.stringify({ replication: { automatic: {} }, ...(labels ? { labels: safeLabels(labels) } : {}) }),
   });
   if (!createRes.ok) {
     const text = await createRes.text().catch(() => '');
@@ -160,6 +177,174 @@ export async function upsertSecret(
 ): Promise<void> {
   const result = await putEntraSecret(project, saToken, secretId, plaintext);
   if (!result.ok) throw new Error(result.error ?? 'upsertSecret failed');
+}
+
+/**
+ * Store a connector credential, but only if it actually differs from what is already
+ * there. Returns whether a new version was written.
+ *
+ * Every save used to add a version unconditionally, and the UI re-posts every field on
+ * every save — so re-opening the connector screen and pressing Save produced a fresh
+ * version of an identical secret. Versions are billed while enabled and never expire,
+ * so a customer adjusting one field slowly accumulated duplicates of all the others,
+ * each one a live copy of a credential.
+ *
+ * A read failure is treated as "unknown, write anyway": the write is the operation the
+ * caller asked for, and skipping it because we could not compare would silently drop a
+ * credential update.
+ */
+export async function upsertSecretIfChanged(
+  saToken: string,
+  project: string,
+  secretId: string,
+  plaintext: string,
+  labels?: Record<string, string>,
+): Promise<{ written: boolean }> {
+  const current = await getEntraSecret(saToken, `projects/${project}/secrets/${secretId}/versions/latest`);
+  if (current.ok && current.plaintext === plaintext) return { written: false };
+  const result = await putEntraSecret(project, saToken, secretId, plaintext, labels);
+  if (!result.ok) throw new Error(result.error ?? 'upsertSecretIfChanged failed');
+  // Superseded versions are still enabled, still billed, and still readable — a stale
+  // copy of a live credential serves no purpose. One prior version is kept so a bad
+  // paste can be rolled back; everything older is destroyed.
+  await pruneSecretVersions(saToken, project, secretId, 2);
+  return { written: true };
+}
+
+/**
+ * Destroy all but the newest `keep` enabled versions of a secret.
+ *
+ * Tools resolve `versions/latest`, so older versions back nothing — they only
+ * accumulate cost and extra copies of a credential. Destroy removes the payload and
+ * leaves the version metadata, which is what keeps the audit trail intact.
+ *
+ * Best-effort: a failure here must never fail the customer's save. The credential is
+ * already written by this point, and refusing the save over a cleanup problem would
+ * trade a real success for a cosmetic one.
+ */
+export async function pruneSecretVersions(
+  saToken: string,
+  project: string,
+  secretId: string,
+  keep = 2,
+): Promise<{ destroyed: number }> {
+  try {
+    const res = await fetch(
+      `${HOST}/projects/${project}/secrets/${secretId}/versions?filter=state:ENABLED&pageSize=100`,
+      { headers: { Authorization: `Bearer ${saToken}` } },
+    );
+    if (!res.ok) return { destroyed: 0 };
+    const json = (await res.json()) as { versions?: Array<{ name?: string; state?: string }> };
+    const enabled = (json.versions ?? []).filter((v) => v.name && v.state === 'ENABLED');
+    // The API returns newest first; guard by version number anyway rather than trusting
+    // ordering, because destroying the wrong end here would destroy the live credential.
+    const sorted = enabled
+      .map((v) => ({ name: v.name!, num: Number(v.name!.split('/').pop()) }))
+      .filter((v) => Number.isFinite(v.num))
+      .sort((a, b) => b.num - a.num);
+    let destroyed = 0;
+    for (const v of sorted.slice(keep)) {
+      const d = await fetch(`${HOST}/${v.name}:destroy`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (d.ok) destroyed++;
+    }
+    if (destroyed) logger.info({ secretId, destroyed }, 'Secret Manager: pruned superseded versions');
+    return { destroyed };
+  } catch (err) {
+    logger.warn({ secretId, err: (err as Error).message }, 'Secret Manager: version prune failed');
+    return { destroyed: 0 };
+  }
+}
+
+/**
+ * Grant the Reasoning Engine runtime service agent read access to EXACTLY the secrets
+ * one deployment needs, on the secrets themselves rather than on the project.
+ *
+ * The documented prerequisite has been a project-wide `roles/secretmanager.secretAccessor`,
+ * which is the same identity for every Reasoning Engine in the project — so any deployed
+ * agent could read every secret there, including other customers' connector credentials.
+ * A per-secret binding narrows that to the credentials the agent was actually built with.
+ *
+ * Best-effort, and deliberately so: our SA needs `secretmanager.secrets.{get,set}IamPolicy`
+ * on the customer's project, which many customers will not have granted. Failing here
+ * must not fail the deployment — the caller reports it, exactly as
+ * `ensureReasoningEngineDiscoveryAccess` does for Discovery Engine — but a caller that
+ * ignores the result ships an agent whose every tool call 403s at inference behind a
+ * green deploy.
+ */
+export async function grantSecretAccessToServiceAgent(
+  saToken: string,
+  project: string,
+  secretIds: string[],
+  serviceAgentEmail: string,
+): Promise<{ granted: string[]; failed: Array<{ secretId: string; error: string }> }> {
+  const granted: string[] = [];
+  const failed: Array<{ secretId: string; error: string }> = [];
+  const member = `serviceAccount:${serviceAgentEmail}`;
+  const role = 'roles/secretmanager.secretAccessor';
+
+  for (const secretId of new Set(secretIds)) {
+    const base = `${HOST}/projects/${project}/secrets/${secretId}`;
+    try {
+      const getRes = await fetch(`${base}:getIamPolicy`, { headers: { Authorization: `Bearer ${saToken}` } });
+      if (!getRes.ok) {
+        failed.push({ secretId, error: `getIamPolicy ${getRes.status}: ${(await getRes.text()).slice(0, 160)}` });
+        continue;
+      }
+      const policy = (await getRes.json()) as { bindings?: Array<{ role: string; members: string[] }> };
+      policy.bindings = policy.bindings ?? [];
+      const binding = policy.bindings.find((b) => b.role === role);
+      if (binding?.members?.includes(member)) {
+        granted.push(secretId);
+        continue;
+      }
+      if (binding) binding.members.push(member);
+      else policy.bindings.push({ role, members: [member] });
+
+      const setRes = await fetch(`${base}:setIamPolicy`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy }),
+      });
+      if (!setRes.ok) {
+        failed.push({ secretId, error: `setIamPolicy ${setRes.status}: ${(await setRes.text()).slice(0, 160)}` });
+        continue;
+      }
+      granted.push(secretId);
+    } catch (err) {
+      failed.push({ secretId, error: (err as Error).message });
+    }
+  }
+  if (failed.length) {
+    logger.warn({ project, failed: failed.length }, 'Secret Manager: per-secret access grant incomplete');
+  }
+  return { granted, failed };
+}
+
+/**
+ * Permanently delete a secret and every version of it.
+ *
+ * The deprovisioning path: without it a departing customer's credentials stay in the
+ * project forever. Irreversible, so it is only ever driven by an explicit request —
+ * never by migration cleanup or a failed run.
+ */
+export async function deleteSecret(
+  saToken: string,
+  project: string,
+  secretId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${HOST}/projects/${project}/secrets/${secretId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${saToken}` },
+  });
+  // Already gone is the outcome the caller wanted.
+  if (res.ok || res.status === 404) return { ok: true };
+  const text = await res.text().catch(() => '');
+  logger.warn({ status: res.status, secretId }, 'Secret Manager: delete secret failed');
+  return { ok: false, error: `${res.status}: ${text.slice(0, 200)}` };
 }
 
 export interface GetSecretResult {

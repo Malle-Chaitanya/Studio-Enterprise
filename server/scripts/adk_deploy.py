@@ -1092,21 +1092,61 @@ def main():
     #
     # `description` is what the root model routes on, so it must say WHEN to use the
     # sub-agent — a description that only restates the name gives the router nothing.
+    # ── Callback: make tool use observable ──────────────────────────────────────
+    #
+    # after_tool_callback fires with the tool's real result, inside the container. That
+    # is the only place a tool call can be observed for what it was: verification has
+    # been scraping the chat transcript for function_response blocks, which cannot tell
+    # WHICH connector answered when an agent has five of them — so an agent where one
+    # tool worked and four were broken verified as healthy.
+    #
+    # The record is written into session state rather than returned, so it travels with
+    # the conversation and a verifier can ask what was actually called.
+    def _record_tool_call(tool, args, tool_context, tool_response):  # noqa: ANN001
+        try:
+            state = tool_context.state
+            # Bounded: a long conversation must not grow session state without limit,
+            # and only recent calls are ever inspected.
+            calls = list(state.get("_tool_calls") or [])[-49:]
+            failed = isinstance(tool_response, dict) and bool(tool_response.get("error"))
+            calls.append({"tool": getattr(tool, "name", str(tool)), "ok": not failed})
+            state["_tool_calls"] = calls
+        except Exception:  # noqa: BLE001
+            # Observability must never break the answer it is observing.
+            pass
+        return None
+
     sub_agent_specs = spec.get("subAgents") or []
     sub_agents = []
     for sa in sub_agent_specs:
+        sa_kwargs = dict(
+            name=_safe_agent_name(sa.get("id") or sa.get("name") or "topic"),
+            model=sa.get("model") or spec.get("model", "gemini-2.5-flash"),
+            description=sa.get("description") or f"Handles {sa.get('displayName') or sa.get('id')} requests.",
+            instruction=sa.get("instruction") or "",
+            # Sub-agents inherit nothing implicitly: give them the same tools as the
+            # root so a topic that needs SharePoint or a connector can still act.
+            tools=tools if sa.get("inheritTools", True) else [],
+        )
         try:
-            sub_agents.append(Agent(
-                name=_safe_agent_name(sa.get("id") or sa.get("name") or "topic"),
-                model=sa.get("model") or spec.get("model", "gemini-2.5-flash"),
-                description=sa.get("description") or f"Handles {sa.get('displayName') or sa.get('id')} requests.",
-                instruction=sa.get("instruction") or "",
-                # Sub-agents inherit nothing implicitly: give them the same tools as the
-                # root so a topic that needs SharePoint or a connector can still act.
-                tools=tools if sa.get("inheritTools", True) else [],
-            ))
+            # Same tool-call record as the root. Once the root transfers to a topic, the
+            # topic is what calls the tools — without this, every tool call made inside a
+            # topic is invisible and the agent looks like it never used its connectors.
+            sub_agents.append(Agent(**sa_kwargs, after_tool_callback=_record_tool_call))
+        except TypeError:
+            sub_agents.append(Agent(**sa_kwargs))
         except Exception as e:  # noqa: BLE001
             emit({"error": f"sub-agent build failed for {sa.get('id')}: {e}"}); return
+
+    # Rules that must hold for the root AND every topic sub-agent. Built server-side
+    # (adkDeployer.globalAnswerContract) so the wording lives in one place; ADK's
+    # global_instruction is what makes it reach sub-agents, which the root's own
+    # instruction never did — a question routed to a topic silently escaped the rules.
+    naming_rule = spec.get("globalInstruction") or (
+        "Tool and data-store names are internal implementation details. Never list, quote or "
+        "describe them to the user. Describe what you can DO and which systems you can reach, "
+        "using their product names (SharePoint, Jira, Confluence), never a function name."
+    )
 
     try:
         root_agent = Agent(
@@ -1114,6 +1154,22 @@ def main():
             model=spec.get("model", "gemini-2.5-flash"),
             description=spec.get("description", ""),
             instruction=spec.get("instruction", "") or "You are a helpful assistant.",
+            tools=tools,
+            global_instruction=naming_rule,
+            after_tool_callback=_record_tool_call,
+            **({"sub_agents": sub_agents} if sub_agents else {}),
+        )
+    except TypeError:
+        # Older google-adk builds do not accept global_instruction/after_tool_callback on
+        # Agent. Deploying without them is strictly better than failing the migration —
+        # the agent still works, it is only less observable — but say so, because a
+        # silently less-verifiable agent is exactly what this project keeps being bitten by.
+        emit({"warn": "adk build does not support global_instruction/after_tool_callback; deploying without them"})
+        root_agent = Agent(
+            name=spec.get("name", "migrated_agent"),
+            model=spec.get("model", "gemini-2.5-flash"),
+            description=spec.get("description", ""),
+            instruction=(spec.get("instruction", "") or "You are a helpful assistant.") + "\n\n" + naming_rule,
             tools=tools,
             **({"sub_agents": sub_agents} if sub_agents else {}),
         )

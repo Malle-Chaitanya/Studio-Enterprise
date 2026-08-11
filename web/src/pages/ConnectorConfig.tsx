@@ -11,6 +11,7 @@ import {
   type DetectedConnector,
   type ConnectorDef,
   type ConnectorRequirement,
+  type ConnectorValidation,
 } from '../api.ts';
 
 // ── Shared input styles ───────────────────────────────────────────────────────
@@ -56,6 +57,9 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
   const [showHint, setShowHint] = useState<string | null>(null);
+  // Entra hands out a valid token for an app with nothing consented, so a successful
+  // save says nothing about whether Graph calls will work. This holds the live check.
+  const [validation, setValidation] = useState<ConnectorValidation | null>(null);
 
   if (detectedMsIds.length === 0) return null;
 
@@ -65,7 +69,8 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
     setSaving(true);
     setError('');
     try {
-      await saveMsConnectorCredentials(session, values);
+      const { validation: v } = await saveMsConnectorCredentials(session, values);
+      setValidation(v ?? null);
       setSaved(true);
     } catch (err) {
       // Show the server's real cause — usually a missing IAM grant, with the exact
@@ -99,8 +104,29 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
             Microsoft Graph at runtime.
           </p>
         </div>
-        {saved && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Saved</span>}
+        {saved && (
+          <span style={{
+            color: !validation || validation.code === 'ok' ? 'var(--ok)' : validation.code === 'unverified' ? 'var(--muted)' : '#dc2626',
+            fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+          }}>
+            {!validation ? '✓ Saved' : validation.code === 'ok' ? '✓ Verified' : validation.code === 'unverified' ? '• Saved (not tested)' : '⚠ Saved, but not working'}
+          </span>
+        )}
       </div>
+
+      {saved && validation && validation.code !== 'ok' && validation.detail && (
+        <div style={{
+          fontSize: 12, marginBottom: 10, padding: '8px 10px', borderRadius: 6,
+          color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca',
+        }}>
+          {validation.detail}
+          {validation.grantedPermissions && (
+            <div style={{ marginTop: 4 }}>
+              Consented today: {validation.grantedPermissions.length ? validation.grantedPermissions.join(', ') : 'none'}.
+            </div>
+          )}
+        </div>
+      )}
 
       {!saved && (
         <>
@@ -271,14 +297,38 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
   const [error, setError] = useState('');
   const [showHint, setShowHint] = useState<string | null>(null);
 
+  // Fields the admin has explicitly chosen to overwrite. A field whose value already
+  // exists in Secret Manager is shown as satisfied rather than as an empty required
+  // input — asking again made admins retype credentials the product already had, and
+  // every retype wrote another version of an identical secret.
+  const [replacing, setReplacing] = useState<Record<string, boolean>>({});
+  // Outcome of the live check the server runs after storing. Kept separate from `error`:
+  // the credential IS saved, so this is a warning about whether it works, not a failure
+  // to save. Showing "✓ Saved" alone is what let a broken connector reach a customer.
+  const [validation, setValidation] = useState<ConnectorValidation | null>(null);
+  const needsValue = (f: { key: string; supplied?: boolean }) => !f.supplied || replacing[f.key];
+
   // An empty field list must never count as "all filled" — that vacuous `true` is what
   // let the button submit nothing. No fields means we do not yet know what to ask for.
-  const allFilled = fields.length > 0 && fields.every((f) => values[f.key]?.trim());
+  // Fields already supplied are satisfied without input; only the ones being entered
+  // or deliberately replaced have to be filled.
+  const allFilled =
+    fields.length > 0 && fields.every((f) => (needsValue(f) ? !!values[f.key]?.trim() : true));
 
   const handleSave = async () => {
     setSaving(true); setError('');
     try {
-      await saveConnectorCredentials(session, c.connectorId, fields.map((f) => ({ field: f.key, value: values[f.key] })));
+      // Send only what the admin actually typed. The server merges onto the existing
+      // record and skips writing a new secret version when the value is unchanged, so
+      // omitting an untouched field leaves both the secret and its id exactly as they
+      // are — which matters because deployed agents resolve credentials by that id.
+      const changed = fields
+        .filter((f) => needsValue(f) && values[f.key]?.trim())
+        .map((f) => ({ field: f.key, value: values[f.key] }));
+      // An empty list is still sent: the server registers the connector against the
+      // credentials a sibling already supplied, and runs the same live check.
+      const { validation: v } = await saveConnectorCredentials(session, c.connectorId, changed);
+      setValidation(v ?? null);
       setSaved(true);
     } catch (err) {
       setError((err as Error).message || 'Failed to save. Please try again.');
@@ -327,9 +377,36 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
             LIKELY
           </span>
         )}
-        {saved && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>}
+        {/* "Saved" only claims storage. Whether it WORKS is the validation badge — a
+            credential that stored fine and cannot call the API is the failure this
+            screen exists to catch, so it must not read as a plain success. */}
+        {saved && validation?.code === 'ok' && (
+          <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ Verified</span>
+        )}
+        {saved && validation && validation.code !== 'ok' && (
+          <span style={{ color: validation.code === 'unverified' ? 'var(--muted)' : '#dc2626', fontSize: 13, fontWeight: 600 }}>
+            {validation.code === 'unverified' ? '• Saved (not tested)' : '⚠ Saved, but not working'}
+          </span>
+        )}
+        {saved && !validation && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>}
         {skipped && <span style={{ color: '#f59e0b', fontSize: 13, fontWeight: 600 }}>⚠ Skipped</span>}
       </div>
+
+      {saved && validation && validation.code !== 'ok' && validation.detail && (
+        <div style={{
+          fontSize: 12, marginBottom: 10, padding: '8px 10px', borderRadius: 6,
+          color: validation.code === 'unverified' ? 'var(--muted)' : '#991b1b',
+          background: validation.code === 'unverified' ? 'var(--bg)' : '#fef2f2',
+          border: `1px solid ${validation.code === 'unverified' ? 'var(--border)' : '#fecaca'}`,
+        }}>
+          {validation.detail}
+          {validation.code === 'permission_denied' && (
+            <div style={{ marginTop: 4 }}>
+              The credentials themselves are correct — this needs a permission grant, not a new token.
+            </div>
+          )}
+        </div>
+      )}
 
       {(c.agentNames?.length ?? 0) > 0 && (
         <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
@@ -369,13 +446,27 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
                     {field.hint}
                   </div>
                 )}
-                <input
-                  type={field.type === 'password' ? 'password' : 'text'}
-                  value={values[field.key] ?? ''}
-                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
-                  placeholder={field.placeholder ?? ''}
-                  style={inputStyle}
-                />
+                {needsValue(field) ? (
+                  <input
+                    type={field.type === 'password' ? 'password' : 'text'}
+                    value={values[field.key] ?? ''}
+                    onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                    placeholder={field.placeholder ?? ''}
+                    style={inputStyle}
+                  />
+                ) : (
+                  // Stored values are never sent back to the browser, so this states
+                  // only that one exists. Replacing is deliberate: leaving it alone
+                  // writes nothing, which is what keeps identical secret versions from
+                  // piling up every time this screen is revisited.
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--muted)', padding: '6px 0' }}>
+                    <span style={{ color: 'var(--ok)' }}>✓ Already stored</span>
+                    <button type="button" className="wbtn" style={{ fontSize: 11, padding: '2px 10px' }}
+                      onClick={() => setReplacing((r) => ({ ...r, [field.key]: true }))}>
+                      Replace
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -399,7 +490,7 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
 
       {saved && (
         <button className="wbtn" style={{ fontSize: 11, padding: '4px 12px', marginTop: 6 }}
-          onClick={() => { setSaved(false); setValues({}); }}>
+          onClick={() => { setSaved(false); setValues({}); setReplacing({}); }}>
           Edit
         </button>
       )}

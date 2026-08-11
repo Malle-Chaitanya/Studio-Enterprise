@@ -5,6 +5,7 @@ import { logger } from '../logger.js';
 import { createDataStore, addTargetSite, dataStoreResourcePath } from './geminiDataStore.js';
 import { sanitizeDataStoreId } from './knowledgePlanner.js';
 import { isPublicWebsiteKind } from './knowledgeClassifier.js';
+import { grantSecretAccessToServiceAgent } from './secretManager.js';
 import type { AgentIR, GeminiDestination, KnowledgeSourceIR } from '../types.js';
 
 /**
@@ -38,6 +39,8 @@ export interface AdkSpec {
   description: string;
   model: string; // GA model — NOT a preview id (preview + global-location hack fails to start)
   instruction: string; // the migrated instruction, verbatim
+  /** Rules that must hold for the root AND every topic sub-agent (ADK global_instruction). */
+  globalInstruction?: string;
   tools: string[]; // e.g. ['googleSearch']
   /**
    * Full Discovery Engine resource paths of data stores this agent should
@@ -83,9 +86,12 @@ export interface AdkSpec {
    * the container resolves them per call, so nothing secret is pickled into the
    * deployment and a rotated token needs no redeploy.
    *
-   * ⚠️ Requires the Reasoning Engine runtime service agent to hold
-   * roles/secretmanager.secretAccessor on the project, or every tool call 403s
-   * at inference time while deployment still reports success.
+   * ⚠️ The Reasoning Engine runtime service agent must hold
+   * roles/secretmanager.secretAccessor on these secrets, or every tool call 403s at
+   * inference time while deployment still reports success. Deployment now grants that
+   * per-secret rather than project-wide (one project-wide grant would let every agent
+   * in the project read every customer's credentials); if our SA cannot set the policy,
+   * the grant is reported as failed and a manual project-wide grant is the fallback.
    */
   liveConnectors?: Array<{
     id: string;
@@ -209,6 +215,8 @@ export function buildAdkSpec(
     description: ir.description || `Migrated from Copilot Studio: ${ir.name}`, // Stage 1 ✓
     model: opts?.model || 'gemini-2.5-flash',
     instruction: withKnowledgeResponseRules(baseInstruction, (opts?.groundingDataStores?.length ?? 0) > 0),
+    // Applies to topic sub-agents as well as the root — see globalAnswerContract.
+    globalInstruction: globalAnswerContract((opts?.groundingDataStores?.length ?? 0) > 0),
     tools,                                                            // only googleSearch for now (Stage 3 adds the rest)
     groundingDataStores: opts?.groundingDataStores?.length ? opts.groundingDataStores : undefined,
   };
@@ -256,6 +264,32 @@ function withKnowledgeResponseRules(instruction: string, hasKnowledge: boolean):
     'sources. Do not answer from general knowledge and present it as if it came from them.',
   ].join('\n');
   return `${instruction.trimEnd()}\n${rules}\n`;
+}
+
+/**
+ * The subset of the answering contract that must hold for EVERY agent in the tree,
+ * carried on ADK's `global_instruction` rather than the root's instruction.
+ *
+ * Once the root transfers to a topic sub-agent, the sub-agent's own instruction is what
+ * governs the reply — the root's rules no longer apply. So a migrated agent obeyed the
+ * citation format until a question routed to a topic, and then quietly stopped. These
+ * are the rules whose whole value depends on being unconditional.
+ */
+function globalAnswerContract(hasKnowledge: boolean): string {
+  const lines = [
+    'Tool and data-store names are internal implementation details. Never list, quote or',
+    'describe them. Describe what you can do and which systems you can reach, using their',
+    'product names (SharePoint, Jira, Confluence), never a function name.',
+  ];
+  if (hasKnowledge) {
+    lines.push(
+      '',
+      'When you used retrieved information, end the reply with a "Sources:" section, one line',
+      'per source: "[INDEXED] <title>" for a knowledge-source search, "[LIVE] <title> — <url>"',
+      'for a live connector result. Never present general knowledge as if it came from a source.',
+    );
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -583,6 +617,11 @@ export async function publishAgentToGallery(
    *  grounding data store is present (see AdkSpec.groundingDataStores doc).
    *  Caller must surface this as a fidelity note — never let it stay silent. */
   googleSearchDropped?: boolean;
+  /** False when per-secret access could not be granted to the Reasoning Engine service
+   *  agent. The connector tools then work only if a project-wide grant already exists,
+   *  so the caller must report it rather than let a green deploy imply working tools. */
+  secretIamGranted?: boolean;
+  secretIamError?: string;
 }> {
   const location = opts?.location || process.env.ADK_LOCATION || 'us-central1';
   // Key the website grounding store by the Copilot botid, NOT the agent's display name.
@@ -618,6 +657,40 @@ export async function publishAgentToGallery(
         { agent: ir.name, project: dest.project, error: iam.error },
         'adk: could not grant Reasoning Engine Discovery Engine access — grounding will 403 at query time until granted manually',
       );
+    }
+  }
+
+  // Per-secret access for exactly the credentials THIS agent's tools resolve.
+  //
+  // The alternative — the project-wide roles/secretmanager.secretAccessor this used to
+  // require — is one identity shared by every Reasoning Engine in the project, so any
+  // deployed agent could read every secret there, including other customers' connector
+  // credentials. Best-effort: our SA may not hold setIamPolicy on the customer's
+  // project, in which case a project-wide grant made by hand is still what makes the
+  // tools work, and the failure is reported rather than silently swallowed.
+  let secretIamGranted: boolean | undefined;
+  let secretIamError: string | undefined;
+  const connectorSecretIds = (opts?.liveConnectors ?? []).flatMap((c) => Object.values(c.secretIds ?? {}));
+  if (connectorSecretIds.length) {
+    const projectNumber = await resolveProjectNumber(dest.project, saToken);
+    if (!projectNumber) {
+      secretIamGranted = false;
+      secretIamError = `could not resolve project number for ${dest.project}`;
+    } else {
+      const grant = await grantSecretAccessToServiceAgent(
+        saToken,
+        dest.project,
+        connectorSecretIds,
+        `service-${projectNumber}@gcp-sa-aiplatform-re.iam.gserviceaccount.com`,
+      );
+      secretIamGranted = grant.failed.length === 0;
+      if (grant.failed.length) {
+        secretIamError = grant.failed.map((f) => `${f.secretId} (${f.error})`).join('; ');
+        logger.warn(
+          { agent: ir.name, project: dest.project, failed: grant.failed.length },
+          'adk: could not grant per-secret access to the Reasoning Engine service agent — connector tools will 403 at inference unless a project-wide grant exists',
+        );
+      }
     }
   }
 
@@ -685,5 +758,5 @@ export async function publishAgentToGallery(
       googleSearchDropped,
     };
   }
-  return { ok: true, agentId: reg.agentId, reasoningEngine: dep.reasoningEngine, state: reg.state, groundingIamGranted, groundingIamError, googleSearchDropped };
+  return { ok: true, agentId: reg.agentId, reasoningEngine: dep.reasoningEngine, state: reg.state, groundingIamGranted, groundingIamError, googleSearchDropped, secretIamGranted, secretIamError };
 }

@@ -8,7 +8,8 @@ import { defaultDestination, resolveDestination, projectReachable, publishAgent,
 import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
-import { resolveConnectorSecrets, buildLiveConnectorSpecs, agentConnectorIds } from './services/connectorToolBuilder.js';
+import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
+import { REGISTRY_BY_ID } from './connectors/registry.js';
 import { migrateSharePointToDataStore } from './services/sharePointMigrator.js';
 import type { SharePointMigrationResult } from './services/sharePointMigrator.js';
 import { migrateConfluenceToDataStore, type ConfluenceCreds, type ConfluenceMigrationResult } from './services/confluenceMigrator.js';
@@ -596,15 +597,25 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // Only records stored in the project we are deploying INTO count — the container
   // resolves secrets from its own project, so a record from elsewhere is unusable.
   const destProject = effectiveGeminiProject(session.geminiProject);
-  const durableConnectorIds = (await listConnectorCredentials(appUserId).catch(() => []))
-    .filter((c) => !!destProject && c.project === destProject)
-    .map((c) => c.connectorId);
+  const durableConnectorRecords = (await listConnectorCredentials(appUserId).catch(() => []))
+    .filter((c) => !!destProject && c.project === destProject);
+  const durableConnectorIds = durableConnectorRecords.map((c) => c.connectorId);
+  // The id each credential was ACTUALLY written under. Secret ids are tenant-scoped
+  // now, but credentials saved before that scoping live under the old name and already
+  // back deployed agents — recomputing would point a working agent at a secret that
+  // does not exist, and every tool call would 403 at inference behind a green deploy.
+  const secretIdOpts = {
+    appUserId,
+    storedSecretIds: Object.fromEntries(
+      durableConnectorRecords.map((c) => [c.connectorId, c.secretIds ?? {}]),
+    ),
+  };
   const savedConnectors = [...new Set([...(plan.savedConnectors ?? []), ...durableConnectorIds])];
   if (durableConnectorIds.length && !(plan.savedConnectors ?? []).length) {
     emitLog('info', `Connectors from saved credentials: ${durableConnectorIds.join(', ')}`);
   }
   const resolvedConnectors = savedConnectors.length && session.geminiProject
-    ? await resolveConnectorSecrets(saToken, session.geminiProject, savedConnectors).catch((err) => {
+    ? await resolveConnectorSecrets(saToken, session.geminiProject, savedConnectors, secretIdOpts).catch((err) => {
         logger.warn({ err }, 'orchestrator: connector secret resolution failed; continuing without connector context');
         return [];
       })
@@ -617,9 +628,16 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // the registry alone — deliberately NOT from resolvedConnectors, because these
   // specs travel into the deployment and must never carry a credential value. The
   // container reads each secret from Secret Manager on every tool call.
-  const liveConnectorSpecs = buildLiveConnectorSpecs(savedConnectors);
+  const { specs: liveConnectorSpecs, unsupported: unsupportedConnectorIds } =
+    buildLiveConnectorSpecsDetailed(savedConnectors, secretIdOpts);
   if (liveConnectorSpecs.length) {
     emitLog('info', `Live connector tools to wire: ${liveConnectorSpecs.map((c) => c.name).join(', ')}`);
+  }
+  // A connector we have no registry entry for cannot become a tool. Say so loudly here
+  // and as a per-agent FidelityNote below — dropping it with only a server-log warning
+  // shipped an agent that looked migrated while quietly missing a capability.
+  if (unsupportedConnectorIds.length) {
+    emitLog('warn', `No connector support for: ${unsupportedConnectorIds.join(', ')} — these tools will NOT be migrated`);
   }
 
   // Confluence connector creds (if the customer filled them in the Connectors step).
@@ -756,7 +774,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
     }
   });
 
-  const staged = await listStaged(runId, 'staged');
+  const staged = await listStaged(appUserId, runId, 'staged');
   emitLog('info', `Phase 1 complete: ${staged.length}/${total} staged in DB`);
 
   // ── Dry run: report what WOULD be inserted, stop before touching Gemini ────
@@ -1232,6 +1250,33 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // reported, never silently.
             const usedConnectorIds = agentConnectorIds(row.mapped!.ir);
 
+            // Connectors this agent genuinely uses that we have no registry entry for.
+            // These cannot become tools, and used to vanish with only a server-log
+            // warning — the agent deployed green while missing a capability its Copilot
+            // original had. Report it as lost, per agent, with the operations it wanted.
+            //
+            // Derived from what THIS AGENT uses, not from what the customer configured.
+            // `unsupportedConnectorIds` comes from `savedConnectors` — the connectors
+            // credentials were saved for — so a connector the agent calls that we have
+            // never heard of (every CUSTOM connector, and any first-party one the customer
+            // did not configure) was absent from that list and reported nowhere. The
+            // registry is the authority on what we can build a tool for; ask it directly.
+            const unsupportedForThisAgent = [...usedConnectorIds].filter(
+              (id) => !REGISTRY_BY_ID.has(id),
+            );
+            for (const missingId of unsupportedForThisAgent) {
+              const wanted = (opsByConnector.get(missingId) ?? []).map((o) => o.id);
+              result.fidelity.push({
+                component: `connector:${missingId}`,
+                status: 'lost',
+                detail:
+                  `This agent calls "${missingId}", which CloudFuze Studio Migrate has no connector support for, ` +
+                  `so no tool was created for it and the migrated agent cannot perform those actions.` +
+                  (wanted.length ? ` Operations the source agent used: ${wanted.join(', ')}.` : ''),
+              });
+              emitLog('warn', `  ${row.name}: "${missingId}" is not a supported connector — its tools were NOT migrated.`);
+            }
+
             const applicable = liveConnectorSpecs.filter((c) => usedConnectorIds.has(c.id));
             const droppedConnectors = liveConnectorSpecs
               .filter((c) => !usedConnectorIds.has(c.id))
@@ -1382,6 +1427,20 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                   failedAttach ? 'warn' : 'ok',
                   `    "${src.name}": SharePoint connector for ${siteUrl} wired via ADK VertexAiSearchTool — confirm Console "Authorize" is done before trusting this source.`,
                 );
+              }
+              if (adk.secretIamGranted === false) {
+                // Deployment succeeded; the credentials it needs may not be readable.
+                // This is exactly the shape that must never stay silent — the agent
+                // looks migrated and then 403s on its first real question.
+                result.fidelity.push({
+                  component: 'connector:credentials-access',
+                  status: 'needs-review',
+                  detail:
+                    'Per-secret access could not be granted to the Reasoning Engine service agent, so the connector tools ' +
+                    'will fail at query time unless a project-wide roles/secretmanager.secretAccessor grant already exists. ' +
+                    `Cause: ${adk.secretIamError ?? 'unknown'}.`,
+                });
+                emitLog('warn', `  ${row.name}: could not grant per-secret access — connector tools may 403 until an admin grants Secret Manager access.`);
               }
               if (adk.googleSearchDropped) {
                 result.fidelity.push({

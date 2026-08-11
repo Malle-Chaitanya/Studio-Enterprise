@@ -45,6 +45,29 @@ export interface ResolvedConnector {
 }
 
 /**
+ * How to name the Secret Manager entries for one customer.
+ *
+ * `storedSecretIds` comes from db/repos/connectorCredentials and is the id the
+ * credential was ACTUALLY written under. It wins over anything computed, because a
+ * credential saved before tenant scoping lives under the legacy name and a deployed
+ * agent already has that name baked into its spec — recomputing would silently point
+ * a working agent at a secret that does not exist, and every tool call would 403 at
+ * inference with a green deployment behind it.
+ */
+export interface SecretIdOptions {
+  appUserId?: string;
+  /** connectorId → (field key → real Secret Manager id), as recorded when saved. */
+  storedSecretIds?: Record<string, Record<string, string>>;
+}
+
+/** The id to use for one connector field: what was stored, else a tenant-scoped name. */
+function secretIdFor(connectorId: string, field: string, opts?: SecretIdOptions): string {
+  const stored = opts?.storedSecretIds?.[connectorId]?.[field];
+  if (stored) return stored;
+  return connectorSecretId(connectorId, field, opts?.appUserId);
+}
+
+/**
  * For each connector ID, look up every credential field in Secret Manager
  * and return a ResolvedConnector with templates filled in.
  * Connectors with no stored secrets are silently skipped.
@@ -53,6 +76,7 @@ export async function resolveConnectorSecrets(
   saToken: string,
   projectId: string,
   connectorIds: string[],
+  opts?: SecretIdOptions,
 ): Promise<ResolvedConnector[]> {
   const results: ResolvedConnector[] = [];
 
@@ -68,7 +92,7 @@ export async function resolveConnectorSecrets(
     // the moment groups were introduced.
     const fields: Record<string, string> = {};
     for (const credField of connectorCredentialFields(connectorId)) {
-      const secretId = connectorSecretId(connectorId, credField.key);
+      const secretId = secretIdFor(connectorId, credField.key, opts);
       const value = await readSecret(saToken, projectId, secretId);
       if (value) fields[credField.key] = value;
     }
@@ -133,12 +157,34 @@ export interface LiveConnectorSpec {
  * purpose-built search tool, everything else gets the generic REST tool driven by
  * the registry's URL/auth templates.
  */
-export function buildLiveConnectorSpecs(connectorIds: string[]): LiveConnectorSpec[] {
+export function buildLiveConnectorSpecs(
+  connectorIds: string[],
+  opts?: SecretIdOptions,
+): LiveConnectorSpec[] {
+  return buildLiveConnectorSpecsDetailed(connectorIds, opts).specs;
+}
+
+/**
+ * As `buildLiveConnectorSpecs`, but also reports the connectors it could NOT build a
+ * tool for.
+ *
+ * A connector the registry has never heard of used to be dropped with a warning in the
+ * server log and nothing else, so the agent deployed green while missing a capability
+ * its Copilot original had — the same silent-degrade shape as the swallowed updateMask
+ * and the staging-bucket 403. The caller turns `unsupported` into a `lost` FidelityNote
+ * so the customer is told what did not come across.
+ */
+export function buildLiveConnectorSpecsDetailed(
+  connectorIds: string[],
+  opts?: SecretIdOptions,
+): { specs: LiveConnectorSpec[]; unsupported: string[] } {
   const specs: LiveConnectorSpec[] = [];
+  const unsupported: string[] = [];
   for (const connectorId of connectorIds) {
     const def = REGISTRY_BY_ID.get(connectorId);
     if (!def) {
       logger.warn({ connectorId }, 'buildLiveConnectorSpecs: connector not in registry, skipping');
+      unsupported.push(connectorId);
       continue;
     }
     // Group fields included, not just the connector's own. Microsoft connectors carry
@@ -147,7 +193,7 @@ export function buildLiveConnectorSpecs(connectorIds: string[]): LiveConnectorSp
     // fail at inference rather than at deploy.
     const secretIds: Record<string, string> = {};
     for (const field of connectorCredentialFields(connectorId)) {
-      secretIds[field.key] = connectorSecretId(connectorId, field.key);
+      secretIds[field.key] = secretIdFor(connectorId, field.key, opts);
     }
 
     // 'shared_confluence' → 'confluence': the deployer keys its purpose-built tools
@@ -170,7 +216,7 @@ export function buildLiveConnectorSpecs(connectorIds: string[]): LiveConnectorSp
       basicSecretField: def.basicSecretField,
     });
   }
-  return specs;
+  return { specs, unsupported };
 }
 
 /**

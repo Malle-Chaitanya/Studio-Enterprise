@@ -512,14 +512,28 @@ export async function saveConnectorCredentials(
   session: string,
   connectorId: string,
   creds: Array<{ field: string; value: string }>,
-): Promise<{ secretIds: string[] }> {
+): Promise<{ secretIds: string[]; validation?: ConnectorValidation }> {
   const res = await fetch('/api/migrate/third-party-connectors/credentials', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session, connectorId, creds }),
   });
   if (!res.ok) throw new Error(await saveErrorMessage(res, 'credentials_save_failed'));
-  return (await res.json()) as { secretIds: string[] };
+  return (await res.json()) as { secretIds: string[]; validation?: ConnectorValidation };
+}
+
+/**
+ * Result of testing a credential against the real provider API after saving it.
+ *
+ * `invalid_credentials` and `permission_denied` are kept apart because they need
+ * different people to act: one is a wrong value to retype, the other is a consent or
+ * access grant the value cannot fix. `unverified` means we did not test this connector
+ * — not that it works.
+ */
+export interface ConnectorValidation {
+  code: 'ok' | 'invalid_credentials' | 'permission_denied' | 'unreachable' | 'unverified';
+  detail?: string;
+  grantedPermissions?: string[];
 }
 
 /** One connector the customer has already configured. Never carries credential values. */
@@ -562,7 +576,11 @@ export interface ConnectorRequirement {
   name?: string;
   icon?: string;
   authKind?: string;
-  fields?: Array<{ key: string; label: string; type: string; placeholder?: string; hint?: string; shared: boolean }>;
+  fields?: Array<{
+    key: string; label: string; type: string; placeholder?: string; hint?: string; shared: boolean;
+    /** A value is already in Secret Manager for this field — do not ask for it again. */
+    supplied?: boolean;
+  }>;
   requiredPermissions?: string[];
   adminConsentRequired?: boolean;
   permissionsHint?: string;
@@ -591,12 +609,12 @@ export async function fetchConnectorRequirements(
 export async function saveMsConnectorCredentials(
   session: string,
   creds: Record<string, string>,
-): Promise<{ secretIds: string[] }> {
+): Promise<{ secretIds: string[]; validation?: ConnectorValidation }> {
   const res = await fetch('/api/migrate/ms-connector-credentials', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session, creds }),
   });
   if (!res.ok) throw new Error(await saveErrorMessage(res, 'ms_creds_save_failed'));
-  return (await res.json()) as { secretIds: string[] };
+  return (await res.json()) as { secretIds: string[]; validation?: ConnectorValidation };
 }
