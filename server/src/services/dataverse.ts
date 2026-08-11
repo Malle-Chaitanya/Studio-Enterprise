@@ -3,6 +3,7 @@ import { logger } from '../logger.js';
 import { ComponentType } from '../types.js';
 import { parseTopicGraph } from './topicGraph.js';
 import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClassifier.js';
+import { connectorIdFromConnectionReference, connectionAuthModeFrom } from './connectorRef.js';
 import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
 
 /**
@@ -579,52 +580,9 @@ function isAgentToolComponent(c: BotComponent): boolean {
   return /^\s*kind:\s*TaskDialog\s*$/m.test(data);
 }
 
-/**
- * `<prefix>.shared_jira.<guid>` → `shared_jira`.
- *
- * The middle dot-segment is the connector id. First-party connectors are `shared_*`;
- * CUSTOM connectors published by the customer are not, and matching `shared_` alone
- * returned `undefined` for every one of them. That is not a graceful degradation: a tool
- * with no `connectorId` never reaches `agentConnectorIds()`, so it never reaches the
- * unsupported list either, so the agent migrated green with a capability silently missing
- * and nothing in the report to say so. Falling back to the middle segment means a custom
- * connector is at least NAMED — we still cannot call it, but the customer is told.
- */
-function connectorIdFromConnectionReference(ref: string): string | undefined {
-  const firstParty = /\b(shared_[a-z0-9_]+)/i.exec(ref)?.[1];
-  if (firstParty) return firstParty.toLowerCase();
-  // `<solutionprefix>_<logicalname>.<connectorid>.<connectionrefid>` — take the middle.
-  const parts = ref.split('.').filter(Boolean);
-  if (parts.length >= 3) {
-    const middle = parts[1].trim();
-    if (middle) return middle.toLowerCase();
-  }
-  return undefined;
-}
-
-/**
- * Whose credentials does this action run under?
- *
- *   connectionProperties:
- *     mode: Invoker      → the SIGNED-IN END USER's own connection
- *   mode: maker / absent → one shared connection the maker configured
- *
- * This is the single most consequential field we extract, and it was previously thrown
- * away: an Invoker action gives each person only what they can already see, while our
- * migration wires one app-only service credential for everyone. Migrating an Invoker
- * agent without saying so hands every end user the service account's whole view — a
- * privilege escalation, not a fidelity gap.
- *
- * Verified live 2026-08-10 (spikes/_diag_connection_auth_mode.ts): it appears in the
- * componenttype-9 payload under connectionProperties, and nowhere on the
- * `connectionreferences` row — that table's only auth-shaped columns are Dataverse's own
- * audit fields. The bot-level `authenticationmode` does not discriminate either.
- */
-function connectionAuthModeFrom(data: string): 'invoker' | 'maker' | undefined {
-  const mode = /^\s*connectionProperties:\s*$[\s\S]{0,200}?^\s*mode:\s*(\w+)\s*$/m.exec(data)?.[1];
-  if (!mode) return undefined;
-  return /^invoker$/i.test(mode) ? 'invoker' : 'maker';
-}
+// connectorIdFromConnectionReference / connectionAuthModeFrom moved to
+// services/connectorRef.ts — they are pure, this module is not (it pulls in the fail-fast
+// config), and that was the only thing stopping them from being unit-tested.
 
 const TASK_ACTION_KIND: Record<string, AgentToolKind> = {
   invokeconnectortaskaction: 'connector',

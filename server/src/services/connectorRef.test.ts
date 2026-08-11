@@ -1,0 +1,101 @@
+import { describe, it, expect } from 'vitest';
+import { connectorIdFromConnectionReference, connectionAuthModeFrom } from './connectorRef.js';
+
+/**
+ * The first real unit tests in this repo.
+ *
+ * Both functions under test have already caused a silent data-loss bug, which is why they
+ * are first: a connector id that parses to `undefined` drops a whole capability with no
+ * FidelityNote, and an auth mode read wrong turns per-user access into shared-credential
+ * access without saying so.
+ *
+ * The payload strings marked "live" are verbatim from real Copilot Studio agents, captured
+ * 2026-08-11 by spikes/_probe_connector_operation_schema.ts. Invented fixtures would only
+ * prove the parser matches whatever shape the author imagined.
+ */
+
+describe('connectorIdFromConnectionReference', () => {
+  it('reads a first-party connector id (live payload)', () => {
+    expect(
+      connectorIdFromConnectionReference(
+        'crf37_Confluenceagent.shared_confluence.cbc262ecb6fe401294af380b08d029d6',
+      ),
+    ).toBe('shared_confluence');
+  });
+
+  it('reads a first-party id whose connection ref has a dashed suffix (live payload)', () => {
+    expect(
+      connectorIdFromConnectionReference(
+        'crf37_DevHelpDeskAgent.shared_sharepointonline.shared-sharepointonl-0a728318-c54b-42b5-a054-732e262fffd9',
+      ),
+    ).toBe('shared_sharepointonline');
+  });
+
+  // The regression this function exists for. Before the fix this returned undefined, the
+  // tool carried no connectorId, and the capability vanished from both the agent and the
+  // report.
+  it('names a CUSTOM connector instead of dropping it', () => {
+    expect(
+      connectorIdFromConnectionReference(
+        'crf37_MyAgent.crf37_acmepayrollapi.9f2c1b7e4d5a4c0e8b3f1a2d6e7c8b90',
+      ),
+    ).toBe('crf37_acmepayrollapi');
+  });
+
+  it('normalises ids to lowercase so registry lookups are stable', () => {
+    expect(connectorIdFromConnectionReference('contoso_Agent.Contoso_HRSystem.abc123')).toBe(
+      'contoso_hrsystem',
+    );
+  });
+
+  it('returns undefined rather than guessing when the reference is malformed', () => {
+    expect(connectorIdFromConnectionReference('justonesegment')).toBeUndefined();
+    expect(connectorIdFromConnectionReference('two.segments')).toBeUndefined();
+    expect(connectorIdFromConnectionReference('')).toBeUndefined();
+  });
+});
+
+describe('connectionAuthModeFrom', () => {
+  // Live payload shape: both connector tools found in the test tenant were Invoker.
+  const invoker = [
+    'kind: TaskDialog',
+    'modelDisplayName: Get pages',
+    '',
+    'action:',
+    '  kind: InvokeConnectorTaskAction',
+    '  connectionReference: crf37_Confluenceagent.shared_confluence.cbc262ec',
+    '  connectionProperties:',
+    '    mode: Invoker',
+    '',
+    '  operationId: GetPages',
+  ].join('\n');
+
+  it('detects per-end-user auth (live payload)', () => {
+    expect(connectionAuthModeFrom(invoker)).toBe('invoker');
+  });
+
+  it('detects a shared maker connection', () => {
+    expect(connectionAuthModeFrom(invoker.replace('mode: Invoker', 'mode: maker'))).toBe('maker');
+  });
+
+  it('is case-insensitive on the mode value', () => {
+    expect(connectionAuthModeFrom(invoker.replace('mode: Invoker', 'mode: INVOKER'))).toBe(
+      'invoker',
+    );
+  });
+
+  // undefined and 'maker' are NOT the same thing downstream: one is "the payload did not
+  // say", the other is a positive statement about a shared connection. Collapsing them
+  // would let an unknown auth mode be reported as safe.
+  it('returns undefined when the payload says nothing about auth', () => {
+    expect(connectionAuthModeFrom('kind: TaskDialog\noperationId: GetPages')).toBeUndefined();
+    expect(connectionAuthModeFrom('')).toBeUndefined();
+  });
+
+  // The regex has a 200-char window between connectionProperties and mode. A `mode:` far
+  // away belongs to something else and must not be picked up.
+  it('does not attribute a distant unrelated mode to connectionProperties', () => {
+    const far = 'connectionProperties:\n' + '  filler: x\n'.repeat(40) + '  mode: Invoker\n';
+    expect(connectionAuthModeFrom(far)).toBeUndefined();
+  });
+});
