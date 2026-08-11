@@ -202,7 +202,7 @@ defects in shipped code, not risks in a plan.
 | **Typecheck gate is green** | `server/tsconfig.json` now excludes `src/spikes`. The rules already exempt spikes from strictness; leaving them inside the tsconfig meant the gate the PR checklist names was permanently red on 27 unused-var errors in files nobody is allowed to clean up. | `cd server && npm run typecheck` → **exit 0**, no diagnostics. `cd web && npm run typecheck` → **exit 0**. | **P** |
 | **`listStaged` cross-tenant read closed** | `appUserId` is now a **required** parameter, first in the filter — the compiler enforces it, not a reviewer. Read index changed to `{ appUserId: 1, runId: 1, status: 1 }` so the scoping is indexed, not paid for in a collection scan. | typecheck passes with the caller updated (`orchestrator.ts:777`); a missing arg is now a compile error | **P** (compile-enforced) |
 | **Custom connectors no longer vanish** | `connectorIdFromConnectionReference` falls back to the middle dot-segment when the id is not `shared_*`. Separately, the per-agent unsupported report now derives from **the agent's own connectors checked against the registry**, not from `savedConnectors` — the previous list could only ever contain connectors the customer had already configured, so a custom one was absent from it and reported nowhere. | `npx tsx src/spikes/_test_connector_id_parsing.ts` → **6/6 passed**, including the two real payloads captured live on 2026-08-11 (no first-party regression) | **P** |
-| Extraction truncates at 1000 components | not yet fixed — `dvGetAll` swap still pending | — | **open** |
+| **Extraction no longer truncates** | Five `$top`-capped reads now follow `@odata.nextLink`: agent components (was 1000), disabled components (100), `knowledgeConnectorScan` (500/chunk), `thirdPartyConnectorScan` (100 flows), and the SharePoint listing (200/page - it *typed* `@odata.nextLink` and ignored it). `sharePointMigrator`'s `MAX_FILES=500` budget stays but now reports itself as a `skipped` entry instead of passing for a complete copy. | `npm run typecheck` exit 0; 23/23 vitest pass. **No tenant here is large enough to page**, so the paging loop itself is unexercised. | **T** |
 
 The custom-connector fix landing *before* the connector census is deliberate: the census
 counts `connectorId × operationId` using that same parser, so running it first would have
@@ -212,6 +212,87 @@ Note the honest limit on the parsing test: it re-implements the function rather 
 importing it, because the function is private to `dataverse.ts`. If the two drift, the
 assertion is worthless. That is the argument for landing `vitest` and importing the real
 symbol — the next step-0 item.
+
+### 1.10 Connector × operation census — what the tenant actually uses (2026-08-12)
+
+`npx tsx src/spikes/_diag_connectors_by_agent.ts <envUrl>`, both accessible environments.
+
+**CloudFuze Migration Test** (`org32322095`, 51 bots) — 12 agents use a connector:
+
+```
+Agent1                                  shared_confluence [GetPages], shared_sharepointonline
+C2MessageGeneratorAgent                 shared_sharepointonline
+Case Enrichment Onboarding Agent        shared_commondataserviceforapps (unsupported)
+Case Management Agent                   shared_commondataserviceforapps (unsupported)
+Customer Service Copilot Bot            shared_commondataserviceforapps (unsupported)
+Customer Service Onboarding Agent       shared_commondataserviceforapps (unsupported)
+Enterprise Agent                        shared_hubspotsettingsv2 (unsupported), shared_sharepointonline
+HubSpot Agent                           shared_hubspotsettingsv2 (unsupported), shared_hubspotcrm (unsupported)
+Migration Knowledge Advisor             shared_confluence, shared_googledrive [11 ops], shared_jira [mcp_JiraIssueManagement]
+Shadow Agent & License Governance ...   shared_powerplatformadminv2 (unsupported)
+Transformation Agent Chat Bot           shared_commondataserviceforapps (unsupported)
+confluence agent                        shared_confluence [GetPages]
+```
+
+**filefuze (default)** (`orga243378d`, 14 bots) — 7 agents:
+`shared_sharepointonline [HttpRequest]` x5, `shared_confluence [GetPages]` x2.
+
+Two facts fall out, both grade **P**:
+
+1. **Four connectors the tenant really uses are not in the 34-entry registry** —
+   `shared_commondataserviceforapps` (5 agents), `shared_hubspotsettingsv2` (2),
+   `shared_hubspotcrm` (1), `shared_powerplatformadminv2` (1). The registry has
+   `shared_dynamicscrmonline`, `shared_hubspot`, `shared_hubspotcrmv2` instead. The ids
+   were guessed from product names; the live ids differ. Hand-registering connectors does
+   not converge on what customers actually use.
+2. **The most-used connector in this tenant is Dataverse itself**
+   (`shared_commondataserviceforapps`, 5 of 12 agents) — exactly the one nobody registered.
+
+`HttpRequest` on `shared_sharepointonline` — the operation the plan's kill list refuses —
+is the *only* operation the entire default environment uses. That decision stands, but its
+blast radius is now measured: 5 of 7 connector-using agents there.
+
+### 1.11 Swagger coverage — every used operation resolves to a real verb + path (2026-08-12)
+
+`npx tsx src/spikes/_probe_swagger_coverage.ts https://org32322095.crm.dynamics.com`
+(38 ids = 8 used live + 34 registry), Power Apps `.../apis/<id>?$expand=swagger`, audience
+`https://service.powerapps.com`, using the app-only token we already mint.
+
+```
+summary: swagger for 32/38 ids; used operations resolved 23, unresolved 0
+no swagger: shared_freshsales, shared_gitlab, shared_http, shared_hubspot, shared_notion, shared_servicenow
+```
+
+Every operationId extracted from Dataverse was a key into the swagger, verb and path
+included:
+
+```
+ok   shared_commondataserviceforapps - Microsoft Dataverse - 93 ops  [NOT in registry]
+       hit  ListRecordsWithOrganization -> GET /{connectionId}/api/data/v9.1.0/{entityName}
+       hit  UpdateRecordWithOrganization -> PATCH /{connectionId}/api/data/v9.1.0/{entityName}({recordId})
+ok   shared_confluence - Confluence - 5 ops
+       hit  GetPages -> GET /{connectionId}/ex/confluence/{cloudId}/wiki/api/v2/pages
+ok   shared_googledrive - Google Drive - 42 ops        (11 of 11 hit)
+ok   shared_jira - Jira - 65 ops
+       hit  mcp_JiraIssueManagement -> POST /{connectionId}/mcp/JiraIssueManagement
+ok   shared_powerplatformadminv2 - Power Platform for Admins V2 - 189 ops  [NOT in registry]
+```
+
+**23 hits, 0 misses.** Grade **P**. This is the load-bearing fact for the connector plan:
+turning "Copilot called operation X" into "call this HTTP endpoint" is *mechanical*, not
+per-connector guesswork. A generic swagger-driven emitter is buildable, and a new connector
+should cost a fixture rather than a module.
+
+Honest limits on that claim:
+
+- The 6 ids with no swagger are all ids **no agent in this tenant uses**. The
+  `$filter=environment eq '<id>'` scopes the query to connectors installed in that
+  environment, so a 404 means "not installed here", not "no swagger exists".
+  `shared_http` differs in kind — the generic HTTP connector has no per-operation schema.
+- Resolving an operation to a verb+path is not the same as **calling** it. Auth binding
+  (`{connectionId}` — plan step 3b) is unproven, and nothing here was executed against a
+  live connector endpoint.
+- Both facts come from one tenant. 65 agents is a sample, not a population.
 
 ### 1.9 Correction — file bytes are not in the extraction `$select`
 
@@ -280,10 +361,16 @@ exactly the class of error this ledger exists to catch.
 returns non-zero. Either exclude `src/spikes` from the typecheck tsconfig or fix the 27.
 Until then "typecheck passes" is only true of app code, and must be said that way.
 
-### 4.2 Nothing is committed or pushed
+### 4.2 ~~Nothing is committed or pushed~~ - closed 2026-08-11/12
 
-22 commits unpushed on `business`; 11 modified and 4 untracked files on top. All of §2 is
-one `git checkout` away from vanishing. This is plan item **#10**.
+Everything is pushed to `business`. Section 2's table is a snapshot of that moment and is
+kept as written; its grades still stand, because committing code does not execute it.
+
+### 4.3 The registry does not match the tenant
+
+Four connectors used by live agents have no registry entry (1.10), one of them by 5 of 12
+agents. Until the emitter is swagger-driven, those agents migrate with their tools missing
+and only a fidelity note to show for it.
 
 ---
 
