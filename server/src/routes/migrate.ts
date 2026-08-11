@@ -40,13 +40,15 @@ export const migrateRouter = Router();
  * return a preview (what will migrate + destination naming). Call before /stream.
  */
 migrateRouter.post('/plan', async (req, res) => {
-  const { session: sessionId, scope, destination, dryRun, forceRedeploy } = req.body as {
+  const { session: sessionId, scope, destination, dryRun, forceRedeploy, acknowledgeAclLoss } = req.body as {
     session?: string;
     scope?: MigrationScope;
     destination?: DestinationOptions;
     dryRun?: boolean;
     /** Redeploy already-migrated agents even when their source is unchanged. */
     forceRedeploy?: boolean;
+    /** Customer accepted that indexed knowledge loses its source permissions. */
+    acknowledgeAclLoss?: boolean;
   };
   const session = await getSession(sessionId ?? '');
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
@@ -57,6 +59,7 @@ migrateRouter.post('/plan', async (req, res) => {
     const plan = await resolveScope(session, scope, dest);
     plan.dryRun = !!dryRun;
     plan.forceRedeploy = !!forceRedeploy;
+    plan.acknowledgeAclLoss = !!acknowledgeAclLoss;
     // Seed from the durable per-customer record (connectorCredentials.ts), not just
     // whatever got saved in THIS session — otherwise a customer who already configured
     // Confluence/Jira/Dynamics in an earlier session (and sees "✓ Saved" in the UI) gets
@@ -76,6 +79,7 @@ migrateRouter.post('/plan', async (req, res) => {
       destination: plan.destination,
       dryRun: plan.dryRun,
       forceRedeploy: plan.forceRedeploy,
+      acknowledgeAclLoss: plan.acknowledgeAclLoss,
     });
   } catch (err) {
     res.status(500).json({ error: 'plan_failed', detail: (err as Error).message });

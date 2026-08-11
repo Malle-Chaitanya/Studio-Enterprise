@@ -11,6 +11,7 @@ import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeFo
 import { mapAgent } from './services/mapper.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
 import { REGISTRY_BY_ID } from './connectors/registry.js';
+import { needsAclAcknowledgement, aclDisclosureFor, aclDisclosureSummary } from './services/aclDisclosure.js';
 import { migrateSharePointToDataStore } from './services/sharePointMigrator.js';
 import type { SharePointMigrationResult } from './services/sharePointMigrator.js';
 import { migrateConfluenceToDataStore, type ConfluenceCreds, type ConfluenceMigrationResult } from './services/confluenceMigrator.js';
@@ -900,6 +901,91 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   const staged = await listStaged(appUserId, runId, 'staged');
   emitLog('info', `Phase 1 complete: ${staged.length}/${total} staged in DB`);
 
+  // ── ACL-loss gate — the last honest moment before anything is written ──────
+  //
+  // Every data store this pipeline creates has `aclEnabled: false`, and that flag is
+  // IMMUTABLE (proven live — docs/verification-ledger.md §1.3). So a SharePoint folder
+  // restricted to Finance becomes readable by anyone who can reach the migrated agent, and
+  // no later fix can change it: the store would have to be destroyed and re-indexed.
+  //
+  // The gate sits HERE, between the phases, on purpose. Extraction is read-only and cheap,
+  // so by this point we can name the exact agents and sources at stake instead of warning
+  // in the abstract — and because the rows are already staged, re-running after
+  // acknowledgement skips straight to the insert.
+  //
+  // It does not block permanently. A hard refusal makes this tool look worse than a hand
+  // migration and pushes people to disable the check; the decision
+  // (docs/connector-transform-plan.md) is to migrate with a mandatory acknowledgement.
+  const aclFlagged = staged
+    .filter((row) => row.mapped && needsAclAcknowledgement(row.mapped.ir))
+    .map((row) => ({ row, disclosure: aclDisclosureFor(row.mapped!.ir) }));
+
+  // A dry run is never gated: it writes nothing, and it is exactly how someone discovers
+  // this in the first place. It still reports every affected source, below.
+  if (aclFlagged.length && !plan.acknowledgeAclLoss && !plan.dryRun) {
+    emitLog('warn', `── Migration stopped: ${aclFlagged.length} agent(s) would lose source permissions ──`);
+    for (const { row, disclosure } of aclFlagged) {
+      emitLog('warn', `  ${aclDisclosureSummary(row.displayName, disclosure)}`);
+      for (const item of disclosure.items) {
+        emitLog('warn', `    • ${item.sourceName} (${item.system}, via ${item.strategy})`);
+      }
+      const result: MigrationResult = {
+        sourceId: row.sourceId,
+        name: row.name,
+        created: false,
+        deployed: false,
+        shared: false,
+        fidelity: [
+          ...row.fidelity,
+          ...disclosure.items.map((item) => ({
+            component: `acl:${item.sourceName}`,
+            status: 'needs-review' as const,
+            detail: item.detail,
+          })),
+        ],
+        error: 'acl_acknowledgement_required',
+      };
+      results.push(result);
+      void saveResult(runId, appUserId, result);
+      emit({ type: 'agent', result });
+    }
+    emitLog(
+      'warn',
+      'Nothing was created. Review the sources above; if this is acceptable, re-run with ' +
+        '"I understand knowledge permissions will not be preserved" acknowledged. The staged ' +
+        'agents are kept, so the re-run goes straight to the insert.',
+    );
+    emitProg(100, 'Stopped — permission loss needs acknowledgement');
+    const summary = `Stopped · ${aclFlagged.length} agent(s) need a permission-loss acknowledgement before migrating`;
+    await finishRun(runId, summary, 'done');
+    emit({ type: 'done', summary, results });
+    return;
+  }
+
+  // Acknowledged (or nothing to acknowledge). Record what was accepted on every affected
+  // agent — an acknowledgement that leaves no trace in the report is worth nothing to the
+  // person who reads that report six months from now.
+  const aclNotesBySourceId = new Map<string, FidelityNote[]>();
+  for (const { row, disclosure } of aclFlagged) {
+    aclNotesBySourceId.set(
+      row.sourceId,
+      disclosure.items.map((item) => ({
+        component: `acl:${item.sourceName}`,
+        status: 'needs-review' as const,
+        detail:
+          `${item.detail} This was explicitly acknowledged before the migration ran. ` +
+          `It cannot be changed without deleting and re-indexing the data store.`,
+      })),
+    );
+  }
+  if (aclFlagged.length) {
+    emitLog(
+      'warn',
+      `Permission loss acknowledged for ${aclFlagged.length} agent(s) — proceeding. Each affected ` +
+        'source is recorded in the fidelity report.',
+    );
+  }
+
   // ── Dry run: report what WOULD be inserted, stop before touching Gemini ────
   if (plan.dryRun) {
     for (const row of staged) {
@@ -909,7 +995,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         created: false,
         deployed: false,
         shared: false,
-        fidelity: row.fidelity,
+        fidelity: [...row.fidelity, ...(aclNotesBySourceId.get(row.sourceId) ?? [])],
         error: 'dry-run (not created)',
       };
       results.push(result);
@@ -945,7 +1031,9 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       created: false,
       deployed: false,
       shared: false,
-      fidelity: row.fidelity,
+      // Acknowledged permission loss travels with the agent's own report, not just the run
+      // log — the report is what someone reads months later.
+      fidelity: [...row.fidelity, ...(aclNotesBySourceId.get(row.sourceId) ?? [])],
     };
     try {
       if (quotaExhausted) {

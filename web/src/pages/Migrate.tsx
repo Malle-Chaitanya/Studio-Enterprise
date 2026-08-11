@@ -42,6 +42,11 @@ export function Migrate() {
   const [status, setStatus] = useState('');
   const [results, setResults] = useState<MigrationResult[]>([]);
   const [done, setDone] = useState<string | null>(null);
+  // Deliberately NOT remembered across runs. This acknowledges a specific set of sources
+  // seen a moment ago; if the selection changes, it has to be given again.
+  const [ackAclLoss, setAckAclLoss] = useState(false);
+  // Agents the server refused to migrate until the permission loss is acknowledged.
+  const aclBlocked = results.filter((r) => r.error === 'acl_acknowledgement_required');
   const esRef = useRef<EventSource | null>(null);
   const runRef = useRef<(dry: boolean) => Promise<void>>(async () => {});
 
@@ -105,7 +110,7 @@ export function Migrate() {
       units: units.map((u) => ({ env: u.env, botIds: u.botIds })),
     };
     setBusy(true);
-    const p = await planMigration(session, scope, { environmentMap: dest }, dry).catch(() => null);
+    const p = await planMigration(session, scope, { environmentMap: dest }, dry, ackAclLoss).catch(() => null);
     setBusy(false);
     if (!p) {
       setStatus('Could not build the migration plan.');
@@ -227,7 +232,68 @@ export function Migrate() {
             </div>
           )}
 
-          {done && (
+          {/*
+            Permission-loss gate. The server stops between extraction and insert when a
+            migration would drop source permissions, because the data store it would create
+            cannot carry them and the flag is immutable once set. Nothing has been created
+            at this point, so this is the last moment the choice is still free.
+
+            The checkbox starts unticked every time and is not remembered: it acknowledges
+            the specific sources listed right above it, not a standing preference.
+          */}
+          {done && aclBlocked.length > 0 && (
+            <div className="donebox" style={{ borderColor: 'var(--fail)' }}>
+              <h3>Stopped — knowledge permissions cannot be preserved</h3>
+              <p>
+                Nothing was created. {aclBlocked.length} agent(s) use knowledge whose source
+                permissions will not survive the migration.
+              </p>
+              <div style={{ margin: '10px 0' }}>
+                {aclBlocked.map((r) => (
+                  <div key={r.sourceId} style={{ marginBottom: 10 }}>
+                    <strong>{r.name}</strong>
+                    <ul style={{ margin: '4px 0 0 18px' }}>
+                      {r.fidelity
+                        .filter((f) => f.component.startsWith('acl:'))
+                        .map((f) => (
+                          <li key={f.component} style={{ fontSize: 13 }}>
+                            {f.component.slice(4)} — {f.detail}
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 14 }}>
+                <input
+                  type="checkbox"
+                  checked={ackAclLoss}
+                  onChange={(e) => setAckAclLoss(e.target.checked)}
+                  style={{ marginTop: 3 }}
+                />
+                <span>
+                  I understand these knowledge sources will be readable by everyone who can use
+                  the migrated agent, including people who cannot open the originals, and that
+                  this cannot be changed afterwards without deleting and re-indexing the data
+                  store.
+                </span>
+              </label>
+              <div className="wizard-actions" style={{ marginTop: 14 }}>
+                <button
+                  className="btn primary"
+                  disabled={!ackAclLoss || busy}
+                  onClick={() => runRef.current(false)}
+                >
+                  Migrate anyway
+                </button>
+                <button className="wbtn" onClick={() => navigate(`/select-data?session=${session}`)}>
+                  ← Change what migrates
+                </button>
+              </div>
+            </div>
+          )}
+
+          {done && aclBlocked.length === 0 && (
             <div className="donebox">
               <h3>{ranDry ? '✓ Dry run complete' : '✓ Migration complete'}</h3>
               <p>{done}</p>

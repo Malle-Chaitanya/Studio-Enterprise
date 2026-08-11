@@ -415,11 +415,14 @@ export async function planMigration(
     environmentMap?: Record<string, GeminiDest>;
   },
   dryRun: boolean,
+  /** The customer has seen, and accepted, that indexed knowledge loses its source
+   *  permissions. Without it the server stops between extract and insert. */
+  acknowledgeAclLoss = false,
 ): Promise<PlanPreview> {
   const res = await fetch('/api/migrate/plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session, scope, destination, dryRun }),
+    body: JSON.stringify({ session, scope, destination, dryRun, acknowledgeAclLoss }),
   });
   if (!res.ok) throw new Error('plan_failed');
   return (await res.json()) as PlanPreview;

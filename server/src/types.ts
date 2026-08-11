@@ -482,6 +482,16 @@ export interface ResolvedPlan {
    * Creates a new Reasoning Engine; the previous one is not deleted automatically.
    */
   forceRedeploy?: boolean;
+  /**
+   * The customer has been shown, and accepted, that indexed knowledge loses its source
+   * permissions (see services/aclDisclosure.ts). Without this the run stops between the
+   * extract and insert phases rather than silently over-sharing restricted content.
+   *
+   * Deliberately not persisted with the session's other preferences: it is an
+   * acknowledgement of a specific set of sources at a specific moment, so it must be given
+   * again if the plan changes.
+   */
+  acknowledgeAclLoss?: boolean;
 }
 
 /** Result of mapping one AgentIR to a Gemini agent definition. */
