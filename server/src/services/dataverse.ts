@@ -394,14 +394,31 @@ function parseGptDynamicPrompt(raw: string | null | undefined): string {
   return out.join('').trim();
 }
 
-/** Follow @odata.nextLink pages, collecting all rows. */
+/**
+ * Follow @odata.nextLink pages, collecting all rows.
+ *
+ * Use this, not `dvGet`, for any list that a real tenant can grow past a page.
+ * A single `dvGet` with `$top=N` truncates SILENTLY at N — Dataverse returns 200
+ * with N rows and no indication there were more, which in extraction means an
+ * agent quietly loses topics or tools and the fidelity report calls it a success.
+ */
 async function dvGetAll<T>(url: string, token: string, path: string): Promise<T[]> {
   const rows: T[] = [];
   let next: string | null = API(url, path);
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json', Prefer: 'odata.maxpagesize=500' };
   while (next) {
     const res = await fetch(next, { headers });
-    if (!res.ok) throw new Error(`Dataverse GET failed (${res.status})`);
+    if (!res.ok) {
+      // Same reasoning as dvGet: a bare status hides which $select Dataverse rejected.
+      let detail = '';
+      try {
+        const body = (await res.json()) as { error?: { message?: string } };
+        detail = body?.error?.message ?? '';
+      } catch {
+        /* body wasn't JSON — fall back to bare status */
+      }
+      throw new Error(`Dataverse GET ${path} failed (${res.status})${detail ? `: ${detail}` : ''}`);
+    }
     const json = (await res.json()) as { value?: T[]; '@odata.nextLink'?: string };
     rows.push(...(json.value ?? []));
     next = json['@odata.nextLink'] ?? null;
@@ -953,13 +970,15 @@ export async function extractAgent(
   token: string,
   bot: BotSummary,
 ): Promise<AgentIR> {
-  const json = await dvGet<{ value: BotComponent[] }>(
+  // Paged, not $top=1000: an agent with more components than the cap would have had the
+  // remainder dropped without any error, and every downstream count (topics, tools,
+  // knowledge) would be wrong while still reporting success.
+  const components = await dvGetAll<BotComponent>(
     url,
     token,
     'botcomponents?$select=name,data,content,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode,description,_modifiedby_value,schemaname' +
-      `&$filter=statecode eq 0 and _parentbotid_value eq ${bot.botid}&$top=1000`,
+      `&$filter=statecode eq 0 and _parentbotid_value eq ${bot.botid}`,
   );
-  const components = json.value ?? [];
 
   // The fetch above deliberately takes only `statecode eq 0`. Ask separately for what was
   // left behind so the report can name it — a disabled tool looks identical to a missing
@@ -967,13 +986,13 @@ export async function extractAgent(
   // (names only): failing to list them must never fail the extraction.
   let disabledComponentNames: string[] = [];
   try {
-    const disabled = await dvGet<{ value: Array<{ name?: string }> }>(
+    const disabled = await dvGetAll<{ name?: string }>(
       url,
       token,
       'botcomponents?$select=name,componenttype' +
-        `&$filter=statecode ne 0 and _parentbotid_value eq ${bot.botid}&$top=100`,
+        `&$filter=statecode ne 0 and _parentbotid_value eq ${bot.botid}`,
     );
-    disabledComponentNames = (disabled.value ?? []).map((c) => c.name ?? '(unnamed)');
+    disabledComponentNames = disabled.map((c) => c.name ?? '(unnamed)');
   } catch (err) {
     logger.debug({ err, bot: bot.name }, 'extractAgent: could not list disabled components');
   }

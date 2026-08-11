@@ -85,22 +85,30 @@ export async function detectKnowledgeConnectors(
     // that is invisible to a knowledge-source-only scan. The "confluence agent" in the test
     // tenant has exactly this shape and appeared to have no connectors at all.
     const filter = `(componenttype eq 16 or componenttype eq 9) and Microsoft.Dynamics.CRM.In(PropertyName='parentbotid',PropertyValues=[${ids}])`;
-    const url = `${base}/api/data/v9.2/botcomponents?$filter=${encodeURIComponent(filter)}&$select=botcomponentid,name,data,content,description,schemaname,_parentbotid_value&$top=500`;
+    // Paged, not capped: a truncated component list here means a connector the agent really
+    // uses is never detected, so the UI never asks for its credentials and the tool fails at
+    // run time with nothing in the report explaining why.
+    let url: string | null =
+      `${base}/api/data/v9.2/botcomponents?$filter=${encodeURIComponent(filter)}&$select=botcomponentid,name,data,content,description,schemaname,_parentbotid_value`;
     try {
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${dvToken}`,
-          Accept: 'application/json',
-          'OData-MaxVersion': '4.0',
-          'OData-Version': '4.0',
-        },
-      });
-      if (!res.ok) {
-        logger.warn({ status: res.status }, 'knowledgeConnectorScan: knowledge source fetch failed');
-        continue;
+      while (url) {
+        const res = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${dvToken}`,
+            Accept: 'application/json',
+            'OData-MaxVersion': '4.0',
+            'OData-Version': '4.0',
+            Prefer: 'odata.maxpagesize=500',
+          },
+        });
+        if (!res.ok) {
+          logger.warn({ status: res.status }, 'knowledgeConnectorScan: knowledge source fetch failed');
+          break;
+        }
+        const json = await res.json() as { value?: BotKsComponent[]; '@odata.nextLink'?: string };
+        allComponents.push(...(json.value ?? []));
+        url = json['@odata.nextLink'] ?? null;
       }
-      const json = await res.json() as { value?: BotKsComponent[] };
-      allComponents.push(...(json.value ?? []));
     } catch (err) {
       logger.warn({ err }, 'knowledgeConnectorScan: fetch error, skipping chunk');
     }

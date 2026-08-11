@@ -120,34 +120,52 @@ export async function resolveSiteAndFolder(
   return { siteId: site.id, folderPath: rest.join('/') };
 }
 
-/** Depth-first listing of every file under the folder, bounded by MAX_FILES. */
+/**
+ * Depth-first listing of every file under the folder, bounded by MAX_FILES.
+ *
+ * Follows `@odata.nextLink`: a folder with more children than the page size returns 200 with
+ * a partial list, so not following it silently omitted files from the migrated knowledge and
+ * still reported success. `truncated` is returned rather than logged so the caller can report
+ * the omission to the customer instead of it disappearing into the server log.
+ */
 async function listFilesRecursive(
   siteId: string,
   folderPath: string,
   token: string,
-): Promise<DriveItem[]> {
+): Promise<{ files: DriveItem[]; truncated: boolean }> {
   const out: DriveItem[] = [];
   const queue: string[] = [folderPath];
+  let truncated = false;
 
   while (queue.length && out.length < MAX_FILES) {
     const path = queue.shift()!;
-    const url = path
+    let url: string | null = path
       ? `/sites/${siteId}/drive/root:/${encodeURI(path)}:/children?$top=200`
       : `/sites/${siteId}/drive/root/children?$top=200`;
-    let page: { value: DriveItem[]; '@odata.nextLink'?: string };
-    try {
-      page = await graphGet(url, token);
-    } catch (err) {
-      logger.warn({ path, err: (err as Error).message }, 'sharePointMigrator: listing failed for folder');
-      continue;
-    }
-    for (const item of page.value ?? []) {
-      if (item.folder) queue.push(path ? `${path}/${item.name}` : item.name);
-      else if (item.file) out.push({ ...item, name: path ? `${path}/${item.name}` : item.name });
-      if (out.length >= MAX_FILES) break;
+    while (url && out.length < MAX_FILES) {
+      let page: { value: DriveItem[]; '@odata.nextLink'?: string };
+      try {
+        page = await graphGet(url, token);
+      } catch (err) {
+        logger.warn({ path, err: (err as Error).message }, 'sharePointMigrator: listing failed for folder');
+        break;
+      }
+      for (const item of page.value ?? []) {
+        if (item.folder) queue.push(path ? `${path}/${item.name}` : item.name);
+        else if (item.file) out.push({ ...item, name: path ? `${path}/${item.name}` : item.name });
+        if (out.length >= MAX_FILES) {
+          truncated = true;
+          break;
+        }
+      }
+      // nextLink is absolute; graphGet takes a path, so strip the host it already knows.
+      const next = page['@odata.nextLink'];
+      url = next ? next.replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, '') : null;
     }
   }
-  return out;
+  // Unvisited folders still queued means the cap, not the tree, ended the walk.
+  if (queue.length) truncated = true;
+  return { files: out, truncated };
 }
 
 /** Discovery Engine parses by MIME type, so a wrong type silently yields no text. */
@@ -210,7 +228,14 @@ export async function migrateSharePointToDataStore(
   }
   logger.info({ siteId, folderPath }, 'sharePointMigrator: resolved site');
 
-  const files = await listFilesRecursive(siteId, folderPath, token);
+  const { files, truncated } = await listFilesRecursive(siteId, folderPath, token);
+  if (truncated) {
+    // Reported, never silent: the customer sees a partial copy as a partial copy.
+    skipped.push({
+      name: `(files beyond the first ${MAX_FILES})`,
+      reason: `this folder holds more than ${MAX_FILES} files; only the first ${MAX_FILES} were migrated`,
+    });
+  }
   if (files.length === 0) {
     return { fileCount: 0, skipped, error: `no files found under ${creds.siteUrl}` };
   }

@@ -63,19 +63,27 @@ export async function detectThirdPartyConnectors(
   dvToken: string,
 ): Promise<DetectedConnector[]> {
   // category eq 5 = Power Automate modern flows
-  const url = `${dvOrgUrl}/api/data/v9.2/workflows?$filter=category eq 5&$select=workflowid,name,clientdata&$top=100`;
-
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${dvToken}`, Accept: 'application/json' },
-  });
-
-  if (!res.ok) {
-    // If this fails (e.g. no PA flows license), return empty — not an error.
-    return [];
+  // Paged rather than $top=100: a tenant with more than a page of flows would have had the
+  // rest dropped silently, under-reporting which connectors the customer actually depends on.
+  let url: string | null = `${dvOrgUrl}/api/data/v9.2/workflows?$filter=category eq 5&$select=workflowid,name,clientdata`;
+  const flows: PaFlow[] = [];
+  while (url) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${dvToken}`, Accept: 'application/json', Prefer: 'odata.maxpagesize=100' },
+    });
+    if (!res.ok) {
+      // If this fails (e.g. no PA flows license), return what we have — not an error.
+      return flows.length ? summarizeFlows(flows) : [];
+    }
+    const json = await res.json() as { value?: PaFlow[]; '@odata.nextLink'?: string };
+    flows.push(...(json.value ?? []));
+    url = json['@odata.nextLink'] ?? null;
   }
+  return summarizeFlows(flows);
+}
 
-  const json = await res.json() as { value?: PaFlow[] };
-  const flows: PaFlow[] = json.value ?? [];
+/** Group the flows' connection references into per-connector counts. */
+function summarizeFlows(flows: PaFlow[]): DetectedConnector[] {
 
   // Map: connectorId → { flowCount, flowNames }
   const connectorMap = new Map<string, { flowCount: number; flowNames: string[] }>();
