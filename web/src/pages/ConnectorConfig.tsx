@@ -12,6 +12,7 @@ import {
   type ConnectorDef,
   type ConnectorRequirement,
   type ConnectorValidation,
+  type ConnectorReadiness,
 } from '../api.ts';
 
 /** Merge per-environment scan results into one list, summing flowCount and
@@ -362,6 +363,43 @@ function OperationList({ operations }: { operations?: string[] }) {
   );
 }
 
+/**
+ * Can we actually reproduce what this agent calls?
+ *
+ * The operation list above says WHAT the agent does; this says whether we can do it. The
+ * answer comes from the connector's captured swagger, so it is available before the run
+ * rather than in the report after one. Blocked operations show the reason verbatim — a bare
+ * "not supported" gives an admin nothing to decide with.
+ *
+ * Absent readiness renders nothing at all: we have not captured this connector, which is
+ * not the same as knowing it will fail.
+ */
+function ReadinessPanel({ readiness }: { readiness?: ConnectorReadiness }) {
+  if (!readiness) return null;
+  const total = readiness.bindable.length + readiness.blocked.length;
+  if (total === 0) return null;
+  const ok = readiness.ready;
+  return (
+    <div style={{
+      fontSize: 12, borderRadius: 6, padding: '8px 10px', marginBottom: 10,
+      background: ok ? '#f0fdf4' : '#fffbeb',
+      border: `1px solid ${ok ? '#bbf7d0' : '#fde68a'}`,
+      color: ok ? '#166534' : '#92400e',
+    }}>
+      <strong>
+        {ok
+          ? `All ${total} operation${total === 1 ? '' : 's'} map to ${readiness.displayName}'s own API.`
+          : `${readiness.bindable.length} of ${total} operations map to ${readiness.displayName}'s own API.`}
+      </strong>
+      {readiness.blocked.map((b) => (
+        <div key={b.operationId} style={{ marginTop: 6 }}>
+          <code style={{ fontSize: 11 }}>{b.operationId}</code> — {b.reason}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 interface ConnectorCardProps {
   /** Narrowed at the call site: an unsupported connector has no def and gets its own
    *  card, so nothing inside here has to guard against a missing registry entry. */
@@ -510,6 +548,7 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
         </div>
       )}
       <OperationList operations={c.operations} />
+      <ReadinessPanel readiness={c.readiness} />
       {c.confidence === 'heuristic' && !saved && (
         <div style={{ fontSize: 11, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px', marginBottom: 10 }}>
           Copilot Studio doesn't name the exact service here, so we guessed
@@ -776,10 +815,15 @@ function UnsupportedConnectorCard({ c }: { c: DetectedConnector }) {
           )}
           <div style={{ marginTop: 6 }}>
             <OperationList operations={c.operations} />
+            <ReadinessPanel readiness={c.readiness} />
           </div>
           <div style={{ fontSize: 12, color: '#b45309', marginTop: 6 }}>
             We don't support this connector yet, so the new agent won't be able to use it.
             This will show up as a gap in your migration report.
+            {c.readiness?.ready && (
+              <> Its operations do map cleanly onto {c.readiness.displayName}'s own API, so
+              this is a gap on our side rather than a limit of your agent.</>
+            )}
           </div>
         </div>
       </div>

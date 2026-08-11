@@ -9,6 +9,7 @@
  * handled by knowledgeClassifier.ts, not this registry).
  */
 
+import type { ConnectorReadiness } from '../connectors/operationBinding.js';
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import type { ConnectorDef } from '../connectors/registry.js';
 
@@ -41,6 +42,14 @@ export interface DetectedConnector {
    * populated by the agent-action path; Power Automate flows do not expose it here.
    */
   operations?: string[];
+  /**
+   * Whether each operation this agent uses can actually be reproduced against the vendor's
+   * API, decided from the captured swagger index rather than from whether someone wrote a
+   * registry entry. This is the customer-facing "will this migrate without errors?" answer,
+   * and it is attached at detection time so it appears BEFORE a run, not in the report
+   * after one. Absent when we hold no captured index for the connector.
+   */
+  readiness?: ConnectorReadiness;
 }
 
 interface PaFlow {

@@ -9,6 +9,7 @@
  */
 
 import { logger } from '../logger.js';
+import { readinessFor } from '../connectors/readiness.js';
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import type { DetectedConnector } from './thirdPartyConnectorScan.js';
 
@@ -207,6 +208,12 @@ export async function detectKnowledgeConnectors(
       // The exact operations this agent invokes. "Uses Jira" is not enough to rebuild
       // an agent — Jira exposes dozens of operations and this one chose five.
       operations: hit.operations.size ? [...hit.operations].sort() : undefined,
+      // Whether we can actually reproduce those operations, decided from the captured
+      // swagger rather than from whether a registry entry happens to exist. A connector
+      // can be `unsupported` (no registry entry) and still fully bindable — Dataverse is
+      // exactly that case — so the two flags are answering different questions and both
+      // are reported.
+      readiness: readinessFor(connectorId, hit.operations.size ? [...hit.operations] : undefined),
     });
   }
 

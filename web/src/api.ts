@@ -447,6 +447,17 @@ export interface ConnectorDef {
   credentials: CredentialField[];
 }
 
+/** Per-connector answer to "will this migrate without errors?", computed server-side. */
+export interface ConnectorReadiness {
+  connectorId: string;
+  displayName: string;
+  /** Operations that map to a real vendor API call. */
+  bindable: string[];
+  /** Operations that do not, each with the reason shown to the customer verbatim. */
+  blocked: Array<{ operationId: string; reason: string }>;
+  ready: boolean;
+}
+
 export interface DetectedConnector {
   connectorId: string;
   /** Absent when `unsupported` — the scan found the connector but we cannot call it.
@@ -462,6 +473,12 @@ export interface DetectedConnector {
   agentNames?: string[];
   /** The exact operations the agent invokes, e.g. ListIssues, GetIssue_V2. */
   operations?: string[];
+  /**
+   * Whether each of those operations can be reproduced against the vendor's own API,
+   * decided from the connector's captured swagger. Absent when we hold no capture for the
+   * connector — which is NOT the same as "not ready", and must not be shown as a failure.
+   */
+  readiness?: ConnectorReadiness;
   /**
    * 'certain'   — Copilot Studio named the connector itself (source kind enum or a
    *               shared_* api name), so this is a fact.
