@@ -71,10 +71,48 @@ export async function recoverSharePointUrlByName(
   dvToken: string,
   sourceName: string,
 ): Promise<UrlRecovery> {
+  return recoverSharePointUrlAcrossEnvs([{ envUrl, dvToken }], sourceName);
+}
+
+/**
+ * The same recovery, widened to every environment we can read in the tenant.
+ *
+ * SharePoint is TENANT-wide while Dataverse environments are not, so the agent that kept
+ * the address is often in a different environment from the agent that lost it — measured:
+ * "TestingPermissions" is address-less in CloudFuze Agent Migration Hub and fully addressed
+ * in filefuze. Searching only the agent's own environment left that source with no copy and
+ * no tool scope at all.
+ *
+ * The unanimity rule is applied across the WHOLE search, not per environment: if two
+ * environments hold different addresses under one name, that is exactly the ambiguity this
+ * must refuse, not a tie to break by preferring the nearer one.
+ */
+export async function recoverSharePointUrlAcrossEnvs(
+  envs: Array<{ envUrl: string; dvToken: string }>,
+  sourceName: string,
+): Promise<UrlRecovery> {
   const name = sourceName.trim();
   // An empty or wildcard-ish name would match everything and "recover" an unrelated URL.
   if (name.length < 3) return { status: 'not-found' };
 
+  const all = new Map<string, string>(); // url -> where it was found
+  for (const env of envs) {
+    const one = await queryOneEnv(env.envUrl, env.dvToken, name);
+    for (const [url, from] of one) if (!all.has(url)) all.set(url, from);
+  }
+  if (all.size === 0) return { status: 'not-found' };
+  if (all.size > 1) return { status: 'ambiguous', urls: [...all.keys()] };
+  const [url, from] = [...all.entries()][0];
+  logger.info({ sourceName, from }, 'recovered SharePoint url from a sibling knowledge source');
+  return { status: 'recovered', url, fromSchemaName: from };
+}
+
+/** Every distinct SharePoint address stored under `name` in ONE environment. */
+async function queryOneEnv(
+  envUrl: string,
+  dvToken: string,
+  name: string,
+): Promise<Map<string, string>> {
   const base = envUrl.replace(/\/$/, '');
   // OData string literals escape a single quote by doubling it; without this a source
   // named "Erik's Notes" would produce a malformed filter and a 400.
@@ -95,29 +133,21 @@ export async function recoverSharePointUrlByName(
       },
     });
     if (!res.ok) {
-      logger.debug({ status: res.status, sourceName }, 'sharepoint url recovery: query failed');
-      return { status: 'not-found' };
+      logger.debug({ status: res.status, name }, 'sharepoint url recovery: query failed');
+      return new Map();
     }
     rows = ((await res.json()) as { value?: ComponentRow[] }).value ?? [];
   } catch (err) {
-    logger.debug({ err: (err as Error).message, sourceName }, 'sharepoint url recovery: query error');
-    return { status: 'not-found' };
+    logger.debug({ err: (err as Error).message, name }, 'sharepoint url recovery: query error');
+    return new Map();
   }
 
-  const byUrl = new Map<string, string>(); // url → the schemaname it came from
+  const byUrl = new Map<string, string>(); // url -> the schemaname it came from
   for (const row of rows) {
     const found = SP_URL.exec(`${row.data ?? ''}${row.content ?? ''}`);
     if (!found) continue;
     const clean = cleanUrl(found[0]);
     if (!byUrl.has(clean)) byUrl.set(clean, row.schemaname ?? row.name ?? 'an unnamed component');
   }
-
-  if (byUrl.size === 0) return { status: 'not-found' };
-  // Two different addresses under one name: the customer has two files called the same
-  // thing. Picking either would ground the agent on possibly the wrong one.
-  if (byUrl.size > 1) return { status: 'ambiguous', urls: [...byUrl.keys()] };
-
-  const [url_, from] = [...byUrl.entries()][0];
-  logger.info({ sourceName, from }, 'recovered SharePoint url from a sibling knowledge source');
-  return { status: 'recovered', url: url_, fromSchemaName: from };
+  return byUrl;
 }

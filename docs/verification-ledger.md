@@ -1603,6 +1603,59 @@ been exercised against live SharePoint — that is the next thing to run, on `HR
 
 ---
 
+### 1.30 Does the SharePoint fix hold for ANY agent? Census, and two gaps it exposed (2026-08-13)
+
+The fix was written against two agents, so it was replayed over every SharePoint source in
+the tenant (`_diag_sp_outcome.ts` — recover the address if missing, resolve it through
+Graph, apply the rule). First run, **P**:
+
+```
+   8  STORED
+   1  NOTHING — no address
+   1  TOOLS
+   1  TOOLS (unresolved: not-found)
+```
+
+Two gaps only a census could show:
+
+**Gap 1 — a recovered address never reached the TOOLS.** Recovery patched a clone handed to
+copy mode; `spGraphSources` still filtered on the source's own `reference`. Copy mode
+declines anything broader than one file, so a recovered FOLDER address was recovered and
+then dropped — no copy AND no tool scope, the same silent nothing the recovery existed to
+fix. Now every consumer reads the address through one `spAddressOf()` helper.
+
+**Gap 2 — recovery searched only the agent's own environment.** SharePoint is TENANT-wide;
+Dataverse environments are not. "TestingPermissions" is address-less in CloudFuze Agent
+Migration Hub and fully addressed in filefuze, so the one environment that could answer was
+the one never asked. `recoverSharePointUrlAcrossEnvs()` searches every readable environment,
+own first, and applies the unanimity rule across the WHOLE search — two environments
+disagreeing is the ambiguity this must refuse, not a tie to break by preferring the nearer.
+
+After both, same command, same tenant:
+
+```
+  Knowledge Assistant
+      TOOLS       TestingPermissions (address recovered)  [folder-multiple-files]
+      STORED      daily_queries.txt (address recovered)  [file]
+  …
+   8  STORED
+   2  TOOLS
+   1  TOOLS (unresolved: not-found)
+```
+
+**11 of 11 sources now get something; `NOTHING` is gone.** The remaining `not-found`
+("Documents" on HR AGENT) still gets a tool scope — `resolveShareUrlSmart` could not resolve
+it as a share link, which does not prove the tools' own `/sites/{host}:{path}` resolution
+will fail. It is labelled `TOOLS?` rather than counted as a success.
+
+Honest limits on "any agent": this holds for any agent in the two environments we can READ.
+CF_MANAGE and Microsoft 365 remain unlistable, so no claim here covers their agents. And
+the whole census measures the DECISION, not the outcome — no migration has run since, so
+`STORED`/`TOOLS` are what the pipeline will now choose, graded **T**, not what a live agent
+has answered from.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run

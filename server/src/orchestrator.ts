@@ -1,5 +1,5 @@
 import { clientCredsToken } from './auth/microsoft.js';
-import { recoverSharePointUrlByName } from './services/sharePointUrlRecovery.js';
+import { recoverSharePointUrlAcrossEnvs } from './services/sharePointUrlRecovery.js';
 import { getSaToken, serviceAccountEmail } from './auth/google.js';
 import { logger } from './logger.js';
 import { extractAgent, fetchFileAttachmentBytes, resolveSystemUserEmail } from './services/dataverse.js';
@@ -723,6 +723,29 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
     }
     return t;
   };
+  /**
+   * Every environment a lost SharePoint address might be recoverable from, the agent's own
+   * first.
+   *
+   * SharePoint is tenant-wide while Dataverse environments are not, so the agent that kept
+   * an address is often in a DIFFERENT environment from the one that lost it (measured:
+   * "TestingPermissions" is address-less in one environment and fully addressed in
+   * another). An environment we cannot get a token for is skipped, not fatal — recovery is
+   * best-effort by design.
+   */
+  const spRecoveryEnvs = async (ownEnvUrl: string): Promise<Array<{ envUrl: string; dvToken: string }>> => {
+    const urls = [ownEnvUrl, ...(session.environments ?? []).map((e) => e.url).filter((u) => u !== ownEnvUrl)];
+    const out: Array<{ envUrl: string; dvToken: string }> = [];
+    for (const envUrl of urls) {
+      try {
+        out.push({ envUrl, dvToken: await tokenFor(envUrl) });
+      } catch {
+        // no access to that environment; the others can still answer
+      }
+    }
+    return out;
+  };
+
   // One Microsoft Graph token for the whole run (not per-environment — Graph
   // isn't scoped to a Dataverse org the way Dataverse tokens are). Used to
   // search SharePoint/OneDrive for FederatedStructuredSearchSource sources
@@ -1255,16 +1278,22 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       // by object identity. Without this map a recovered source would be reported as
       // covered AND as still needing the native connector's caveat.
       const originalOf = new Map<KnowledgeSourceIR, KnowledgeSourceIR>();
+      // A recovered address must reach the TOOLS too, not only copy mode. Copy mode
+      // declines anything broader than one file, so a recovered FOLDER address would
+      // otherwise be recovered and then dropped — the agent gets neither a copy nor a
+      // tool scope, which is the same silent nothing the recovery existed to fix.
+      const recoveredUrlOf = new Map<KnowledgeSourceIR, string>();
       for (const src of spConnectorSources) {
         const have = (src.reference ?? src.references?.[0] ?? '').trim();
         if (/^https?:\/\//i.test(have)) {
           spSourcesForCopy.push(src);
           continue;
         }
-        const rec = await recoverSharePointUrlByName(row.envUrl, await tokenFor(row.envUrl), src.name);
+        const rec = await recoverSharePointUrlAcrossEnvs(await spRecoveryEnvs(row.envUrl), src.name);
         if (rec.status === 'recovered') {
           const patched: KnowledgeSourceIR = { ...src, reference: rec.url };
           originalOf.set(patched, src);
+          recoveredUrlOf.set(src, rec.url);
           spSourcesForCopy.push(patched);
           result.fidelity.push({
             component: `knowledge:${src.name}`,
@@ -1373,8 +1402,11 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       // named exactly one folder. Scope must come from the source, per agent.
       let preSpResult: SharePointMigrationResult | null = null;
       let spScopeUri = '';
+      /** The address to use for a source: its own, or the one recovered for it. */
+      const spAddressOf = (s: KnowledgeSourceIR): string =>
+        recoveredUrlOf.get(s) ?? (s.reference ?? s.references?.[0] ?? '').trim();
       const spGraphSources = ks.filter(
-        (s) => s.kind !== 'FileUpload' && /sharepoint\.com/i.test(s.reference ?? s.references?.[0] ?? ''),
+        (s) => s.kind !== 'FileUpload' && /sharepoint\.com/i.test(spAddressOf(s)),
       );
       // EVERY named source becomes a tool scope, not just the one we crawl. An agent with
       // two SharePoint sources attached could read both in Copilot; scoping its tools to
@@ -1389,7 +1421,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       const spScopeUris = [
         ...new Set(
           spUncovered
-            .map((s) => (s.reference ?? s.references?.[0] ?? '').trim())
+            .map(spAddressOf)
             .filter((u) => /^https?:\/\//i.test(u)),
         ),
       ];
@@ -1426,11 +1458,11 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               'regardless of who is asking.',
           });
         }
-      } else if (spUncovered.length && dest.project && spHasCreds && /^https?:\/\//i.test(spUncovered[0].reference ?? spUncovered[0].references?.[0] ?? '')) {
+      } else if (spUncovered.length && dest.project && spHasCreds && /^https?:\/\//i.test(spAddressOf(spUncovered[0]))) {
         // Only ever crawl what copy mode did NOT already fetch; crawling a file we just
         // indexed would duplicate it into a second data store. And only with a real
         // address — an opaque config id here produced a crawl guaranteed to fail.
-        spScopeUri = spUncovered[0].reference ?? spUncovered[0].references?.[0] ?? '';
+        spScopeUri = spAddressOf(spUncovered[0]);
         emitLog('info', `    SharePoint: crawling ${spScopeUri} for grounding…`);
         preSpResult = await migrateSharePointToDataStore(
           dest.project, saToken, row.mapped.ir.sourceId,
