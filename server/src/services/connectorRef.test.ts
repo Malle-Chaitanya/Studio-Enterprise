@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { connectorIdFromConnectionReference, connectionAuthModeFrom } from './connectorRef.js';
+import {
+  connectorIdFromConnectionReference,
+  connectorIdFromOperation,
+  resolveConnectorId,
+  connectionAuthModeFrom,
+} from './connectorRef.js';
 
 /**
  * The first real unit tests in this repo.
@@ -52,6 +57,65 @@ describe('connectorIdFromConnectionReference', () => {
     expect(connectorIdFromConnectionReference('justonesegment')).toBeUndefined();
     expect(connectorIdFromConnectionReference('two.segments')).toBeUndefined();
     expect(connectorIdFromConnectionReference('')).toBeUndefined();
+  });
+});
+
+describe('resolveConnectorId (topic-embedded actions)', () => {
+  // The regression. Live strings from spikes/_dump_conn_refs.ts against
+  // "Quality Evaluation Agent - Incident", 2026-08-12:
+  //   raw ref: QMA.Incident.DVPluginConnection
+  //   op:      PerformUnboundActionWithOrganization
+  // The middle segment is the ENTITY. The old parser returned `incident`, which matched no
+  // registry entry, so the operation bound to nothing and produced no note at all.
+  it('resolves a solution-prefixed Dataverse reference by its operation family', () => {
+    expect(resolveConnectorId('QMA.Incident.DVPluginConnection', 'PerformUnboundActionWithOrganization')).toEqual({
+      connectorId: 'shared_commondataserviceforapps',
+      confidence: 'inferred',
+    });
+    expect(resolveConnectorId('QMA.Incident.DVPluginConnection', 'GetItemWithOrganization').connectorId).toBe(
+      'shared_commondataserviceforapps',
+    );
+  });
+
+  it('never lets the entity name win over the operation', () => {
+    expect(resolveConnectorId('QMA.Incident.DVPluginConnection', 'GetItemWithOrganization').connectorId).not.toBe(
+      'incident',
+    );
+  });
+
+  it('works when the reference is missing entirely', () => {
+    expect(resolveConnectorId(undefined, 'ListRecordsWithOrganization')).toEqual({
+      connectorId: 'shared_commondataserviceforapps',
+      confidence: 'inferred',
+    });
+  });
+
+  // An explicit `shared_*` id is the connector stating itself — it must outrank inference,
+  // or a future hint regex could silently retarget a correctly-identified connector.
+  it('prefers an explicit shared_* id over the operation family', () => {
+    expect(
+      resolveConnectorId('crf37_Agent.shared_confluence.abc123', 'GetItemWithOrganization'),
+    ).toEqual({ connectorId: 'shared_confluence', confidence: 'exact' });
+  });
+
+  // Custom connectors still fall through to the middle segment, marked as the weaker
+  // evidence it is, so they keep reaching the unsupported list and the report.
+  it('still NAMES a custom connector, flagged as named-only', () => {
+    expect(resolveConnectorId('crf37_MyAgent.crf37_acmepayrollapi.9f2c', 'CreatePayrollRun')).toEqual({
+      connectorId: 'crf37_acmepayrollapi',
+      confidence: 'named-only',
+    });
+  });
+
+  it('reports unknown rather than guessing', () => {
+    expect(resolveConnectorId(undefined, undefined)).toEqual({ confidence: 'unknown' });
+    expect(resolveConnectorId('two.segments', 'SomeOperation')).toEqual({ confidence: 'unknown' });
+  });
+
+  it('only claims Dataverse for the WithOrganization suffix, not for a substring', () => {
+    expect(connectorIdFromOperation('GetOrganizationProfile')).toBeUndefined();
+    expect(connectorIdFromOperation('WithOrganizationDetails')).toBeUndefined();
+    expect(connectorIdFromOperation('UpdateRecordWithOrganization')).toBe('shared_commondataserviceforapps');
   });
 });
 

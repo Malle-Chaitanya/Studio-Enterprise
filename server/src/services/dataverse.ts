@@ -3,7 +3,7 @@ import { logger } from '../logger.js';
 import { ComponentType } from '../types.js';
 import { parseTopicGraph } from './topicGraph.js';
 import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClassifier.js';
-import { connectorIdFromConnectionReference, connectionAuthModeFrom } from './connectorRef.js';
+import { resolveConnectorId, connectionAuthModeFrom } from './connectorRef.js';
 import { parseToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef, parseTopicConnectorActions } from './toolPayload.js';
 import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
 
@@ -642,14 +642,15 @@ function parseAgentTool(c: BotComponent): AgentToolIR {
   const mcp = parseMcpBinding(data);
   const flowId = parseFlowId(data);
   const aiPlugin = parseAiPluginRef(data);
+  const operationId = /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1] || undefined;
   return {
     name: c.name ?? '(unnamed tool)',
     kind: TASK_ACTION_KIND[rawKind.toLowerCase()] ?? 'unknown',
     displayName: /^\s*modelDisplayName:\s*(.+)$/m.exec(data)?.[1]?.trim() || undefined,
     description: /^\s*modelDescription:\s*(.+)$/m.exec(data)?.[1]?.trim() || undefined,
-    connectorId: connectionReference ? connectorIdFromConnectionReference(connectionReference) : undefined,
+    connectorId: resolveConnectorId(connectionReference || undefined, operationId).connectorId,
     connectionAuthMode: connectionAuthModeFrom(data),
-    operationId: /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1] || undefined,
+    operationId,
     outputs: outputs.length ? outputs : undefined,
     inputs: inputs.length ? inputs : undefined,
     outputSchema: outputSchema.length ? outputSchema : undefined,
@@ -1140,9 +1141,10 @@ export async function extractAgent(
           `Used by the "${topicName}" topic of the source agent` +
           (action.outputVariable ? `, which stored the result in ${action.outputVariable}` : '') +
           '.',
-        connectorId: action.connectionReference
-          ? connectorIdFromConnectionReference(action.connectionReference)
-          : undefined,
+        // Topic-embedded references are solution-prefixed connection reference NAMES
+        // (`QMA.Incident.DVPluginConnection`), so the middle segment is the entity, not a
+        // connector. Let the operation family speak — see resolveConnectorId.
+        connectorId: resolveConnectorId(action.connectionReference, action.operationId).connectorId,
         connectionAuthMode: connectionAuthModeFrom(payload),
         operationId: action.operationId,
         inputs: action.inputs.length ? action.inputs : undefined,

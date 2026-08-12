@@ -1123,6 +1123,81 @@ notes, neither is fixed.
 
 ---
 
+### 1.23 The topic-embedded connector-id bug — 45 → 71 Dataverse operations (2026-08-12)
+
+The target set is Confluence / Jira / HubSpot / Dataverse. Measured before the fix
+(`_diag_target_four.ts`), five of the ten Dataverse agents bound **zero** operations:
+
+```
+  D365 Sales - Configuration Agent          [Dataverse]  0/9 ops bind
+  Quality Evaluation Agent                  [Dataverse]  0/8 ops bind
+  Quality Evaluation Agent - Incident       [Dataverse]  0/5 ops bind
+  QualityEvaluationAgentForConversation     [Dataverse]  0/4 ops bind
+  Sales Qualification Agent Config Assista  [Dataverse]  0/3 ops bind
+  Dataverse    10 agent(s)   45/79 operations bind
+```
+
+`_dump_conn_refs.ts` found the cause — the reference on a topic-embedded
+`InvokeConnectorAction` is not the shape the TaskDialog parser was written for:
+
+```
+op:        PerformUnboundActionWithOrganization
+  raw ref: QMA.Incident.DVPluginConnection
+  parsed:  incident
+```
+
+`QMA.Incident.DVPluginConnection` is a solution-prefixed connection reference NAME, so the
+middle segment is the Dataverse ENTITY, not a connector id. `incident` matches no registry
+entry, `resolveOpIndex` returned null, and the tool was skipped by a `continue` whose
+comment says the loss is "reported elsewhere" — it was not. Silently absent, with no
+FidelityNote: the worst failure mode this project has, because the report says nothing.
+
+Fix: `resolveConnectorId(ref, operationId)` ranks the evidence — an explicit `shared_*` in
+the reference (`exact`) beats the operation family (`inferred`) beats the middle segment
+(`named-only`). The `…WithOrganization` operation family is Dataverse and nothing else.
+17 unit tests, including that the entity name must never win.
+
+Measured after, same command, same tenant:
+
+```
+  D365 Sales - Configuration Agent          [Dataverse]  9/9 ops bind
+  Quality Evaluation Agent                  [Dataverse]  7/8 ops bind · 1 refused
+  Quality Evaluation Agent - Incident       [Dataverse]  4/5 ops bind · 1 refused
+  QualityEvaluationAgentForConversation     [Dataverse]  4/4 ops bind
+  Sales Qualification Agent Config Assista  [Dataverse]  2/3 ops bind · 1 refused
+  Dataverse    10 agent(s)   71/79 operations bind
+  Confluence    4 agent(s)   1/1 operations bind
+  HubSpot       2 agent(s)   3/3 operations bind
+```
+
+Tenant-wide bound operations 53 → 78. Grade **P** for the binding count (real extraction,
+real binder). Grade **U** for whether these tools return live data — no bound Dataverse
+call has been executed against the API yet; that needs the application-user grant.
+
+**The 8 that remain are refused, not lost silently.** Every one is a required *path*
+parameter the source agent computes from Copilot state:
+
+```
+Case Management Agent — Act on a customer issue - PerformBoundActionWithOrganization:
+  "entityName" is computed at run time … and is required for this call,
+  so the tool would silently query the wrong data.
+Quality Evaluation Agent - Incident — Fetch Payload and Evaluate - GetItemWithOrganization:
+  "recordId" is computed at run time in Copilot …
+```
+
+Leaving `recordId` to the model means fetching a hallucinated record id — a wrong answer
+presented as a right one. Refusing with a `lost` note is the correct call and I am not
+weakening it without a decision. Non-required expression inputs (`item.msdyn_name`,
+`item.BotConversationId`) already degrade to `needs-review` and still bind: 59 such notes.
+
+**Jira: zero agents in this tenant.** Nothing to build, nothing to prove.
+
+**Still silently absent (outside the target four).** 12 operations across
+`shared_googledrive` (9) and `shared_get` (3) produce no bound call AND no note — same
+`continue` path, different cause (no registry fixture). Not fixed.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run

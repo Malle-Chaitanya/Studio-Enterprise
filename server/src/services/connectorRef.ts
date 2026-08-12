@@ -35,6 +35,65 @@ export function connectorIdFromConnectionReference(ref: string): string | undefi
 }
 
 /**
+ * Operation families that identify their connector on their own.
+ *
+ * Dataverse's connector exposes a distinctive set of `…WithOrganization` operations
+ * (`ListRecordsWithOrganization`, `PerformUnboundActionWithOrganization`,
+ * `GetItemWithOrganization`, `UpdateRecordWithOrganization`,
+ * `PerformBoundActionWithOrganization`). No other connector in the captured index uses
+ * that suffix, and they always carry `organization: current` in the binding.
+ */
+const OPERATION_CONNECTOR_HINTS: Array<{ re: RegExp; connectorId: string }> = [
+  { re: /WithOrganization$/i, connectorId: 'shared_commondataserviceforapps' },
+];
+
+/** The connector an operation id can only belong to, or undefined. */
+export function connectorIdFromOperation(operationId: string | undefined): string | undefined {
+  if (!operationId) return undefined;
+  return OPERATION_CONNECTOR_HINTS.find((h) => h.re.test(operationId))?.connectorId;
+}
+
+/**
+ * Resolve the connector for a connector action, preferring the strongest evidence.
+ *
+ * TOPIC-EMBEDDED actions (`kind: InvokeConnectorAction` inside an AdaptiveDialog) carry a
+ * connection reference in a shape the TaskDialog parser was never written for. Live
+ * example:
+ *
+ *     raw ref: QMA.Incident.DVPluginConnection
+ *     op:      PerformUnboundActionWithOrganization
+ *
+ * The middle segment there is the ENTITY (`Incident`), not a connector — so the fallback
+ * produced `incident`, which matches no registry entry, so the operation bound to nothing
+ * and was dropped **with no bound call and no fidelity note**. Silently absent, which is
+ * worse than refused: the report said nothing at all. Measured 2026-08-12: 29 operations
+ * across 5 agents, five of which had 0 working operations as a result.
+ *
+ * Order of evidence:
+ *   1. `shared_*` in the reference — the connector states itself. `exact`.
+ *   2. The operation family — `…WithOrganization` is Dataverse and nothing else. `inferred`.
+ *   3. The middle segment — a custom connector we cannot call but can NAME, so it still
+ *      reaches the unsupported list and the report. `named-only`.
+ *
+ * The confidence is returned rather than discarded so the caller can say which it was;
+ * a guess presented as a fact is how the entity name got treated as a connector id.
+ */
+export function resolveConnectorId(
+  ref: string | undefined,
+  operationId?: string,
+): { connectorId?: string; confidence: 'exact' | 'inferred' | 'named-only' | 'unknown' } {
+  if (ref) {
+    const firstParty = /\b(shared_[a-z0-9_]+)/i.exec(ref)?.[1];
+    if (firstParty) return { connectorId: firstParty.toLowerCase(), confidence: 'exact' };
+  }
+  const fromOp = connectorIdFromOperation(operationId);
+  if (fromOp) return { connectorId: fromOp, confidence: 'inferred' };
+  const middle = ref ? connectorIdFromConnectionReference(ref) : undefined;
+  if (middle) return { connectorId: middle, confidence: 'named-only' };
+  return { confidence: 'unknown' };
+}
+
+/**
  * Whose credentials does this action run under?
  *
  *   connectionProperties:
