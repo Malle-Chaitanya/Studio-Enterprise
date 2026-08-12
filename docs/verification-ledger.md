@@ -597,6 +597,73 @@ operations with no fixed arguments; the Power Fx demotion path and the Dataverse
 
 ---
 
+### 1.17 Dataverse: connector calls live inside TOPICS, and two of our instruments disagreed (2026-08-12)
+
+Going after the Dataverse agents surfaced three things, in the order they were found.
+
+**a) Extraction was blind to the way these agents work.** The census said `Case Management
+Agent` uses `shared_commondataserviceforapps` with six operations. `extractAgent` reported
+**0 tools** for it. One of them was wrong, and it was extraction:
+
+```
+bot Case Management Agent — 12 components, all type=9 statecode=0 managed=true
+[AdaptiveDialog] Resolve a case      actions: InvokeConnectorAction  ops: ListRecordsWithOrganization, PerformUnbound…
+[AdaptiveDialog] Initialize agent    actions: InvokeConnectorAction  ops: PerformUnboundActionWithOrganization
+[AdaptiveDialog] Apply Routing Rules actions: InvokeConnectorAction  ops: PerformUnboundActionWithOrganization
+```
+
+The connector call is a STEP INSIDE A TOPIC (`kind: InvokeConnectorAction`), not a
+standalone `TaskDialog` tool. `isAgentToolComponent` only accepted TaskDialog, so five
+Microsoft Customer Service agents — the largest connector group in the tenant — looked
+toolless. After `parseTopicConnectorActions`: **0 → 15 tools**, each with its bound
+arguments and its owning topic. Grade **P**.
+
+The argument shape differs too: `input.binding` is a map, not a list of typed input
+records. That is exactly the "every customer's payloads differ" case the parser was written
+scanner-style for.
+
+**b) A bug in my own refusal rule, caught by running it.** Topic bindings QUOTE their
+Power Fx:
+
+```yaml
+item: "={msdyn_AutomationLevel: Topic.automationLevel, msdyn_Entity: Topic.incidentEntity, …}"
+$filter: ="_msdyn_incidentid_value eq '" & Topic.incidentId & "' and statecode eq 0"
+```
+
+`value.startsWith('=')` is false for the first one — it starts with `"`. So the strictest
+rule in the pipeline ("never copy Power Fx through as a literal") silently did not fire, and
+the migrated tool would have POSTed the formula text as a request body. Fixed by unquoting
+first. Recorded because the rule looked correct in review and only its execution exposed the
+hole.
+
+After the fix, for that one agent: **3 operations refused outright** (`entityName` /
+`recordId` computed at run time and required — a tool that silently queries the wrong table
+is worse than no tool) and **18 arguments demoted** to model-supplied with `needs-review`.
+The pinned parts survive: `actionName=msdyn_SetAIAgentStatus`, `organization=current`.
+
+**c) The Dataverse call itself is blocked on a customer grant, not on code.**
+
+```
+── resolve_a_case_listrecordswithorganization
+   GET {dataverseOrgUrl}/api/data/v9.1.0/{entityName}
+   context: dataverseOrgUrl  auth=aad-token
+   -> 403  {"error":{"code":"0x80072560","message":"The user is not a member of the organization."}}
+```
+
+The Entra token minted successfully — the `aad-token` path works. Dataverse then refused it
+because the app registration is not an **application user** in that environment. That is a
+prerequisite the customer grants (Power Platform admin → Environment → Application users →
+New), and it is now stated in the connector's `permissionsHint` so it appears in the UI
+before a run rather than as a 403 at inference.
+
+**What this says about the Microsoft prebuilt agents.** Their logic is choreography: topics
+decide when to call, in what order, with values computed from conversation state. Extracting
+the calls preserves the CAPABILITY; the sequencing does not survive, and the report says so
+per tool. An honest migration of these agents is "here are the actions it could perform",
+not "here is the same agent".
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run

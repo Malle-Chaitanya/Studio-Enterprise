@@ -4,7 +4,7 @@ import { ComponentType } from '../types.js';
 import { parseTopicGraph } from './topicGraph.js';
 import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClassifier.js';
 import { connectorIdFromConnectionReference, connectionAuthModeFrom } from './connectorRef.js';
-import { parseToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef } from './toolPayload.js';
+import { parseToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef, parseTopicConnectorActions } from './toolPayload.js';
 import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
 
 /**
@@ -1117,6 +1117,40 @@ export async function extractAgent(
   const toolComps = type9.filter((c) => isAgentToolComponent(c));
   const topicComps = type9.filter((c) => !isAgentToolComponent(c));
   const agentTools = toolComps.map(parseAgentTool);
+
+  // Connector calls that live INSIDE a topic rather than as a standalone TaskDialog.
+  // The Customer Service agents in the test tenant make every Dataverse call this way
+  // (ledger 1.17): `kind: InvokeConnectorAction` as a step in an AdaptiveDialog. Reading
+  // only TaskDialog rows made those agents look like they had no tools at all, while the
+  // connector census correctly reported they used Dataverse — two of our own instruments
+  // disagreeing, with extraction the wrong one.
+  //
+  // These are steps in a flow, so what survives is the CAPABILITY, not the choreography:
+  // the topic decided when to call them and what to do with the result. The mapper reports
+  // that; dropping them entirely would lose the capability as well.
+  for (const topicComp of topicComps) {
+    const payload = topicComp.data || topicComp.content || '';
+    const topicName = topicComp.name ?? '(unnamed topic)';
+    for (const action of parseTopicConnectorActions(payload)) {
+      if (!action.operationId && !action.connectionReference) continue;
+      agentTools.push({
+        name: `${topicName} - ${action.operationId ?? 'connector call'}`,
+        kind: 'connector',
+        description:
+          `Used by the "${topicName}" topic of the source agent` +
+          (action.outputVariable ? `, which stored the result in ${action.outputVariable}` : '') +
+          '.',
+        connectorId: action.connectionReference
+          ? connectorIdFromConnectionReference(action.connectionReference)
+          : undefined,
+        connectionAuthMode: connectionAuthModeFrom(payload),
+        operationId: action.operationId,
+        inputs: action.inputs.length ? action.inputs : undefined,
+        sourceTopic: topicName,
+        schemaName: topicComp.schemaname ?? undefined,
+      });
+    }
+  }
   const ksComps = components.filter((c) => c.componenttype === ComponentType.KnowledgeSource);
   const fileComps = components.filter((c) => c.componenttype === ComponentType.BotFileAttachment);
 

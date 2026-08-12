@@ -110,6 +110,24 @@ for (const [connectorId, specs] of build.byConnector) {
       const key = (await secret(connectorId, 'api_key')) ?? (await secret('shared_hubspotcrmv2', 'api_key'));
       if (!key) { console.log('   missing bearer token'); continue; }
       authHeader = `Bearer ${key}`;
+    } else if (spec.auth === 'aad-token') {
+      // App-only Entra token for the customer's own Dataverse org, from the app
+      // registration they already saved. Same exchange the container performs.
+      const tenant = await secret('shared_dynamicscrmonline', 'tenant_id');
+      const clientId = await secret('shared_dynamicscrmonline', 'client_id');
+      const clientSecret = await secret('shared_dynamicscrmonline', 'client_secret');
+      let resource = spec.aadResource ?? '';
+      for (const c of spec.contextRequired) resource = resource.replace(`{${c}}`, spec.contextValues[c] ?? '');
+      if (!tenant || !clientId || !clientSecret || !resource) { console.log('   missing Entra app credentials'); continue; }
+      const form = new URLSearchParams({
+        grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret,
+        scope: `${resource.replace(/\/$/, '')}/.default`,
+      });
+      const tok = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form,
+      }).then((r) => r.json() as Promise<{ access_token?: string; error_description?: string }>);
+      if (!tok.access_token) { console.log(`   token mint failed: ${(tok.error_description ?? '').slice(0, 120)}`); continue; }
+      authHeader = `Bearer ${tok.access_token}`;
     } else {
       console.log(`   auth kind ${spec.auth} not exercised by this probe`);
       continue;

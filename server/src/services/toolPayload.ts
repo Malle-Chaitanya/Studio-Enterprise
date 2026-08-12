@@ -280,3 +280,83 @@ export function parseAiPluginRef(data: string): { name?: string; operationId?: s
     operationId: /operationid=([^,\s]+)/i.exec(key)?.[1],
   };
 }
+
+/** A connector call that lives INSIDE a topic's flow rather than as a standalone tool. */
+export interface TopicConnectorAction {
+  /** `InvokeConnectorAction` id from the payload, for traceability. */
+  id?: string;
+  operationId?: string;
+  connectionReference?: string;
+  /** The arguments bound at that step, same shape as a TaskDialog tool's inputs. */
+  inputs: ToolInputIR[];
+  /** Where the step put its result, e.g. `Topic.ActiveMonitoringRecord`. */
+  outputVariable?: string;
+}
+
+/**
+ * Connector calls embedded in an AdaptiveDialog topic.
+ *
+ * Discovered 2026-08-12 (ledger §1.17): the Customer Service agents in the test tenant —
+ * 5 of the 12 connector-using agents — make every Dataverse call this way, as a step inside
+ * a topic, with `kind: InvokeConnectorAction`. Our extraction only recognised standalone
+ * `TaskDialog` tools, so those agents appeared to have no tools at all while the connector
+ * census correctly reported they used Dataverse. Two of our own instruments disagreed, and
+ * the extraction was the wrong one.
+ *
+ * The argument shape differs from a TaskDialog's: `input.binding` is a MAP of
+ * `parameter: value`, not a list of typed input records, and its values lean heavily on
+ * Power Fx over topic variables (`="… eq '" & Topic.incidentId & "'"`). Those are marked
+ * `isExpression` exactly as elsewhere, so the caller demotes rather than copies them.
+ *
+ * FIDELITY LIMIT the caller must carry: these are steps in a flow. The topic decided WHEN
+ * to call them, in what order, and what to do with the result. Extracting them as tools
+ * preserves the capability, not the choreography.
+ */
+export function parseTopicConnectorActions(data: string): TopicConnectorAction[] {
+  const lines = data.split(/\r?\n/);
+  const out: TopicConnectorAction[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*-?\s*kind:\s*InvokeConnectorAction\s*$/.test(lines[i])) continue;
+    const actionIndent = indentOf(lines[i]);
+    // The block runs until a line at or above the action's own indentation that starts a
+    // new list item — anything more deeply indented belongs to this action.
+    const block: string[] = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const line = lines[j];
+      if (line.trim() && indentOf(line) <= actionIndent && /^\s*-\s/.test(line)) break;
+      if (line.trim() && indentOf(line) < actionIndent) break;
+      block.push(line);
+    }
+    const text = block.join('\n');
+    const inputs: ToolInputIR[] = [];
+    for (const bindLine of blockLines(text, 'binding')) {
+      const m = /^\s*([^:\s][^:]*):\s*(.*)$/.exec(bindLine);
+      if (!m) continue;
+      const name = unquoteName(m[1]);
+      const rawValue = m[2].trim();
+      if (!name || !rawValue) continue;
+      // Topic bindings QUOTE their Power Fx: `item: "={a: Topic.x}"`. Testing the raw
+      // string for a leading `=` therefore called an expression a literal, and the
+      // migrated tool would have POSTed the formula text as a request body. Caught live on
+      // 2026-08-12 against a Customer Service agent (ledger 1.17). Unquote first.
+      const value = unquoteName(rawValue);
+      inputs.push({
+        name,
+        source: 'fixed',
+        value,
+        // Copilot writes Power Fx with a leading `=`; inside topics these routinely
+        // reference topic variables that do not exist on the Gemini side.
+        isExpression: value.startsWith('=') || undefined,
+      });
+    }
+    out.push({
+      id: scalar(block, 'id'),
+      operationId: scalar(block, 'operationId'),
+      connectionReference: scalar(block, 'connectionReference'),
+      inputs,
+      outputVariable: scalar(blockLines(text, 'output'), 'variable'),
+    });
+  }
+  return out;
+}

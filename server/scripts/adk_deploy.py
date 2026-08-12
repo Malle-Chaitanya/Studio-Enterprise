@@ -676,6 +676,40 @@ def _build_live_connector_tool(conn: dict, project: str):
             return cloud_id
         raise RuntimeError("no value for '" + name + "' - the migrated tool cannot build its URL")
 
+    # A tool result goes straight into the model's context. Copilot's own connector calls
+    # were bounded by the maker's page size; ours are bounded by nothing, so a list
+    # operation against a real CRM can return megabytes. Unbounded, that either blows the
+    # context window or silently costs a fortune per turn, and the failure appears as a
+    # confusing model error rather than as "too much data".
+    #
+    # So: cap it, say so, and tell the model how to narrow. Truncating in silence would let
+    # the model present a partial list as the whole answer, which is the fidelity failure
+    # this codebase refuses everywhere else.
+    RESULT_CHAR_BUDGET = 24000
+
+    def _capped(result: dict, narrowing=None) -> dict:
+        import json as _json
+
+        try:
+            text = _json.dumps(result.get("body"))
+        except Exception:  # noqa: BLE001
+            text = str(result.get("body"))
+        if len(text) <= RESULT_CHAR_BUDGET:
+            return result
+        hint = ""
+        if narrowing:
+            hint = " Narrow the request with: " + ", ".join(narrowing) + "."
+        return {
+            "status": result.get("status"),
+            "truncated": True,
+            "note": (
+                "The response was " + str(len(text)) + " characters and has been cut to "
+                + str(RESULT_CHAR_BUDGET) + ". This is a PARTIAL result - do not describe it "
+                "as the complete set." + hint
+            ),
+            "body": text[:RESULT_CHAR_BUDGET],
+        }
+
     def _make_bound_tool(op: dict):
         """Build one typed ADK function tool for one bound operation."""
         import json as _json
@@ -706,11 +740,62 @@ def _build_live_connector_tool(conn: dict, project: str):
             seen.add(pn)
             unique_args.append((pn, a))
 
+        # Which arguments can shrink the next call. Derived from the operation's own
+        # parameters so the advice is true for THIS endpoint, not generic prose.
+        narrowing = [
+            a.get("name")
+            for a in model_args
+            if a.get("name") in ("limit", "$top", "top", "pageSize", "maxResults", "$filter", "filter", "$select")
+        ]
+
+        def _aad_header() -> str:
+            """Entra token for a named resource, from the customer's app registration.
+
+            Dataverse is app-only: the resource is the customer's own org URL, which the
+            server passes as context rather than asking an admin to paste a URL we already
+            hold. The registry's generic client_credentials path cannot be reused here
+            because it resolves the scope from a stored `org_url` secret that, by design,
+            does not exist for this connector.
+            """
+            import json as _json
+            import time
+            import urllib.parse
+            import urllib.request
+
+            resource = op.get("aadResource") or ""
+            for c in ctx_required:
+                resource = resource.replace("{" + c + "}", _context(c, ctx_values))
+            resource = resource.rstrip("/")
+            cache_key = "aad:" + resource
+            cached = token_cache.get(cache_key)
+            if cached and cached.get("expires_at", 0) > time.time() + 60:
+                return "Bearer " + cached["token"]
+            form = {
+                "grant_type": "client_credentials",
+                "client_id": _secret("client_id"),
+                "client_secret": _secret("client_secret"),
+                "scope": resource + "/.default",
+            }
+            url = "https://login.microsoftonline.com/" + _secret("tenant_id") + "/oauth2/v2.0/token"
+            req = urllib.request.Request(
+                url,
+                data=urllib.parse.urlencode(form).encode(),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                payload = _json.loads(resp.read().decode("utf-8"))
+            token = payload.get("access_token")
+            if not token:
+                raise RuntimeError("no access_token for " + resource)
+            token_cache[cache_key] = {"token": token, "expires_at": time.time() + int(payload.get("expires_in") or 3600)}
+            return "Bearer " + token
+
         def _invoke(**kwargs) -> dict:
             try:
-                auth_header = _auth_header(_fill)
+                auth_header = _aad_header() if op.get("auth") == "aad-token" else _auth_header(_fill)
             except Exception as e:  # noqa: BLE001
-                return {"error": "auth failed (" + str(auth_kind) + "): " + str(e)}
+                return {"error": "auth failed (" + str(op.get("auth") or auth_kind) + "): " + str(e)}
 
             path_params, query, headers = {}, {}, {}
             body_val = None
@@ -767,9 +852,10 @@ def _build_live_connector_tool(conn: dict, project: str):
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     raw = resp.read().decode("utf-8")
                     try:
-                        return {"status": resp.status, "body": _json.loads(raw)}
+                        parsed = _json.loads(raw)
                     except Exception:  # noqa: BLE001
-                        return {"status": resp.status, "body": raw[:4000]}
+                        return _capped({"status": resp.status, "body": raw}, narrowing)
+                    return _capped({"status": resp.status, "body": parsed}, narrowing)
             except Exception as e:  # noqa: BLE001
                 # Quote the failure. A vague error invites the model to narrate a
                 # plausible answer instead of reporting that it could not look.

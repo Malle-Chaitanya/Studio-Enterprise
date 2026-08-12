@@ -376,6 +376,12 @@ export interface AgentToolIR {
   flowId?: string;
   /** For `ai-plugin` tools: the plugin identity from `entityKey`. */
   aiPlugin?: { name?: string; operationId?: string };
+  /**
+   * Set when the call was embedded in a TOPIC rather than declared as a standalone tool
+   * (`InvokeConnectorAction` inside an AdaptiveDialog). The migrated tool preserves the
+   * capability, not the topic's ordering or conditions — callers must report that.
+   */
+  sourceTopic?: string;
   /** Dataverse schema name of the component. */
   schemaName?: string;
 }

@@ -289,6 +289,34 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
   },
 
   {
+    // THE most-used connector in the test tenant (5 of 12 connector-using agents, ledger
+    // 1.10) and it had no entry, because the registry guessed `shared_dynamicscrmonline`
+    // from the product name while Copilot Studio actually emits
+    // `shared_commondataserviceforapps`. Same Web API, same app-only auth.
+    //
+    // `org_url` is NOT asked for here: the migration already knows the environment it
+    // extracted from, and bound operations carry it as `dataverseOrgUrl` context. Asking an
+    // admin to paste a URL we hold would be asking them to re-enter our own data.
+    id: 'shared_commondataserviceforapps',
+    name: 'Microsoft Dataverse',
+    category: 'crm',
+    icon: '💠',
+    docsUrl: 'https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/overview',
+    credentialGroup: 'ms_graph',
+    credentials: [],
+    requiredPermissions: ['Dataverse user_impersonation (application user in the target environment)'],
+    permissionsHint:
+      'App-only Dataverse access needs the app registration added as an APPLICATION USER in the ' +
+      'target environment with a security role — a Graph permission alone is not enough, and the ' +
+      'failure shows up as 401 on the first call, not at save time.',
+    baseUrlTemplate: '{org_url}/api/data/v9.2',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'oauth2-client-credentials',
+    tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+    scope: '{org_url}/.default',
+  },
+
+  {
     id: 'shared_pipedrive',
     name: 'Pipedrive',
     category: 'crm',
