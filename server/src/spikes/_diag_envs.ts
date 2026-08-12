@@ -15,13 +15,19 @@ import { connectMongo } from '../db/mongo.js';
 import { getDb } from '../db/core.js';
 import { clientCredsToken } from '../auth/microsoft.js';
 import { listBots } from '../services/dataverse.js';
+import { discoverEnvironments } from '../auth/microsoft.js';
 
 await connectMongo();
+const LIVE = process.env.LIVE_ENVS === '1';
 const cache = (await getDb().collection('environmentsCache').find({ tenantId: { $exists: true } })
   .sort({ $natural: -1 }).limit(1).next()) as
   { tenantId?: string; environments?: Array<{ url: string; name: string; id: string }> } | null;
 const tenantId = cache!.tenantId!;
-const envs = cache!.environments ?? [];
+// The cache is a snapshot. An environment created since the last discovery is simply
+// absent from it, and "not in the cache" is not "does not exist" — LIVE_ENVS=1 asks the
+// BAP admin API directly.
+const envs = LIVE ? await discoverEnvironments(tenantId) : (cache!.environments ?? []);
+console.log(LIVE ? '(source: LIVE BAP discovery)' : '(source: environmentsCache snapshot)');
 
 console.log(`\ntenant has ${envs.length} environment(s) in environmentsCache\n`);
 let total = 0;
