@@ -6,6 +6,7 @@ import { normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
 import { assessAgent } from '../services/assess.js';
 import { getCachedIR } from '../db/repos/agentIR.js';
 import { getSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
+import { listCustomConnectors } from '../connectors/customConnectorInventory.js';
 import { mapPoolCollect } from '../concurrency.js';
 import {
   cacheEnvironments,
@@ -228,4 +229,33 @@ exploreRouter.get('/connectors-needed', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: 'connectors_needed_failed', detail: (err as Error).message });
   }
+});
+
+/**
+ * GET /api/explore/custom-connectors?session=…&env=…
+ *
+ * The customer's OWN connectors — the ones no registry can ever list, because they were
+ * built in their tenant. Surfaced BEFORE a migration so a connector is never discovered
+ * mid-run: the one in the test tenant was published the same day as the agent using it,
+ * so no shipped table could have known about it.
+ *
+ * `listed: false` means we could not read the listing, which is NOT the same as "you have
+ * none" and must not be rendered as such.
+ */
+exploreRouter.get('/custom-connectors', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!session.tenantId) return void res.status(400).json({ error: 'ms_not_connected' });
+
+  const envUrl = String(req.query.env ?? '');
+  if (!envUrl) return void res.status(400).json({ error: 'env_required' });
+  const envId = session.environments?.find(
+    (e) => e.url.replace(/\/$/, '') === envUrl.replace(/\/$/, ''),
+  )?.id;
+  // Custom connectors are per environment; without the id we would be reporting some
+  // other environment's connectors, which is worse than reporting none.
+  if (!envId) return void res.status(400).json({ error: 'unknown_environment' });
+
+  const connectors = await listCustomConnectors(session.tenantId, envId);
+  res.json({ listed: connectors !== undefined, connectors: connectors ?? [] });
 });

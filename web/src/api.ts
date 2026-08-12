@@ -641,3 +641,35 @@ export async function saveMsConnectorCredentials(
   if (!res.ok) throw new Error(await saveErrorMessage(res, 'ms_creds_save_failed'));
   return (await res.json()) as { secretIds: string[]; validation?: ConnectorValidation };
 }
+
+/** One of the customer's OWN connectors, built in their tenant. */
+export interface CustomConnectorInfo {
+  connectorId: string;
+  displayName: string;
+  publisher?: string;
+  createdBy?: string;
+  createdTime?: string;
+  backendHost?: string;
+  operationCount: number;
+  operations: string[];
+  bindable: boolean;
+  reason?: string;
+  policyCount: number;
+}
+
+/**
+ * Custom connectors in one environment.
+ *
+ * `listed: false` means we could not READ the listing — which is not the same as "you
+ * have none" and must never be shown as such.
+ */
+export async function fetchCustomConnectors(
+  session: string,
+  envUrl: string,
+): Promise<{ listed: boolean; connectors: CustomConnectorInfo[] }> {
+  const res = await fetch(
+    `/api/explore/custom-connectors?session=${session}&env=${encodeURIComponent(envUrl)}`,
+  );
+  if (!res.ok) throw new Error('custom_connectors_failed');
+  return (await res.json()) as { listed: boolean; connectors: CustomConnectorInfo[] };
+}

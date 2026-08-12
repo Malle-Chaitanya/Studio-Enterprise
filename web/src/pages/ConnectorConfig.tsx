@@ -8,6 +8,8 @@ import {
   saveMsConnectorCredentials,
   fetchSavedConnectors,
   fetchConnectorRequirements,
+  fetchCustomConnectors,
+  type CustomConnectorInfo,
   type DetectedConnector,
   type ConnectorDef,
   type ConnectorRequirement,
@@ -861,6 +863,9 @@ export function ConnectorConfig() {
   const [connectors, setConnectors] = useState<DetectedConnector[]>([]);
   const [msIds, setMsIds] = useState<string[]>([]);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  // The customer's OWN connectors. `listed:false` means we could not read the listing,
+  // which is not the same as "none" and is rendered differently.
+  const [customConnectors, setCustomConnectors] = useState<{ listed: boolean; connectors: CustomConnectorInfo[] } | null>(null);
   const [requirements, setRequirements] = useState<Map<string, ConnectorRequirement>>(new Map());
   const [error, setError] = useState('');
   const fetchedRef = useRef(false);
@@ -968,6 +973,16 @@ export function ConnectorConfig() {
         } catch {
           /* no permission guidance available */
         }
+        // The customer's own connectors, asked of the platform rather than looked up in a
+        // registry that by definition cannot contain them. Surfaced here so one is never
+        // discovered mid-migration: the one in the test tenant was published the same day
+        // as the agent that used it.
+        try {
+          const envUrl = envsWithAgents[0]?.env;
+          if (envUrl) setCustomConnectors(await fetchCustomConnectors(session, envUrl));
+        } catch {
+          /* best-effort: the cards below still render */
+        }
         setLoading(false);
       } catch {
         setError('Could not scan for connector dependencies. Make sure Microsoft is connected.');
@@ -1036,6 +1051,62 @@ export function ConnectorConfig() {
         <div className="infobox">
           No outside connections found for the agents you selected — they only use built-in
           Microsoft features and don't rely on any external service.
+        </div>
+      )}
+
+      {/* The customer's OWN connectors. Shown whether or not an agent uses one: knowing a
+          bindable custom connector exists BEFORE a run is the difference between
+          configuring it and discovering it mid-migration. */}
+      {!loading && customConnectors && (
+        <div style={{ marginBottom: 14 }}>
+          {!customConnectors.listed ? (
+            <div className="infobox">
+              <strong>Custom connectors could not be listed.</strong> Your team may have built
+              connectors of its own; we could not read them, so this page may be missing some.
+              This is not a statement that you have none.
+            </div>
+          ) : customConnectors.connectors.length > 0 ? (
+            <div className="infobox">
+              <strong>
+                {customConnectors.connectors.length} custom connector
+                {customConnectors.connectors.length !== 1 ? 's' : ''} built by your team
+              </strong>
+              <p style={{ fontSize: 12, color: 'var(--muted)', margin: '4px 0 8px' }}>
+                These are yours, not Microsoft's, so they are not in any built-in list — we read
+                each one's published definition to work out what it can do.
+              </p>
+              {customConnectors.connectors.map((c) => (
+                <div key={c.connectorId} style={{ marginTop: 8 }}>
+                  <div>
+                    <strong>{c.displayName}</strong>{' '}
+                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                      {c.publisher ? `published by ${c.publisher}` : ''}
+                      {c.backendHost ? ` · calls ${c.backendHost}` : ''}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, marginTop: 2 }}>
+                    {c.bindable ? (
+                      <span>
+                        ✓ {c.operationCount} operation{c.operationCount !== 1 ? 's' : ''} can be
+                        recreated: <code>{c.operations.join(', ')}</code>
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--warn, #b45309)' }}>
+                        Cannot be recreated — {c.reason ?? 'we could not read its definition.'}
+                      </span>
+                    )}
+                  </div>
+                  {c.policyCount > 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--warn, #b45309)', marginTop: 2 }}>
+                      Applies {c.policyCount} Power Platform policy/policies that rewrite the
+                      request before it reaches {c.backendHost ?? 'the service'}. We call the
+                      service directly, so results may differ — compare before relying on it.
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
 
