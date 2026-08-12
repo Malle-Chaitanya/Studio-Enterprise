@@ -50,6 +50,21 @@ export interface ConfluenceMigrationResult {
   pageCount: number;
   spaceCount: number;
   error?: string;
+  /**
+   * Spaces the agent was grounded on that we could NOT find, when at least one other
+   * space DID match.
+   *
+   * These were computed and written to a server log, then dropped. When every space
+   * fails the caller gets `error` and the customer is told; when only SOME fail the
+   * crawl succeeds, the run reports "N page(s) ready", and the missing spaces exist
+   * nowhere the customer can see. That is an agent deploying green while a knowledge
+   * source it was grounded on is silently absent — observed live 2026-08-12 on a real
+   * Confluence_agent run that warned here and then reported success.
+   *
+   * We cannot tell WHY from here (renamed, deleted, or invisible to this credential),
+   * so the caller reports the names and asks rather than guessing.
+   */
+  unmatchedSpaceNames?: string[];
 }
 
 function basicAuth(email: string, apiToken: string): string {
@@ -213,7 +228,29 @@ function pageToHtml(page: ConfluencePage, baseUrl: string): Buffer {
  * data store (e.g. customer's DE project ≠ SA's GCS project), pass `gcsToken`
  * and `gcsProject` separately. Both default to `saToken`/`project` when omitted.
  */
+/**
+ * Crawl the agent's Confluence spaces into a Discovery Engine data store.
+ *
+ * Thin wrapper over the implementation so `unmatchedSpaceNames` reaches the caller from
+ * EVERY return path. The implementation returns from a dozen places — GCS failures,
+ * import failures, the success path — and adding the field to each by hand is exactly
+ * how one gets missed, which would restore the silent loss this exists to fix. The
+ * unmatched names are recorded on the shared ref as soon as they are known, so whichever
+ * return fires carries them.
+ */
 export async function migrateConfluenceToDataStore(
+  project: string,
+  saToken: string,
+  agentSourceId: string,
+  creds: ConfluenceCreds,
+  opts?: Parameters<typeof migrateConfluenceToDataStoreImpl>[4],
+): Promise<ConfluenceMigrationResult> {
+  const unmatched: { names: string[] } = { names: [] };
+  const result = await migrateConfluenceToDataStoreImpl(project, saToken, agentSourceId, creds, opts, unmatched);
+  return unmatched.names.length ? { ...result, unmatchedSpaceNames: unmatched.names } : result;
+}
+
+async function migrateConfluenceToDataStoreImpl(
   project: string,
   saToken: string,
   agentSourceId: string,
@@ -226,6 +263,9 @@ export async function migrateConfluenceToDataStore(
      *  DE service agent grant can be applied without a Resource Manager call. */
     deProjectNumber?: string;
   },
+  /** Filled in as soon as the unmatched names are known, so the wrapper can attach them
+   *  to whichever of this function's many return paths actually fires. */
+  unmatchedOut?: { names: string[] },
 ): Promise<ConfluenceMigrationResult> {
   const gcsToken   = opts?.gcsToken   ?? saToken;
   const gcsProject = opts?.gcsProject ?? project;
@@ -254,6 +294,9 @@ export async function migrateConfluenceToDataStore(
     (n) => !resolvedSpaces.some((s) => s.name.toLowerCase().trim() === n.toLowerCase().trim()),
   );
   if (unmatchedNames.length > 0) {
+    // Hand them to the wrapper so they survive whichever return path fires. Logging
+    // alone is what made these invisible to the customer.
+    if (unmatchedOut) unmatchedOut.names = unmatchedNames;
     logger.warn({ unmatchedNames }, 'confluenceMigrator: some requested spaces not found — crawling matched ones only');
   }
 
@@ -274,6 +317,7 @@ export async function migrateConfluenceToDataStore(
       pageCount: 0,
       spaceCount: resolvedSpaces.length,
       error: `No pages found in matched spaces: ${resolvedSpaces.map((s) => s.name).join(', ')}.`,
+      unmatchedSpaceNames: unmatchedNames.length ? unmatchedNames : undefined,
     };
   }
 

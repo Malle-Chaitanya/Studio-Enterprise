@@ -954,7 +954,16 @@ export function ConnectorConfig() {
         // Permissions + credential-group state. Best-effort: without it the cards still
         // collect credentials, they just cannot warn about permissions.
         try {
-          const reqs = await fetchConnectorRequirements(session, [...new Set([...all.map((c) => c.connectorId), ...ms])]);
+          // Pass the environment. A CUSTOM connector is defined per environment, so
+          // without one the server cannot resolve its definition and renders it as
+          // `unknown` — no name, no credential field — which is exactly the connector
+          // the customer most needs to configure, since it is the one we cannot
+          // describe from a built-in registry.
+          const reqs = await fetchConnectorRequirements(
+            session,
+            [...new Set([...all.map((c) => c.connectorId), ...ms])],
+            envsWithAgents[0]?.env,
+          );
           setRequirements(new Map(reqs.map((r) => [r.connectorId, r])));
         } catch {
           /* no permission guidance available */

@@ -1365,6 +1365,26 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               logger.warn({ err }, 'orchestrator: Confluence pre-crawl threw; continuing');
               return { pageCount: 0, spaceCount: 0, error: (err as Error).message };
             });
+            // Spaces the agent was grounded on that we could not find. When ALL of them
+            // fail the crawl returns an error and the customer is told; when only SOME do,
+            // the crawl succeeds and — until now — the missing ones appeared nowhere but a
+            // server log. Observed live 2026-08-12: a run warned about unmatched spaces,
+            // then reported "7 page(s) ready" and finished green. An agent that deploys
+            // successfully while a knowledge source it was grounded on is silently absent
+            // is the exact failure this pipeline exists to prevent.
+            if (preCfResult.unmatchedSpaceNames?.length) {
+              const names = preCfResult.unmatchedSpaceNames.join(', ');
+              result.fidelity.push({
+                component: 'knowledge:confluence',
+                status: 'needs-review',
+                detail:
+                  `The source agent is grounded on Confluence space(s) we could not find: ${names}. ` +
+                  'The other spaces were crawled and the agent migrated, so it will answer from LESS ' +
+                  'content than the original. The space may have been renamed or deleted, or the ' +
+                  'Confluence credential may not be able to see it — check before relying on this agent.',
+              });
+              emitLog('warn', `    Confluence: space(s) not found and NOT migrated: ${names}`);
+            }
             if (preCfResult.dataStoreId) {
               connectorGroundingDataStores.push(dataStoreResourcePath(dest.project, preCfResult.dataStoreId));
               connectorGroundedNames.push(`Confluence (${allCfSpaceNames.join(', ')})`);

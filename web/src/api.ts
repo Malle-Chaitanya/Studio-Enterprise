@@ -618,9 +618,13 @@ export interface ConnectorRequirement {
 export async function fetchConnectorRequirements(
   session: string,
   connectorIds: string[],
+  /** Dataverse org URL. Custom connectors are defined per environment, so the server
+   *  needs one to resolve anything outside the built-in registry. */
+  envUrl?: string,
 ): Promise<ConnectorRequirement[]> {
   if (connectorIds.length === 0) return [];
-  const res = await fetch(`/api/migrate/connector-requirements?session=${session}&ids=${encodeURIComponent(connectorIds.join(','))}`);
+  const envParam = envUrl ? `&env=${encodeURIComponent(envUrl)}` : '';
+  const res = await fetch(`/api/migrate/connector-requirements?session=${session}&ids=${encodeURIComponent(connectorIds.join(','))}${envParam}`);
   if (!res.ok) throw new Error('connector_requirements_failed');
   return ((await res.json()) as { connectors: ConnectorRequirement[] }).connectors;
 }
