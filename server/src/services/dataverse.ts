@@ -4,6 +4,7 @@ import { ComponentType } from '../types.js';
 import { parseTopicGraph } from './topicGraph.js';
 import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClassifier.js';
 import { connectorIdFromConnectionReference, connectionAuthModeFrom } from './connectorRef.js';
+import { parseToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef } from './toolPayload.js';
 import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
 
 /**
@@ -615,6 +616,10 @@ const TASK_ACTION_KIND: Record<string, AgentToolKind> = {
   invokeexternalagenttaskaction: 'mcp-server',
   invokeconnectedagenttaskaction: 'connected-agent',
   invokeaibuildermodeltaskaction: 'ai-builder',
+  // Both were previously absent, so every custom API and every flow-backed tool in the
+  // tenant parsed as 'unknown' — 11 of 63 tools in the live census (ledger 1.12).
+  invokeaiplugintaskaction: 'ai-plugin',
+  invokeflowtaskaction: 'flow',
 };
 
 /**
@@ -630,6 +635,13 @@ function parseAgentTool(c: BotComponent): AgentToolIR {
   const rawKind = /^\s*kind:\s*(Invoke\w*TaskAction)\s*$/m.exec(data)?.[1] ?? '';
   const connectionReference = /^\s*connectionReference:\s*(\S+)\s*$/m.exec(data)?.[1] ?? '';
   const outputs = [...data.matchAll(/^\s*-\s*propertyName:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+  // Everything the author BOUND, not just what the tool is. Parsed in toolPayload.ts so it
+  // can be unit-tested; see the module header for why it scans instead of loading YAML.
+  const inputs = parseToolInputs(data);
+  const outputSchema = parseOutputSchema(data);
+  const mcp = parseMcpBinding(data);
+  const flowId = parseFlowId(data);
+  const aiPlugin = parseAiPluginRef(data);
   return {
     name: c.name ?? '(unnamed tool)',
     kind: TASK_ACTION_KIND[rawKind.toLowerCase()] ?? 'unknown',
@@ -639,6 +651,11 @@ function parseAgentTool(c: BotComponent): AgentToolIR {
     connectionAuthMode: connectionAuthModeFrom(data),
     operationId: /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1] || undefined,
     outputs: outputs.length ? outputs : undefined,
+    inputs: inputs.length ? inputs : undefined,
+    outputSchema: outputSchema.length ? outputSchema : undefined,
+    mcp,
+    flowId,
+    aiPlugin,
     schemaName: c.schemaname ?? undefined,
   };
 }

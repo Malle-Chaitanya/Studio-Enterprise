@@ -1,5 +1,6 @@
 import type { TopicGraph } from './services/topicGraph.js';
 import type { KnowledgeClassification } from './services/knowledgeClassifier.js';
+import type { ToolInputIR, ToolOutputFieldIR, McpBindingIR } from './services/toolPayload.js';
 
 /**
  * Types shared across the migration pipeline.
@@ -318,6 +319,10 @@ export type AgentToolKind =
   | 'connected-agent'
   /** An AI Builder prompt/model. */
   | 'ai-builder'
+  /** A custom API the author added in Copilot Studio (`InvokeAIPluginTaskAction`). */
+  | 'ai-plugin'
+  /** A Power Automate flow (`InvokeFlowTaskAction`) — only its id is in the payload. */
+  | 'flow'
   /** A TaskDialog whose action kind we do not recognise — preserved, never dropped. */
   | 'unknown';
 
@@ -355,6 +360,22 @@ export interface AgentToolIR {
   operationId?: string;
   /** Declared output property names, when the component lists them. */
   outputs?: string[];
+  /**
+   * The arguments the AUTHOR bound: which are pinned to a value and which the model fills.
+   *
+   * This is what separates reproducing the call from reproducing the call's shape. A tool
+   * whose `entityName` was pinned to one table becomes, without this, a tool the model can
+   * point at any table.
+   */
+  inputs?: ToolInputIR[];
+  /** Declared result shape, flattened. Lets the migrated tool describe its output. */
+  outputSchema?: ToolOutputFieldIR[];
+  /** For `mcp-server` tools: the server operation and the tools the author allowed. */
+  mcp?: McpBindingIR;
+  /** For `flow` tools: the Power Automate flow id. The flow itself is not migrated yet. */
+  flowId?: string;
+  /** For `ai-plugin` tools: the plugin identity from `entityKey`. */
+  aiPlugin?: { name?: string; operationId?: string };
   /** Dataverse schema name of the component. */
   schemaName?: string;
 }

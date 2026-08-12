@@ -415,6 +415,52 @@ not an access problem.
 
 ---
 
+### 1.13 The binding extractor, run over every live tool (2026-08-12)
+
+`npx tsx src/spikes/_test_tool_payload_parser.ts` — parses every TaskDialog in both
+environments with `services/toolPayload.ts` and reports what it recovered.
+
+```
+TaskDialogs parsed          63
+  with input bindings       37
+    fixed arguments         109   (of which Power Fx expressions: 19)
+    model-filled arguments  26
+    unrecognised kinds      0
+  with output schema        25  (292 fields total)
+  MCP servers               6  (allow-listed: 1, no list stated: 5)
+  Power Automate flows      3
+  AI plugins (custom API)   8
+```
+
+63 of 63 tools parsed, **0 unrecognised input kinds**, and the tool count matches the
+independent census in §1.12 exactly. Grade **P** for extraction.
+
+What that buys, concretely: 109 arguments the author pinned are now recoverable instead of
+being re-invented by the model, and 292 declared output fields can be described to it.
+
+Two numbers that are warnings rather than wins:
+
+- **19 of 109 fixed arguments are Power Fx expressions**, not literals. They reference
+  runtime state (`Global.…`, `Concatenate(…)`) that does not exist on the Gemini side.
+  Copying one through would send the word `Concatenate` to the vendor. `isExpression`
+  flags them so a caller cannot mistake one for a literal; deciding what to DO with them
+  (evaluate a Power Fx subset, or demote to a model-supplied argument with a
+  `needs-review` note) is not yet implemented.
+- **5 of 6 MCP servers state no tool allow-list.** The parser reports `unknown` rather
+  than widening to `all`, because migrating an MCP server without its list would give the
+  migrated agent MORE tools than the source had. Whether Copilot stores the list elsewhere
+  for those five is unanswered.
+
+### Correction — a probe truncated itself
+
+The first run of this spike reported `TaskDialogs parsed 42`. It read one page and no
+`@odata.nextLink`, exactly the bug class fixed in the pipeline hours earlier. It was caught
+only because 42 contradicted §1.12's 63. Recorded because the ledger's own instruments are
+not exempt from the errors it exists to catch, and because two independent counts
+disagreeing is what made it visible.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
@@ -476,6 +522,22 @@ Until then "typecheck passes" is only true of app code, and must be said that wa
 
 Everything is pushed to `business`. Section 2's table is a snapshot of that moment and is
 kept as written; its grades still stand, because committing code does not execute it.
+
+### 4.4 Connector indexes are captured from ONE tenant
+
+`src/connectors/fixtures/*.ops.json` were captured from CloudFuze's own environments. This
+is a product for customer migrations, and a customer's Power Platform environment installs a
+different set of connectors, sometimes at different versions. Two consequences:
+
+- A connector a customer uses that we never captured falls back to `readiness = undefined`
+  ("not yet supported"), which is honest but understates what we could do — the swagger for
+  it is fetchable from THEIR environment with the token we already mint.
+- A committed index can drift from the version a customer's environment actually has.
+
+The fix is to capture on demand per customer environment (same call as
+`_dump_connector_op_index.ts`), cache it keyed by `appUserId` + environment id, and keep the
+committed fixtures only as an offline fallback and as the thing the unit tests assert
+against. Not built yet.
 
 ### 4.3 The registry does not match the tenant
 
