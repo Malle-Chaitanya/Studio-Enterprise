@@ -131,10 +131,23 @@ export async function stageAgent(row: StagedAgent): Promise<void> {
 }
 
 /** Read staged rows for a run, optionally filtered by status. Phase 2 reads these. */
-export async function listStaged(runId: string, status?: StageStatus): Promise<StagedAgent[]> {
+/**
+ * Read staged rows for one run, for one customer.
+ *
+ * `appUserId` is REQUIRED, not optional. This filtered on `runId` alone, which
+ * .claude/rules/security-rules.md forbids by name for this collection: a runId is opaque
+ * but it is not a tenancy boundary, so any code path that reached this with another
+ * customer's runId read their staged agents — including `mapped.ir`, the full extracted
+ * agent. Making the parameter required means the compiler, not a reviewer, enforces it.
+ */
+export async function listStaged(
+  appUserId: string,
+  runId: string,
+  status?: StageStatus,
+): Promise<StagedAgent[]> {
   if (!isDbConnected()) return [];
   try {
-    const filter: Record<string, unknown> = { runId };
+    const filter: Record<string, unknown> = { appUserId, runId };
     if (status) filter.status = status;
     return await getDb(config.CSGE_DB).collection<StagedAgent>(COLL).find(filter).toArray();
   } catch (e) {

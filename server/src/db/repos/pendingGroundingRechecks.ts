@@ -63,6 +63,21 @@ export async function schedulePendingGroundingRecheck(
   }
 }
 
+/**
+ * Every recheck due right now, across ALL customers.
+ *
+ * The missing `appUserId` filter is deliberate and is the one legitimate exception to the
+ * tenant-scoping rule in `.claude/rules/security-rules.md`. This backs the server-level
+ * self-healing sweep (`services/groundingRecheck.ts`, started from `server.ts`), which by
+ * definition has no single customer: its job is to re-verify slow-indexing files for
+ * everyone. Each row it returns carries its own `appUserId` and every write below is
+ * scoped by it.
+ *
+ * The rule it is exempt from exists to stop one customer READING another's data. Nothing
+ * here is reachable from a request path, and it must stay that way: never call this from a
+ * route or anything that runs on behalf of a signed-in user. A per-customer view belongs in
+ * a separate, `appUserId`-filtered function rather than a widened caller of this one.
+ */
 export async function getDuePendingGroundingRechecks(now: Date): Promise<PendingGroundingRecheck[]> {
   if (!isDbConnected()) return [];
   try {

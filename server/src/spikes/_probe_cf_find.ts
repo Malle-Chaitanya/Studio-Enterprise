@@ -1,0 +1,21 @@
+/** Does a Confluence space OR page exist with this name? Reads creds from Secret Manager. */
+import 'dotenv/config';
+import { readFileSync } from 'node:fs';
+import { JWT } from 'google-auth-library';
+import { config } from '../config.js';
+import { getEntraSecret } from '../services/secretManager.js';
+const PROJECT = 'studio-enterprise-migration';
+const NAME = process.argv[2]!;
+const raw = config.GOOGLE_SA_KEY_JSON?.trim() ? config.GOOGLE_SA_KEY_JSON : readFileSync(config.GOOGLE_SA_KEY_FILE!, 'utf8');
+const k = JSON.parse(raw) as { client_email: string; private_key: string };
+const { access_token } = await new JWT({ email: k.client_email, key: k.private_key, scopes: ['https://www.googleapis.com/auth/cloud-platform'] }).authorize();
+const get = async (id: string) => (await getEntraSecret(access_token!, `projects/${PROJECT}/secrets/${id}/versions/latest`)).plaintext!.trim();
+const base = (await get('studio-enterprise-atlassian-base-url')).replace(/\/$/, '');
+const auth = 'Basic ' + Buffer.from(`${await get('studio-enterprise-atlassian-email')}:${await get('studio-enterprise-atlassian-api-token')}`).toString('base64');
+const h = { Authorization: auth, Accept: 'application/json' };
+const cql = encodeURIComponent(`title ~ "${NAME}"`);
+const r = await fetch(`${base}/wiki/rest/api/content/search?cql=${cql}&limit=10&expand=space`, { headers: h });
+const j = await r.json() as any;
+console.log(`title ~ "${NAME}" -> ${r.status}  results=${(j.results ?? []).length}`);
+for (const x of j.results ?? []) console.log(`   [${x.type}] ${x.title}   space=${x.space?.key ?? '?'}`);
+process.exit(0);

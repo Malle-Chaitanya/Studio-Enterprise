@@ -733,3 +733,20 @@ scaffold. Format: **date — decision — why — impact**.
 - **Decision**: Default `MONGO_HOST=mongodb://localhost:27019`, db `csge`.
 - **Why**: Avoid collisions with sibling projects on the same machine (GEM_CO 27017, itsm 27018).
 - **Impact**: Local/deploy setup must point at the CS_GE instance.
+## 2026-08-07 — componenttype 9 carries TOOLS as well as topics (`AgentIR.agentTools`)
+- **Decision**: Split Dataverse `componenttype 9` on the `kind:` in its body — `AdaptiveDialog`
+  is a topic, `TaskDialog` is a TOOL — and add `AgentIR.agentTools: AgentToolIR[]` capturing
+  kind (`connector` | `mcp-server` | `connected-agent` | `ai-builder` | `unknown`),
+  `connectorId`, `operationId`, model display name/description and declared outputs.
+- **Why**: `ComponentType.Topic = 9` and extraction treated every type-9 row as a topic, so
+  "Jira - Get list of issues" was migrated as a conversational topic and counted as one
+  ("Enterprise Migration Knowledge" reported 22 topics; 13 are real). The operations the agent
+  actually invokes — `GetIssue_V2`, `ListIssues`, `ListIssues_Datacenter`, `ListResources`,
+  `mcp_JiraIssueManagement` — were nowhere in the IR, so mapping could not migrate them and the
+  report could not say they were lost. Knowing an agent "uses Jira" is not enough to rebuild it.
+- **Impact**: `AgentIR` gained an optional additive field — no existing consumer breaks, and
+  agents with no tools omit it. Topic counts DROP for agents that use connector actions; that is
+  a correction, not a regression. Every tool now emits a `FidelityNote` (`mapped` when a live
+  connector tool was wired, `lost` otherwise). Connector detection also stopped dropping
+  connectors with no registry entry (`shared_hubspotcrmv2`, `shared_cdataconnectai` were
+  invisible), matching what `thirdPartyConnectorScan` already did for flows.

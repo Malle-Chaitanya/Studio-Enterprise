@@ -334,8 +334,33 @@ export async function discoverEngines(project: string, saToken: string): Promise
  * only if discovery finds nothing. So the tool works against any client's
  * project without hardcoding their engine id.
  */
+/**
+ * The project we should actually target, applying the GEMINI_PROJECT override.
+ *
+ * The override has to be applied at every point of USE, not only in
+ * discoverGeminiProject. The project is discovered once, at Google connect, and then
+ * stored on the session — so an existing session keeps its original project forever
+ * and an operator who sets GEMINI_PROJECT sees no effect until they start a brand new
+ * session. That is exactly how a run on 2026-08-07 went to the old project again
+ * minutes after the override was configured.
+ *
+ * It matters for CREDENTIALS as much as for the agent: secrets written to one project
+ * cannot be read by an agent deployed in another, so a half-applied override is worse
+ * than none — it deploys to the right place and stores the credentials in the wrong one.
+ */
+export function effectiveGeminiProject(project: string | undefined): string {
+  const forced = (process.env.GEMINI_PROJECT ?? '').trim();
+  return forced || project || '';
+}
+
 export async function resolveDestination(project: string, saToken: string): Promise<GeminiDestination> {
   const assistant = process.env.GEMINI_ASSISTANT || 'default_assistant';
+
+  const effective = effectiveGeminiProject(project);
+  if (effective !== project) {
+    logger.info({ from: project, to: effective }, 'resolveDestination: project overridden by GEMINI_PROJECT');
+    project = effective;
+  }
   if (process.env.GEMINI_ENGINE) {
     return { project, engine: process.env.GEMINI_ENGINE, assistant };
   }

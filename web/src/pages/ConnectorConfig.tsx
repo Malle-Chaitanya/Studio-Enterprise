@@ -11,6 +11,8 @@ import {
   type DetectedConnector,
   type ConnectorDef,
   type ConnectorRequirement,
+  type ConnectorValidation,
+  type ConnectorReadiness,
 } from '../api.ts';
 
 /** Merge per-environment scan results into one list, summing flowCount and
@@ -71,6 +73,9 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
   const [showHint, setShowHint] = useState<string | null>(null);
+  // Entra hands out a valid token for an app with nothing consented, so a successful
+  // save says nothing about whether Graph calls will work. This holds the live check.
+  const [validation, setValidation] = useState<ConnectorValidation | null>(null);
 
   if (detectedMsIds.length === 0) return null;
 
@@ -95,7 +100,11 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
     setSaving(true);
     setError('');
     try {
-      await saveMsConnectorCredentials(session, values);
+      const { validation: v } = await saveMsConnectorCredentials(session, values);
+      setValidation(v ?? null);
+      // Connector-OWN fields (e.g. Dynamics `org_url`) are not part of the shared
+      // ms_graph credential and are saved separately — the group save above does not
+      // carry them.
       for (const [id, fields] of ownFieldsById) {
         await saveConnectorCredentials(
           session,
@@ -104,8 +113,10 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
         );
       }
       setSaved(true);
-    } catch {
-      setError('Failed to save. Check that Google is connected and try again.');
+    } catch (err) {
+      // Show the server's real cause — usually a missing IAM grant, with the exact
+      // command in the message. The old canned line named the wrong culprit.
+      setError((err as Error).message || 'Failed to save. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -129,7 +140,14 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
             })}
           </div>
         </div>
-        {saved && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Saved</span>}
+        {saved && (
+          <span style={{
+            color: !validation || validation.code === 'ok' ? 'var(--ok)' : validation.code === 'unverified' ? 'var(--muted)' : '#dc2626',
+            fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+          }}>
+            {!validation ? '✓ Saved' : validation.code === 'ok' ? '✓ Verified' : validation.code === 'unverified' ? '• Saved (not tested)' : '⚠ Saved, but not working'}
+          </span>
+        )}
       </div>
       {/* Flush-left with the rest of the card body (needs/permissions/inputs below) —
           not indented under the icon, so the left edge stays consistent top to bottom. */}
@@ -138,6 +156,20 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
         below. Your new Gemini agents will use it to securely access Microsoft data like
         SharePoint and Teams.
       </p>
+
+      {saved && validation && validation.code !== 'ok' && validation.detail && (
+        <div style={{
+          fontSize: 12, marginBottom: 10, padding: '8px 10px', borderRadius: 6,
+          color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca',
+        }}>
+          {validation.detail}
+          {validation.grantedPermissions && (
+            <div style={{ marginTop: 4 }}>
+              Consented today: {validation.grantedPermissions.length ? validation.grantedPermissions.join(', ') : 'none'}.
+            </div>
+          )}
+        </div>
+      )}
 
       {!saved && (
         <>
@@ -304,6 +336,72 @@ function PermissionsPanel({ req }: { req?: ConnectorRequirement }) {
   );
 }
 
+/**
+ * The specific operations the source agent invokes on this connector.
+ *
+ * Shown because "this agent uses Jira" is not enough for an admin to judge what the
+ * migrated agent has to be able to do — Jira exposes dozens of operations and an
+ * agent picks a handful. These come from `operationId` on the Copilot Studio action.
+ */
+function OperationList({ operations }: { operations?: string[] }) {
+  if (!operations?.length) return null;
+  return (
+    <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
+      Operations used:{' '}
+      {operations.map((op) => (
+        <code
+          key={op}
+          style={{
+            display: 'inline-block', background: 'var(--bg)', border: '1px solid var(--border)',
+            borderRadius: 4, padding: '1px 6px', marginRight: 4, marginBottom: 4, fontSize: 11,
+          }}
+        >
+          {op}
+        </code>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Can we actually reproduce what this agent calls?
+ *
+ * The operation list above says WHAT the agent does; this says whether we can do it. The
+ * answer comes from the connector's captured swagger, so it is available before the run
+ * rather than in the report after one. Blocked operations show the reason verbatim — a bare
+ * "not supported" gives an admin nothing to decide with.
+ *
+ * Absent readiness renders nothing at all: we have not captured this connector, which is
+ * not the same as knowing it will fail.
+ */
+function ReadinessPanel({ readiness }: { readiness?: ConnectorReadiness }) {
+  if (!readiness) return null;
+  const total = readiness.bindable.length + readiness.blocked.length;
+  if (total === 0) return null;
+  const ok = readiness.ready;
+  return (
+    <div style={{
+      fontSize: 12, borderRadius: 6, padding: '8px 10px', marginBottom: 10,
+      background: ok ? '#f0fdf4' : '#fffbeb',
+      border: `1px solid ${ok ? '#bbf7d0' : '#fde68a'}`,
+      color: ok ? '#166534' : '#92400e',
+    }}>
+      <strong>
+        {ok
+          ? total === 1
+            ? `The one operation this agent uses maps to ${readiness.displayName}'s own API.`
+            : `All ${total} operations map to ${readiness.displayName}'s own API.`
+          : `${readiness.bindable.length} of ${total} operations map to ${readiness.displayName}'s own API.`}
+      </strong>
+      {readiness.blocked.map((b) => (
+        <div key={b.operationId} style={{ marginTop: 6 }}>
+          <code style={{ fontSize: 11 }}>{b.operationId}</code> — {b.reason}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 interface ConnectorCardProps {
   /** Narrowed at the call site: an unsupported connector has no def and gets its own
    *  card, so nothing inside here has to guard against a missing registry entry. */
@@ -317,8 +415,15 @@ interface ConnectorCardProps {
 
 function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
   const { def, flowCount, flowNames } = c;
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(def.credentials.map((f) => [f.key, ''])));
+  // `def.credentials` holds only the fields a connector declares FOR ITSELF. Connectors in
+  // a credential group declare none — Confluence and Jira both leave it empty because
+  // base_url/email/api_token belong to the shared `atlassian` group. Rendering from it
+  // therefore drew no inputs at all, `[].every()` returned true so Save stayed enabled,
+  // and the save posted an empty creds array that the server rejected with
+  // `connector_id_and_creds_required`. The server already computes the full list
+  // (group + own) and returns it as `req.fields`; use that whenever it is available.
+  const fields = req?.fields?.length ? req.fields : def.credentials;
+  const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   // Start "saved" when this customer configured the connector before, so a
   // returning admin is not asked to re-enter credentials that already exist in
@@ -328,15 +433,41 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
   const [error, setError] = useState('');
   const [showHint, setShowHint] = useState<string | null>(null);
 
-  const allFilled = def.credentials.every((f) => values[f.key]?.trim());
+  // Fields the admin has explicitly chosen to overwrite. A field whose value already
+  // exists in Secret Manager is shown as satisfied rather than as an empty required
+  // input — asking again made admins retype credentials the product already had, and
+  // every retype wrote another version of an identical secret.
+  const [replacing, setReplacing] = useState<Record<string, boolean>>({});
+  // Outcome of the live check the server runs after storing. Kept separate from `error`:
+  // the credential IS saved, so this is a warning about whether it works, not a failure
+  // to save. Showing "✓ Saved" alone is what let a broken connector reach a customer.
+  const [validation, setValidation] = useState<ConnectorValidation | null>(null);
+  const needsValue = (f: { key: string; supplied?: boolean }) => !f.supplied || replacing[f.key];
+
+  // An empty field list must never count as "all filled" — that vacuous `true` is what
+  // let the button submit nothing. No fields means we do not yet know what to ask for.
+  // Fields already supplied are satisfied without input; only the ones being entered
+  // or deliberately replaced have to be filled.
+  const allFilled =
+    fields.length > 0 && fields.every((f) => (needsValue(f) ? !!values[f.key]?.trim() : true));
 
   const handleSave = async () => {
     setSaving(true); setError('');
     try {
-      await saveConnectorCredentials(session, c.connectorId, def.credentials.map((f) => ({ field: f.key, value: values[f.key] })));
+      // Send only what the admin actually typed. The server merges onto the existing
+      // record and skips writing a new secret version when the value is unchanged, so
+      // omitting an untouched field leaves both the secret and its id exactly as they
+      // are — which matters because deployed agents resolve credentials by that id.
+      const changed = fields
+        .filter((f) => needsValue(f) && values[f.key]?.trim())
+        .map((f) => ({ field: f.key, value: values[f.key] }));
+      // An empty list is still sent: the server registers the connector against the
+      // credentials a sibling already supplied, and runs the same live check.
+      const { validation: v } = await saveConnectorCredentials(session, c.connectorId, changed);
+      setValidation(v ?? null);
       setSaved(true);
-    } catch {
-      setError('Failed to save. Check Google is connected and try again.');
+    } catch (err) {
+      setError((err as Error).message || 'Failed to save. Please try again.');
     } finally { setSaving(false); }
   };
 
@@ -382,15 +513,44 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
             LIKELY
           </span>
         )}
-        {saved && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>}
+        {/* "Saved" only claims storage. Whether it WORKS is the validation badge — a
+            credential that stored fine and cannot call the API is the failure this
+            screen exists to catch, so it must not read as a plain success. */}
+        {saved && validation?.code === 'ok' && (
+          <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ Verified</span>
+        )}
+        {saved && validation && validation.code !== 'ok' && (
+          <span style={{ color: validation.code === 'unverified' ? 'var(--muted)' : '#dc2626', fontSize: 13, fontWeight: 600 }}>
+            {validation.code === 'unverified' ? '• Saved (not tested)' : '⚠ Saved, but not working'}
+          </span>
+        )}
+        {saved && !validation && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>}
         {skipped && <span style={{ color: '#f59e0b', fontSize: 13, fontWeight: 600 }}>⚠ Skipped</span>}
       </div>
+
+      {saved && validation && validation.code !== 'ok' && validation.detail && (
+        <div style={{
+          fontSize: 12, marginBottom: 10, padding: '8px 10px', borderRadius: 6,
+          color: validation.code === 'unverified' ? 'var(--muted)' : '#991b1b',
+          background: validation.code === 'unverified' ? 'var(--bg)' : '#fef2f2',
+          border: `1px solid ${validation.code === 'unverified' ? 'var(--border)' : '#fecaca'}`,
+        }}>
+          {validation.detail}
+          {validation.code === 'permission_denied' && (
+            <div style={{ marginTop: 4 }}>
+              The credentials themselves are correct — this needs a permission grant, not a new token.
+            </div>
+          )}
+        </div>
+      )}
 
       {(c.agentNames?.length ?? 0) > 0 && (
         <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
           Needed by: <strong>{c.agentNames!.join(', ')}</strong>
         </div>
       )}
+      <OperationList operations={c.operations} />
+      <ReadinessPanel readiness={c.readiness} />
       {c.confidence === 'heuristic' && !saved && (
         <div style={{ fontSize: 11, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px', marginBottom: 10 }}>
           Copilot Studio doesn't name the exact service here, so we guessed
@@ -402,7 +562,14 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
         <>
           <PermissionsPanel req={req} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {def.credentials.map((field) => (
+            {fields.length === 0 && (
+              <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px' }}>
+                Still loading what this connector needs. If this persists, the credential
+                requirements could not be read from the server — skip it and it will be
+                flagged for review rather than saved empty.
+              </div>
+            )}
+            {fields.map((field) => (
               <div key={field.key}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <label style={{ fontSize: 12, fontWeight: 600 }}>{field.label}</label>
@@ -416,13 +583,27 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
                     {field.hint}
                   </div>
                 )}
-                <input
-                  type={field.type === 'password' ? 'password' : 'text'}
-                  value={values[field.key] ?? ''}
-                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
-                  placeholder={field.placeholder ?? ''}
-                  style={inputStyle}
-                />
+                {needsValue(field) ? (
+                  <input
+                    type={field.type === 'password' ? 'password' : 'text'}
+                    value={values[field.key] ?? ''}
+                    onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                    placeholder={field.placeholder ?? ''}
+                    style={inputStyle}
+                  />
+                ) : (
+                  // Stored values are never sent back to the browser, so this states
+                  // only that one exists. Replacing is deliberate: leaving it alone
+                  // writes nothing, which is what keeps identical secret versions from
+                  // piling up every time this screen is revisited.
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--muted)', padding: '6px 0' }}>
+                    <span style={{ color: 'var(--ok)' }}>✓ Already stored</span>
+                    <button type="button" className="wbtn" style={{ fontSize: 11, padding: '2px 10px' }}
+                      onClick={() => setReplacing((r) => ({ ...r, [field.key]: true }))}>
+                      Replace
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -446,7 +627,7 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
 
       {saved && (
         <button className="wbtn" style={{ fontSize: 11, padding: '4px 12px', marginTop: 6 }}
-          onClick={() => { setSaved(false); setValues(Object.fromEntries(def.credentials.map((f) => [f.key, '']))); }}>
+          onClick={() => { setSaved(false); setValues({}); setReplacing({}); }}>
           Edit
         </button>
       )}
@@ -548,6 +729,19 @@ function GroupSection({ session, members, reqs }: GroupSectionProps) {
         {saved && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Saved</span>}
       </div>
 
+      {/* What each member can actually DO, shown whether or not credentials are saved.
+          Readiness is a statement about the operations, not about the token — hiding it
+          behind the unsaved state meant the connectors that share a credential group
+          (Atlassian, HubSpot — i.e. most of what we migrate) never showed it at all,
+          while a standalone connector did. The customer could not tell that an
+          operation was refused until the fidelity report. */}
+      {members.map((m) => (
+        <div key={m.connectorId}>
+          <OperationList operations={m.operations} />
+          <ReadinessPanel readiness={m.readiness} />
+        </div>
+      ))}
+
       {!saved && (
         <>
           {members.map((m) => (
@@ -629,9 +823,22 @@ function UnsupportedConnectorCard({ c }: { c: DetectedConnector }) {
             Used by {c.flowCount} flow{c.flowCount !== 1 ? 's' : ''}
             {c.flowNames.length ? `: ${c.flowNames.slice(0, 3).join(', ')}` : ''}
           </div>
+          {(c.agentNames?.length ?? 0) > 0 && (
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
+              Used by agent: <strong>{c.agentNames!.join(', ')}</strong>
+            </div>
+          )}
+          <div style={{ marginTop: 6 }}>
+            <OperationList operations={c.operations} />
+            <ReadinessPanel readiness={c.readiness} />
+          </div>
           <div style={{ fontSize: 12, color: '#b45309', marginTop: 6 }}>
             We don't support this connector yet, so the new agent won't be able to use it.
             This will show up as a gap in your migration report.
+            {c.readiness?.ready && (
+              <> Its operations do map cleanly onto {c.readiness.displayName}'s own API, so
+              this is a gap on our side rather than a limit of your agent.</>
+            )}
           </div>
         </div>
       </div>
@@ -737,7 +944,10 @@ export function ConnectorConfig() {
         // again, which is annoying but never wrong.
         try {
           const previously = await fetchSavedConnectors(session);
-          setSavedIds(new Set(previously.map((s) => s.connectorId)));
+          // Only count credentials stored in the project this migration targets.
+          // Secrets saved against a different project cannot be read by the deployed
+          // agent, so showing them as configured hides a guaranteed failure.
+          setSavedIds(new Set(previously.filter((s) => s.matchesDestination !== false).map((s) => s.connectorId)));
         } catch {
           /* leave empty — cards fall back to asking */
         }

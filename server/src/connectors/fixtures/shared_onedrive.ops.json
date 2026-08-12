@@ -1,0 +1,1663 @@
+{
+  "connectorId": "shared_onedrive",
+  "displayName": "OneDrive",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/onedrive",
+  "securityDefinitions": {},
+  "connectionAuth": {
+    "Token": {
+      "type": "oauthSetting",
+      "identityProvider": "OneDrive",
+      "scopes": [
+        "wl.signin wl.emails wl.offline_access onedrive.readwrite"
+      ]
+    }
+  },
+  "operationCount": 56,
+  "operations": {
+    "GetDataSetsMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetFileMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/files/{id}",
+      "summary": "Get file metadata",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateFile": {
+      "method": "PUT",
+      "path": "/{connectionId}/datasets/default/files/{id}",
+      "summary": "Update file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteFile": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/default/files/{id}",
+      "summary": "Delete file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileMetadataByPath": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/GetFileByPath",
+      "summary": "Get file metadata using path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateShareLink": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/files/{id}/share",
+      "summary": "Create share link",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateShareLinkV2": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/files/{id}/shareV2",
+      "summary": "Create share link",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateShareLinkByPath": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/CreateShareLinkByPath",
+      "summary": "Create share link by path",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateShareLinkByPathV2": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/CreateShareLinkByPathV2",
+      "summary": "Create share link by path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileContentByPath": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/GetFileContentByPath",
+      "summary": "Get file content using path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "GetFileContent": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/files/{id}/content",
+      "summary": "Get file content",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/files",
+      "summary": "Create file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateFileUploadChunk": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/default/files/chunk",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateFileUploadChunk": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/default/files/{id}/chunk",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "AppendFile": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/default/files/{id}/append",
+      "summary": "Append file",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CopyFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/copyFile",
+      "summary": "Upload file from URL",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "CopyDriveFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/files/{id}/copy",
+      "summary": "Copy file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "CopyDriveFileByPath": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/CopyFileByPath",
+      "summary": "Copy file using path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "MoveFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/files/{id}/move",
+      "summary": "Move or rename a file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "MoveFileByPath": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/MoveFileByPath",
+      "summary": "Move or rename a file using path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "ConvertFile": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/files/{id}/convert",
+      "summary": "Convert file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "ConvertFileByPath": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/ConvertFileByPath",
+      "summary": "Convert file using path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileTags": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/files/{id}/tags",
+      "summary": "Get file tags",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "AddFileTag": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/files/{id}/tags",
+      "summary": "Add file tag",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "tag",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "RemoveFileTag": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/default/files/{id}/tags",
+      "summary": "Remove file tag",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "tag",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileThumbnail": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/files/{id}/thumbnail",
+      "summary": "Get file thumbnail",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "size",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileMetadata_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/files/{id}",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateFile_Old": {
+      "method": "PUT",
+      "path": "/{connectionId}/api/blob/files/{id}",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteFile_Old": {
+      "method": "DELETE",
+      "path": "/{connectionId}/api/blob/files/{id}",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileMetadataByPath_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/GetFileByPath",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileContentByPath_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/GetFileContentByPath",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "GetFileContent_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/files/{id}/content",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "CreateFile_Old": {
+      "method": "POST",
+      "path": "/{connectionId}/api/blob/files",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CopyFile_Old": {
+      "method": "POST",
+      "path": "/{connectionId}/api/blob/copyFile",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "OnNewFile": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/triggers/onnewfile",
+      "summary": "When a file is created",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnNewFileV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/triggers/onnewfilev2",
+      "summary": "When a file is created",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeSubfolders",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "simulate",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnUpdatedFile": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/triggers/onupdatedfile",
+      "summary": "When a file is modified",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeFileContent",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnUpdatedFileV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/triggers/onupdatedfilev2",
+      "summary": "When a file is modified",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeSubfolders",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "includeFileContent",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "simulate",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnNewFiles": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/triggers/batch/onnewfile",
+      "summary": "When a file is created (properties only)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "maxFileCount",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnNewFilesV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/triggers/batch/onnewfilesv2",
+      "summary": "When a file is created (properties only)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeSubfolders",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "maxFileCount",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "simulate",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnUpdatedFiles": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/triggers/batch/onupdatedfile",
+      "summary": "When a file is modified (properties only)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "maxFileCount",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnUpdatedFilesV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/triggers/batch/onupdatedfilesv2",
+      "summary": "When a file is modified (properties only)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeSubfolders",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "maxFileCount",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "simulate",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnDeletedFiles": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/triggers/batch/ondeletedfile",
+      "summary": "When a file is deleted (properties only)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeSubfolders",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "simulate",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        },
+        {
+          "name": "x-ms-operation-context",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "OnNewFile_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/trigger/onnewfile",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "OnUpdatedFile_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/trigger/onupdatedfile",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeFileContent",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "ListFolder": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/folders/{id}",
+      "summary": "List files in folder",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "includeSubfolders",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "ListFolderV2": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/foldersV2/{id}",
+      "summary": "List files in folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "skipToken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ListRootFolder": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/folders",
+      "summary": "List files in root folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ListAllRootFolders": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/rootfolders",
+      "summary": "Lists all the root folders",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ExtractFolderV2": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/extractFolderV2",
+      "summary": "Extract archive to folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "FindFiles": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/folders/{id}/search",
+      "summary": "Find files in folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "findMode",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "maxFileCount",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "FindFilesByPath": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/findFile",
+      "summary": "Find files in folder by path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "findMode",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "maxFileCount",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListFolder_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/folders/{id}",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListRootFolder_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/folders",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ExtractFolder_Old": {
+      "method": "POST",
+      "path": "/{connectionId}/api/blob/extractFolder",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "TestConnection": {
+      "method": "GET",
+      "path": "/{connectionId}/testconnection",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    }
+  }
+}

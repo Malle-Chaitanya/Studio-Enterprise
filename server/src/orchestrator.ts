@@ -5,10 +5,17 @@ import { extractAgent, fetchFileAttachmentBytes, resolveSystemUserEmail } from '
 import { findCandidates } from './services/graphSearch.js';
 import { resolveShareUrlSmart, downloadDriveItemBytes } from './services/graphFiles.js';
 import { buildOrganizationProfile } from './services/organizationProfile.js';
-import { createAgent, defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, grantAgentAccess, type CreateOutcome } from './services/gemini.js';
+import { createAgent, defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, grantAgentAccess, effectiveGeminiProject, type CreateOutcome } from './services/gemini.js';
+import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
-import { resolveConnectorSecrets, buildLiveConnectorSpecs } from './services/connectorToolBuilder.js';
+import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
+import { connectorsSharingCredentials } from './services/connectorCredentials.js';
+import { readinessFor } from './connectors/readiness.js';
+import { buildBoundToolSpecs } from './connectors/boundToolSpec.js';
+import type { CaptureContext } from './connectors/captureOpIndex.js';
+import { REGISTRY_BY_ID } from './connectors/registry.js';
+import { needsAclAcknowledgement, aclDisclosureFor, aclDisclosureSummary } from './services/aclDisclosure.js';
 import { migrateSharePointToDataStore } from './services/sharePointMigrator.js';
 import type { SharePointMigrationResult } from './services/sharePointMigrator.js';
 import { migrateConfluenceToDataStore, type ConfluenceCreds, type ConfluenceMigrationResult } from './services/confluenceMigrator.js';
@@ -31,10 +38,17 @@ import { planTopicsMigration } from './services/topicsMigration.js';
 import { normalizeSharePointSiteUrl } from './services/knowledgePlanner.js';
 import { verifyAgent } from './services/verify.js';
 import { preflightQuota, nextQuotaResetUtc } from './services/quota.js';
-import { DEFAULT_APP_USER_ID, newId, type Session } from './sessionStore.js';
+import { DEFAULT_APP_USER_ID, credentialScope, newId, type Session } from './sessionStore.js';
 import { appendLog, finishRun, saveResult, startRun } from './db/repos/migrations.js';
 import { cacheAgentIR } from './db/repos/agentIR.js';
 import { listStaged, markStaged, stageAgent } from './db/repos/staged.js';
+import {
+  attributeMemory,
+  migrateAgentMemory,
+  readEnvironmentMemory,
+  unattributedMemoryNote,
+} from './services/memoryExtract.js';
+import type { MemoryFactIR } from './services/memory.js';
 import { getIdentityMap } from './db/repos/identityMap.js';
 import {
   buildPermissionHandoff,
@@ -99,6 +113,19 @@ async function resolveDataverseSnapshotSources(
 ): Promise<DataverseSnapshotResolution[]> {
   const out: DataverseSnapshotResolution[] = [];
   for (const src of sources) {
+    // Table resolution lives in the executor now: resolveTableSearchTarget follows the
+    // real Dataverse join (`dvtablesearch` → `dvtablesearchentity` → `entitylogicalname`)
+    // rather than matching the captured key against table DISPLAY names, which could
+    // never match — that key is an arbitrary generated name, and treating it as an
+    // EntitySetName is why every table-search source failed with a misleading
+    // "EntityDefinitions lookup failed" (confirmed live 2026-08-07).
+    //
+    // KNOWN REGRESSION, deliberately taken: an earlier display-name resolver expanded ONE
+    // Copilot source naming SEVERAL tables ("FAQ Entry, CF ICP Profile") into one data
+    // store each, because different schemas cannot share a structured store. The correct
+    // resolver reads only the FIRST `dvtablesearchentity` row, so a multi-table source now
+    // snapshots one table. Correct-but-narrow beats broad-but-broken; fixing it properly
+    // means returning every entity from that join, not going back to display names.
     const snap = await migrateDataverseSnapshot(dest, saToken, dvToken, envUrl, sourceId, src);
     out.push({ src, snap });
   }
@@ -570,7 +597,20 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // so the tool works against any client's project without a hardcoded engine id.
   const envMap = plan.destination.environmentMap ?? {};
   let resolvedDefault = defaultDestination(project); // sync fallback; replaced after auth
-  const targetFor = (envUrl: string): GeminiDestination => envMap[envUrl] ?? resolvedDefault;
+  const targetFor = (envUrl: string): GeminiDestination => {
+    const dest = envMap[envUrl] ?? resolvedDefault;
+    // Refuse rather than deploy into a destination that cannot exist. The route validates
+    // this too, but a plan can reach here from a resumed session, so "checked at the edge"
+    // is not the same as "cannot happen" — and the failure this prevents costs a built,
+    // billable Reasoning Engine to discover.
+    if (!dest?.project?.trim() || !dest?.engine?.trim()) {
+      throw new Error(
+        `No Gemini project/app is set for ${envUrl}. Choose both on the Select & Map ` +
+          'Environments step — migrating without them would deploy an engine that cannot be registered.',
+      );
+    }
+    return dest;
+  };
 
   const emitLog = (level: 'info' | 'ok' | 'warn' | 'fail', msg: string): void => {
     void appendLog(runId, appUserId, level, msg); // DB — keep rich Unicode
@@ -699,9 +739,61 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // Reads any third-party / MS-native API credentials the customer saved in
   // ConnectorConfig from Google Secret Manager, then embeds them in every
   // agent's instruction via buildConnectorInstructionBlock.
-  const savedConnectors = plan.savedConnectors ?? [];
+  // Connectors come from the DURABLE credential records, not only from the plan.
+  //
+  // plan.savedConnectors is a snapshot taken when the plan was built, so saving a
+  // credential after that point had no effect: the run saw an empty list, wired no
+  // tools, and reported the Confluence source as "needs a connector" while the
+  // credentials sat correctly in Secret Manager (live 2026-08-07, twice). Nothing in
+  // the UI suggested the plan had to be rebuilt afterwards.
+  //
+  // Only records stored in the project we are deploying INTO count — the container
+  // resolves secrets from its own project, so a record from elsewhere is unusable.
+  const destProject = effectiveGeminiProject(session.geminiProject);
+  const durableConnectorRecords = (await listConnectorCredentials(appUserId).catch(() => []))
+    .filter((c) => !!destProject && c.project === destProject);
+  const durableConnectorIds = durableConnectorRecords.map((c) => c.connectorId);
+  // The id each credential was ACTUALLY written under. Secret ids are tenant-scoped
+  // now, but credentials saved before that scoping live under the old name and already
+  // back deployed agents — recomputing would point a working agent at a secret that
+  // does not exist, and every tool call would 403 at inference behind a green deploy.
+  // Resolve connector definitions from the CUSTOMER'S own environment (their installed
+  // connectors, their versions) rather than the fixtures captured in ours.
+  const captureCtxFor = (envUrl: string): CaptureContext | undefined => {
+    const envId = session.environments?.find(
+      (e) => e.url.replace(/\/$/, '') === envUrl.replace(/\/$/, ''),
+    )?.id;
+    if (!envId || !session.tenantId) return undefined;
+    return { tenantId: session.tenantId, environmentId: envId, scope: credentialScope(session) };
+  };
+
+  const secretIdOpts = {
+    // The customer's isolation key, not the Mongo scope key: `appUserId` is 'default' for
+    // everyone until sign-in is wired, and secret ids built from it collide across
+    // customers. See credentialScope() in sessionStore.ts.
+    ownerScope: credentialScope(session),
+    storedSecretIds: Object.fromEntries(
+      durableConnectorRecords.map((c) => [c.connectorId, c.secretIds ?? {}]),
+    ),
+  };
+  // Connectors that SHARE a credential group with something the customer configured are
+  // configured too — one Atlassian token is Confluence and Jira; one HubSpot private app
+  // token is every HubSpot connector. Without this expansion an agent using a sibling id
+  // (live: `shared_hubspotcrm` where the saved record says `shared_hubspotcrmv2`) got no
+  // tool at all, and the report called it an unsupported connector rather than the
+  // already-satisfied credential it actually was.
+  const savedConnectors = [
+    ...new Set([
+      ...(plan.savedConnectors ?? []),
+      ...durableConnectorIds,
+      ...durableConnectorIds.flatMap((id) => connectorsSharingCredentials(id)),
+    ]),
+  ];
+  if (durableConnectorIds.length && !(plan.savedConnectors ?? []).length) {
+    emitLog('info', `Connectors from saved credentials: ${durableConnectorIds.join(', ')}`);
+  }
   const resolvedConnectors = savedConnectors.length && session.geminiProject
-    ? await resolveConnectorSecrets(saToken, session.geminiProject, savedConnectors).catch((err) => {
+    ? await resolveConnectorSecrets(saToken, session.geminiProject, savedConnectors, secretIdOpts).catch((err) => {
         logger.warn({ err }, 'orchestrator: connector secret resolution failed; continuing without connector context');
         return [];
       })
@@ -714,9 +806,16 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // the registry alone — deliberately NOT from resolvedConnectors, because these
   // specs travel into the deployment and must never carry a credential value. The
   // container reads each secret from Secret Manager on every tool call.
-  const liveConnectorSpecs = buildLiveConnectorSpecs(savedConnectors);
+  const { specs: liveConnectorSpecs, unsupported: unsupportedConnectorIds } =
+    buildLiveConnectorSpecsDetailed(savedConnectors, secretIdOpts);
   if (liveConnectorSpecs.length) {
     emitLog('info', `Live connector tools to wire: ${liveConnectorSpecs.map((c) => c.name).join(', ')}`);
+  }
+  // A connector we have no registry entry for cannot become a tool. Say so loudly here
+  // and as a per-agent FidelityNote below — dropping it with only a server-log warning
+  // shipped an agent that looked migrated while quietly missing a capability.
+  if (unsupportedConnectorIds.length) {
+    emitLog('warn', `No connector support for: ${unsupportedConnectorIds.join(', ')} — these tools will NOT be migrated`);
   }
 
   // Confluence connector creds (if the customer filled them in the Connectors step).
@@ -735,7 +834,14 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       // migrated in this phase, so the plan is not surfaced in the fidelity
       // report — see mapper.ts.
       const topicsPlan = planTopicsMigration(ir);
-      const mapped = await mapAgent(ir, { connectors: resolvedConnectors });
+      // Scope the instruction's connector block to THIS agent too — the wired tools and
+      // the text that describes them must agree, or the model is told about tools that
+      // do not exist on it. Passing every configured connector gave an agent that
+      // references three systems live API access to nine.
+      const irConnectorIds = agentConnectorIds(ir);
+      const mapped = await mapAgent(ir, {
+        connectors: resolvedConnectors.filter((c) => irConnectorIds.has(c.connectorId)),
+      });
       const capabilities = [...topicsPlan.systemCapabilities, ...topicsPlan.connectedAgents.flatMap((a) => a.capabilities)];
 
       await stageAgent({
@@ -841,8 +947,143 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
     }
   });
 
-  const staged = await listStaged(runId, 'staged');
+  const staged = await listStaged(appUserId, runId, 'staged');
   emitLog('info', `Phase 1 complete: ${staged.length}/${total} staged in DB`);
+
+  // ── Agent memory: read once per environment ───────────────────────────────
+  //
+  // `intelligentmemory` has no bot relationship, so this cannot be folded into per-agent
+  // extraction — it is one read per environment, split afterwards. `undefined` means the
+  // table could not be read (an environment older than the feature returns 404), which
+  // must stay distinguishable from "this customer has no memory": reporting the first as
+  // the second would claim we checked when we did not.
+  const envMemory = await (async () => {
+    const byAgent = new Map<string, MemoryFactIR[]>();
+    let unattributed = 0;
+    let anyRead = false;
+    for (const unit of plan.units) {
+      const facts = await readEnvironmentMemory(unit.envUrl, await tokenFor(unit.envUrl));
+      if (facts === undefined) continue;
+      anyRead = true;
+      const split = attributeMemory(facts, unit.bots.map((b) => b.botid));
+      for (const [botId, list] of split.byAgent) byAgent.set(botId, [...(byAgent.get(botId) ?? []), ...list]);
+      unattributed += split.unattributed.length;
+    }
+    if (!anyRead) return undefined;
+    const total = [...byAgent.values()].reduce((n, l) => n + l.length, 0) + unattributed;
+    if (total) {
+      emitLog('info', `Agent memory: ${total} remembered fact(s) — ${total - unattributed} tied to a migrating agent, ${unattributed} not.`);
+    }
+    return { byAgent, unattributed };
+  })();
+
+  // The operator's Microsoft→Google user mapping is what lets a private memory move at
+  // all: without a destination identity there is no scope narrow enough to hold it.
+  const memoryIdentityMap = new Map(
+    Object.entries(identityOverrides.users).map(([ms, google]) => [ms.toLowerCase(), String(google)]),
+  );
+
+  // Memory that belongs to no migrating agent still has to reach the report — it is the
+  // difference between "this agent kept its personalization" and "the personalization
+  // stayed in Copilot". Carried onto every agent in the run because the report is
+  // per-agent and the note itself says it is environment-wide.
+  const envMemoryNotes: FidelityNote[] = envMemory?.unattributed
+    ? [unattributedMemoryNote(envMemory.unattributed)]
+    : [];
+
+  // ── ACL-loss gate — the last honest moment before anything is written ──────
+  //
+  // Every data store this pipeline creates has `aclEnabled: false`, and that flag is
+  // IMMUTABLE (proven live — docs/verification-ledger.md §1.3). So a SharePoint folder
+  // restricted to Finance becomes readable by anyone who can reach the migrated agent, and
+  // no later fix can change it: the store would have to be destroyed and re-indexed.
+  //
+  // The gate sits HERE, between the phases, on purpose. Extraction is read-only and cheap,
+  // so by this point we can name the exact agents and sources at stake instead of warning
+  // in the abstract — and because the rows are already staged, re-running after
+  // acknowledgement skips straight to the insert.
+  //
+  // It does not block permanently. A hard refusal makes this tool look worse than a hand
+  // migration and pushes people to disable the check; the decision
+  // (docs/connector-transform-plan.md) is to migrate with a mandatory acknowledgement.
+  const aclFlagged = staged
+    .filter((row) => row.mapped && needsAclAcknowledgement(row.mapped.ir))
+    .map((row) => ({ row, disclosure: aclDisclosureFor(row.mapped!.ir) }));
+
+  // A dry run is never gated: it writes nothing, and it is exactly how someone discovers
+  // this in the first place. It still reports every affected source, below.
+  if (aclFlagged.length && !plan.acknowledgeAclLoss && !plan.dryRun) {
+    emitLog('warn', `── Migration stopped: ${aclFlagged.length} agent(s) would lose source permissions ──`);
+    for (const { row, disclosure } of aclFlagged) {
+      emitLog('warn', `  ${aclDisclosureSummary(row.displayName, disclosure)}`);
+      for (const item of disclosure.items) {
+        emitLog('warn', `    • ${item.sourceName} (${item.system}, via ${item.strategy})`);
+      }
+      const result: MigrationResult = {
+        sourceId: row.sourceId,
+        name: row.name,
+        created: false,
+        deployed: false,
+        shared: false,
+        fidelity: [
+          ...row.fidelity,
+          ...disclosure.items.map((item) => ({
+            component: `acl:${item.sourceName}`,
+            status: 'needs-review' as const,
+            detail: item.detail,
+          })),
+        ],
+        error: 'acl_acknowledgement_required',
+      };
+      results.push(result);
+      void saveResult(runId, appUserId, result);
+      emit({ type: 'agent', result });
+    }
+    emitLog(
+      'warn',
+      'Nothing was created. Review the sources above; if this is acceptable, re-run with ' +
+        '"I understand knowledge permissions will not be preserved" acknowledged. The staged ' +
+        'agents are kept, so the re-run goes straight to the insert.',
+    );
+    emitProg(100, 'Stopped — permission loss needs acknowledgement');
+    const summary = `Stopped · ${aclFlagged.length} agent(s) need a permission-loss acknowledgement before migrating`;
+    await finishRun(runId, summary, 'done');
+    emit({ type: 'done', summary, results });
+    return;
+  }
+
+  // Acknowledged (or nothing to acknowledge). Record what was accepted on every affected
+  // agent — an acknowledgement that leaves no trace in the report is worth nothing to the
+  // person who reads that report six months from now.
+  const aclNotesBySourceId = new Map<string, FidelityNote[]>();
+  for (const { row, disclosure } of aclFlagged) {
+    aclNotesBySourceId.set(
+      row.sourceId,
+      disclosure.items.map((item) => ({
+        component: `acl:${item.sourceName}`,
+        status: 'needs-review' as const,
+        detail:
+          `${item.detail} ${
+            plan.acknowledgeAclLoss
+              ? 'This was explicitly acknowledged before the migration ran.'
+              : 'A live run requires this to be acknowledged before anything is created.'
+          } It cannot be changed without deleting and re-indexing the data store.`,
+      })),
+    );
+  }
+  if (aclFlagged.length) {
+    // A dry run reaches here WITHOUT an acknowledgement (the gate above skips it), so
+    // saying "acknowledged" would credit the operator with a consent they never gave —
+    // and this log is what someone reads later to decide whether the loss was accepted.
+    emitLog(
+      'warn',
+      plan.acknowledgeAclLoss
+        ? `Permission loss acknowledged for ${aclFlagged.length} agent(s) — proceeding. Each affected ` +
+            'source is recorded in the fidelity report.'
+        : `${aclFlagged.length} agent(s) would lose source permissions. A live run stops here until ` +
+            'this is acknowledged; each affected source is listed in the fidelity report.',
+    );
+  }
 
   // ── Dry run: report what WOULD be inserted, stop before touching Gemini ────
   if (plan.dryRun) {
@@ -853,7 +1094,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         created: false,
         deployed: false,
         shared: false,
-        fidelity: row.fidelity,
+        fidelity: [...row.fidelity, ...(aclNotesBySourceId.get(row.sourceId) ?? []), ...envMemoryNotes],
         error: 'dry-run (not created)',
       };
       results.push(result);
@@ -889,7 +1130,9 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       created: false,
       deployed: false,
       shared: false,
-      fidelity: row.fidelity,
+      // Acknowledged permission loss travels with the agent's own report, not just the run
+      // log — the report is what someone reads months later.
+      fidelity: [...row.fidelity, ...(aclNotesBySourceId.get(row.sourceId) ?? []), ...envMemoryNotes],
     };
     try {
       if (quotaExhausted) {
@@ -1158,11 +1401,17 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             const existing = await getAdkDeployment(appUserId, row.envUrl, row.sourceId, dest);
             if (existing) {
               const priorSnapshot = await getMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest);
-              if (!priorSnapshot) {
+              // An explicit force wins over every skip below. Drift only knows about the
+              // SOURCE agent, so without this there is no way to push a change that
+              // originates on OUR side — a corrected tool name, a newly wired connector —
+              // onto an agent that is already migrated.
+              if (plan.forceRedeploy) {
+                emitLog('warn', `  ${row.name}: forced redeploy — deploying again even though the source is unchanged.`);
+              } else if (!priorSnapshot) {
                 // Migrated before drift-tracking existed — record a baseline now
                 // rather than guess whether it changed; drift detection starts
                 // for real from the NEXT re-run.
-                await saveMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest, snapshotFrom(row.mapped!.ir));
+                await saveMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest, snapshotFrom(row.mapped!.ir, savedConnectors));
                 result.fidelity.push({
                   component: 'resync',
                   status: 'needs-review',
@@ -1171,7 +1420,12 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                 usedAdk = true;
                 return { created: true, agentId: existing.agentId, alreadyExists: true };
               }
-              const drift = detectDrift(priorSnapshot, row.mapped!.ir);
+              // Drift covers the SOURCE agent AND the connectors configured on our side
+              // (see driftDetector.ts) — configuring Jira and re-running otherwise skipped
+              // the agent as "already exists" with no way to get the tool onto it.
+              const drift = priorSnapshot
+                ? detectDrift(priorSnapshot, row.mapped!.ir, savedConnectors)
+                : { changed: true, reasons: ['no prior snapshot'] };
 
               // "No source drift" used to mean an unconditional skip — but
               // skipping never checked whether the DESTINATION side was still
@@ -1203,18 +1457,25 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                 .filter((src) => !spCopyModeCoveredSrcs.has(src) && !spCoveredNames.has(src.name))
                 .map((src) => src.name);
 
-              if (!drift.changed && !unhealthyFiles.length && !unhealthySharePoint.length) {
+              // Three independent reasons to redeploy: the source changed, the destination
+              // broke, or a human asked for it. forceRedeploy is last because it is the
+              // only one that is a decision rather than an observation.
+              if (!drift.changed && !unhealthyFiles.length && !unhealthySharePoint.length && !plan.forceRedeploy) {
                 usedAdk = true;
                 return { created: true, agentId: existing.agentId, alreadyExists: true };
               }
-              // Something needs fixing — either the SOURCE changed, or the
-              // DESTINATION knowledge broke. Either way, do NOT return here:
-              // fall through to the same deploy flow a fresh agent uses, so
-              // the ADK agent actually picks up the fix (redeploy is the only
-              // way; ADK create has no in-place update — see adkDeployments.ts).
+              // Something needs fixing — either the SOURCE changed, the DESTINATION
+              // knowledge broke, or a redeploy was requested. Either way, do NOT return
+              // here: fall through to the same deploy flow a fresh agent uses, so the ADK
+              // agent actually picks up the fix (redeploy is the only way; ADK create has
+              // no in-place update — see adkDeployments.ts).
               // publishAgentToGallery is called below with existingAgentId set,
               // so this repoints the SAME agent at a fresh Reasoning Engine —
               // it does NOT register a second, duplicate gallery agent.
+              //
+              // Each branch says what actually happened. Claiming the source changed when
+              // it did not sends someone hunting for an edit in Copilot Studio that never
+              // happened.
               if (drift.changed) {
                 emitLog('warn', `  ${row.name}: source changed since last migration (${drift.reasons.join(', ')}) — redeploying via ADK.`);
                 result.fidelity.push({
@@ -1222,13 +1483,20 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                   status: 'mapped',
                   detail: `Source changed since last migration (${drift.reasons.join(', ')}) — redeployed via ADK to pick up the change (same agent, repointed — not a duplicate). The previous Reasoning Engine is NOT automatically deleted (no delete capability exists for it yet) — it may still exist and bill separately; delete manually if so.`,
                 });
-              } else {
+              } else if (unhealthyFiles.length || unhealthySharePoint.length) {
                 const unhealthy = [...unhealthyFiles, ...unhealthySharePoint];
                 emitLog('warn', `  ${row.name}: source unchanged, but knowledge source(s) [${unhealthy.join(', ')}] are missing/broken on the destination — repairing via redeploy.`);
                 result.fidelity.push({
                   component: 'resync',
                   status: 'mapped',
                   detail: `Source unchanged, but knowledge source(s) [${unhealthy.join(', ')}] were missing/broken on the destination (e.g. deleted manually/console testing) — redeployed via ADK to repair (same agent, repointed — not a duplicate). The previous Reasoning Engine is NOT automatically deleted — it may still exist and bill separately.`,
+                });
+              } else {
+                emitLog('warn', `  ${row.name}: source unchanged and destination healthy, but a redeploy was requested — redeploying via ADK.`);
+                result.fidelity.push({
+                  component: 'resync',
+                  status: 'mapped',
+                  detail: 'A redeploy was requested (forceRedeploy) even though nothing about the source agent or its destination knowledge had changed — redeployed via ADK so a fix made on our side reaches this agent (same agent, repointed — not a duplicate). The previous Reasoning Engine is NOT automatically deleted — it may still exist and bill separately.',
                 });
               }
             }
@@ -1375,9 +1643,129 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // Scope the SharePoint/OneDrive tools to THIS agent's own folder. The
             // specs are shared across agents, so the scope has to be applied per agent
             // rather than baked in when they were built.
-            const scopedConnectors = liveConnectorSpecs.map((c) =>
-              /sharepoint|onedrive/i.test(c.kind) && spScopeUri ? { ...c, scopeUri: spScopeUri } : c,
+            // Which operations did THIS agent invoke on each connector? The specs are
+            // built once per run from the saved credentials, but the operations are a
+            // property of the individual agent, so they are attached here rather than
+            // there. They shape the tool's description only — the tool can still call
+            // anything the credentials permit.
+            // Carry the operation DESCRIPTIONS too, not just the ids. Copilot Studio shows
+            // the author a description per operation ("This operation returns a list of
+            // issues using JQL"); that is the clearest statement of what the agent was
+            // built to do, and dropping it left the migrated tool describing itself in
+            // our words instead of the source's.
+            const opsByConnector = new Map<string, Array<{ id: string; description?: string }>>();
+            for (const tool of row.mapped!.ir.agentTools ?? []) {
+              if (!tool.connectorId || !tool.operationId) continue;
+              const list = opsByConnector.get(tool.connectorId) ?? [];
+              if (!list.some((o) => o.id === tool.operationId)) {
+                list.push({ id: tool.operationId, description: tool.description });
+              }
+              opsByConnector.set(tool.connectorId, list);
+            }
+            // Wire ONLY the connectors THIS agent uses.
+            //
+            // Every saved credential used to be wired onto every agent: an agent using
+            // three connectors received nine, including live API access to systems its
+            // Copilot original never touched. That is a security problem before it is a
+            // quality one, and it also caused a real outage — two of the unused
+            // connectors (SharePoint + OneDrive) collided on tool names and 400'd every
+            // message (live 2026-08-07).
+            //
+            // The agent's own tools name their connectors, and a knowledge source that
+            // needs a crawler names one implicitly. Anything else is dropped and
+            // reported, never silently.
+            const usedConnectorIds = agentConnectorIds(row.mapped!.ir);
+
+            // Connectors this agent genuinely uses that we have no registry entry for.
+            // These cannot become tools, and used to vanish with only a server-log
+            // warning — the agent deployed green while missing a capability its Copilot
+            // original had. Report it as lost, per agent, with the operations it wanted.
+            //
+            // Derived from what THIS AGENT uses, not from what the customer configured.
+            // `unsupportedConnectorIds` comes from `savedConnectors` — the connectors
+            // credentials were saved for — so a connector the agent calls that we have
+            // never heard of (every CUSTOM connector, and any first-party one the customer
+            // did not configure) was absent from that list and reported nowhere. The
+            // registry is the authority on what we can build a tool for; ask it directly.
+            const unsupportedForThisAgent = [...usedConnectorIds].filter(
+              (id) => !REGISTRY_BY_ID.has(id),
             );
+            for (const missingId of unsupportedForThisAgent) {
+              const wanted = (opsByConnector.get(missingId) ?? []).map((o) => o.id);
+              result.fidelity.push({
+                component: `connector:${missingId}`,
+                status: 'lost',
+                detail:
+                  `This agent calls "${missingId}", which CloudFuze Studio Migrate has no connector support for, ` +
+                  `so no tool was created for it and the migrated agent cannot perform those actions.` +
+                  (wanted.length ? ` Operations the source agent used: ${wanted.join(', ')}.` : ''),
+              });
+              emitLog('warn', `  ${row.name}: "${missingId}" is not a supported connector — its tools were NOT migrated.`);
+            }
+
+            // Beyond "is there a registry entry", report per OPERATION whether we can
+            // actually reproduce the call the source agent made. A connector can be
+            // registered and still have operations we cannot rebuild (SharePoint's
+            // HttpRequest tunnel, Google Drive's dataset abstraction), and an
+            // unregistered one can be fully reproducible (Dataverse). Reporting only at
+            // connector granularity gets both cases wrong.
+            for (const [connectorId, ops] of opsByConnector) {
+              if (!usedConnectorIds.has(connectorId)) continue;
+              const readiness = readinessFor(connectorId, ops.map((o) => o.id));
+              if (!readiness) continue; // no captured API for this connector — already covered above
+              for (const blockedOp of readiness.blocked) {
+                result.fidelity.push({
+                  component: `connector:${connectorId}:${blockedOp.operationId}`,
+                  status: 'lost',
+                  detail:
+                    `This agent calls "${blockedOp.operationId}" on ${readiness.displayName}, which the ` +
+                    `migrated agent cannot reproduce. ${blockedOp.reason}`,
+                });
+                emitLog(
+                  'warn',
+                  `  ${row.name}: ${connectorId}.${blockedOp.operationId} cannot be reproduced — reported as lost.`,
+                );
+              }
+            }
+
+            const applicable = liveConnectorSpecs.filter((c) => usedConnectorIds.has(c.id));
+            const droppedConnectors = liveConnectorSpecs
+              .filter((c) => !usedConnectorIds.has(c.id))
+              .map((c) => c.name);
+            if (droppedConnectors.length) {
+              emitLog(
+                'info',
+                `    ${row.name}: ${applicable.length} connector(s) apply to this agent; not wiring ${droppedConnectors.join(', ')} (configured, but this agent does not reference them).`,
+              );
+            }
+
+            // Reproduce the CALL, not just the capability: one typed tool per operation the
+            // source agent invoked, with the arguments its author pinned. Falls back to the
+            // generic REST tool for any connector this produces nothing for, so a connector
+            // we cannot bind still deploys with the behaviour it had yesterday.
+            const boundBuild = await buildBoundToolSpecs(row.mapped!.ir, captureCtxFor(row.envUrl), {
+              dataverseOrgUrl: row.envUrl ?? '',
+            });
+            result.fidelity.push(...boundBuild.notes);
+            for (const note of boundBuild.notes) {
+              if (note.status === 'lost') emitLog('warn', `  ${row.name}: ${note.detail}`);
+            }
+
+            const scopedConnectors = applicable.map((c) => {
+              const withOps = opsByConnector.has(c.id) ? { ...c, operations: opsByConnector.get(c.id) } : c;
+              const bound = boundBuild.byConnector.get(c.id);
+              const withBound = bound?.length ? { ...withOps, boundOperations: bound } : withOps;
+              return /sharepoint|onedrive/i.test(withBound.kind) && spScopeUri
+                ? { ...withBound, scopeUri: spScopeUri }
+                : withBound;
+            });
+            const boundCount = [...boundBuild.byConnector.values()].reduce((n, l) => n + l.length, 0);
+            if (boundCount) {
+              emitLog(
+                'info',
+                `    ${row.name}: ${boundCount} connector operation(s) rebuilt as exact API calls with the source agent's own arguments.`,
+              );
+            }
 
             // Copilot topics become ADK sub-agents INSIDE this deployment. Not one
             // Reasoning Engine per topic: that would multiply cost and burn the ~7/day
@@ -1412,6 +1800,10 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               groundingDataStores,
               liveConnectors: scopedConnectors,
               subAgents: topicSubAgents,
+              // Redeploying an agent we already migrated: repoint the EXISTING agent at
+              // the new Reasoning Engine rather than creating a second one. Creation is
+              // capped by an undocumented daily quota and re-runs used to burn one every
+              // time, while also accumulating same-named duplicates.
               existingAgentId: existing?.agentId,
             });
 
@@ -1439,6 +1831,35 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                       : 'Uploaded file grounded on the ADK agent via a Discovery Engine document data store + VertexAiSearchTool.',
                 });
               }
+              // Agent TOOLS (Copilot connector actions, MCP servers, connected agents,
+              // AI Builder models). Every one is a capability the source agent had, so
+              // every one must appear in the report — mapped when we wired a live tool
+              // for its connector, lost when we did not. Without this a customer got a
+              // clean report from an agent that used Jira, HubSpot and CData, none of
+              // which were mentioned anywhere (live 2026-08-07). The UI already told
+              // them unsupported connectors were "recorded in the migration report as a
+              // gap" — until now that claim was simply untrue.
+              const wiredConnectorIds = new Set(scopedConnectors.map((c) => c.id));
+              for (const tool of row.mapped!.ir.agentTools ?? []) {
+                const wired = !!tool.connectorId && wiredConnectorIds.has(tool.connectorId);
+                const opText = tool.operationId ? ` (${tool.operationId})` : '';
+                result.fidelity.push({
+                  component: `tool:${tool.name}`,
+                  status: wired ? 'mapped' : 'lost',
+                  detail: wired
+                    ? `Connector action${opText} — a live ${tool.connectorId} tool is wired on the migrated agent.`
+                    : tool.kind === 'connector'
+                      ? `Connector action${opText} on ${tool.connectorId ?? 'an unknown connector'} was NOT migrated — no credentials were configured for it, or the connector has no entry in our registry. The migrated agent cannot perform this action.`
+                      : tool.kind === 'mcp-server'
+                        ? `MCP server tool${opText} (${tool.connectorId ?? 'unknown'}) was NOT migrated — remote MCP servers attached in Copilot Studio have no equivalent in the migrated agent yet.`
+                        : tool.kind === 'connected-agent'
+                          ? 'This agent invoked ANOTHER Copilot agent as a tool. That relationship is not recreated — migrate the other agent and reconnect them manually.'
+                          : tool.kind === 'ai-builder'
+                            ? 'AI Builder model/prompt used as a tool — the prompt text is folded into the instruction where available, but the model itself is not migrated.'
+                            : `Tool of an unrecognised kind was found and preserved in the IR but not migrated${opText}.`,
+                });
+              }
+
               for (const { src, snap } of dvResolved) {
                 if (!snap.resourcePath) continue; // resolution failure already reported above
                 result.fidelity.push({
@@ -1497,6 +1918,20 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                   `    "${src.name}": SharePoint connector for ${siteUrl} wired via ADK VertexAiSearchTool — confirm Console "Authorize" is done before trusting this source.`,
                 );
               }
+              if (adk.secretIamGranted === false) {
+                // Deployment succeeded; the credentials it needs may not be readable.
+                // This is exactly the shape that must never stay silent — the agent
+                // looks migrated and then 403s on its first real question.
+                result.fidelity.push({
+                  component: 'connector:credentials-access',
+                  status: 'needs-review',
+                  detail:
+                    'Per-secret access could not be granted to the Reasoning Engine service agent, so the connector tools ' +
+                    'will fail at query time unless a project-wide roles/secretmanager.secretAccessor grant already exists. ' +
+                    `Cause: ${adk.secretIamError ?? 'unknown'}.`,
+                });
+                emitLog('warn', `  ${row.name}: could not grant per-secret access — connector tools may 403 until an admin grants Secret Manager access.`);
+              }
               if (adk.googleSearchDropped) {
                 result.fidelity.push({
                   component: 'capability:web-browsing',
@@ -1510,7 +1945,7 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                 reasoningEngine: adk.reasoningEngine,
                 agentId: adk.agentId,
               });
-              await saveMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest, snapshotFrom(row.mapped!.ir));
+              await saveMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest, snapshotFrom(row.mapped!.ir, savedConnectors));
               emitLog('ok', `  ${row.name}: deployed via ADK (${adk.state}).`);
               usedAdk = true;
               return { created: true, agentId: adk.agentId };
@@ -1756,7 +2191,18 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
         // path yet — reported honestly.
         const nonFile = ks.filter((k) => k.kind !== 'FileUpload' && k !== adkWebsiteSource);
         {
-          const other = nonFile.filter((k) => !dvSnapshotSources.includes(k) && !spConnectorSources.includes(k));
+          // A source the Confluence crawler already grounded is NOT "not migrated". Its
+          // pages are in a data store attached to this agent, and the fidelity report says
+          // so on the same run — leaving it in this list produced a warning that
+          // contradicted the report and told the customer their knowledge was left behind
+          // when it had not been (live 2026-08-12: "7 page(s) ready" and "2 knowledge
+          // source(s) NOT migrated" about the same two sources, in the same run).
+          const cfCrawled = preCfResult?.dataStoreId
+            ? nonFile.filter((k) => Array.isArray(k.confluenceSpaceNames) && k.confluenceSpaceNames.length > 0)
+            : [];
+          const other = nonFile.filter(
+            (k) => !dvSnapshotSources.includes(k) && !spConnectorSources.includes(k) && !cfCrawled.includes(k),
+          );
 
           if (other.length) {
             emitLog(
@@ -1787,7 +2233,17 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
           // nothing left to disambiguate, so it's downloaded and attached
           // automatically — recorded in the fidelity report as an automatic
           // match, not a silent one.
-          const searchable = other.filter((k) => k.kind === 'FederatedStructuredSearchSource');
+          // Confluence sources are NOT searchable this way. Their `name` is a list of
+          // space names ("Engineering, Chaitanya Malle, Demo Company Wiki"), not a
+          // filename, so a Graph search can only ever return nothing — it spent a
+          // Dataverse lookup plus a Graph round trip per source to log "no candidates"
+          // (live 2026-08-07). They are handled by the Confluence crawler, and when
+          // that cannot run the reason is already reported against the crawler.
+          const searchable = other.filter(
+            (k) =>
+              k.kind === 'FederatedStructuredSearchSource' &&
+              k.classification?.strategy !== 'confluence-crawler',
+          );
           for (const src of searchable) {
             try {
               let scopedToUser: string | null = null;
@@ -1993,6 +2449,43 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
           });
           emitLog('warn', `  ${row.name}: verification failed — ${v.note}`);
         }
+        // ── Agent memory ─────────────────────────────────────────────────────
+        //
+        // Copilot remembers facts about PEOPLE (Dataverse `intelligentmemory`), not about
+        // agents, and it stores them as inferences a model drew. Moving them needs the
+        // reasoning engine to exist (Memory Bank hangs off it) and needs the operator's
+        // Microsoft→Google user mapping, so this is the first point where it is possible.
+        // Only facts whose `sourceid` is this agent's botid are its own; everything else
+        // is reported by the environment-level note, never attached here on a guess.
+        const ownMemory = envMemory?.byAgent.get(row.sourceId.toLowerCase());
+        if (ownMemory?.length && adkReasoningEngineId) {
+          const mem = await migrateAgentMemory(
+            ownMemory,
+            memoryIdentityMap,
+            {
+              project: dest.project,
+              location: process.env.ADK_LOCATION || 'us-central1',
+              reasoningEngineId: adkReasoningEngineId,
+              saToken,
+            },
+          );
+          result.fidelity.push(...mem.notes);
+          emitLog(
+            mem.written === ownMemory.length ? 'ok' : 'warn',
+            `  ${row.name}: ${mem.written}/${ownMemory.length} remembered fact(s) migrated into agent memory.`,
+          );
+        } else if (ownMemory?.length) {
+          // No engine means no Memory Bank. Saying nothing here would let an agent lose
+          // its entire personalization behind a clean report.
+          result.fidelity.push({
+            component: 'memory',
+            status: 'lost',
+            detail:
+              `${ownMemory.length} remembered fact(s) could not be migrated: this agent was not ` +
+              'deployed as a reasoning engine, and agent memory has no home without one.',
+          });
+        }
+
         await markStaged(runId, row.sourceId, {
           status: 'inserted',
           geminiAgentId: create.agentId,

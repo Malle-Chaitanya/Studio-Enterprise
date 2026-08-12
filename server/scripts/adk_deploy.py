@@ -35,6 +35,7 @@ recognizable source name.
 import argparse
 import json
 import os
+import re
 import sys
 
 
@@ -134,6 +135,25 @@ def _build_live_connector_tool(conn: dict, project: str):
     auth_header_tpl = conn.get("authHeaderTemplate") or ""
     conn_name = conn.get("name") or kind or "connector"
     auth_kind = conn.get("authKind") or "bearer"
+    # The operations the SOURCE agent actually invoked, extracted from Copilot Studio.
+    # Telling the model which ones this agent was built around is the difference between
+    # a generic REST tool and one that knows what this agent is for.
+    # Each entry is {id, description}; plain strings are still accepted so an older
+    # spec does not break. The DESCRIPTION is the valuable half — it is what Copilot
+    # Studio showed the author for that operation ("This operation returns a list of
+    # issues using JQL"), i.e. the source's own statement of what the agent does.
+    _ops = []
+    for o in (conn.get("operations") or []):
+        if isinstance(o, str):
+            _ops.append((o, ""))
+        elif isinstance(o, dict) and o.get("id"):
+            _ops.append((str(o["id"]), str(o.get("description") or "")))
+    operations_hint = (
+        "\nThe source agent used these operations — prefer them when they fit the request:\n"
+        + "".join(f"  - {oid}{': ' + desc if desc else ''}\n" for oid, desc in _ops)
+        if _ops
+        else ""
+    )
     token_url_tpl = conn.get("tokenUrlTemplate") or ""
     scope = conn.get("scope") or ""
     basic_user_field = conn.get("basicUserField") or ""
@@ -260,12 +280,17 @@ def _build_live_connector_tool(conn: dict, project: str):
         from connector_tools.google_drive import build_tools as _build
         return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
+    if kind == "jira":
+        from connector_tools.jira import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
     if kind == "confluence":
         from connector_tools.confluence import build_tools as _build
         return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
-    # Generic REST connector fallback: base URL + auth header from the
-    # registry, resolved from Secret Manager the same way.
+    # Generic REST connector fallback: bound per-operation tools when the server
+    # captured the source agent's actual swagger operations, else a single generic
+    # call_external_api tool. See connector_tools/generic_rest.py.
     from connector_tools.generic_rest import build_tools as _build
     return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
@@ -480,6 +505,22 @@ def _make_search_tool(data_store_id, tool_name, source_name):
             return {"status": "error", "source": source_name, "error_message": str(e)}
 
     _search.__name__ = tool_name
+    # The docstring IS the tool description Gemini uses to choose between tools, so it
+    # must name THIS source. A shared, generic description makes every knowledge tool
+    # look identical and the choice arbitrary.
+    if label:
+        _search.__doc__ = (
+            f'Search the "{label}" knowledge source for information relevant to the query.\n'
+            f"\n"
+            f'Use this when the question could be answered by "{label}". Prefer the source whose\n'
+            f"subject matches the question; if unsure which applies, search more than one.\n"
+            f"\n"
+            f"Args:\n"
+            f"  query: The search query.\n"
+            f"\n"
+            f"Returns:\n"
+            f"  A dict with the search status and any matching results (title, url, content).\n"
+        )
     return FunctionTool(_search)
 
 
@@ -530,6 +571,9 @@ def main():
     # stores use _make_search_tool (module-level, see its comment above for
     # the full reasoning) instead of combining VertexAiSearchTool instances.
     tools = []
+    # Reported back to the server so a dropped capability becomes a fidelity note
+    # instead of vanishing — a silent drop is the failure mode this project keeps hitting.
+    dropped_google_search = False
     grounding_data_stores = spec.get("groundingDataStores") or []
     grounding_engine_configs = spec.get("groundingEngineServingConfigs") or []
     live_connectors = spec.get("liveConnectors") or []
@@ -561,8 +605,18 @@ def main():
                 seen_names.add(tool_name)
                 tools.append(_make_search_tool(entry["resourcePath"], tool_name, entry.get("sourceName") or fallback))
         elif "googleSearch" in (spec.get("tools") or []):
-            from google.adk.tools import google_search
-            tools.append(google_search)
+            # ONLY when google_search can stand alone. Gemini rejects a built-in search
+            # tool mixed with function tools ("Multiple tools are supported only when
+            # they are all search tools"), and sub-agents add transfer functions of
+            # their own. Adding it anyway produced an agent that deployed cleanly and
+            # then 400'd on every single message — live 2026-08-07, Confluence_agent,
+            # which reached this branch precisely BECAUSE its knowledge migration had
+            # failed and left it with zero stores.
+            if live_connectors or spec.get("subAgents"):
+                dropped_google_search = True
+            else:
+                from google.adk.tools import google_search
+                tools.append(google_search)
 
         # Live action connectors (Track B). A real callable tool, NOT instruction
         # text: an LLM told "call https://... with Bearer x" has no way to make an
@@ -574,13 +628,38 @@ def main():
         # never embedded in the agent instruction or pickled into the deployment —
         # anything placed in the instruction is retrievable by any end user who asks
         # the agent to repeat its prompt.
+        # Function names must be unique across the WHOLE agent, so uniqueness is enforced
+        # here — once, over every tool — rather than inside each builder.
+        #
+        # Two connectors of the same family collide otherwise: shared_sharepointonline and
+        # shared_onedrive both take the SharePoint path, which returns hardcoded
+        # `sharepoint_list_files` / `sharepoint_read_file`, so wiring both produced
+        # "Duplicate function declaration found: sharepoint_list_files" and the agent
+        # 400'd on every message (live 2026-08-07). The generic connectors were fixed
+        # earlier the same day by naming them per connector; doing it per builder just
+        # moves the problem to whichever builder is next.
+        used_tool_names = {t.__name__ for t in tools if hasattr(t, "__name__")}
         for conn in live_connectors:
             built = _build_live_connector_tool(conn, args.project)
             # SharePoint contributes two tools (list + read); others contribute one.
-            if isinstance(built, (list, tuple)):
-                tools.extend(built)
-            else:
-                tools.append(built)
+            for fn in (built if isinstance(built, (list, tuple)) else [built]):
+                original = getattr(fn, "__name__", "tool")
+                if original in used_tool_names:
+                    kind_hint = re.sub(r"[^a-z0-9]+", "_", str(conn.get("kind") or conn.get("id") or "")).strip("_")
+                    candidate = f"{original}_{kind_hint}" if kind_hint else f"{original}_2"
+                    i = 2
+                    while candidate in used_tool_names:
+                        candidate = f"{original}_{kind_hint}_{i}" if kind_hint else f"{original}_{i}"
+                        i += 1
+                    try:
+                        fn.__name__ = candidate[:60]
+                    except (AttributeError, TypeError):
+                        # A tool object that is not a plain function cannot be renamed;
+                        # keep it rather than drop a capability, and let the platform
+                        # complain loudly instead of failing silently here.
+                        pass
+                used_tool_names.add(getattr(fn, "__name__", original))
+                tools.append(fn)
     except Exception as e:  # noqa: BLE001
         emit({"error": f"tool wiring failed: {e}"}); return
 
@@ -596,21 +675,61 @@ def main():
     #
     # `description` is what the root model routes on, so it must say WHEN to use the
     # sub-agent — a description that only restates the name gives the router nothing.
+    # ── Callback: make tool use observable ──────────────────────────────────────
+    #
+    # after_tool_callback fires with the tool's real result, inside the container. That
+    # is the only place a tool call can be observed for what it was: verification has
+    # been scraping the chat transcript for function_response blocks, which cannot tell
+    # WHICH connector answered when an agent has five of them — so an agent where one
+    # tool worked and four were broken verified as healthy.
+    #
+    # The record is written into session state rather than returned, so it travels with
+    # the conversation and a verifier can ask what was actually called.
+    def _record_tool_call(tool, args, tool_context, tool_response):  # noqa: ANN001
+        try:
+            state = tool_context.state
+            # Bounded: a long conversation must not grow session state without limit,
+            # and only recent calls are ever inspected.
+            calls = list(state.get("_tool_calls") or [])[-49:]
+            failed = isinstance(tool_response, dict) and bool(tool_response.get("error"))
+            calls.append({"tool": getattr(tool, "name", str(tool)), "ok": not failed})
+            state["_tool_calls"] = calls
+        except Exception:  # noqa: BLE001
+            # Observability must never break the answer it is observing.
+            pass
+        return None
+
     sub_agent_specs = spec.get("subAgents") or []
     sub_agents = []
     for sa in sub_agent_specs:
+        sa_kwargs = dict(
+            name=_safe_agent_name(sa.get("id") or sa.get("name") or "topic"),
+            model=sa.get("model") or spec.get("model", "gemini-2.5-flash"),
+            description=sa.get("description") or f"Handles {sa.get('displayName') or sa.get('id')} requests.",
+            instruction=sa.get("instruction") or "",
+            # Sub-agents inherit nothing implicitly: give them the same tools as the
+            # root so a topic that needs SharePoint or a connector can still act.
+            tools=tools if sa.get("inheritTools", True) else [],
+        )
         try:
-            sub_agents.append(Agent(
-                name=_safe_agent_name(sa.get("id") or sa.get("name") or "topic"),
-                model=sa.get("model") or spec.get("model", "gemini-2.5-flash"),
-                description=sa.get("description") or f"Handles {sa.get('displayName') or sa.get('id')} requests.",
-                instruction=sa.get("instruction") or "",
-                # Sub-agents inherit nothing implicitly: give them the same tools as the
-                # root so a topic that needs SharePoint or a connector can still act.
-                tools=tools if sa.get("inheritTools", True) else [],
-            ))
+            # Same tool-call record as the root. Once the root transfers to a topic, the
+            # topic is what calls the tools — without this, every tool call made inside a
+            # topic is invisible and the agent looks like it never used its connectors.
+            sub_agents.append(Agent(**sa_kwargs, after_tool_callback=_record_tool_call))
+        except TypeError:
+            sub_agents.append(Agent(**sa_kwargs))
         except Exception as e:  # noqa: BLE001
             emit({"error": f"sub-agent build failed for {sa.get('id')}: {e}"}); return
+
+    # Rules that must hold for the root AND every topic sub-agent. Built server-side
+    # (adkDeployer.globalAnswerContract) so the wording lives in one place; ADK's
+    # global_instruction is what makes it reach sub-agents, which the root's own
+    # instruction never did — a question routed to a topic silently escaped the rules.
+    naming_rule = spec.get("globalInstruction") or (
+        "Tool and data-store names are internal implementation details. Never list, quote or "
+        "describe them to the user. Describe what you can DO and which systems you can reach, "
+        "using their product names (SharePoint, Jira, Confluence), never a function name."
+    )
 
     try:
         root_agent = Agent(
@@ -618,6 +737,22 @@ def main():
             model=spec.get("model", "gemini-2.5-flash"),
             description=spec.get("description", ""),
             instruction=spec.get("instruction", "") or "You are a helpful assistant.",
+            tools=tools,
+            global_instruction=naming_rule,
+            after_tool_callback=_record_tool_call,
+            **({"sub_agents": sub_agents} if sub_agents else {}),
+        )
+    except TypeError:
+        # Older google-adk builds do not accept global_instruction/after_tool_callback on
+        # Agent. Deploying without them is strictly better than failing the migration —
+        # the agent still works, it is only less observable — but say so, because a
+        # silently less-verifiable agent is exactly what this project keeps being bitten by.
+        emit({"warn": "adk build does not support global_instruction/after_tool_callback; deploying without them"})
+        root_agent = Agent(
+            name=spec.get("name", "migrated_agent"),
+            model=spec.get("model", "gemini-2.5-flash"),
+            description=spec.get("description", ""),
+            instruction=(spec.get("instruction", "") or "You are a helpful assistant.") + "\n\n" + naming_rule,
             tools=tools,
             **({"sub_agents": sub_agents} if sub_agents else {}),
         )
@@ -693,7 +828,10 @@ def main():
             requirements=requirements,
             extra_packages=extra_packages or None,
         )
-        emit({"reasoningEngine": remote.resource_name})
+        emit({
+            "reasoningEngine": remote.resource_name,
+            "droppedGoogleSearch": dropped_google_search,
+        })
     except Exception as e:  # noqa: BLE001
         emit({"error": f"deploy failed: {e}"})
 

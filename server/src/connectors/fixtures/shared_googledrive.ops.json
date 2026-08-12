@@ -1,0 +1,1212 @@
+{
+  "connectorId": "shared_googledrive",
+  "displayName": "Google Drive",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/googledrive",
+  "securityDefinitions": {},
+  "connectionAuth": {
+    "Token": {
+      "type": "oauthSetting",
+      "identityProvider": "Google",
+      "scopes": [
+        "https://www.googleapis.com/auth/drive"
+      ]
+    }
+  },
+  "operationCount": 42,
+  "operations": {
+    "GetDataSetsMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetFileMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/files/{id}",
+      "summary": "Get file metadata using id",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateFile": {
+      "method": "PUT",
+      "path": "/{connectionId}/datasets/default/files/{id}",
+      "summary": "Update file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteFile": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/default/files/{id}",
+      "summary": "Delete file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "AppendFile": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/default/files/{id}",
+      "summary": "Append file",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileMetadataByPath": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/GetFileByPath",
+      "summary": "Get file metadata using path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetFileContentByPath": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/GetFileContentByPath",
+      "summary": "Get file content using path",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetFileContent": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/files/{id}/content",
+      "summary": "Get file content using id",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "inferContentType",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "CreateFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/files",
+      "summary": "Create file (V1) (deprecated)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CreateFileV2": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/v2/files",
+      "summary": "Create file (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CopyFile": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/copyFile",
+      "summary": "Copy file",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetFileMetadata_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/files/{id}",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateFile_Old": {
+      "method": "PUT",
+      "path": "/{connectionId}/api/blob/files/{id}",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteFile_Old": {
+      "method": "DELETE",
+      "path": "/{connectionId}/api/blob/files/{id}",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileMetadataByPath_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/GetFileByPath",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileContentByPath_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/GetFileContentByPath",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetFileContent_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/files/{id}/content",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateFile_Old": {
+      "method": "POST",
+      "path": "/{connectionId}/api/blob/files",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CopyFile_Old": {
+      "method": "POST",
+      "path": "/{connectionId}/api/blob/copyFile",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "ListFolder": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/folders/{id}",
+      "summary": "List files in folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListRootFolder": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/folders",
+      "summary": "List files in root folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CreateFolder": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/folders",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "folderPath",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListAllRootFolders": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/default/rootfolders",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ExtractFolderV2": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/default/extractFolderV2",
+      "summary": "Extract archive to folder",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "queryParametersSingleEncoded",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ListFolder_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/folders/{id}",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListRootFolder_Old": {
+      "method": "GET",
+      "path": "/{connectionId}/api/blob/folders",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ExtractFolder_Old": {
+      "method": "POST",
+      "path": "/{connectionId}/api/blob/extractFolder",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "destination",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "overwrite",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "GetTable": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets/{dataset}/tables/{table}",
+      "summary": "Get sheet metadata",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ODataStyleGetTable": {
+      "method": "GET",
+      "path": "/{connectionId}/$metadata.json/datasets('{dataset}')/tables('{table}')",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTables": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables",
+      "summary": "Get sheets",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ODataStyleGetTables": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ODataStyleGetItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ODataStylePostItem": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetItems": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items",
+      "summary": "Get rows",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$orderby",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$skip",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "PostItem": {
+      "method": "POST",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items",
+      "summary": "Insert row",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetItem": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}",
+      "summary": "Get row",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DeleteItem": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}",
+      "summary": "Delete Row",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "PatchItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets/{dataset}/tables/{table}/items/{id}",
+      "summary": "Update row",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ODataStyleGetItem": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items({id})",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ODataStyleDeleteItem": {
+      "method": "DELETE",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items({id})",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ODataStylePatchItem": {
+      "method": "PATCH",
+      "path": "/{connectionId}/datasets({dataset})/tables({table})/items({id})",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "dataset",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "table",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetDataSets": {
+      "method": "GET",
+      "path": "/{connectionId}/datasets",
+      "summary": "",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    }
+  }
+}

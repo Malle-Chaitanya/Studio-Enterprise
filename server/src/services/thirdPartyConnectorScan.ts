@@ -9,6 +9,7 @@
  * handled by knowledgeClassifier.ts, not this registry).
  */
 
+import type { ConnectorReadiness } from '../connectors/operationBinding.js';
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import type { ConnectorDef } from '../connectors/registry.js';
 
@@ -34,6 +35,21 @@ export interface DetectedConnector {
    * The UI must not present a heuristic hit as a requirement.
    */
   confidence?: 'certain' | 'heuristic';
+  /**
+   * The exact connector operations the agent invokes, e.g. `ListIssues`,
+   * `GetIssue_V2`. Knowing an agent "uses Jira" does not let anyone rebuild it —
+   * Jira exposes dozens of operations and an agent selects specific ones. Only
+   * populated by the agent-action path; Power Automate flows do not expose it here.
+   */
+  operations?: string[];
+  /**
+   * Whether each operation this agent uses can actually be reproduced against the vendor's
+   * API, decided from the captured swagger index rather than from whether someone wrote a
+   * registry entry. This is the customer-facing "will this migrate without errors?" answer,
+   * and it is attached at detection time so it appears BEFORE a run, not in the report
+   * after one. Absent when we hold no captured index for the connector.
+   */
+  readiness?: ConnectorReadiness;
 }
 
 interface PaFlow {
@@ -56,19 +72,27 @@ export async function detectThirdPartyConnectors(
   dvToken: string,
 ): Promise<DetectedConnector[]> {
   // category eq 5 = Power Automate modern flows
-  const url = `${dvOrgUrl}/api/data/v9.2/workflows?$filter=category eq 5&$select=workflowid,name,clientdata&$top=100`;
-
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${dvToken}`, Accept: 'application/json' },
-  });
-
-  if (!res.ok) {
-    // If this fails (e.g. no PA flows license), return empty — not an error.
-    return [];
+  // Paged rather than $top=100: a tenant with more than a page of flows would have had the
+  // rest dropped silently, under-reporting which connectors the customer actually depends on.
+  let url: string | null = `${dvOrgUrl}/api/data/v9.2/workflows?$filter=category eq 5&$select=workflowid,name,clientdata`;
+  const flows: PaFlow[] = [];
+  while (url) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${dvToken}`, Accept: 'application/json', Prefer: 'odata.maxpagesize=100' },
+    });
+    if (!res.ok) {
+      // If this fails (e.g. no PA flows license), return what we have — not an error.
+      return flows.length ? summarizeFlows(flows) : [];
+    }
+    const json = await res.json() as { value?: PaFlow[]; '@odata.nextLink'?: string };
+    flows.push(...(json.value ?? []));
+    url = json['@odata.nextLink'] ?? null;
   }
+  return summarizeFlows(flows);
+}
 
-  const json = await res.json() as { value?: PaFlow[] };
-  const flows: PaFlow[] = json.value ?? [];
+/** Group the flows' connection references into per-connector counts. */
+function summarizeFlows(flows: PaFlow[]): DetectedConnector[] {
 
   // Map: connectorId → { flowCount, flowNames }
   const connectorMap = new Map<string, { flowCount: number; flowNames: string[] }>();

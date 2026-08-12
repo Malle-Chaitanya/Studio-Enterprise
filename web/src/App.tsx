@@ -1,5 +1,6 @@
-import { useCallback, useRef, useState } from 'react';
-import { Outlet, Route, Routes, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Outlet, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
+import { fetchSession } from './api.ts';
 import { AgentChat } from './components/AgentChat.tsx';
 import { WizardProvider } from './context/WizardContext.tsx';
 import { IcoLogout } from './icons.tsx';
@@ -17,9 +18,43 @@ import { SelectMap } from './pages/SelectMap.tsx';
 
 function AppHeader() {
   const navigate = useNavigate();
-  const signOut = () => {
-    fetch('/api/logout', { method: 'POST' }).catch(() => {});
-    navigate('/');
+  /**
+   * Sign out for real.
+   *
+   * This used to POST `/api/logout` — an endpoint that does not exist — swallow the
+   * 404, and then PUSH `/` onto history. So the session stayed alive, the wizard pages
+   * stayed in history, and Back landed on a fully working screen while Forward returned
+   * to the login page: the browser arrows bounced between signed-in and signed-out.
+   *
+   * Three things are needed and all three were missing: end the session server-side,
+   * drop the client-side session ids so nothing can be resumed from them, and REPLACE
+   * the history entry so Back does not lead back in.
+   */
+  const signOut = async () => {
+    const session = new URLSearchParams(window.location.search).get('session') ?? '';
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session }),
+      });
+      // Ending the CLOUD session is not the same as ending the SIGN-IN. Without this the
+      // auth cookie survives, so returning to the app skips the login screen entirely —
+      // which on a shared machine hands the next person the previous user's account.
+      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+    } catch {
+      /* signing out must never strand someone on the page they are leaving */
+    }
+    // Wizard state is cached per session under csge_* keys — leaving it behind lets a
+    // later session pick up the previous user's selections.
+    try {
+      for (const key of Object.keys(sessionStorage)) {
+        if (key.startsWith('csge_')) sessionStorage.removeItem(key);
+      }
+    } catch {
+      /* private mode / storage disabled */
+    }
+    navigate('/', { replace: true });
   };
   return (
     <header className="appheader">
@@ -77,6 +112,36 @@ function loadFabPos(): FabPos | null {
  *  drag-to-resize, same mechanism as GEM_CO's `.drag-divider` (mousedown →
  *  document-level mousemove/mouseup so dragging keeps working even if the
  *  pointer leaves the thin divider strip). */
+
+/**
+ * Send someone back to the login page when the session in the URL is gone.
+ *
+ * After signing out, the browser's Back button still restores a wizard URL carrying
+ * `?session=<id>`. The page renders, fires its API calls, and shows a wall of errors
+ * instead of saying the obvious thing: you are signed out.
+ *
+ * Only acts when a session id is PRESENT and rejected. A missing id is left alone —
+ * pages reach their own conclusions about that, and redirecting on absence would
+ * hijack normal navigation.
+ */
+function SessionGuard() {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const session = params.get('session') ?? '';
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    fetchSession(session)
+      .catch(() => {
+        if (!cancelled) navigate('/', { replace: true });
+      });
+    return () => { cancelled = true; };
+  }, [session, navigate]);
+
+  return null;
+}
+
 function AppShell() {
   const containerRef = useRef<HTMLDivElement>(null);
   const dividerRef = useRef<HTMLDivElement>(null);
@@ -188,6 +253,7 @@ function AppShell() {
 
   return (
     <WizardProvider>
+      <SessionGuard />
       <AppHeader />
       <div className="console" ref={containerRef}>
         <div className="pane-workflow">

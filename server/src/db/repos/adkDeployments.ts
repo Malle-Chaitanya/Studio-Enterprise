@@ -96,7 +96,33 @@ export async function getAdkDeployment(
     const doc = await getDb(config.CSGE_DB)
       .collection(COLL)
       .findOne<AdkDeploymentRecord>({ appUserId, envUrl, sourceId, project: dest.project, engine: dest.engine });
-    return doc ? { reasoningEngine: doc.reasoningEngine, agentId: doc.agentId } : null;
+    if (doc) return { reasoningEngine: doc.reasoningEngine, agentId: doc.agentId };
+
+    // The SAME Google project can reach us under two names — the project ID
+    // (`studio-enterprise-migration`) and the project NUMBER (`231705905417`) — depending on
+    // which path resolved the destination. With `project` in the match, one run failed to
+    // find the other's record and deployed a SECOND agent under the same display name.
+    // Observed live: Confluence_agent recorded twice on 2026-08-07, four hours apart, one
+    // row per spelling, and the customer saw two identical agents in the gallery with no
+    // way to tell which was current.
+    //
+    // The engine id is already unique to one project, so matching without `project` is safe
+    // and repairs the split. Kept as a FALLBACK, not the primary match, so an exact record
+    // still wins.
+    const byEngine = await getDb(config.CSGE_DB)
+      .collection(COLL)
+      .find<AdkDeploymentRecord & { deployedAt?: Date }>({ appUserId, envUrl, sourceId, engine: dest.engine })
+      .sort({ deployedAt: -1 })
+      .limit(1)
+      .next();
+    if (byEngine) {
+      logger.info(
+        { sourceId, engine: dest.engine },
+        'adkDeployments: matched an existing deployment by engine — the project was recorded under a different spelling',
+      );
+      return { reasoningEngine: byEngine.reasoningEngine, agentId: byEngine.agentId };
+    }
+    return null;
   } catch (e) {
     logger.warn(`getAdkDeployment read failed: ${(e as Error).message}`);
     return null;

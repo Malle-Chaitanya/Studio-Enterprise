@@ -1,0 +1,12 @@
+import 'dotenv/config';
+import { MongoClient } from 'mongodb';
+import { config } from '../config.js';
+const c = await MongoClient.connect(config.MONGO_HOST);
+const db = c.db(config.CSGE_DB);
+const r = await db.collection('migrationRuns').find({}).sort({ _id: -1 }).limit(1).next() as any;
+console.log('LATEST RUN KEYS:', Object.keys(r ?? {}).join(', '));
+console.log(JSON.stringify(r, null, 1).slice(0, 700));
+const l = await db.collection('migrationLogs').find({}).sort({ _id: -1 }).limit(1).next() as any;
+console.log('\nLOG KEYS:', Object.keys(l ?? {}).join(', '));
+console.log(JSON.stringify(l, null, 1).slice(0, 400));
+await c.close(); process.exit(0);

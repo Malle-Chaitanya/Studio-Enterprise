@@ -17,5 +17,11 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  // Diagnostic spikes are throwaway probes run directly with `tsx`, never imported by
+  // server.ts and never shipped. .claude/rules/code-style.md already exempts them from the
+  // strictness the rest of the tree is held to — but they stayed inside this tsconfig, so
+  // `npm run typecheck` (the gate the PR checklist names) exited non-zero on 27 unused-var
+  // errors in files nobody is allowed to clean up. A gate that is always red is not a gate.
+  "exclude": ["src/spikes", "dist", "node_modules"]
 }

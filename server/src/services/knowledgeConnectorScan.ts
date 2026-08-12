@@ -9,6 +9,8 @@
  */
 
 import { logger } from '../logger.js';
+import { readinessForCustomer } from '../connectors/readiness.js';
+import type { CaptureContext } from '../connectors/captureOpIndex.js';
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import type { DetectedConnector } from './thirdPartyConnectorScan.js';
 
@@ -66,6 +68,12 @@ export async function detectKnowledgeConnectors(
   /** botId → agent name, so the UI can say WHICH agent needs each connector rather
    *  than showing one undifferentiated list. */
   botNames?: Map<string, string>,
+  /**
+   * Lets readiness be answered from the CUSTOMER'S own connector definitions instead of a
+   * capture of ours. Optional so offline and test callers still work — without it the
+   * answer falls back to the committed fixtures, which is a different tenant's view.
+   */
+  captureCtx?: CaptureContext,
 ): Promise<DetectedConnector[]> {
   if (botIds.length === 0) return [];
 
@@ -85,22 +93,30 @@ export async function detectKnowledgeConnectors(
     // that is invisible to a knowledge-source-only scan. The "confluence agent" in the test
     // tenant has exactly this shape and appeared to have no connectors at all.
     const filter = `(componenttype eq 16 or componenttype eq 9) and Microsoft.Dynamics.CRM.In(PropertyName='parentbotid',PropertyValues=[${ids}])`;
-    const url = `${base}/api/data/v9.2/botcomponents?$filter=${encodeURIComponent(filter)}&$select=botcomponentid,name,data,content,description,schemaname,_parentbotid_value&$top=500`;
+    // Paged, not capped: a truncated component list here means a connector the agent really
+    // uses is never detected, so the UI never asks for its credentials and the tool fails at
+    // run time with nothing in the report explaining why.
+    let url: string | null =
+      `${base}/api/data/v9.2/botcomponents?$filter=${encodeURIComponent(filter)}&$select=botcomponentid,name,data,content,description,schemaname,_parentbotid_value`;
     try {
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${dvToken}`,
-          Accept: 'application/json',
-          'OData-MaxVersion': '4.0',
-          'OData-Version': '4.0',
-        },
-      });
-      if (!res.ok) {
-        logger.warn({ status: res.status }, 'knowledgeConnectorScan: knowledge source fetch failed');
-        continue;
+      while (url) {
+        const res = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${dvToken}`,
+            Accept: 'application/json',
+            'OData-MaxVersion': '4.0',
+            'OData-Version': '4.0',
+            Prefer: 'odata.maxpagesize=500',
+          },
+        });
+        if (!res.ok) {
+          logger.warn({ status: res.status }, 'knowledgeConnectorScan: knowledge source fetch failed');
+          break;
+        }
+        const json = await res.json() as { value?: BotKsComponent[]; '@odata.nextLink'?: string };
+        allComponents.push(...(json.value ?? []));
+        url = json['@odata.nextLink'] ?? null;
       }
-      const json = await res.json() as { value?: BotKsComponent[] };
-      allComponents.push(...(json.value ?? []));
     } catch (err) {
       logger.warn({ err }, 'knowledgeConnectorScan: fetch error, skipping chunk');
     }
@@ -118,16 +134,23 @@ export async function detectKnowledgeConnectors(
   // `heuristic` and must be presented to the customer as "we think", not "you need".
   const connectorHits = new Map<
     string,
-    { flowCount: number; flowNames: Set<string>; agentNames: Set<string>; certain: boolean }
+    {
+      flowCount: number;
+      flowNames: Set<string>;
+      agentNames: Set<string>;
+      certain: boolean;
+      operations: Set<string>;
+    }
   >();
 
-  const record = (connectorId: string, comp: BotKsComponent, certain: boolean): void => {
+  const record = (connectorId: string, comp: BotKsComponent, certain: boolean, operation?: string): void => {
     if (!connectorId) return; // sources that need no credentials (Dataverse, public site)
     const existing = connectorHits.get(connectorId)
-      ?? { flowCount: 0, flowNames: new Set<string>(), agentNames: new Set<string>(), certain: false };
+      ?? { flowCount: 0, flowNames: new Set<string>(), agentNames: new Set<string>(), certain: false, operations: new Set<string>() };
     existing.flowCount++;
     existing.certain = existing.certain || certain;
     if (comp.name) existing.flowNames.add(comp.name);
+    if (operation) existing.operations.add(operation);
     const owner = comp._parentbotid_value;
     if (owner && botNames?.get(owner)) existing.agentNames.add(botNames.get(owner)!);
     connectorHits.set(connectorId, existing);
@@ -136,9 +159,14 @@ export async function detectKnowledgeConnectors(
   for (const comp of allComponents) {
     const data = comp.data || comp.content || '';
 
+    // On an agent action the operation sits alongside the connection reference, so
+    // capture it in the same pass — it is the difference between "needs Jira
+    // credentials" and "calls ListIssues, GetIssue_V2, …".
+    const operationId = /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1];
+
     // Tier 1a — api names appearing structurally (connection references, connector actions).
     for (const m of data.matchAll(/\bshared_[a-z0-9_]+/gi)) {
-      record(m[0].toLowerCase(), comp, true);
+      record(m[0].toLowerCase(), comp, true, operationId);
     }
 
     // Tier 1b — the source kind enum.
@@ -167,7 +195,13 @@ export async function detectKnowledgeConnectors(
   const results: DetectedConnector[] = [];
   for (const [connectorId, hit] of connectorHits) {
     const def = REGISTRY_BY_ID.get(connectorId);
-    if (!def) continue;
+    // A connector with no registry entry is one we cannot CALL — it is not one the
+    // customer does not have. Dropping it here produced a clean-looking report that
+    // never mentioned it: "Enterprise Migration Knowledge" uses shared_hubspotcrmv2
+    // and shared_cdataconnectai, and neither appeared anywhere in the UI or the
+    // report (live 2026-08-07). thirdPartyConnectorScan already calls this exact
+    // behaviour a fidelity lie and returns `unsupported: true`; this scanner now
+    // does the same instead of contradicting it.
     results.push({
       connectorId,
       def,
@@ -177,6 +211,20 @@ export async function detectKnowledgeConnectors(
       // 'certain' when Copilot Studio itself named the connector; 'heuristic' when we
       // inferred it from editable text on a generic federated source.
       confidence: hit.certain ? 'certain' : 'heuristic',
+      unsupported: def ? undefined : true,
+      // The exact operations this agent invokes. "Uses Jira" is not enough to rebuild
+      // an agent — Jira exposes dozens of operations and this one chose five.
+      operations: hit.operations.size ? [...hit.operations].sort() : undefined,
+      // Whether we can actually reproduce those operations, decided from the captured
+      // swagger rather than from whether a registry entry happens to exist. A connector
+      // can be `unsupported` (no registry entry) and still fully bindable — Dataverse is
+      // exactly that case — so the two flags are answering different questions and both
+      // are reported.
+      readiness: await readinessForCustomer(
+        connectorId,
+        hit.operations.size ? [...hit.operations] : undefined,
+        captureCtx,
+      ),
     });
   }
 

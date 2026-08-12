@@ -76,19 +76,37 @@ async function confluenceFetch(url: string, auth: string): Promise<Response> {
 async function resolveSpaceKeys(
   creds: ConfluenceCreds,
   targetNames: string[],
-): Promise<ConfluenceSpace[]> {
+): Promise<{ spaces: ConfluenceSpace[]; listError?: string }> {
   const auth = basicAuth(creds.email, creds.api_token);
   const normalizedTargets = new Map(targetNames.map((n) => [n.toLowerCase().trim(), n]));
   const matched: ConfluenceSpace[] = [];
+  let listError: string | undefined;
 
   let start = 0;
   const limit = 50;
 
   while (true) {
-    const url = `${creds.base_url}/wiki/rest/api/space?limit=${limit}&start=${start}&type=global`;
+    // No `type` filter. Restricting to `global` made personal spaces invisible, so a
+    // source pointing at one could never match and reported "space not found" with the
+    // space sitting right there (cf2020 has 22 global + ~40 personal spaces).
+    const url = `${creds.base_url}/wiki/rest/api/space?limit=${limit}&start=${start}`;
     const res = await confluenceFetch(url, auth);
     if (!res.ok) {
-      logger.warn({ status: res.status }, 'confluenceMigrator: spaces list failed');
+      // A failed LISTING is not "the space does not exist". Swallowing it and reporting
+      // "none of the requested spaces found — check space names" sent us looking for a
+      // naming bug when the real answer was
+      //   403 "Request rejected because caller cannot access Confluence"
+      // i.e. the Atlassian account has no Confluence access on that site at all
+      // (live 2026-08-07). Carry the real status up.
+      const body = await res.text().catch(() => '');
+      listError =
+        res.status === 403
+          ? `Atlassian returned 403 listing spaces — the account ${creds.email} cannot access Confluence at ${creds.base_url}. ` +
+            'Grant that account Confluence access (a Jira-only licence is not enough), or use an account that has it.'
+          : res.status === 401
+            ? `Atlassian returned 401 listing spaces — the email/API token pair was rejected for ${creds.base_url}.`
+            : `Atlassian returned ${res.status} listing spaces: ${body.slice(0, 200)}`;
+      logger.warn({ status: res.status, base: creds.base_url }, 'confluenceMigrator: spaces list failed');
       break;
     }
     const json = await res.json() as {
@@ -108,7 +126,7 @@ async function resolveSpaceKeys(
     start += results.length;
   }
 
-  return matched;
+  return { spaces: matched, listError };
 }
 
 /**
@@ -219,12 +237,16 @@ export async function migrateConfluenceToDataStore(
   logger.info({ targetNames }, 'confluenceMigrator: resolving space names to keys');
 
   // ── 1. Resolve space names → keys ────────────────────────────────────────
-  const resolvedSpaces = await resolveSpaceKeys(creds, targetNames);
+  const { spaces: resolvedSpaces, listError } = await resolveSpaceKeys(creds, targetNames);
   if (resolvedSpaces.length === 0) {
     return {
       pageCount: 0,
       spaceCount: 0,
-      error: `None of the requested spaces found: ${targetNames.join(', ')}. Check credentials and space names.`,
+      // Report the ACCESS failure when there was one — "space not found" is only true
+      // when the listing actually succeeded and the name was absent from it.
+      error:
+        listError ??
+        `None of the requested spaces found: ${targetNames.join(', ')}. The space list was read successfully, so these names do not match any space on ${creds.base_url}.`,
     };
   }
 
@@ -374,9 +396,14 @@ export async function uploadConfluencePagesToAgent(
   }
 
   // ── 1. Resolve space names → keys ──────────────────────────────────────────
-  const resolvedSpaces = await resolveSpaceKeys(creds, targetNames);
+  const { spaces: resolvedSpaces, listError: listErr } = await resolveSpaceKeys(creds, targetNames);
   if (resolvedSpaces.length === 0) {
-    return { uploaded: 0, skipped: 0, spaceCount: 0, error: `No spaces matched: ${targetNames.join(', ')}` };
+    return {
+      uploaded: 0,
+      skipped: 0,
+      spaceCount: 0,
+      error: listErr ?? `No spaces matched: ${targetNames.join(', ')}`,
+    };
   }
 
   // ── 2. Fetch pages from each space ─────────────────────────────────────────

@@ -415,11 +415,14 @@ export async function planMigration(
     environmentMap?: Record<string, GeminiDest>;
   },
   dryRun: boolean,
+  /** The customer has seen, and accepted, that indexed knowledge loses its source
+   *  permissions. Without it the server stops between extract and insert. */
+  acknowledgeAclLoss = false,
 ): Promise<PlanPreview> {
   const res = await fetch('/api/migrate/plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session, scope, destination, dryRun }),
+    body: JSON.stringify({ session, scope, destination, dryRun, acknowledgeAclLoss }),
   });
   if (!res.ok) throw new Error('plan_failed');
   return (await res.json()) as PlanPreview;
@@ -444,6 +447,17 @@ export interface ConnectorDef {
   credentials: CredentialField[];
 }
 
+/** Per-connector answer to "will this migrate without errors?", computed server-side. */
+export interface ConnectorReadiness {
+  connectorId: string;
+  displayName: string;
+  /** Operations that map to a real vendor API call. */
+  bindable: string[];
+  /** Operations that do not, each with the reason shown to the customer verbatim. */
+  blocked: Array<{ operationId: string; reason: string }>;
+  ready: boolean;
+}
+
 export interface DetectedConnector {
   connectorId: string;
   /** Absent when `unsupported` — the scan found the connector but we cannot call it.
@@ -457,6 +471,14 @@ export interface DetectedConnector {
   unsupported?: boolean;
   /** Which of the selected agents actually use this connector. */
   agentNames?: string[];
+  /** The exact operations the agent invokes, e.g. ListIssues, GetIssue_V2. */
+  operations?: string[];
+  /**
+   * Whether each of those operations can be reproduced against the vendor's own API,
+   * decided from the connector's captured swagger. Absent when we hold no capture for the
+   * connector — which is NOT the same as "not ready", and must not be shown as a failure.
+   */
+  readiness?: ConnectorReadiness;
   /**
    * 'certain'   — Copilot Studio named the connector itself (source kind enum or a
    *               shared_* api name), so this is a fact.
@@ -488,18 +510,49 @@ export async function fetchKnowledgeSourceConnectors(
   return ((await res.json()) as { connectors: DetectedConnector[] }).connectors;
 }
 
+/**
+ * Prefer the server's `detail` over the error code when saving credentials.
+ *
+ * These failures are almost always an IAM grant the admin must make, and the fix is
+ * in the detail string ("grant roles/secretmanager.admin on project X"). Throwing the
+ * bare code forced the page to guess, and it guessed "Check that Google is connected"
+ * — which sent admins to re-check a connection that was fine.
+ */
+async function saveErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string; detail?: string };
+    return body.detail || body.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export async function saveConnectorCredentials(
   session: string,
   connectorId: string,
   creds: Array<{ field: string; value: string }>,
-): Promise<{ secretIds: string[] }> {
+): Promise<{ secretIds: string[]; validation?: ConnectorValidation }> {
   const res = await fetch('/api/migrate/third-party-connectors/credentials', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session, connectorId, creds }),
   });
-  if (!res.ok) throw new Error('credentials_save_failed');
-  return (await res.json()) as { secretIds: string[] };
+  if (!res.ok) throw new Error(await saveErrorMessage(res, 'credentials_save_failed'));
+  return (await res.json()) as { secretIds: string[]; validation?: ConnectorValidation };
+}
+
+/**
+ * Result of testing a credential against the real provider API after saving it.
+ *
+ * `invalid_credentials` and `permission_denied` are kept apart because they need
+ * different people to act: one is a wrong value to retype, the other is a consent or
+ * access grant the value cannot fix. `unverified` means we did not test this connector
+ * — not that it works.
+ */
+export interface ConnectorValidation {
+  code: 'ok' | 'invalid_credentials' | 'permission_denied' | 'unreachable' | 'unverified';
+  detail?: string;
+  grantedPermissions?: string[];
 }
 
 /** One connector the customer has already configured. Never carries credential values. */
@@ -508,6 +561,10 @@ export interface SavedConnector {
   fields: string[];
   project: string;
   updatedAt?: string;
+  /** The secrets are in the project this migration targets. When false they exist but
+   *  are unreachable from the destination, so the connector is NOT configured for
+   *  this run — treating it as configured is what silently skipped knowledge sources. */
+  matchesDestination?: boolean;
 }
 
 /**
@@ -538,7 +595,11 @@ export interface ConnectorRequirement {
   name?: string;
   icon?: string;
   authKind?: string;
-  fields?: Array<{ key: string; label: string; type: string; placeholder?: string; hint?: string; shared: boolean }>;
+  fields?: Array<{
+    key: string; label: string; type: string; placeholder?: string; hint?: string; shared: boolean;
+    /** A value is already in Secret Manager for this field — do not ask for it again. */
+    supplied?: boolean;
+  }>;
   requiredPermissions?: string[];
   adminConsentRequired?: boolean;
   permissionsHint?: string;
@@ -567,12 +628,12 @@ export async function fetchConnectorRequirements(
 export async function saveMsConnectorCredentials(
   session: string,
   creds: Record<string, string>,
-): Promise<{ secretIds: string[] }> {
+): Promise<{ secretIds: string[]; validation?: ConnectorValidation }> {
   const res = await fetch('/api/migrate/ms-connector-credentials', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session, creds }),
   });
-  if (!res.ok) throw new Error('ms_creds_save_failed');
-  return (await res.json()) as { secretIds: string[] };
+  if (!res.ok) throw new Error(await saveErrorMessage(res, 'ms_creds_save_failed'));
+  return (await res.json()) as { secretIds: string[]; validation?: ConnectorValidation };
 }

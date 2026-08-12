@@ -39,6 +39,13 @@ async function ensureCollections(): Promise<void> {
   await ensure('appUsers');
   await db.collection('appUsers').createIndex({ email: 1 }, { unique: true });
 
+  // 1b. appLoginSessions — server-side sign-in sessions (opaque cookie token → appUserId).
+  //     Server-side rather than a JWT so signing out can actually revoke; the TTL index is
+  //     the backstop for the ones nobody signs out of.
+  await ensure('appLoginSessions');
+  await db.collection('appLoginSessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+  await db.collection('appLoginSessions').createIndex({ appUserId: 1 });
+
   // 2. authSessions — OAuth tokens per user+provider+account (multi-account).
   await ensure('authSessions');
   await db.collection('authSessions').createIndex(
@@ -90,7 +97,9 @@ async function ensureCollections(): Promise<void> {
   //    `staged`; phase 2 reads them and flips each to `inserted`/`failed`.
   await ensure('stagedAgents');
   await db.collection('stagedAgents').createIndex({ runId: 1, sourceId: 1 }, { unique: true });
-  await db.collection('stagedAgents').createIndex({ runId: 1, status: 1 });
+  // appUserId leads the read index: every read is tenant-scoped (see listStaged), so the
+  // index must be too, or the scoping is enforced in code and paid for in a collection scan.
+  await db.collection('stagedAgents').createIndex({ appUserId: 1, runId: 1, status: 1 });
 
   // 10. adkDeployments — tracks already-deployed ADK Reasoning Engines so a
   //     re-run reuses them instead of deploying a second, billable one (Vertex
@@ -123,6 +132,18 @@ async function ensureCollections(): Promise<void> {
     { unique: true },
   );
 
+  // 11b. connectorOpIndexes — a connector's operation schema as captured from the
+  //      CUSTOMER'S own Power Platform environment. The committed fixtures are another
+  //      tenant's view; a customer installs a different set of connectors, sometimes at
+  //      different versions, so their environment is the authority and this is the cache.
+  //      Not secret, but it does reveal which connectors a customer has installed, so it
+  //      is scoped like everything else.
+  await ensure('connectorOpIndexes');
+  await db.collection('connectorOpIndexes').createIndex(
+    { scope: 1, environmentId: 1, connectorId: 1 },
+    { unique: true },
+  );
+
   // 12. entraAppCredentials — per (customer, Microsoft tenant) reference to a
   //     Secret Manager-stored Entra app credential, so a NEW site under an
   //     already-onboarded tenant can auto-provision a connector without asking
@@ -140,10 +161,25 @@ async function ensureCollections(): Promise<void> {
   //     reuses the existing data store instead of re-uploading to GCS and
   //     re-indexing every time. See knowledgeDataStoreExecutor.migrateFileToDocumentStore.
   await ensure('adkKnowledgeStores');
+  // The key MUST include `project`. A data store lives in one project and is unreadable
+  // from another, so the same file legitimately has one store per project — which is why
+  // upsertAdkKnowledgeStore filters on project too. While the unique index omitted it,
+  // that filter matched nothing for a second project and the upsert fell through to an
+  // insert that the 3-field index then rejected: `E11000 duplicate key ... index:
+  // appUserId_1_sourceId_1_fileName_1` (live 2026-08-07). The write is best-effort, so
+  // the failure was only a warning — and the store record silently never updated.
   await db.collection('adkKnowledgeStores').createIndex(
-    { appUserId: 1, sourceId: 1, fileName: 1 },
-    { unique: true },
+    { appUserId: 1, project: 1, sourceId: 1, fileName: 1 },
+    { unique: true, name: 'adkKnowledgeStores_tenant_project_source_file' },
   );
+  // Drop the superseded index if this database predates the fix. Best-effort: a fresh
+  // database never had it, and failing to drop it must not stop the app from booting.
+  try {
+    await db.collection('adkKnowledgeStores').dropIndex('appUserId_1_sourceId_1_fileName_1');
+    logger.info('adkKnowledgeStores: dropped stale unique index missing `project`');
+  } catch {
+    /* not present — nothing to do */
+  }
 
   // 14. identityMappings — durable Entra/email → Google Workspace override map
   //     per (customer, Microsoft tenant). Used for permission handoff / owner
@@ -166,16 +202,89 @@ async function ensureCollections(): Promise<void> {
   );
   await db.collection('pendingGroundingRechecks').createIndex({ nextCheckAt: 1 });
 
-  // Seed default app users if empty (parity with GEM_CO).
+  // ── Seed the first accounts ───────────────────────────────────────────────
+  //
+  // The credentials come from the environment, never from this file. They used to be
+  // literals here, which meant every deployment that had not changed them could be signed
+  // into by anyone who read the repo — and this tool holds two clouds' admin tokens for
+  // several customers, so that is a compromise of the customers, not of us.
+  //
+  // Seeding still happens on a fresh database so a deployment comes up usable; it just
+  // needs the values supplied. With none supplied in production, nothing is seeded and the
+  // startup log says why.
   const userCount = await db.collection('appUsers').countDocuments();
   if (userCount === 0) {
-    const defaultUsers = [
-      { email: 'admin@cloudfuze.com', password: await bcrypt.hash('CloudFuze@2026', 10), name: 'Admin User', role: 'admin', createdAt: new Date() },
-      { email: 'demo@cloudfuze.com', password: await bcrypt.hash('Demo@2026', 10), name: 'Demo User', role: 'user', createdAt: new Date() },
+    const isProd = process.env.NODE_ENV === 'production';
+    const seeds = [
+      {
+        email: process.env.SEED_ADMIN_EMAIL,
+        password: process.env.SEED_ADMIN_PASSWORD,
+        name: process.env.SEED_ADMIN_NAME ?? 'Admin User',
+        role: 'admin' as const,
+        // Local convenience only. Never applied in production.
+        devFallback: { email: 'admin@cloudfuze.com', password: 'CloudFuze@2026' },
+      },
+      {
+        email: process.env.SEED_DEMO_EMAIL,
+        password: process.env.SEED_DEMO_PASSWORD,
+        name: process.env.SEED_DEMO_NAME ?? 'Demo User',
+        role: 'user' as const,
+        devFallback: { email: 'demo@cloudfuze.com', password: 'Demo@2026' },
+      },
     ];
-    await db.collection('appUsers').insertMany(defaultUsers);
-    logger.info('Seeded 2 default app users');
+
+    const docs = [];
+    for (const s of seeds) {
+      const email = s.email ?? (isProd ? undefined : s.devFallback.email);
+      const password = s.password ?? (isProd ? undefined : s.devFallback.password);
+      if (!email || !password) continue;
+      docs.push({
+        email: email.trim().toLowerCase(),
+        password: await bcrypt.hash(password, 10),
+        name: s.name,
+        role: s.role,
+        createdAt: new Date(),
+        // True when the password came from a checked-in dev default rather than the
+        // operator. Surfaced at startup so it cannot quietly become the production login.
+        seededWithDevDefault: !s.password,
+      });
+    }
+
+    if (docs.length) {
+      await db.collection('appUsers').insertMany(docs);
+      logger.info(`Seeded ${docs.length} app user(s): ${docs.map((d) => d.email).join(', ')}`);
+      if (docs.some((d) => d.seededWithDevDefault)) {
+        logger.warn(
+          'One or more seeded accounts use the built-in DEVELOPMENT password. Set ' +
+            'SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD (and SEED_DEMO_*) before exposing this instance.',
+        );
+      }
+    } else {
+      logger.warn(
+        'No app users exist and none were seeded — set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD, ' +
+          'then restart, or nobody can sign in.',
+      );
+    }
   }
 
-  logger.info('All 15 collections verified with indexes (multi-tenant scoped)');
+  // ── Multi-tenant readiness: say out loud what is still unattributed ───────
+  //
+  // Rows left on the placeholder owner are reachable by any signed-in user (see
+  // auth/sessionOwnership.ts). That is a deliberate transition, and a transition nobody
+  // can see is indistinguishable from a bug, so it is counted on every boot.
+  try {
+    const legacy = await db.collection('migrationSessions').countDocuments({
+      $or: [{ appUserId: 'default' }, { appUserId: { $exists: false } }],
+    });
+    if (legacy > 0) {
+      logger.warn(
+        `${legacy} migration session(s) still owned by the placeholder 'default' user — any ` +
+          'signed-in user can reach them. Run `npx tsx src/scripts/rekeyAppUser.ts` to assign a real owner.',
+      );
+    }
+  } catch {
+    /* best-effort: a count failing must never stop the app booting */
+  }
+
+  logger.info('All 17 collections verified with indexes (multi-tenant scoped)');
 }

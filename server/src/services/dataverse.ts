@@ -3,7 +3,9 @@ import { logger } from '../logger.js';
 import { ComponentType } from '../types.js';
 import { parseTopicGraph } from './topicGraph.js';
 import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClassifier.js';
-import type { AgentIR, AgentPermissions, AgentSourceMetadata, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
+import { connectorIdFromConnectionReference, connectionAuthModeFrom } from './connectorRef.js';
+import { parseToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef, parseTopicConnectorActions } from './toolPayload.js';
+import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
 
 /**
  * Copilot Studio extraction: reads an agent's complete definition from the
@@ -393,14 +395,31 @@ function parseGptDynamicPrompt(raw: string | null | undefined): string {
   return out.join('').trim();
 }
 
-/** Follow @odata.nextLink pages, collecting all rows. */
+/**
+ * Follow @odata.nextLink pages, collecting all rows.
+ *
+ * Use this, not `dvGet`, for any list that a real tenant can grow past a page.
+ * A single `dvGet` with `$top=N` truncates SILENTLY at N — Dataverse returns 200
+ * with N rows and no indication there were more, which in extraction means an
+ * agent quietly loses topics or tools and the fidelity report calls it a success.
+ */
 async function dvGetAll<T>(url: string, token: string, path: string): Promise<T[]> {
   const rows: T[] = [];
   let next: string | null = API(url, path);
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json', Prefer: 'odata.maxpagesize=500' };
   while (next) {
     const res = await fetch(next, { headers });
-    if (!res.ok) throw new Error(`Dataverse GET failed (${res.status})`);
+    if (!res.ok) {
+      // Same reasoning as dvGet: a bare status hides which $select Dataverse rejected.
+      let detail = '';
+      try {
+        const body = (await res.json()) as { error?: { message?: string } };
+        detail = body?.error?.message ?? '';
+      } catch {
+        /* body wasn't JSON — fall back to bare status */
+      }
+      throw new Error(`Dataverse GET ${path} failed (${res.status})${detail ? `: ${detail}` : ''}`);
+    }
     const json = (await res.json()) as { value?: T[]; '@odata.nextLink'?: string };
     rows.push(...(json.value ?? []));
     next = json['@odata.nextLink'] ?? null;
@@ -576,6 +595,71 @@ function collectStrings(node: unknown, keyMatch: (k: string) => boolean, out: st
 }
 
 /** Parse one topic's AdaptiveDialog YAML into a TopicIR. */
+/**
+ * Is this componenttype-9 row a TOOL rather than a topic?
+ *
+ * Copilot Studio files both under the same component type and separates them by the
+ * `kind:` on the first meaningful line of `data`: `AdaptiveDialog` for an authored
+ * topic, `TaskDialog` for something the agent can invoke.
+ */
+function isAgentToolComponent(c: BotComponent): boolean {
+  const data = c.data || c.content || '';
+  return /^\s*kind:\s*TaskDialog\s*$/m.test(data);
+}
+
+// connectorIdFromConnectionReference / connectionAuthModeFrom moved to
+// services/connectorRef.ts — they are pure, this module is not (it pulls in the fail-fast
+// config), and that was the only thing stopping them from being unit-tested.
+
+const TASK_ACTION_KIND: Record<string, AgentToolKind> = {
+  invokeconnectortaskaction: 'connector',
+  invokeexternalagenttaskaction: 'mcp-server',
+  invokeconnectedagenttaskaction: 'connected-agent',
+  invokeaibuildermodeltaskaction: 'ai-builder',
+  // Both were previously absent, so every custom API and every flow-backed tool in the
+  // tenant parsed as 'unknown' — 11 of 63 tools in the live census (ledger 1.12).
+  invokeaiplugintaskaction: 'ai-plugin',
+  invokeflowtaskaction: 'flow',
+};
+
+/**
+ * Parse one TaskDialog component into an AgentToolIR.
+ *
+ * Read with targeted regexes rather than a YAML parse for the same reason the topic
+ * parser does: these bodies are Copilot's own dialect and a strict parse throws on
+ * shapes we have not seen, which would drop the whole tool. An unrecognised action
+ * kind is preserved as 'unknown' — never discarded.
+ */
+function parseAgentTool(c: BotComponent): AgentToolIR {
+  const data = c.data || c.content || '';
+  const rawKind = /^\s*kind:\s*(Invoke\w*TaskAction)\s*$/m.exec(data)?.[1] ?? '';
+  const connectionReference = /^\s*connectionReference:\s*(\S+)\s*$/m.exec(data)?.[1] ?? '';
+  const outputs = [...data.matchAll(/^\s*-\s*propertyName:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+  // Everything the author BOUND, not just what the tool is. Parsed in toolPayload.ts so it
+  // can be unit-tested; see the module header for why it scans instead of loading YAML.
+  const inputs = parseToolInputs(data);
+  const outputSchema = parseOutputSchema(data);
+  const mcp = parseMcpBinding(data);
+  const flowId = parseFlowId(data);
+  const aiPlugin = parseAiPluginRef(data);
+  return {
+    name: c.name ?? '(unnamed tool)',
+    kind: TASK_ACTION_KIND[rawKind.toLowerCase()] ?? 'unknown',
+    displayName: /^\s*modelDisplayName:\s*(.+)$/m.exec(data)?.[1]?.trim() || undefined,
+    description: /^\s*modelDescription:\s*(.+)$/m.exec(data)?.[1]?.trim() || undefined,
+    connectorId: connectionReference ? connectorIdFromConnectionReference(connectionReference) : undefined,
+    connectionAuthMode: connectionAuthModeFrom(data),
+    operationId: /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1] || undefined,
+    outputs: outputs.length ? outputs : undefined,
+    inputs: inputs.length ? inputs : undefined,
+    outputSchema: outputSchema.length ? outputSchema : undefined,
+    mcp,
+    flowId,
+    aiPlugin,
+    schemaName: c.schemaname ?? undefined,
+  };
+}
+
 function parseTopic(c: BotComponent): TopicIR {
   const raw = c.data ?? '';
   const doc = tryParseYaml(raw);
@@ -903,13 +987,32 @@ export async function extractAgent(
   token: string,
   bot: BotSummary,
 ): Promise<AgentIR> {
-  const json = await dvGet<{ value: BotComponent[] }>(
+  // Paged, not $top=1000: an agent with more components than the cap would have had the
+  // remainder dropped without any error, and every downstream count (topics, tools,
+  // knowledge) would be wrong while still reporting success.
+  const components = await dvGetAll<BotComponent>(
     url,
     token,
     'botcomponents?$select=name,data,content,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode,description,_modifiedby_value,schemaname' +
-      `&$filter=statecode eq 0 and _parentbotid_value eq ${bot.botid}&$top=1000`,
+      `&$filter=statecode eq 0 and _parentbotid_value eq ${bot.botid}`,
   );
-  const components = json.value ?? [];
+
+  // The fetch above deliberately takes only `statecode eq 0`. Ask separately for what was
+  // left behind so the report can name it — a disabled tool looks identical to a missing
+  // one when you are comparing the two platforms side by side. Best-effort and cheap
+  // (names only): failing to list them must never fail the extraction.
+  let disabledComponentNames: string[] = [];
+  try {
+    const disabled = await dvGetAll<{ name?: string }>(
+      url,
+      token,
+      'botcomponents?$select=name,componenttype' +
+        `&$filter=statecode ne 0 and _parentbotid_value eq ${bot.botid}`,
+    );
+    disabledComponentNames = disabled.map((c) => c.name ?? '(unnamed)');
+  } catch (err) {
+    logger.debug({ err, bot: bot.name }, 'extractAgent: could not list disabled components');
+  }
 
   // The agent's AUTHORED description/displayName live in bot.configuration
   // (settings["default-2.1.0"].content). For user-authored agents this holds the
@@ -1004,7 +1107,50 @@ export async function extractAgent(
   const permissions = await readAgentPermissions(url, token, bot.botid);
 
   const gptComp = components.find((c) => c.componenttype === ComponentType.CustomGpt);
-  const topicComps = components.filter((c) => c.componenttype === ComponentType.Topic);
+  // componenttype 9 is NOT only topics. It also carries the agent's TOOLS — connector
+  // operations, MCP servers, connected agents and AI Builder models — distinguished by
+  // the `kind:` at the top of `data`: `AdaptiveDialog` is a topic, `TaskDialog` is a
+  // tool. Treating every type-9 row as a topic meant "Jira - Get list of issues" was
+  // migrated as a conversational topic (and counted as one: 22 "topics" on an agent
+  // with far fewer), while the operations it actually calls were never recorded.
+  const type9 = components.filter((c) => c.componenttype === ComponentType.Topic);
+  const toolComps = type9.filter((c) => isAgentToolComponent(c));
+  const topicComps = type9.filter((c) => !isAgentToolComponent(c));
+  const agentTools = toolComps.map(parseAgentTool);
+
+  // Connector calls that live INSIDE a topic rather than as a standalone TaskDialog.
+  // The Customer Service agents in the test tenant make every Dataverse call this way
+  // (ledger 1.17): `kind: InvokeConnectorAction` as a step in an AdaptiveDialog. Reading
+  // only TaskDialog rows made those agents look like they had no tools at all, while the
+  // connector census correctly reported they used Dataverse — two of our own instruments
+  // disagreeing, with extraction the wrong one.
+  //
+  // These are steps in a flow, so what survives is the CAPABILITY, not the choreography:
+  // the topic decided when to call them and what to do with the result. The mapper reports
+  // that; dropping them entirely would lose the capability as well.
+  for (const topicComp of topicComps) {
+    const payload = topicComp.data || topicComp.content || '';
+    const topicName = topicComp.name ?? '(unnamed topic)';
+    for (const action of parseTopicConnectorActions(payload)) {
+      if (!action.operationId && !action.connectionReference) continue;
+      agentTools.push({
+        name: `${topicName} - ${action.operationId ?? 'connector call'}`,
+        kind: 'connector',
+        description:
+          `Used by the "${topicName}" topic of the source agent` +
+          (action.outputVariable ? `, which stored the result in ${action.outputVariable}` : '') +
+          '.',
+        connectorId: action.connectionReference
+          ? connectorIdFromConnectionReference(action.connectionReference)
+          : undefined,
+        connectionAuthMode: connectionAuthModeFrom(payload),
+        operationId: action.operationId,
+        inputs: action.inputs.length ? action.inputs : undefined,
+        sourceTopic: topicName,
+        schemaName: topicComp.schemaname ?? undefined,
+      });
+    }
+  }
   const ksComps = components.filter((c) => c.componenttype === ComponentType.KnowledgeSource);
   const fileComps = components.filter((c) => c.componenttype === ComponentType.BotFileAttachment);
 
@@ -1078,6 +1224,31 @@ export async function extractAgent(
   const thinContent = !gpt.instructions && !hasReadableTopicContent && !hasAiPrompt;
 
   const unmapped: string[] = [];
+
+  // Evaluation data (componenttype 19) — the agent's authored TEST questions and
+  // evaluation sets. Not runtime behaviour, so nothing is functionally lost by not
+  // migrating them, but they ARE authored content: 11 of this agent's 38 components
+  // were evaluation rows that disappeared without a word. "Lossless" means the report
+  // says what we left behind, not that we migrate everything.
+  const evalComps = components.filter((c) => c.componenttype === 19);
+  if (evalComps.length) {
+    unmapped.push(
+      `${evalComps.length} evaluation component(s) (test questions / evaluation sets authored in ` +
+        `Copilot Studio) were read but not migrated — Gemini has no equivalent. They remain in the ` +
+        `source agent.`,
+    );
+  }
+
+  // Components the author DISABLED in Copilot Studio. Extraction filters `statecode eq 0`,
+  // so these never reach the IR — correct, but worth stating: an admin comparing tool
+  // counts between the two platforms should know one was switched off, not missing.
+  if (disabledComponentNames.length) {
+    unmapped.push(
+      `${disabledComponentNames.length} component(s) are disabled in the source agent and were not ` +
+        `migrated: ${disabledComponentNames.join(', ')}.`,
+    );
+  }
+
   if (knowledgeSources.length) {
     const fileCount = knowledgeSources.filter((k) => k.kind === 'FileUpload').length;
     const nonFile = knowledgeSources.filter((k) => k.kind !== 'FileUpload');
@@ -1134,6 +1305,7 @@ export async function extractAgent(
     unmapped,
     sourceMetadata,
     permissions,
+    agentTools: agentTools.length ? agentTools : undefined,
   };
 }
 

@@ -1,0 +1,1700 @@
+{
+  "connectorId": "shared_jira",
+  "displayName": "Jira",
+  "capturedFrom": "https://api.powerapps.com/providers/Microsoft.PowerApps/apis (swagger)",
+  "proxyHost": "usa002-004.azure-apihub.net",
+  "proxyBasePath": "/apim/jira",
+  "securityDefinitions": {
+    "Authorization": {
+      "type": "basic"
+    }
+  },
+  "connectionAuth": {
+    "jirainstance": {
+      "type": "string"
+    },
+    "username": {
+      "type": "string"
+    },
+    "password": {
+      "type": "securestring"
+    }
+  },
+  "operationCount": 65,
+  "operations": {
+    "EditIssue": {
+      "method": "PUT",
+      "path": "/{connectionId}/3/issue/{issueIdOrKey}",
+      "summary": "Edit Issue",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "issueIdOrKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "notifyUsers",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "overrideScreenSecurity",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "overrideEditableFlag",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "EditIssue_V2": {
+      "method": "PUT",
+      "path": "/{connectionId}/v2/3/issue/{issueIdOrKey}",
+      "summary": "Edit Issue (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issueIdOrKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "notifyUsers",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "overrideScreenSecurity",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "overrideEditableFlag",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteProject": {
+      "method": "DELETE",
+      "path": "/{connectionId}/3/project/{projectIdOrKey}",
+      "summary": "Delete Project",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectIdOrKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "enableUndo",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "UpdateProject": {
+      "method": "PUT",
+      "path": "/{connectionId}/3/project/{projectIdOrKey}",
+      "summary": "Update Project",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectIdOrKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "DeleteProject_V2": {
+      "method": "DELETE",
+      "path": "/{connectionId}/v2/project/{projectIdOrKey}",
+      "summary": "Delete Project (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "projectIdOrKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "enableUndo",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "UpdateProject_V2": {
+      "method": "PUT",
+      "path": "/{connectionId}/v2/project/{projectIdOrKey}",
+      "summary": "Update Project (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "projectIdOrKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetAllProjectCategories": {
+      "method": "GET",
+      "path": "/{connectionId}/3/projectCategory",
+      "summary": "Get All Project Categories",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CreateProjectCategory": {
+      "method": "POST",
+      "path": "/{connectionId}/3/projectCategory",
+      "summary": "Create Project Category",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetAllProjectCategories_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/projectCategory",
+      "summary": "Get All Project Categories (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateProjectCategory_V2": {
+      "method": "POST",
+      "path": "/{connectionId}/v2/projectCategory",
+      "summary": "Create Project Category (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "RemoveProjectCategory": {
+      "method": "DELETE",
+      "path": "/{connectionId}/3/projectCategory/{id}",
+      "summary": "Remove Project Category",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "RemoveProjectCategory_V2": {
+      "method": "DELETE",
+      "path": "/{connectionId}/v2/projectCategory/{id}",
+      "summary": "Remove Project Category (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ]
+    },
+    "GetTask": {
+      "method": "GET",
+      "path": "/{connectionId}/3/task/{taskId}",
+      "summary": "Get Task",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "GetTask_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/task/{taskId}",
+      "summary": "Get Task (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "CancelTask": {
+      "method": "POST",
+      "path": "/{connectionId}/3/task/{taskId}/cancel",
+      "summary": "Cancel Task",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "X-Atlassian-Token",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CancelTask_V2": {
+      "method": "POST",
+      "path": "/{connectionId}/v2/task/{taskId}/cancel",
+      "summary": "Cancel Task (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "X-Atlassian-Token",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "GetUser": {
+      "method": "GET",
+      "path": "/{connectionId}/3/user",
+      "summary": "Get User",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "accountId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "expand",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "GetUser_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/user",
+      "summary": "Get User (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "accountId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "expand",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "CreateIssue": {
+      "method": "POST",
+      "path": "/{connectionId}/issue",
+      "summary": "Create a new issue",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateIssueV2": {
+      "method": "POST",
+      "path": "/{connectionId}/v2/issue",
+      "summary": "Create a new issue (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issueTypeIds",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateIssue_V3": {
+      "method": "POST",
+      "path": "/{connectionId}/v3/issue",
+      "summary": "Create a new issue (V3)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issueTypeIds",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "GetIssue": {
+      "method": "GET",
+      "path": "/{connectionId}/issue/{issueKey}",
+      "summary": "Get issue by key",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateIssue": {
+      "method": "PUT",
+      "path": "/{connectionId}/issue/{issueKey}",
+      "summary": "Update issue",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetIssue_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/issue/{issueKey}",
+      "summary": "Get issue by key (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateIssue_V2": {
+      "method": "PUT",
+      "path": "/{connectionId}/v2/issue/{issueKey}",
+      "summary": "Update issue (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "AddComment": {
+      "method": "POST",
+      "path": "/{connectionId}/issue/{issueKey}/comment",
+      "summary": "Add comment",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "AddComment_V2": {
+      "method": "POST",
+      "path": "/{connectionId}/v2/issue/{issueKey}/comment",
+      "summary": "Add comment (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListIssueTypes": {
+      "method": "GET",
+      "path": "/{connectionId}/issue/createmeta",
+      "summary": "Get issue types",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListIssueTypes_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/types/issue/createmeta",
+      "summary": "Get issue types (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListIssueTypesFields": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/issue/createmeta",
+      "summary": "Get issue types fields",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issuetypeIds",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListIssueTypesFields_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v3/issue/createmeta",
+      "summary": "Get issue types fields (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issuetypeIds",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListProjects": {
+      "method": "GET",
+      "path": "/{connectionId}/project",
+      "summary": "Get projects",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "CreateProject": {
+      "method": "POST",
+      "path": "/{connectionId}/project",
+      "summary": "Create a new project",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Project",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "CreateProject_V2": {
+      "method": "POST",
+      "path": "/{connectionId}/v2/project",
+      "summary": "Create a new project (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "Project",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "ListProjects_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/project/search",
+      "summary": "Get projects",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ListProjects_V3": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/project/search",
+      "summary": "Get projects (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListStatuses": {
+      "method": "GET",
+      "path": "/{connectionId}/project/{projectId}/statuses",
+      "summary": "Get statuses",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "issueType",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "projectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListStatuses_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/project/{projectId}/statuses",
+      "summary": "Get statuses (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issueType",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "projectId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListProjectUsers": {
+      "method": "GET",
+      "path": "/{connectionId}/user/permission/search",
+      "summary": "List users by project",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListProjectUsers_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/user/permission/search",
+      "summary": "List users by project (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListAssignableUsers": {
+      "method": "GET",
+      "path": "/{connectionId}/user/assignable/search",
+      "summary": "Get assignable Users",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListAssignableUsers_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/user/assignable/search",
+      "summary": "Get assignable Users (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListPriorityTypes": {
+      "method": "GET",
+      "path": "/{connectionId}/priority",
+      "summary": "Get priority types",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ListPriorityTypes_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/priority",
+      "summary": "Get priority types (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListFilters": {
+      "method": "GET",
+      "path": "/{connectionId}/2/filter/search",
+      "summary": "Get list of Filters",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ListFilters_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/filter/search",
+      "summary": "Get list of Filters (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListResources": {
+      "method": "GET",
+      "path": "/{connectionId}/oauth/token/accessible-resources",
+      "summary": "Get list of Resources",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "ListIssues": {
+      "method": "GET",
+      "path": "/{connectionId}/2/search",
+      "summary": "Get list of issues",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "jql",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "expand",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "fields",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "nextPageToken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "ListIssues_Datacenter": {
+      "method": "GET",
+      "path": "/{connectionId}/datacenter/search",
+      "summary": "Get list of issues (Datacenter)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "ListTransitions": {
+      "method": "GET",
+      "path": "/{connectionId}/3/issue/{issueIdOrKey}/transitions",
+      "summary": "Get list of Transitions",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issueIdOrKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UpdateTransition": {
+      "method": "POST",
+      "path": "/{connectionId}/3/issue/{issueIdOrKey}/transitions",
+      "summary": "Performs an issue transition",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "issueIdOrKey",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "object"
+        }
+      ]
+    },
+    "GetCurrentUser": {
+      "method": "GET",
+      "path": "/{connectionId}/3/myself",
+      "summary": "Get current user",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "expand",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    "OnNewIssue": {
+      "method": "GET",
+      "path": "/{connectionId}/new_issue_trigger/search",
+      "summary": "When a new issue is created",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnNewIssue_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/new_issue_trigger/search",
+      "summary": "When a new issue is created (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnNewIssue_Datacenter": {
+      "method": "GET",
+      "path": "/{connectionId}/datacenter/new_issue_trigger/search",
+      "summary": "When a new issue is created (Datacenter)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "important"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnCloseIssue": {
+      "method": "GET",
+      "path": "/{connectionId}/close_issue_trigger/search",
+      "summary": "When an issue is closed",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnCloseIssue_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/close_issue_trigger/search",
+      "summary": "When an issue is closed (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnCloseIssue_Datacenter": {
+      "method": "GET",
+      "path": "/{connectionId}/datacenter/close_issue_trigger/search",
+      "summary": "When an issue is closed (Datacenter)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnUpdateIssue": {
+      "method": "GET",
+      "path": "/{connectionId}/update_issue_trigger/search",
+      "summary": "When an issue is updated",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnUpdateIssue_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/update_issue_trigger/search",
+      "summary": "When an issue is updated (V2)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnUpdateIssue_Datacenter": {
+      "method": "GET",
+      "path": "/{connectionId}/datacenter/update_issue_trigger/search",
+      "summary": "When an issue is updated (Datacenter)",
+      "deprecated": true,
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "projectKey",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnNewIssueJQL": {
+      "method": "GET",
+      "path": "/{connectionId}/new_issue_jql_trigger/search",
+      "summary": "When a new issue is returned by a JQL query",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "jql",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnNewIssueJQL_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/new_issue_jql_trigger/search",
+      "summary": "When a new issue is returned by a JQL query (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "jql",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "OnNewIssueJQL_Datacenter": {
+      "method": "GET",
+      "path": "/{connectionId}/datacenter/new_issue_jql_trigger/search",
+      "summary": "When a new issue is returned by a JQL query (Datacenter)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "X-Request-Jirainstance",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "jql",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "mcp_JiraIssueManagement": {
+      "method": "POST",
+      "path": "/{connectionId}/mcp/JiraIssueManagement",
+      "summary": "Jira MCP Server",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "queryRequest",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "sessionId",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

@@ -106,6 +106,8 @@ export async function migrateDataverseSnapshot(
   envUrl: string,
   agentSourceId: string,
   source: KnowledgeSourceIR,
+  /** Explicit table to snapshot. Set by the caller when one source names several
+   *  tables; omitted, the table is resolved from the source itself. */
 ): Promise<DataverseSnapshotResult> {
   const capturedRef = (source.references?.[0] ?? source.reference ?? '').trim();
   if (!capturedRef) {

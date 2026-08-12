@@ -158,12 +158,49 @@ function popupResult(res: Response, type: string, payload: Record<string, unknow
 }
 
 /**
- * Resume the most recent connected session for the (default) app user — so cloud
- * connections persist across logout/login instead of being lost with the URL id.
+ * Resume the most recent connected session for the SIGNED-IN user — so cloud connections
+ * persist across a page refresh instead of being lost with the URL id.
+ *
+ * Scoped to the caller. Resuming by placeholder id used to hand whoever asked the newest
+ * connected session in the whole database, which on a multi-customer install means handing
+ * one customer another customer's live cloud connection. Unauthenticated callers get
+ * nothing rather than someone else's session.
  */
-authRouter.get('/resume', async (_req, res) => {
-  const id = await findLatestConnectedSession(DEFAULT_APP_USER_ID);
-  res.json({ session: id });
+authRouter.get('/resume', async (req, res) => {
+  if (!req.appUser) return void res.json({ session: null });
+  const id = await findLatestConnectedSession(req.appUser.appUserId);
+  // Installs that predate sign-in have their sessions under the placeholder owner. Falling
+  // back keeps those users working until `rekeyAppUser.ts` is run; once it is, this branch
+  // finds nothing and the scoped lookup above is the only path.
+  const legacy = id ?? (await findLatestConnectedSession(DEFAULT_APP_USER_ID));
+  res.json({ session: legacy });
+});
+
+/**
+ * POST /api/auth/logout  body: { session }
+ *
+ * End the session for real. The Sign out button used to POST to `/api/logout`, which
+ * does not exist — the 404 was swallowed and the session stayed alive, so pressing
+ * Back landed on a fully working wizard page and /resume would hand the same
+ * connection straight back. Signing out has to mean something.
+ *
+ * Deleting the session deliberately also stops `/resume` returning it: resume exists so
+ * a REFRESH does not lose the cloud connections, not so a sign-out can be undone with
+ * the browser's Back button.
+ *
+ * Idempotent and never fails — a sign-out that errors would strand someone on a page
+ * they are trying to leave.
+ */
+authRouter.post('/logout', async (req, res) => {
+  const sessionId = (req.body as { session?: string })?.session ?? '';
+  if (sessionId) {
+    try {
+      await deleteSession(sessionId);
+    } catch (err) {
+      logger.warn({ err }, 'logout: could not delete session');
+    }
+  }
+  res.json({ ok: true });
 });
 
 // ── Microsoft ────────────────────────────────────────────────────────────────
@@ -250,7 +287,18 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
       sessionId = st.msSessionId!;
       await updateSession(sessionId, { step: existing.gEmail ? 'ready' : 'ms_done', ...msFields });
     } else {
-      sessionId = await createSession({ step: 'ms_done', ...msFields });
+      // A migration session is minted here, and its owner decides who can ever read the
+      // customer's environments, staged agents and connector credentials. Creating one
+      // without a signed-in user is what produced the 'default' bucket in the first
+      // place, so it is refused rather than defaulted. The cookie is present: this
+      // callback is a same-origin navigation, so a signed-in browser carries it.
+      const owner = req.appUser?.appUserId;
+      if (!owner) {
+        const detail = 'Sign in to CloudFuze before connecting a cloud, so the connection has an owner.';
+        if (popup) return void popupResult(res, 'ms-auth-error', { error: detail });
+        return void res.redirect(web(`/?error=${encodeURIComponent(detail)}`));
+      }
+      sessionId = await createSession({ step: 'ms_done', appUserId: owner, ...msFields });
     }
 
     // Land back on the platform screen so the user sees "1 cloud connected".

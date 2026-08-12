@@ -129,6 +129,19 @@ export const CREDENTIAL_GROUPS: Record<string, CredentialGroupDef> = {
       'per connector below as APPLICATION permissions, then click Grant admin consent.',
     credentials: [], // filled from MS_GRAPH_FIELDS below
   },
+  hubspot: {
+    id: 'hubspot',
+    name: 'HubSpot (one private app token)',
+    setupUrl: 'https://app.hubspot.com/private-apps',
+    setupHint:
+      'One private app token serves every HubSpot connector. Create it under Settings → ' +
+      'Integrations → Private Apps and grant only the CRM scopes the agent needs — the token ' +
+      'carries exactly the scopes you tick, so a read-only agent should get read scopes only.',
+    credentials: [
+      { key: 'api_key', label: 'Private App Token', type: 'password',
+        placeholder: 'pat-na1-…', hint: 'HubSpot → Settings → Integrations → Private Apps → Create a private app' },
+    ],
+  },
   atlassian: {
     id: 'atlassian',
     name: 'Atlassian (one API token)',
@@ -171,10 +184,68 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'crm',
     icon: '🟠',
     docsUrl: 'https://developers.hubspot.com/docs/api/overview',
-    credentials: [
-      { key: 'api_key', label: 'Private App Token', type: 'password',
-        placeholder: 'pat-na1-…', hint: 'HubSpot → Settings → Integrations → Private Apps → Create a private app' },
-    ],
+    credentialGroup: 'hubspot',
+    credentials: [], // supplied by the hubspot credential group
+    requiredPermissions: ['crm.objects.contacts.read', 'crm.objects.companies.read', 'crm.objects.deals.read'],
+    permissionsHint:
+      'A private app token carries exactly the scopes ticked when it was created. Missing a ' +
+      'scope returns 403 at inference time, not at save time.',
+    baseUrlTemplate: 'https://api.hubapi.com',
+    authHeaderTemplate: 'Bearer {api_key}',
+  },
+
+  {
+    // The Independent Publisher variant is a SEPARATE connector id in Power Platform,
+    // and agents in the field use it (found on "Enterprise Migration Knowledge",
+    // 2026-08-07, where it was silently dropped for having no registry entry). It
+    // targets the same HubSpot REST API with the same private-app-token auth, so it
+    // shares the credential group rather than asking for a second token.
+    id: 'shared_hubspotcrmv2',
+    name: 'HubSpot CRM V2 (Independent Publisher)',
+    category: 'crm',
+    icon: '🟠',
+    docsUrl: 'https://developers.hubspot.com/docs/api/crm/understanding-the-crm',
+    credentialGroup: 'hubspot',
+    credentials: [],
+    requiredPermissions: ['crm.objects.contacts.read', 'crm.objects.companies.read', 'crm.objects.deals.read'],
+    permissionsHint:
+      'Same private app token as the HubSpot connector. Association endpoints need read scope ' +
+      'on BOTH object types involved.',
+    baseUrlTemplate: 'https://api.hubapi.com',
+    authHeaderTemplate: 'Bearer {api_key}',
+  },
+
+  {
+    // The two HubSpot ids agents in the field ACTUALLY use (live census 2026-08-12,
+    // ledger 1.10): `shared_hubspotcrm` on the HubSpot Agent and `shared_hubspotsettingsv2`
+    // on two agents. Neither had a registry entry, so both were reported unsupported and no
+    // tool was ever built — while `shared_hubspot`, which the registry did have, appears in
+    // no agent at all. The registry ids were guessed from product names; these are measured.
+    id: 'shared_hubspotcrm',
+    name: 'HubSpot CRM (Independent Publisher)',
+    category: 'crm',
+    icon: '🟠',
+    docsUrl: 'https://developers.hubspot.com/docs/api/crm/understanding-the-crm',
+    credentialGroup: 'hubspot',
+    credentials: [],
+    requiredPermissions: ['crm.objects.contacts.read', 'crm.objects.companies.read'],
+    permissionsHint:
+      'Same private app token as every other HubSpot connector — the customer is not asked twice.',
+    baseUrlTemplate: 'https://api.hubapi.com',
+    authHeaderTemplate: 'Bearer {api_key}',
+  },
+
+  {
+    id: 'shared_hubspotsettingsv2',
+    name: 'HubSpot Settings V2 (Independent Publisher)',
+    category: 'crm',
+    icon: '🟠',
+    docsUrl: 'https://developers.hubspot.com/docs/api/settings/account-information-api',
+    credentialGroup: 'hubspot',
+    credentials: [],
+    requiredPermissions: ['oauth'],
+    permissionsHint:
+      'Account-info endpoints need only the token itself; no CRM object scopes are involved.',
     baseUrlTemplate: 'https://api.hubapi.com',
     authHeaderTemplate: 'Bearer {api_key}',
   },
@@ -211,6 +282,34 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     baseUrlTemplate: '{org_url}/api/data/v9.2',
     // Was a pasted access token. The app registration is durable; the runtime does the
     // client_credentials exchange and refreshes on expiry.
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'oauth2-client-credentials',
+    tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+    scope: '{org_url}/.default',
+  },
+
+  {
+    // THE most-used connector in the test tenant (5 of 12 connector-using agents, ledger
+    // 1.10) and it had no entry, because the registry guessed `shared_dynamicscrmonline`
+    // from the product name while Copilot Studio actually emits
+    // `shared_commondataserviceforapps`. Same Web API, same app-only auth.
+    //
+    // `org_url` is NOT asked for here: the migration already knows the environment it
+    // extracted from, and bound operations carry it as `dataverseOrgUrl` context. Asking an
+    // admin to paste a URL we hold would be asking them to re-enter our own data.
+    id: 'shared_commondataserviceforapps',
+    name: 'Microsoft Dataverse',
+    category: 'crm',
+    icon: '💠',
+    docsUrl: 'https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/overview',
+    credentialGroup: 'ms_graph',
+    credentials: [],
+    requiredPermissions: ['Dataverse user_impersonation (application user in the target environment)'],
+    permissionsHint:
+      'App-only Dataverse access needs the app registration added as an APPLICATION USER in the ' +
+      'target environment with a security role — a Graph permission alone is not enough, and the ' +
+      'failure shows up as 401 on the first call, not at save time.',
+    baseUrlTemplate: '{org_url}/api/data/v9.2',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
     tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',

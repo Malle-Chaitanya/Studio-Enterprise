@@ -12,10 +12,17 @@
  * turned up another connector from the same family, when the only thing actually
  * needed was adding a permission to the app that already exists.
  *
- * KNOWN GAP: the scope carries no appUserId, so two customers sharing one Google
- * project, or one customer with two Jira sites, would collide. Isolation today comes
- * only from each customer having their own project. See handoff.md — this is the top
- * item in the production hardening list.
+ * TENANT SCOPING: the id also carries the appUserId, because the group scope alone
+ * collides whenever two customers share one Google project — customer B's save
+ * overwrites customer A's Jira token, and B's deployed agent then reads A's
+ * credential. Isolation used to rest entirely on every customer having their own
+ * project, which is an assumption the product does not enforce anywhere.
+ *
+ * READING ALREADY-STORED SECRETS: never recompute an id to READ with. Credentials
+ * saved before tenant scoping live under `legacyConnectorSecretId`, and a deployed
+ * agent has whatever id it was built with baked into its spec. The durable record
+ * (db/repos/connectorCredentials.ts) stores the real id per field — resolve through
+ * that, and treat the computed id as the value to use only when writing something new.
  */
 
 import { REGISTRY_BY_ID, CREDENTIAL_GROUPS } from '../connectors/registry.js';
@@ -42,17 +49,48 @@ export function connectorFieldScope(connectorId: string, field: string): string 
   return isOwnField ? connectorId : def.credentialGroup;
 }
 
-/** Build a Secret Manager secret ID for one credential field. */
-export function connectorSecretId(connectorIdOrScope: string, field: string): string {
+/** Secret Manager ids allow [a-zA-Z0-9_-] only; anything else becomes a dash. */
+function secretSafe(part: string): string {
+  return part.replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase();
+}
+
+/**
+ * Build a Secret Manager secret ID for one credential field, scoped to one customer.
+ *
+ * `appUserId` is REQUIRED for anything the product writes. It is optional only so the
+ * throwaway spikes in src/spikes/ — which run against a single known tenant — keep
+ * working; omitting it in app code recreates the cross-tenant collision this scoping
+ * exists to prevent.
+ */
+export function connectorSecretId(
+  connectorIdOrScope: string,
+  field: string,
+  ownerScope: string,
+): string {
   // Accepts either a connector id (resolved through its group) or an explicit scope,
   // so callers that already know the scope — or use a non-registry scope like
   // 'ms_native' — keep working unchanged.
   const scope = REGISTRY_BY_ID.has(connectorIdOrScope)
     ? connectorFieldScope(connectorIdOrScope, field)
     : connectorIdOrScope;
-  const safeScope = scope.replace(/_/g, '-').toLowerCase();
-  const safeField = field.replace(/_/g, '-').toLowerCase();
-  return `studio-enterprise-${safeScope}-${safeField}`;
+  // `ownerScope` is REQUIRED and the parameter is not optional, deliberately. It used to
+  // be, falling back to the un-scoped legacy id when omitted — so a caller that simply
+  // forgot it wrote into the namespace EVERY customer shares, silently. That is a
+  // cross-tenant credential overwrite produced by an omission the compiler allowed. Use
+  // `credentialScope(session)`; never pass a client-supplied value.
+  return `studio-enterprise-${secretSafe(ownerScope)}-${secretSafe(scope)}-${secretSafe(field)}`;
+}
+
+/**
+ * The pre-tenant-scoping id. Kept because secrets written under it still exist and
+ * still back deployed agents — this is a READ path for records that predate scoping,
+ * never a name to write new credentials under.
+ */
+export function legacyConnectorSecretId(connectorIdOrScope: string, field: string): string {
+  const scope = REGISTRY_BY_ID.has(connectorIdOrScope)
+    ? connectorFieldScope(connectorIdOrScope, field)
+    : connectorIdOrScope;
+  return `studio-enterprise-${secretSafe(scope)}-${secretSafe(field)}`;
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { TopicGraph } from './services/topicGraph.js';
 import type { KnowledgeClassification } from './services/knowledgeClassifier.js';
+import type { ToolInputIR, ToolOutputFieldIR, McpBindingIR } from './services/toolPayload.js';
 
 /**
  * Types shared across the migration pipeline.
@@ -292,6 +293,97 @@ export interface AgentIR {
   sourceMetadata?: AgentSourceMetadata;
   /** Source access model (owner, shares, chat access). Optional/additive. */
   permissions?: AgentPermissions;
+  /**
+   * Tools the agent can invoke — connector operations, MCP servers, connected
+   * agents and AI Builder models (Dataverse componenttype 9, `kind: TaskDialog`).
+   *
+   * Extraction previously read only CustomGpt / Topic / KnowledgeSource /
+   * BotFileAttachment, so an agent wired to five Jira operations produced an IR
+   * that mentioned none of them (live 2026-08-07, "Enterprise Migration
+   * Knowledge"). The connector SCAN saw them, but the IR the migration maps from
+   * did not — so the operations could never reach the target agent, and the
+   * report could not say what was lost.
+   *
+   * Optional and additive: an agent with no tools simply omits it.
+   */
+  agentTools?: AgentToolIR[];
+}
+
+/** How a tool is invoked in Copilot Studio. Mirrors `action.kind`. */
+export type AgentToolKind =
+  /** A Power Platform connector operation, e.g. Jira `ListIssues`. */
+  | 'connector'
+  /** A remote MCP server exposed as a tool (`InvokeExternalAgentTaskAction`). */
+  | 'mcp-server'
+  /** Another Copilot agent invoked as a tool. */
+  | 'connected-agent'
+  /** An AI Builder prompt/model. */
+  | 'ai-builder'
+  /** A custom API the author added in Copilot Studio (`InvokeAIPluginTaskAction`). */
+  | 'ai-plugin'
+  /** A Power Automate flow (`InvokeFlowTaskAction`) — only its id is in the payload. */
+  | 'flow'
+  /** A TaskDialog whose action kind we do not recognise — preserved, never dropped. */
+  | 'unknown';
+
+/**
+ * One invocable tool on the source agent.
+ *
+ * `connectorId` + `operationId` together are what make a tool reproducible: knowing
+ * an agent "uses Jira" is not enough to rebuild it, because Jira exposes dozens of
+ * operations and this agent chose five specific ones.
+ */
+export interface AgentToolIR {
+  /** Component name as authored, e.g. "Jira - Get list of issues". */
+  name: string;
+  kind: AgentToolKind;
+  /** Model-facing display name (`modelDisplayName`), when present. */
+  displayName?: string;
+  /** Model-facing description (`modelDescription`) — what the tool is for. */
+  description?: string;
+  /** Registry connector id parsed from the connection reference, e.g. `shared_jira`. */
+  connectorId?: string;
+  /**
+   * Whose credentials the action runs under, from `connectionProperties.mode`.
+   *
+   * `invoker` — the signed-in END USER's own connection, so each person sees only what
+   * they already have access to. `maker` — one shared connection the author configured,
+   * the same for everyone. `undefined` — the payload did not say.
+   *
+   * Load-bearing for access fidelity: migrating an `invoker` tool onto our app-only
+   * service credential gives every end user the service account's entire view. That must
+   * be reported, and where possible replaced with a Gemini Enterprise end-user
+   * authorization, rather than shipped silently.
+   */
+  connectionAuthMode?: 'invoker' | 'maker';
+  /** The exact operation invoked, e.g. `ListIssues`, `GetIssue_V2`. */
+  operationId?: string;
+  /** Declared output property names, when the component lists them. */
+  outputs?: string[];
+  /**
+   * The arguments the AUTHOR bound: which are pinned to a value and which the model fills.
+   *
+   * This is what separates reproducing the call from reproducing the call's shape. A tool
+   * whose `entityName` was pinned to one table becomes, without this, a tool the model can
+   * point at any table.
+   */
+  inputs?: ToolInputIR[];
+  /** Declared result shape, flattened. Lets the migrated tool describe its output. */
+  outputSchema?: ToolOutputFieldIR[];
+  /** For `mcp-server` tools: the server operation and the tools the author allowed. */
+  mcp?: McpBindingIR;
+  /** For `flow` tools: the Power Automate flow id. The flow itself is not migrated yet. */
+  flowId?: string;
+  /** For `ai-plugin` tools: the plugin identity from `entityKey`. */
+  aiPlugin?: { name?: string; operationId?: string };
+  /**
+   * Set when the call was embedded in a TOPIC rather than declared as a standalone tool
+   * (`InvokeConnectorAction` inside an AdaptiveDialog). The migrated tool preserves the
+   * capability, not the topic's ordering or conditions — callers must report that.
+   */
+  sourceTopic?: string;
+  /** Dataverse schema name of the component. */
+  schemaName?: string;
 }
 
 /**
@@ -404,6 +496,29 @@ export interface ResolvedPlan {
   savedConnectors?: string[];
   /** Whether MS native app registration creds were saved (Teams/SharePoint/Office365). */
   msCreds?: boolean;
+  /**
+   * Redeploy even when nothing about the SOURCE agent changed.
+   *
+   * Drift detection compares the Copilot agent against the last migration, so an agent
+   * whose source is untouched is skipped as "already exists". That is right for the
+   * source, and wrong for everything else: when the DEPLOYMENT changes — a fixed tool
+   * name, a new connector wiring, a corrected instruction — there is otherwise no way
+   * to get the change onto an already-migrated agent short of editing the Copilot agent
+   * to fake a difference (hit repeatedly on 2026-08-07).
+   *
+   * Creates a new Reasoning Engine; the previous one is not deleted automatically.
+   */
+  forceRedeploy?: boolean;
+  /**
+   * The customer has been shown, and accepted, that indexed knowledge loses its source
+   * permissions (see services/aclDisclosure.ts). Without this the run stops between the
+   * extract and insert phases rather than silently over-sharing restricted content.
+   *
+   * Deliberately not persisted with the session's other preferences: it is an
+   * acknowledgement of a specific set of sources at a specific moment, so it must be given
+   * again if the plan changes.
+   */
+  acknowledgeAclLoss?: boolean;
 }
 
 /** Result of mapping one AgentIR to a Gemini agent definition. */

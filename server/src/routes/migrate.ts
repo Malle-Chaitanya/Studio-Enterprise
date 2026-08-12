@@ -2,26 +2,31 @@ import { Router } from 'express';
 import { runMigration } from '../orchestrator.js';
 import { renderReportExcel } from '../services/report.js';
 import { resolveScope } from '../services/scope.js';
-import { getSession, updateSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
+import { getSession, updateSession, credentialScope, DEFAULT_APP_USER_ID } from '../sessionStore.js';
 import {
   upsertConnectorCredential,
   listConnectorCredentials,
+  getConnectorCredential,
   deleteConnectorCredential,
 } from '../db/repos/connectorCredentials.js';
 import { clientCredsToken } from '../auth/microsoft.js';
 import { resolveSystemUserEmail } from '../services/dataverse.js';
 import { getSaToken } from '../auth/google.js';
-import { defaultDestination } from '../services/gemini.js';
+import { defaultDestination, effectiveGeminiProject } from '../services/gemini.js';
 import { findCandidates } from '../services/graphSearch.js';
 import { resolveShareUrlSmart } from '../services/graphFiles.js';
 import { migrateSharePointDriveItem } from '../services/knowledgeDataStoreExecutor.js';
 import { detectThirdPartyConnectors } from '../services/thirdPartyConnectorScan.js';
 import { detectKnowledgeConnectors } from '../services/knowledgeConnectorScan.js';
 import { listBots } from '../services/dataverse.js';
-import { upsertSecret } from '../services/secretManager.js';
+import { upsertSecretIfChanged, preflightSecretAccess, deleteSecret, getSecretOwnership, getEntraSecret } from '../services/secretManager.js';
+import { validateConnectorCredentials } from '../services/connectorValidator.js';
+import { logger } from '../logger.js';
+import { serviceAccountEmail } from '../auth/google.js';
 import {
   connectorSecretId,
   connectorCredentialFields,
+  connectorCredentialScope,
   connectorsSharingCredentials,
 } from '../services/connectorCredentials.js';
 import { REGISTRY_BY_ID, CREDENTIAL_GROUPS } from '../connectors/registry.js';
@@ -35,20 +40,42 @@ export const migrateRouter = Router();
  * return a preview (what will migrate + destination naming). Call before /stream.
  */
 migrateRouter.post('/plan', async (req, res) => {
-  const { session: sessionId, scope, destination, dryRun } = req.body as {
+  const { session: sessionId, scope, destination, dryRun, forceRedeploy, acknowledgeAclLoss } = req.body as {
     session?: string;
     scope?: MigrationScope;
     destination?: DestinationOptions;
     dryRun?: boolean;
+    /** Redeploy already-migrated agents even when their source is unchanged. */
+    forceRedeploy?: boolean;
+    /** Customer accepted that indexed knowledge loses its source permissions. */
+    acknowledgeAclLoss?: boolean;
   };
   const session = await getSession(sessionId ?? '');
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   if (!scope) return void res.status(400).json({ error: 'scope_required' });
 
+  // A destination that is missing its engine used to be discovered at the END of a
+  // deploy: the Reasoning Engine was built and billed, registration 404'd with
+  // `Engine "undefined" does not exist`, and the orphan was left running. Nothing about
+  // that failure needed six minutes and a GPU to establish.
+  const badEnv = Object.entries(destination?.environmentMap ?? {}).find(
+    ([, d]) => !d || typeof d.project !== 'string' || !d.project.trim() || typeof d.engine !== 'string' || !d.engine.trim(),
+  );
+  if (badEnv) {
+    return void res.status(400).json({
+      error: 'invalid_destination',
+      detail:
+        `The destination for ${badEnv[0]} is missing its project or Gemini app. ` +
+        'Pick both on the Select & Map Environments step before migrating.',
+    });
+  }
+
   try {
     const dest = destination ?? {};
     const plan = await resolveScope(session, scope, dest);
     plan.dryRun = !!dryRun;
+    plan.forceRedeploy = !!forceRedeploy;
+    plan.acknowledgeAclLoss = !!acknowledgeAclLoss;
     // Seed from the durable per-customer record (connectorCredentials.ts), not just
     // whatever got saved in THIS session — otherwise a customer who already configured
     // Confluence/Jira/Dynamics in an earlier session (and sees "✓ Saved" in the UI) gets
@@ -67,6 +94,8 @@ migrateRouter.post('/plan', async (req, res) => {
       environments: plan.units.map((u) => ({ name: u.envName, agents: u.bots.map((b) => b.name) })),
       destination: plan.destination,
       dryRun: plan.dryRun,
+      forceRedeploy: plan.forceRedeploy,
+      acknowledgeAclLoss: plan.acknowledgeAclLoss,
     });
   } catch (err) {
     res.status(500).json({ error: 'plan_failed', detail: (err as Error).message });
@@ -325,7 +354,17 @@ migrateRouter.post('/knowledge-connectors', async (req, res) => {
     } catch {
       /* attribution is a nicety; detection still works without it */
     }
-    const connectors = await detectKnowledgeConnectors(envUrl, dvToken, botIds, botNames);
+    // Answer readiness from the CUSTOMER'S own connector definitions where we can reach
+    // them, not from a capture of ours. Their environment decides which connectors exist
+    // and at what version; a fixture is only a fallback. The environment GUID differs from
+    // the org URL, so resolve it from the session's discovered environments.
+    const envId = session.environments?.find(
+      (e) => e.url.replace(/\/$/, '') === envUrl.replace(/\/$/, ''),
+    )?.id;
+    const captureCtx = envId
+      ? { tenantId: session.tenantId, environmentId: envId, scope: credentialScope(session) }
+      : undefined;
+    const connectors = await detectKnowledgeConnectors(envUrl, dvToken, botIds, botNames, captureCtx);
     res.json({ connectors });
   } catch (err) {
     res.status(502).json({ error: 'knowledge_connector_scan_failed', detail: (err as Error).message });
@@ -345,18 +384,71 @@ migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
   };
   const session = await getSession(sessionId ?? '');
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
-  if (!connectorId || !Array.isArray(creds) || creds.length === 0) {
+  // An EMPTY creds array is legitimate: the client sends only fields the admin typed,
+  // and a connector whose credentials all came from a sibling in the same group (Jira
+  // after Confluence, Teams after SharePoint) has nothing new to write — it still has
+  // to be registered, or the migration will not wire a tool for it. Rejected below if
+  // no existing secret turns out to back it.
+  if (!connectorId || !Array.isArray(creds)) {
     return void res.status(400).json({ error: 'connector_id_and_creds_required' });
   }
   if (!session.geminiProject) return void res.status(400).json({ error: 'google_not_connected' });
 
   try {
     const saToken = await getSaToken(session.gEmail);
+    // Fail BEFORE writing anything, and say what is actually wrong. Discovering this
+    // on the write meant a half-saved connector and a UI blaming the Google
+    // connection, which was never the problem.
+    // Secrets MUST go to the project the agent will be deployed into, or the deployed
+    // container cannot read them. Apply the same override resolveDestination uses.
+    const secretsProject = effectiveGeminiProject(session.geminiProject);
+    const access = await preflightSecretAccess(secretsProject, saToken, serviceAccountEmail());
+    if (!access.ok) return void res.status(403).json({ error: access.code, detail: access.detail });
+
+    // Tenant-scoped ids. Without the appUserId two customers sharing one Google
+    // project write to the same secret, so the second save overwrites the first and
+    // the first customer's deployed agent starts reading the second's credential.
+    const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+
+    // The client may send only the fields the admin actually changed, so merge onto
+    // what is already recorded. Replacing the record wholesale would erase the secret
+    // ids of untouched fields, and the deployed agent resolves its credentials from
+    // exactly those ids.
+    // Look across the whole credential group, not just this connector: one Atlassian
+    // token backs Confluence and Jira, one Azure app backs all five Microsoft
+    // connectors. A sibling's record is where this connector's shared secret ids live.
+    const scope = connectorCredentialScope(connectorId);
+    const groupRecords = (await listConnectorCredentials(appUserId)).filter(
+      (r) => r.project === secretsProject && connectorCredentialScope(r.connectorId) === scope,
+    );
+    const priorRecord =
+      (await getConnectorCredential(appUserId, connectorId)) ??
+      (groupRecords.length ? groupRecords[0] : null);
+
+    if (creds.length === 0 && !priorRecord) {
+      return void res.status(400).json({
+        error: 'connector_id_and_creds_required',
+        detail: 'No credentials were supplied and none are already stored for this connector.',
+      });
+    }
+
+    const secretIdByField: Record<string, string> = { ...(priorRecord?.secretIds ?? {}) };
     const secretIds: string[] = [];
-    const secretIdByField: Record<string, string> = {};
     for (const { field, value } of creds) {
-      const secretId = connectorSecretId(connectorId, field);
-      await upsertSecret(saToken, session.geminiProject, secretId, value);
+      // Reuse the id this field was stored under before, so an update lands on the
+      // secret the already-deployed agents read rather than creating a parallel one.
+      const secretId = priorRecord?.secretIds?.[field] ?? connectorSecretId(connectorId, field, credentialScope(session));
+      // Labels are the only way to tell later which tenant and connector a secret
+      // belongs to — the id alone cannot be queried, so without these there is no way
+      // to enumerate a customer's credentials in order to audit or remove them.
+      await upsertSecretIfChanged(saToken, secretsProject, secretId, value, {
+        managed_by: 'studio-enterprise',
+        // The OWNER scope, not the Mongo key: appUserId is 'default' for every customer
+        // until sign-in is wired, which would label every customer's secret identically
+        // and make the delete path's ownership check meaningless.
+        app_user: credentialScope(session),
+        connector: connectorId,
+      });
       secretIds.push(secretId);
       secretIdByField[field] = secretId;
     }
@@ -364,12 +456,14 @@ migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
     // Durable record, keyed by customer — survives the session TTL so a returning
     // admin sees "already configured" instead of re-entering credentials that are
     // already in Secret Manager. Field names + secret ids only, never values.
-    const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+    // It is also the authority on where a credential really lives: everything
+    // downstream resolves ids from here rather than recomputing them, so credentials
+    // saved before tenant scoping keep backing the agents already deployed on them.
     await upsertConnectorCredential(appUserId, {
       connectorId,
-      fields: creds.map((c) => c.field),
+      fields: [...new Set([...(priorRecord?.fields ?? []), ...creds.map((c) => c.field)])],
       secretIds: secretIdByField,
-      project: session.geminiProject,
+      project: secretsProject,
     });
 
     // Still recorded on the session plan: that's what the in-flight migration reads.
@@ -378,7 +472,25 @@ migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
       const updated = { ...session.plan, savedConnectors: [...existing, connectorId] };
       await updateSession(sessionId!, { plan: updated as typeof session.plan });
     }
-    res.json({ secretIds });
+
+    // Prove the credentials work before telling the admin they are saved.
+    //
+    // Validated AFTER the write, against the full merged set read back from Secret
+    // Manager, for two reasons: the admin may have retyped only one field, so the
+    // typed values alone are not a testable credential; and a credential that fails
+    // its check is usually right-but-not-yet-consented, so keeping it stored lets the
+    // admin fix permissions and retry instead of retyping everything. The response
+    // says plainly which of the two happened.
+    const merged: Record<string, string> = {};
+    for (const [field, secretId] of Object.entries(secretIdByField)) {
+      const got = await getEntraSecret(saToken, `projects/${secretsProject}/secrets/${secretId}/versions/latest`);
+      if (got.ok && got.plaintext) merged[field] = got.plaintext;
+    }
+    const validation = await validateConnectorCredentials(connectorId, merged);
+    if (validation.code !== 'ok') {
+      logger.warn({ connectorId, code: validation.code }, 'connector credentials stored but did not validate');
+    }
+    res.json({ secretIds, validation });
   } catch (err) {
     res.status(502).json({ error: 'credentials_save_failed', detail: (err as Error).message });
   }
@@ -410,8 +522,23 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
   if (ids.length === 0) return void res.json({ connectors: [] });
 
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const destProject = effectiveGeminiProject(session.geminiProject);
   const saved = await listConnectorCredentials(appUserId);
-  const savedIds = new Set(saved.map((s) => s.connectorId));
+  // Only credentials stored in the project we are migrating INTO are usable — the
+  // deployed container resolves secrets from its own project. See the GET route above.
+  const usable = saved.filter((s) => !!destProject && s.project === destProject);
+  const savedIds = new Set(usable.map((s) => s.connectorId));
+  // Which individual FIELDS already have a secret, across the whole credential group.
+  // Per-field state is what lets the UI stop demanding a value it already holds: a
+  // returning admin was shown every input as required, so they retyped credentials
+  // that were sitting in Secret Manager, and each retype wrote another secret version.
+  const suppliedFieldsByScope = new Map<string, Set<string>>();
+  for (const rec of usable) {
+    const scope = connectorCredentialScope(rec.connectorId);
+    const set = suppliedFieldsByScope.get(scope) ?? new Set<string>();
+    for (const f of rec.fields ?? []) set.add(f);
+    suppliedFieldsByScope.set(scope, set);
+  }
 
   const connectors = ids.map((id) => {
     const def = REGISTRY_BY_ID.get(id);
@@ -436,6 +563,10 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
         placeholder: f.placeholder,
         hint: f.hint,
         shared: f.shared,
+        // A value already exists for this field. The UI renders it as satisfied with a
+        // Replace affordance instead of an empty required input, and omits it from the
+        // save so an unchanged credential does not get a new version.
+        supplied: suppliedFieldsByScope.get(connectorCredentialScope(id))?.has(f.key) ?? false,
       })),
       requiredPermissions: def.requiredPermissions ?? [],
       adminConsentRequired: !!def.adminConsentRequired,
@@ -463,23 +594,35 @@ migrateRouter.get('/connector-credentials', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const destProject = effectiveGeminiProject(session.geminiProject);
   const saved = await listConnectorCredentials(appUserId);
+  // Secrets live in the project they were saved against. Migrating into a DIFFERENT
+  // project cannot read them, so a record from another project must NOT read as
+  // configured — live 2026-08-07 credentials saved during a GTM session made the UI
+  // show "✓ Saved" while the studio run skipped every Confluence source as
+  // "needs a connector or manual step".
   res.json({
     connectors: saved.map((s) => ({
       connectorId: s.connectorId,
       fields: s.fields,
       project: s.project,
       updatedAt: s.updatedAt,
+      matchesDestination: !!destProject && s.project === destProject,
     })),
   });
 });
 
 /**
- * DELETE /api/migrate/connector-credentials?session=…&connectorId=…
+ * DELETE /api/migrate/connector-credentials?session=…&connectorId=…[&purge=true]
  *
- * Forget our record of a connector so the UI asks for credentials again. Leaves the
- * Secret Manager secrets in place on purpose — destroying customer secret material
- * is an explicit, irreversible action, not a side effect of "reconfigure this".
+ * Forget our record of a connector so the UI asks for credentials again. By default the
+ * Secret Manager secrets stay in place — destroying customer secret material is an
+ * explicit, irreversible action, not a side effect of "reconfigure this".
+ *
+ * `purge=true` is the deprovisioning path: it also deletes the secrets themselves, so a
+ * departing customer's credentials do not live in the project forever. It deletes only
+ * secrets no REMAINING connector still depends on — one Atlassian token backs both
+ * Confluence and Jira, and purging Jira must not break a Confluence agent still running.
  */
 migrateRouter.delete('/connector-credentials', async (req, res) => {
   const session = await getSession(req.query.session as string);
@@ -487,8 +630,58 @@ migrateRouter.delete('/connector-credentials', async (req, res) => {
   const connectorId = req.query.connectorId as string;
   if (!connectorId) return void res.status(400).json({ error: 'connector_id_required' });
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const purge = String(req.query.purge ?? '') === 'true';
+
+  const record = purge ? await getConnectorCredential(appUserId, connectorId) : null;
   await deleteConnectorCredential(appUserId, connectorId);
-  res.json({ ok: true });
+
+  const purged: string[] = [];
+  const purgeErrors: string[] = [];
+  if (purge && record) {
+    // Read the remaining records AFTER the delete, so "still in use" reflects the state
+    // the customer is left with rather than the one they asked us to leave behind.
+    const stillUsed = new Set(
+      (await listConnectorCredentials(appUserId))
+        .filter((r) => r.project === record.project)
+        .flatMap((r) => Object.values(r.secretIds ?? {})),
+    );
+    const saToken = await getSaToken(session.gEmail);
+    const scope = credentialScope(session);
+    for (const secretId of new Set(Object.values(record.secretIds ?? {}))) {
+      if (stillUsed.has(secretId)) continue;
+      // Destroy is irreversible, and an id is not proof of ownership: credentials saved
+      // before customer scoping carry no owner in the id, so on a deployment serving more
+      // than one customer the same id can back several of them. Check the label on the
+      // secret itself and refuse anything that is not demonstrably this customer's.
+      const owner = await getSecretOwnership(saToken, record.project, secretId);
+      if (!owner.found) {
+        purgeErrors.push(`${secretId}: could not read the secret's metadata, so it was left in place`);
+        continue;
+      }
+      if (!owner.managed) {
+        purgeErrors.push(`${secretId}: not managed by Studio Migrate — left in place`);
+        continue;
+      }
+      if (owner.owner && owner.owner !== scope) {
+        purgeErrors.push(`${secretId}: belongs to another customer — left in place`);
+        logger.warn({ secretId, project: record.project }, 'purge refused: secret owned by a different scope');
+        continue;
+      }
+      if (!owner.owner) {
+        // Written before ownership labelling. It may back another customer's running
+        // agent, and there is no way to tell from here.
+        purgeErrors.push(
+          `${secretId}: saved before ownership labelling, so it cannot be proven to be yours — left in place. ` +
+            'Delete it from Secret Manager directly if you are sure.',
+        );
+        continue;
+      }
+      const del = await deleteSecret(saToken, record.project, secretId);
+      if (del.ok) purged.push(secretId);
+      else purgeErrors.push(`${secretId}: ${del.error}`);
+    }
+  }
+  res.json({ ok: true, purged, ...(purgeErrors.length ? { purgeErrors } : {}) });
 });
 
 /**
@@ -510,6 +703,12 @@ migrateRouter.post('/ms-connector-credentials', async (req, res) => {
 
   try {
     const saToken = await getSaToken(session.gEmail);
+    // Secrets MUST go to the project the agent will be deployed into, or the deployed
+    // container cannot read them. Apply the same override resolveDestination uses.
+    const secretsProject = effectiveGeminiProject(session.geminiProject);
+    const access = await preflightSecretAccess(secretsProject, saToken, serviceAccountEmail());
+    if (!access.ok) return void res.status(403).json({ error: access.code, detail: access.detail });
+
     const secretIds: string[] = [];
     // Write to the SHARED ms_graph namespace — the same one buildLiveConnectorSpecs
     // hands to the deployed tools. This used to write 'ms_native', so credentials saved
@@ -517,12 +716,25 @@ migrateRouter.post('/ms-connector-credentials', async (req, res) => {
     // looked for studio-enterprise-ms-graph-*: the agent deployed fine and then failed
     // at inference with "no secret id configured", with nothing in typecheck or the
     // save flow to reveal the mismatch.
-    const secretIdByField: Record<string, string> = {};
+    const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+    // Any Microsoft connector's record carries the shared ms_graph ids, so read one to
+    // find where these fields already live and merge rather than replace — an admin
+    // changing only the client secret must not blank the tenant and client ids.
+    const priorMs = (await listConnectorCredentials(appUserId)).find(
+      (c) => REGISTRY_BY_ID.get(c.connectorId)?.credentialGroup === 'ms_graph' && c.project === secretsProject,
+    );
+    const secretIdByField: Record<string, string> = { ...(priorMs?.secretIds ?? {}) };
     for (const field of MS_APP_REG_FIELDS) {
       const value = creds[field.key];
+      // Absent field means "leave as is" — the client omits what the admin did not
+      // retype. An empty string would be a real value and is not treated as one here.
       if (!value) continue;
-      const secretId = connectorSecretId('ms_graph', field.key);
-      await upsertSecret(saToken, session.geminiProject, secretId, value);
+      const secretId = priorMs?.secretIds?.[field.key] ?? connectorSecretId('ms_graph', field.key, credentialScope(session));
+      await upsertSecretIfChanged(saToken, secretsProject, secretId, value, {
+        managed_by: 'studio-enterprise',
+        app_user: appUserId,
+        connector: 'ms_graph',
+      });
       secretIds.push(secretId);
       secretIdByField[field.key] = secretId;
     }
@@ -530,16 +742,20 @@ migrateRouter.post('/ms-connector-credentials', async (req, res) => {
     // One Azure app serves every Microsoft connector, so record all of them as
     // configured — otherwise a later-detected sibling (Teams after SharePoint) would
     // ask for credentials that already exist.
-    const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
     const msConnectorIds = [...REGISTRY_BY_ID.values()]
       .filter((d) => d.credentialGroup === 'ms_graph')
       .map((d) => d.id);
     for (const connectorId of msConnectorIds) {
       await upsertConnectorCredential(appUserId, {
         connectorId,
+        // secretsProject, NOT session.geminiProject: the secret was written to the
+        // effective destination, and /connector-requirements only counts a credential
+        // as configured when its recorded project matches that destination. Recording
+        // the raw session project made every Microsoft connector ask for credentials
+        // again whenever the destination override was in play.
+        project: secretsProject,
         fields: Object.keys(secretIdByField),
         secretIds: secretIdByField,
-        project: session.geminiProject,
       });
     }
 
@@ -552,7 +768,21 @@ migrateRouter.post('/ms-connector-credentials', async (req, res) => {
       savedConnectors: [...new Set([...existingSaved, ...msConnectorIds])],
     };
     await updateSession(sessionId!, { plan: updated as typeof session.plan });
-    res.json({ secretIds });
+
+    // A minted token proves nothing here: Entra issues one for an app with no
+    // application permissions consented, and every Graph call then 403s. Validate
+    // against the merged stored set so an admin who retyped only the secret is not told
+    // their tenant id is missing.
+    const merged: Record<string, string> = {};
+    for (const [field, secretId] of Object.entries(secretIdByField)) {
+      const got = await getEntraSecret(saToken, `projects/${secretsProject}/secrets/${secretId}/versions/latest`);
+      if (got.ok && got.plaintext) merged[field] = got.plaintext;
+    }
+    const validation = await validateConnectorCredentials('ms_graph', merged);
+    if (validation.code !== 'ok') {
+      logger.warn({ code: validation.code }, 'Microsoft app credentials stored but did not validate');
+    }
+    res.json({ secretIds, validation });
   } catch (err) {
     res.status(502).json({ error: 'ms_creds_save_failed', detail: (err as Error).message });
   }

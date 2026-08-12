@@ -1,7 +1,7 @@
 import { config, llmEnabled } from '../config.js';
 import { logger } from '../logger.js';
 import type { ResolvedConnector } from './connectorToolBuilder.js';
-import { buildLiveConnectorSpecs, buildLiveConnectorInstruction } from './connectorToolBuilder.js';
+import { connectorCapabilityRefs, buildLiveConnectorInstruction } from './connectorToolBuilder.js';
 import type { AgentIR, FidelityNote, MappedAgent } from '../types.js';
 
 /**
@@ -152,7 +152,8 @@ export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAg
   // deploy time (AdkSpec.liveConnectors); this text only tells the agent when to
   // reach for them.
   if (opts?.connectors && opts.connectors.length > 0) {
-    const specs = buildLiveConnectorSpecs(opts.connectors.map((c) => c.connectorId));
+    // Identity only: this path writes instruction text and must not construct secret ids.
+    const specs = connectorCapabilityRefs(opts.connectors.map((c) => c.connectorId));
     const block = buildLiveConnectorInstruction(specs);
     if (block) {
       refined += block;

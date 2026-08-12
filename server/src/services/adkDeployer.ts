@@ -5,6 +5,7 @@ import { logger } from '../logger.js';
 import { createDataStore, addTargetSite, dataStoreResourcePath } from './geminiDataStore.js';
 import { sanitizeDataStoreId } from './knowledgePlanner.js';
 import { isPublicWebsiteKind } from './knowledgeClassifier.js';
+import { grantSecretAccessToServiceAgent } from './secretManager.js';
 import type { AgentIR, GeminiDestination, KnowledgeSourceIR } from '../types.js';
 
 /**
@@ -38,6 +39,8 @@ export interface AdkSpec {
   description: string;
   model: string; // GA model — NOT a preview id (preview + global-location hack fails to start)
   instruction: string; // the migrated instruction, verbatim
+  /** Rules that must hold for the root AND every topic sub-agent (ADK global_instruction). */
+  globalInstruction?: string;
   tools: string[]; // e.g. ['googleSearch']
   /**
    * Full Discovery Engine resource paths of data stores this agent should
@@ -91,9 +94,12 @@ export interface AdkSpec {
    * the container resolves them per call, so nothing secret is pickled into the
    * deployment and a rotated token needs no redeploy.
    *
-   * ⚠️ Requires the Reasoning Engine runtime service agent to hold
-   * roles/secretmanager.secretAccessor on the project, or every tool call 403s
-   * at inference time while deployment still reports success.
+   * ⚠️ The Reasoning Engine runtime service agent must hold
+   * roles/secretmanager.secretAccessor on these secrets, or every tool call 403s at
+   * inference time while deployment still reports success. Deployment now grants that
+   * per-secret rather than project-wide (one project-wide grant would let every agent
+   * in the project read every customer's credentials); if our SA cannot set the policy,
+   * the grant is reported as failed and a manual project-wide grant is the fallback.
    */
   liveConnectors?: Array<{
     id: string;
@@ -101,6 +107,11 @@ export interface AdkSpec {
     kind: string;
     name?: string;
     secretIds: Record<string, string>;
+    /** Operations the SOURCE agent invoked on this connector (e.g. `ListIssues`), each
+     *  with the description Copilot Studio showed for it. Advisory only — it shapes the
+     *  generated tool's description so the model knows what this agent was built to do;
+     *  it does not restrict what the tool may call. */
+    operations?: Array<{ id: string; description?: string }>;
     /** Registry templates for the generic REST tool, e.g. 'https://{subdomain}.example.com'. */
     baseUrlTemplate?: string;
     authHeaderTemplate?: string;
@@ -217,15 +228,88 @@ export function buildAdkSpec(
   //   VertexAiSearchTool (opts.groundingDataStores). orchestrator.ts resolves all
   //   of them before deciding low-code vs ADK, so this path gets the same
   //   knowledge the low-code path would, not just the two kinds it used to.
+  const baseInstruction = opts?.instruction ?? ir.instructions ?? '';
   return {
     name: sanitize(ir.name),
     displayName: ir.name,                                              // Stage 1 ✓
     description: ir.description || `Migrated from Copilot Studio: ${ir.name}`, // Stage 1 ✓
     model: opts?.model || 'gemini-2.5-flash',
-    instruction: opts?.instruction ?? ir.instructions ?? '',          // Stage 1 ✓ (real instruction; opts.instruction = Stage 2 enriched)
+    instruction: withKnowledgeResponseRules(baseInstruction, (opts?.groundingDataStores?.length ?? 0) > 0),
+    // Applies to topic sub-agents as well as the root — see globalAnswerContract.
+    globalInstruction: globalAnswerContract((opts?.groundingDataStores?.length ?? 0) > 0),
     tools,                                                            // only googleSearch for now (Stage 3 adds the rest)
     groundingDataStores: opts?.groundingDataStores?.length ? opts.groundingDataStores : undefined,
   };
+}
+
+/**
+ * Append the response rules a grounded agent needs, leaving the migrated instruction
+ * itself untouched above them.
+ *
+ * Two behaviours this fixes, both observed live 2026-08-07 on a migrated agent:
+ *   - it narrated its own plumbing — "I access these through my
+ *     search_knowledge_source_1 and search_knowledge_source_2 functions";
+ *   - it answered from a single source without citing anything, so a reader could not
+ *     tell what was retrieved from what was invented.
+ *
+ * The `Sources:` contract is the one proven in the hand-built cited agent
+ * (spikes/_e2e_adk_cited_agent.ts), which is why migrated agents looked worse than
+ * the demo agent: that instruction existed only in the spike, never in the product.
+ *
+ * Appended, never merged into the customer's own instruction text — migration fidelity
+ * means their words stay verbatim and ours are visibly separate.
+ */
+function withKnowledgeResponseRules(instruction: string, hasKnowledge: boolean): string {
+  if (!hasKnowledge) return instruction;
+  const rules = [
+    '',
+    '---',
+    '## How to answer (added by migration)',
+    '',
+    'Search your knowledge sources before answering questions about their subject matter.',
+    'When more than one source could hold the answer, search each relevant one rather than',
+    'repeating the same search.',
+    '',
+    'Never mention tool or function names, data store ids, or that you performed a search.',
+    'These are internal. Describe what you know, not how you retrieved it.',
+    '',
+    'When you used retrieved information, end the reply with a "Sources:" section, one line',
+    'per source:',
+    '  - [INDEXED] <document or page title>',
+    '  - [LIVE] <title> — <url>',
+    'Use [LIVE] only for results from a live connector tool, including the url it returned.',
+    'Use [INDEXED] for results from a knowledge source search.',
+    '',
+    'If a search returns nothing, say plainly that you could not find it in your knowledge',
+    'sources. Do not answer from general knowledge and present it as if it came from them.',
+  ].join('\n');
+  return `${instruction.trimEnd()}\n${rules}\n`;
+}
+
+/**
+ * The subset of the answering contract that must hold for EVERY agent in the tree,
+ * carried on ADK's `global_instruction` rather than the root's instruction.
+ *
+ * Once the root transfers to a topic sub-agent, the sub-agent's own instruction is what
+ * governs the reply — the root's rules no longer apply. So a migrated agent obeyed the
+ * citation format until a question routed to a topic, and then quietly stopped. These
+ * are the rules whose whole value depends on being unconditional.
+ */
+function globalAnswerContract(hasKnowledge: boolean): string {
+  const lines = [
+    'Tool and data-store names are internal implementation details. Never list, quote or',
+    'describe them. Describe what you can do and which systems you can reach, using their',
+    'product names (SharePoint, Jira, Confluence), never a function name.',
+  ];
+  if (hasKnowledge) {
+    lines.push(
+      '',
+      'When you used retrieved information, end the reply with a "Sources:" section, one line',
+      'per source: "[INDEXED] <title>" for a knowledge-source search, "[LIVE] <title> — <url>"',
+      'for a live connector result. Never present general knowledge as if it came from a source.',
+    );
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -252,7 +336,8 @@ export async function createWebsiteGroundingDataStore(
   const dataStoreId = sanitizeDataStoreId(`${agentSourceId}-web-${source.id}`);
   const create = await createDataStore(project, saToken, {
     dataStoreId,
-    displayName: `${source.name} (ADK website grounding — ${agentSourceId})`,
+    // Display name only — the ID above is what must be unique.
+    displayName: `${source.name} (ADK website grounding — ${agentSourceId})`.slice(0, 128),
     kind: 'website',
     advanced: false,
   });
@@ -353,6 +438,9 @@ export interface DeployResult {
   /** Full resource: projects/<p>/locations/<loc>/reasoningEngines/<id> */
   reasoningEngine?: string;
   error?: string;
+  /** The worker refused to wire googleSearch because it cannot coexist with the
+   *  function tools this agent has. Reported so it becomes a fidelity note. */
+  droppedGoogleSearch?: boolean;
 }
 
 /**
@@ -391,8 +479,10 @@ export function deployReasoningEngine(
       // The worker prints a JSON result on its LAST non-empty stdout line.
       const line = out.trim().split(/\r?\n/).filter(Boolean).pop() || '';
       try {
-        const j = JSON.parse(line) as { reasoningEngine?: string; error?: string };
-        if (j.reasoningEngine) return resolve({ ok: true, reasoningEngine: j.reasoningEngine });
+        const j = JSON.parse(line) as { reasoningEngine?: string; error?: string; droppedGoogleSearch?: boolean };
+        if (j.reasoningEngine) {
+          return resolve({ ok: true, reasoningEngine: j.reasoningEngine, droppedGoogleSearch: j.droppedGoogleSearch });
+        }
         return resolve({ ok: false, error: j.error || `deploy failed (exit ${code}): ${err.slice(-300)}` });
       } catch {
         return resolve({ ok: false, error: `deploy produced no JSON result (exit ${code}): ${(err || out).slice(-300)}` });
@@ -406,16 +496,37 @@ export function deployReasoningEngine(
  * an engine nothing points at still runs and still bills.
  * `force=true` also removes the sessions it accumulated.
  */
-async function deleteReasoningEngine(location: string, resourceName: string): Promise<boolean> {
+/**
+ * Delete a Reasoning Engine we deployed but could not register.
+ *
+ * Takes the caller's service-account token deliberately. This used to mint its own via
+ * `new GoogleAuth(...)` — Application Default Credentials — while every other call in this
+ * file uses the service account. On any host where ADC is absent or stale the delete
+ * failed with `invalid_grant: reauth related error (invalid_rapt)`, the failure was
+ * swallowed into a `return false`, and the engine stayed deployed and billable. Observed
+ * live 2026-08-12: 81 of 86 engines in the project had no owning record, which is what a
+ * cleanup path that can never succeed looks like from the outside.
+ *
+ * `force=true` because an engine that has sessions or memories attached refuses a plain
+ * delete.
+ */
+async function deleteReasoningEngine(
+  location: string,
+  resourceName: string,
+  saToken: string,
+): Promise<boolean> {
   try {
-    const { GoogleAuth } = await import('google-auth-library');
-    const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
-    const token = await auth.getAccessToken();
     const res = await fetch(
       `https://${location}-aiplatform.googleapis.com/v1beta1/${resourceName}?force=true`,
-      { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+      { method: 'DELETE', headers: { Authorization: `Bearer ${saToken}` } },
     );
-    return res.ok || res.status === 404;
+    if (res.ok || res.status === 404) return true;
+    // Say WHY. A bare false is what let a systematically-broken cleanup look like bad luck.
+    logger.warn(
+      { resourceName, status: res.status, body: (await res.text()).slice(0, 200) },
+      'adk: reasoning engine cleanup refused by the API',
+    );
+    return false;
   } catch (err) {
     logger.warn({ resourceName, err: (err as Error).message }, 'adk: reasoning engine cleanup failed');
     return false;
@@ -437,17 +548,60 @@ export interface RegisterResult {
 export async function registerAdkAgent(
   dest: GeminiDestination,
   saToken: string,
-  args: { reasoningEngine: string; displayName: string; description: string },
+  args: {
+    reasoningEngine: string;
+    displayName: string;
+    description: string;
+    /**
+     * Existing agent to UPDATE instead of creating a new one. Supply this on every
+     * re-migration of an agent we have already migrated.
+     *
+     * Agents support PATCH, and repointing one at a freshly deployed Reasoning Engine
+     * works (verified live 2026-08-08). That matters twice over:
+     *   - agents.create is capped by an undocumented daily quota, and re-running a
+     *     migration used to burn one every time; PATCH consumes none, so a redeploy is
+     *     free and the quota is reserved for genuinely new agents.
+     *   - creating unconditionally left a second agent with the same display name on
+     *     every re-run. Seven copies of one agent accumulated on 2026-08-07 before it
+     *     was noticed, each with its own always-on billable engine.
+     */
+    existingAgentId?: string;
+  },
 ): Promise<RegisterResult> {
   await geminiWriteLimiter.acquire(); // pace writes to avoid 429 bursts (same limiter as low-code path)
+  const body = {
+    displayName: args.displayName,
+    description: args.description,
+    adkAgentDefinition: { provisionedReasoningEngine: { reasoningEngine: args.reasoningEngine } },
+  };
+
+  if (args.existingAgentId) {
+    const res = await fetch(
+      `${assistantBase(dest)}/agents/${args.existingAgentId}?updateMask=displayName,description,adkAgentDefinition`,
+      {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+    const text = await res.text();
+    if (res.ok) {
+      const j = JSON.parse(text) as { name?: string; state?: string };
+      logger.info({ agentId: args.existingAgentId }, 'adk: updated existing agent in place (no creation quota used)');
+      return { registered: true, agentId: j.name?.split('/').pop() ?? args.existingAgentId, state: j.state };
+    }
+    // Fall through to create — the agent may have been deleted in the console, and a
+    // failed update must not leave the migration with nothing.
+    logger.warn(
+      { agentId: args.existingAgentId, status: res.status },
+      'adk: agent update failed, falling back to create',
+    );
+  }
+
   const res = await fetch(`${assistantBase(dest)}/agents`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      displayName: args.displayName,
-      description: args.description,
-      adkAgentDefinition: { provisionedReasoningEngine: { reasoningEngine: args.reasoningEngine } },
-    }),
+    body: JSON.stringify(body),
   });
   const text = await res.text();
   if (!res.ok) return { registered: false, error: `${res.status}: ${text.replace(/\s+/g, ' ').slice(0, 300)}` };
@@ -538,9 +692,20 @@ export async function publishAgentToGallery(
    *  grounding data store is present (see AdkSpec.groundingDataStores doc).
    *  Caller must surface this as a fidelity note — never let it stay silent. */
   googleSearchDropped?: boolean;
+  /** False when per-secret access could not be granted to the Reasoning Engine service
+   *  agent. The connector tools then work only if a project-wide grant already exists,
+   *  so the caller must report it rather than let a green deploy imply working tools. */
+  secretIamGranted?: boolean;
+  secretIamError?: string;
 }> {
   const location = opts?.location || process.env.ADK_LOCATION || 'us-central1';
-  const agentSourceId = sanitize(ir.name);
+  // Key the website grounding store by the Copilot botid, NOT the agent's display name.
+  // Names are not unique — two agents in different environments routinely share one, and
+  // the same name in two environments produced the SAME data store id, so the second
+  // agent silently adopted the first's website index. Every other knowledge path
+  // (Confluence, Dataverse snapshots, uploaded files) already keys by sourceId; this was
+  // the one that did not. `ir.name` is kept only for the human-readable display name.
+  const agentSourceId = sanitize(ir.sourceId || ir.name);
 
   const groundingDataStores: { resourcePath: string; sourceName: string }[] = [...(opts?.groundingDataStores ?? [])];
   if (opts?.websiteSource) {
@@ -548,12 +713,15 @@ export async function publishAgentToGallery(
     if (!grounding.ok) return { ok: false, error: `website grounding data store: ${grounding.error}` };
     if (grounding.resourcePath) groundingDataStores.push({ resourcePath: grounding.resourcePath, sourceName: opts.websiteSource.name });
   }
-  // Mirrors buildAdkSpec's condition exactly (knowledgeSources.length > 0),
-  // not just "grounding succeeded" — googleSearch is now withheld whenever
-  // this agent HAD knowledge sources at all, including when grounding for
-  // them failed/isn't ready, so the fidelity note below must fire for that
-  // case too, not just the "grounding succeeded" case.
-  const googleSearchDropped = ir.knowledgeSources.length > 0 && !!ir.capabilities?.webBrowsing;
+  // Withheld whenever this agent HAD knowledge sources at all — including when grounding
+  // for them failed or is not ready — so the fidelity note fires for that case too, not
+  // only when grounding succeeded. Mirrors buildAdkSpec's condition exactly.
+  //
+  // Web browsing is ALSO dropped when the agent has live connector tools or sub-agents,
+  // because Gemini refuses a built-in search tool alongside function tools. That case is
+  // decided inside the worker (it knows the final tool list), so this stays mutable and is
+  // OR'd with what the worker reports rather than being guessed twice in two places.
+  let googleSearchDropped = ir.knowledgeSources.length > 0 && !!ir.capabilities?.webBrowsing;
 
   // Best-effort — a missing grant means degraded (ungrounded) search, not a
   // failed deployment. Caller reports this honestly via fidelity notes.
@@ -571,21 +739,82 @@ export async function publishAgentToGallery(
     }
   }
 
+  // Per-secret access for exactly the credentials THIS agent's tools resolve.
+  //
+  // The alternative — the project-wide roles/secretmanager.secretAccessor this used to
+  // require — is one identity shared by every Reasoning Engine in the project, so any
+  // deployed agent could read every secret there, including other customers' connector
+  // credentials. Best-effort: our SA may not hold setIamPolicy on the customer's
+  // project, in which case a project-wide grant made by hand is still what makes the
+  // tools work, and the failure is reported rather than silently swallowed.
+  let secretIamGranted: boolean | undefined;
+  let secretIamError: string | undefined;
+  const connectorSecretIds = (opts?.liveConnectors ?? []).flatMap((c) => Object.values(c.secretIds ?? {}));
+  if (connectorSecretIds.length) {
+    const projectNumber = await resolveProjectNumber(dest.project, saToken);
+    if (!projectNumber) {
+      secretIamGranted = false;
+      secretIamError = `could not resolve project number for ${dest.project}`;
+    } else {
+      const grant = await grantSecretAccessToServiceAgent(
+        saToken,
+        dest.project,
+        connectorSecretIds,
+        `service-${projectNumber}@gcp-sa-aiplatform-re.iam.gserviceaccount.com`,
+      );
+      secretIamGranted = grant.failed.length === 0;
+      if (grant.failed.length) {
+        secretIamError = grant.failed.map((f) => `${f.secretId} (${f.error})`).join('; ');
+        logger.warn(
+          { agent: ir.name, project: dest.project, failed: grant.failed.length },
+          'adk: could not grant per-secret access to the Reasoning Engine service agent — connector tools will 403 at inference unless a project-wide grant exists',
+        );
+      }
+    }
+  }
+
   const spec = buildAdkSpec(ir, { model: opts?.model, instruction: opts?.instruction, groundingDataStores });
-  if (opts?.liveConnectors?.length) spec.liveConnectors = opts.liveConnectors;
+  if (opts?.liveConnectors?.length) {
+    spec.liveConnectors = opts.liveConnectors;
+    // Appended LAST, after the knowledge rules, because the model weights the end of the
+    // instruction most and this is the behaviour that kept losing. Asked "how many
+    // tickets do we have in Jira?" the agent answered "I cannot provide live counts,
+    // check Jira directly" WITHOUT calling jira_search — while jira_search was wired,
+    // listed among its tools, and worked when named explicitly (live 2026-08-07).
+    // Describing the capability was not enough; it needed a rule against deflecting.
+    spec.instruction +=
+      '\n' +
+      [
+        '## Live systems — non-negotiable',
+        '',
+        'You have working tools for the connected systems listed above. When a question is',
+        'about data in one of them — counts, lists, status, "recent", "open", "how many" —',
+        'CALL THE TOOL. Do not answer from memory, and never reply "I cannot provide live',
+        'data" or "please check <system> directly": you can check it, so check it.',
+        '',
+        'If a tool needs an argument you were not given (a project key, an issue key, a',
+        'search term), make a reasonable attempt first — a broad query is better than a',
+        'refusal — and only ask the user if the attempt genuinely cannot be formed.',
+        '',
+        'Report what the tool returned, including empty results ("Jira returned no matching',
+        'issues") and errors, verbatim. An empty result is an answer; a refusal is not.',
+      ].join('\n') +
+      '\n';
+  }
   if (opts?.subAgents?.length) spec.subAgents = opts.subAgents;
   logger.info({ agent: ir.name, location }, 'adk: deploying reasoning engine');
   const dep = await deployReasoningEngine(dest.project, location, spec, { stagingBucket: opts?.stagingBucket });
   if (!dep.ok || !dep.reasoningEngine) return { ok: false, error: `deploy: ${dep.error}` };
-  const reg = opts?.existingAgentId
-    ? await (async () => {
-        logger.info({ agent: ir.name, reasoningEngine: dep.reasoningEngine, agentId: opts.existingAgentId }, 'adk: repointing existing agent at freshly-deployed reasoning engine');
-        return updateAdkAgentReasoningEngine(dest, saToken, opts.existingAgentId!, dep.reasoningEngine!);
-      })()
-    : await (async () => {
-        logger.info({ agent: ir.name, reasoningEngine: dep.reasoningEngine }, 'adk: registering into engine');
-        return registerAdkAgent(dest, saToken, { reasoningEngine: dep.reasoningEngine!, displayName: spec.displayName, description: spec.description });
-      })();
+  if (dep.droppedGoogleSearch) googleSearchDropped = true;
+  logger.info({ agent: ir.name, reasoningEngine: dep.reasoningEngine }, 'adk: registering into engine');
+  const reg = await registerAdkAgent(dest, saToken, {
+    reasoningEngine: dep.reasoningEngine,
+    displayName: spec.displayName,
+    description: spec.description,
+    // Update in place when this agent was migrated before — no creation quota, no
+    // duplicate. See registerAdkAgent.
+    existingAgentId: opts?.existingAgentId,
+  });
   if (!reg.registered) {
     // Deploy succeeded, registration/repoint did not — delete the Reasoning Engine.
     //
@@ -597,7 +826,7 @@ export async function publishAgentToGallery(
     // deleted by hand. Best-effort: if the delete fails we still report the
     // register error, and say the engine was left behind so someone can
     // remove it.
-    const cleanup = await deleteReasoningEngine(location, dep.reasoningEngine);
+    const cleanup = await deleteReasoningEngine(location, dep.reasoningEngine, saToken);
     logger.warn(
       { agent: ir.name, reasoningEngine: dep.reasoningEngine, cleaned: cleanup },
       'adk: registration failed — deployed reasoning engine ' + (cleanup ? 'deleted' : 'COULD NOT be deleted (still billable)'),
@@ -611,5 +840,5 @@ export async function publishAgentToGallery(
       googleSearchDropped,
     };
   }
-  return { ok: true, agentId: reg.agentId, reasoningEngine: dep.reasoningEngine, state: reg.state, groundingIamGranted, groundingIamError, googleSearchDropped };
+  return { ok: true, agentId: reg.agentId, reasoningEngine: dep.reasoningEngine, state: reg.state, groundingIamGranted, groundingIamError, googleSearchDropped, secretIamGranted, secretIamError };
 }
