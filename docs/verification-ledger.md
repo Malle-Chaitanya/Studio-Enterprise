@@ -740,16 +740,118 @@ earlier work; dry run staged 2/2 and reported `Confluence_agent 2 auto / 5 needs
 exactly one run (`── Phase 1` appears once per click) — an apparent double-run in an
 earlier attempt was my own double navigation, not the product.
 
-**Still open from this run.** `detTools=0` on both agents during staging, while the
-connector step detected 3 connectors for the same two agents — the two counts disagree
-and only one of them can be right. That is the same shape of contradiction as §1.17a and
-is NOT yet explained.
+**A contradiction I reported and was wrong about.** I flagged `detTools=0` against the
+connector step's 3 detected connectors as the same instrument disagreement as §1.17a. It
+is not one. `detTools` is `deterministicTools` from the topic compiler
+(`topicsMigration.ts:351`): `c.tools.filter((t) => t.requiresWorkflow).length` — tools
+found INSIDE topics that need a Cloud Workflow. It never counted connector tools.
+Confluence_agent uses Confluence as a knowledge source and HubSpot Agent's calls are
+standalone TaskDialog tools, so `0` is right for both. Recorded because the lesson from
+§1.17a — two counts disagreeing means one instrument is wrong — does not apply when the
+two counts were never measuring the same thing, and I should have read the emitter before
+raising it.
 
 **And the login page is not a login page.** `web/src/pages/Login.tsx` POSTs to
 `/api/login`, which does not exist; anything other than a 401 proceeds, so any input
 signs in. `verifyLogin` in `db/repos/users.ts` is written and unused. This is §4.5's
 launch blocker seen from the front: multi-tenant isolation cannot be real while the
 identity is unauthenticated. Grade **X** against "the app has sign-in".
+
+### 1.19 Copilot agent memory: what it is, and proving it has somewhere to land (2026-08-12)
+
+Memory was a feature we had never looked at. Before deciding how to migrate it, three
+questions had to be answered with data: what is it, can it be scoped to an agent, and does
+the destination have anywhere to put it.
+
+**a) What Copilot stores.** Two tables, both present in the customer's environments and
+both **empty** — nobody in this tenant has used the feature yet:
+
+```
+═══ intelligentmemory
+  memorykind      String   The category of information being persisted - fact, observation, inference etc.
+  memorysource    String   The source creating the memory record - app, agent, user etc.
+  memorytype      String   short_term, long_term
+  predicate       String   '_' separated strings that represent the relationship/characteristic
+  privacylevel    String   Private (user-only), Shared (specific a…
+  subject         Memo     The subject/entity that the memory is about.
+  targetobject    Memo     The information about the subject that is being persisted.
+  ttlinseconds    Integer  Time to live in seconds.
+  ── lookups: (none beyond ownership)
+
+═══ agentmemory
+  agentid, sessionid, agenticscenario, promptid, agentinput, signals, data, ttlinseconds
+  ── lookups: agenticscenario→agenticscenario
+```
+
+`intelligentmemory` is a **semantic triple store about people** — subject / predicate /
+object, with a per-fact privacy level and expiry. `agentmemory` is per-session scratch
+with a TTL. Grade **P** for the schema; **P** for "empty in this tenant".
+
+**b) Memory has no agent.** `intelligentmemory` carries **no relationship to `bot`** —
+only a free-string `sourceid`. Copilot remembers things about a PERSON, not about an
+agent. This is the fact that shapes the whole design: a memory can be attributed to a
+migrating agent only when `sourceid` happens to equal that agent's botid, and everything
+else must be reported rather than attached to whichever agent was migrating at the time.
+`attributeMemory()` does exactly that and nothing looser.
+
+**c) The destination can hold it — proven, not assumed.** Vertex AI Agent Engine's Memory
+Bank hangs off a reasoning engine, and our migrated agents already are reasoning engines.
+Against the live `Confluence_agent` engine with the service account we already have:
+
+```
+1. CREATE  -> 200 .../memories/4058335694869757952/operations/1087890172122497024
+   operation done -> .../memories/4058335694869757952
+2. LIST    -> 200  1 memory(ies)   fact="The user prefers weekly summaries delivered on Monday mornin"
+3. RETRIEVE-> 200 { "retrievedMemories": [ { "memory": { … "fact" …
+4. DELETE  -> 200
+```
+
+Grade **P**. Create → list → retrieve → delete, all 200.
+
+**d) The full step, end to end, through the functions the pipeline calls.** Four
+synthesized facts in the Dataverse shape (no customer memory content anywhere in this
+repo), one of them deliberately private with an unmappable subject:
+
+```
+1. READ real environment memory
+   -> 0 fact(s); attributed to migrating agents: 0; unattributed: 0
+2. MIGRATE (4 synthetic facts, one deliberately unmappable & private)
+   written: 3/4
+   note [needs-review] memory:reports_cadence: Copilot would have forgotten this on 2026-08-12
+        (TTL 172800s). Memory Bank has no per-memory expiry, so it now persists until deleted.
+   note [lost] memory:salary_band: Remembered detail about "unmapped@nowhere.example" was not
+        migrated: it is marked Private (user-only) in Copilot and its subject has no mapped…
+   note [needs-review] memory:renewal_month: Recorded as an inference — something Copilot's
+        model concluded, not something the user stated…
+3. RETRIEVE as the agent would
+   "probe@dest.example prefers contact channel: email, not chat"
+   "probe@dest.example reports cadence: weekly on Monday"
+   private-unmapped fact leaked into the shared scope? no
+   [shared] "acme corp renewal month: March"
+4. DELETE everything created -> 200, 200, 200
+```
+
+Grade **P** for the write/retrieve/refusal behaviour. **U** for migrating a REAL Copilot
+memory, and it will stay U until a tenant that has actually used the feature runs through
+it — the extractor is proven to read the table and return 0, not to parse a populated row.
+
+**The three rules the mapping enforces, and why.**
+
+- **Private facts never widen.** A `Private (user-only)` fact is scoped to that person's
+  mapped Google identity, and if the operator's user mapping has no destination for its
+  subject it is **refused** with a `lost` note. Scoping it to the agent instead would
+  publish one employee's inferred details to everyone who can use that agent — the ACL
+  failure again, but leaking statements about people rather than documents.
+- **TTL does not survive.** Memory Bank has no per-memory expiry, so a fact Copilot would
+  have forgotten becomes permanent. Every TTL-bearing fact carries a note naming the date
+  it would have expired.
+- **An inference is not a statement.** `memorykind: inference|observation` means the model
+  concluded it; the note says so, because it moves across as an asserted fact.
+
+**What is deliberately NOT migrated.** `agentmemory` (session scratch, TTL-bounded — there
+is nothing to preserve) and unattributed `intelligentmemory` rows, which get an explicit
+environment-level note on every agent in the run rather than being silently left behind or
+silently attached to an agent that never learned them.
 
 ---
 

@@ -42,6 +42,13 @@ import { DEFAULT_APP_USER_ID, credentialScope, newId, type Session } from './ses
 import { appendLog, finishRun, saveResult, startRun } from './db/repos/migrations.js';
 import { cacheAgentIR } from './db/repos/agentIR.js';
 import { listStaged, markStaged, stageAgent } from './db/repos/staged.js';
+import {
+  attributeMemory,
+  migrateAgentMemory,
+  readEnvironmentMemory,
+  unattributedMemoryNote,
+} from './services/memoryExtract.js';
+import type { MemoryFactIR } from './services/memory.js';
 import { getIdentityMap } from './db/repos/identityMap.js';
 import {
   buildPermissionHandoff,
@@ -930,6 +937,47 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   const staged = await listStaged(appUserId, runId, 'staged');
   emitLog('info', `Phase 1 complete: ${staged.length}/${total} staged in DB`);
 
+  // ── Agent memory: read once per environment ───────────────────────────────
+  //
+  // `intelligentmemory` has no bot relationship, so this cannot be folded into per-agent
+  // extraction — it is one read per environment, split afterwards. `undefined` means the
+  // table could not be read (an environment older than the feature returns 404), which
+  // must stay distinguishable from "this customer has no memory": reporting the first as
+  // the second would claim we checked when we did not.
+  const envMemory = await (async () => {
+    const byAgent = new Map<string, MemoryFactIR[]>();
+    let unattributed = 0;
+    let anyRead = false;
+    for (const unit of plan.units) {
+      const facts = await readEnvironmentMemory(unit.envUrl, await tokenFor(unit.envUrl));
+      if (facts === undefined) continue;
+      anyRead = true;
+      const split = attributeMemory(facts, unit.bots.map((b) => b.botid));
+      for (const [botId, list] of split.byAgent) byAgent.set(botId, [...(byAgent.get(botId) ?? []), ...list]);
+      unattributed += split.unattributed.length;
+    }
+    if (!anyRead) return undefined;
+    const total = [...byAgent.values()].reduce((n, l) => n + l.length, 0) + unattributed;
+    if (total) {
+      emitLog('info', `Agent memory: ${total} remembered fact(s) — ${total - unattributed} tied to a migrating agent, ${unattributed} not.`);
+    }
+    return { byAgent, unattributed };
+  })();
+
+  // The operator's Microsoft→Google user mapping is what lets a private memory move at
+  // all: without a destination identity there is no scope narrow enough to hold it.
+  const memoryIdentityMap = new Map(
+    Object.entries(identityOverrides.users).map(([ms, google]) => [ms.toLowerCase(), String(google)]),
+  );
+
+  // Memory that belongs to no migrating agent still has to reach the report — it is the
+  // difference between "this agent kept its personalization" and "the personalization
+  // stayed in Copilot". Carried onto every agent in the run because the report is
+  // per-agent and the note itself says it is environment-wide.
+  const envMemoryNotes: FidelityNote[] = envMemory?.unattributed
+    ? [unattributedMemoryNote(envMemory.unattributed)]
+    : [];
+
   // ── ACL-loss gate — the last honest moment before anything is written ──────
   //
   // Every data store this pipeline creates has `aclEnabled: false`, and that flag is
@@ -1033,7 +1081,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         created: false,
         deployed: false,
         shared: false,
-        fidelity: [...row.fidelity, ...(aclNotesBySourceId.get(row.sourceId) ?? [])],
+        fidelity: [...row.fidelity, ...(aclNotesBySourceId.get(row.sourceId) ?? []), ...envMemoryNotes],
         error: 'dry-run (not created)',
       };
       results.push(result);
@@ -1071,7 +1119,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       shared: false,
       // Acknowledged permission loss travels with the agent's own report, not just the run
       // log — the report is what someone reads months later.
-      fidelity: [...row.fidelity, ...(aclNotesBySourceId.get(row.sourceId) ?? [])],
+      fidelity: [...row.fidelity, ...(aclNotesBySourceId.get(row.sourceId) ?? []), ...envMemoryNotes],
     };
     try {
       if (quotaExhausted) {
@@ -2377,6 +2425,43 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
           });
           emitLog('warn', `  ${row.name}: verification failed — ${v.note}`);
         }
+        // ── Agent memory ─────────────────────────────────────────────────────
+        //
+        // Copilot remembers facts about PEOPLE (Dataverse `intelligentmemory`), not about
+        // agents, and it stores them as inferences a model drew. Moving them needs the
+        // reasoning engine to exist (Memory Bank hangs off it) and needs the operator's
+        // Microsoft→Google user mapping, so this is the first point where it is possible.
+        // Only facts whose `sourceid` is this agent's botid are its own; everything else
+        // is reported by the environment-level note, never attached here on a guess.
+        const ownMemory = envMemory?.byAgent.get(row.sourceId.toLowerCase());
+        if (ownMemory?.length && adkReasoningEngineId) {
+          const mem = await migrateAgentMemory(
+            ownMemory,
+            memoryIdentityMap,
+            {
+              project: dest.project,
+              location: process.env.ADK_LOCATION || 'us-central1',
+              reasoningEngineId: adkReasoningEngineId,
+              saToken,
+            },
+          );
+          result.fidelity.push(...mem.notes);
+          emitLog(
+            mem.written === ownMemory.length ? 'ok' : 'warn',
+            `  ${row.name}: ${mem.written}/${ownMemory.length} remembered fact(s) migrated into agent memory.`,
+          );
+        } else if (ownMemory?.length) {
+          // No engine means no Memory Bank. Saying nothing here would let an agent lose
+          // its entire personalization behind a clean report.
+          result.fidelity.push({
+            component: 'memory',
+            status: 'lost',
+            detail:
+              `${ownMemory.length} remembered fact(s) could not be migrated: this agent was not ` +
+              'deployed as a reasoning engine, and agent memory has no home without one.',
+          });
+        }
+
         await markStaged(runId, row.sourceId, {
           status: 'inserted',
           geminiAgentId: create.agentId,
