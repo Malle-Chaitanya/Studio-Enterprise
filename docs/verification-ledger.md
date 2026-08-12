@@ -1377,6 +1377,53 @@ the census counts an MCP server as ONE tool but it yields six calls, which is wh
 
 ---
 
+### 1.26 "What can we migrate without errors?" — graded per agent (2026-08-13)
+
+The question has two meanings and they give very different answers, so
+`_diag_readiness.ts` refuses to collapse them:
+
+- **RUN-CLEAN** — the run finishes without throwing. Nearly everything is run-clean,
+  because losses are reported as fidelity notes rather than raised. This sense of "no
+  errors" is the one that misleads.
+- **FAITHFUL** — every component of the source agent has a migrated equivalent:
+  instructions, every topic, every knowledge source, and every tool producing a real vendor
+  call. Nothing `lost`, nothing `manual`.
+
+Graded live over the two readable environments:
+
+```
+66 agent(s) graded · 32 faithful · 34 partial · 0 thin
+FAITHFUL = every component has a migrated equivalent. It does NOT mean a live run has been proven.
+
+NOT GRADED — 2 environment(s) could not be listed:
+  CF_MANAGE · Microsoft 365
+```
+
+**The load-bearing detail: only 3 of the 32 faithful agents have any tools at all.**
+
+```
+Confluence_agent                            912ch instr · 13 topic · 1 tool · 2 knowledge
+Enterprise Agent                            833ch instr · 13 topic · 1 tool · 4 knowledge
+Shadow Agent & License Governance Auditor  2495ch instr · 13 topic · 2 tool · 0 knowledge
+```
+
+The other 29 are instruction + topic + knowledge agents, and they are not empty — sizes
+were printed precisely so "nothing was lost" could not hide an agent with nothing in it
+(`Copilot in Dynamics 365 Sales`: 5361ch instructions, 93 topics; the smallest,
+`D365 Sales Agent - Company Resolver`: 36ch, 2 topics).
+
+So the honest headline is: **agents whose behaviour is instructions, topics and knowledge
+migrate whole; agents whose behaviour is API calls mostly do not, yet.** The 34 partial
+agents each name their own reason (§1.25's table aggregates them); the most common single
+cause is Google Drive's 11 operations.
+
+`FAITHFUL` is a claim about MAPPING — every part has a target. It is NOT a runtime claim.
+The only runtime evidence in this ledger is §1.16 (one migrated agent reached
+`api.hubapi.com` and got a vendor-side auth error, which proves reachability, not success).
+Grade for "these 32 will work in production": **U**.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
