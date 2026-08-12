@@ -54,6 +54,22 @@ migrateRouter.post('/plan', async (req, res) => {
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   if (!scope) return void res.status(400).json({ error: 'scope_required' });
 
+  // A destination that is missing its engine used to be discovered at the END of a
+  // deploy: the Reasoning Engine was built and billed, registration 404'd with
+  // `Engine "undefined" does not exist`, and the orphan was left running. Nothing about
+  // that failure needed six minutes and a GPU to establish.
+  const badEnv = Object.entries(destination?.environmentMap ?? {}).find(
+    ([, d]) => !d || typeof d.project !== 'string' || !d.project.trim() || typeof d.engine !== 'string' || !d.engine.trim(),
+  );
+  if (badEnv) {
+    return void res.status(400).json({
+      error: 'invalid_destination',
+      detail:
+        `The destination for ${badEnv[0]} is missing its project or Gemini app. ` +
+        'Pick both on the Select & Map Environments step before migrating.',
+    });
+  }
+
   try {
     const dest = destination ?? {};
     const plan = await resolveScope(session, scope, dest);

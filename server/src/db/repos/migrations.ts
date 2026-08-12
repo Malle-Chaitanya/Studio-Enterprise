@@ -64,6 +64,40 @@ export async function finishRun(runId: string, summary: string, status = 'done')
   }
 }
 
+/**
+ * Mark runs that were in flight when the process died.
+ *
+ * A migration only ever leaves `running` because `finishRun` says so, and that call is
+ * in-process. So a crash, a deploy, or a `tsx watch` restart mid-run strands the row at
+ * `running` forever — measured 2026-08-12: five such rows, one of them from a restart
+ * caused by editing a server file while a migration was deploying. Nothing reconciled
+ * them, so "is this migration still going?" had no truthful answer.
+ *
+ * Called once on boot. Any run still `running` at that moment cannot be ours — this
+ * process has just started and owns no runs — so it is safe to close them all.
+ * `interrupted` rather than `failed`: we do not know how far it got, and the staged rows
+ * are still there for a resume.
+ */
+export async function reconcileInterruptedRuns(): Promise<number> {
+  if (!isDbConnected()) return 0;
+  try {
+    const res = await getDb(config.CSGE_DB).collection(RUNS).updateMany(
+      { status: 'running' },
+      {
+        $set: {
+          status: 'interrupted',
+          summary: 'Interrupted — the server restarted while this migration was running. Staged agents were kept; re-run to continue from the insert.',
+          endTime: new Date(),
+        },
+      },
+    );
+    return res.modifiedCount;
+  } catch (e) {
+    logger.warn(`reconcileInterruptedRuns failed: ${(e as Error).message}`);
+    return 0;
+  }
+}
+
 /** Upsert one agent's MigrationResult (unique per {runId, sourceId}). */
 export async function saveResult(
   runId: string,

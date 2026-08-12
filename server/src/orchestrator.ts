@@ -597,7 +597,20 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // so the tool works against any client's project without a hardcoded engine id.
   const envMap = plan.destination.environmentMap ?? {};
   let resolvedDefault = defaultDestination(project); // sync fallback; replaced after auth
-  const targetFor = (envUrl: string): GeminiDestination => envMap[envUrl] ?? resolvedDefault;
+  const targetFor = (envUrl: string): GeminiDestination => {
+    const dest = envMap[envUrl] ?? resolvedDefault;
+    // Refuse rather than deploy into a destination that cannot exist. The route validates
+    // this too, but a plan can reach here from a resumed session, so "checked at the edge"
+    // is not the same as "cannot happen" — and the failure this prevents costs a built,
+    // billable Reasoning Engine to discover.
+    if (!dest?.project?.trim() || !dest?.engine?.trim()) {
+      throw new Error(
+        `No Gemini project/app is set for ${envUrl}. Choose both on the Select & Map ` +
+          'Environments step — migrating without them would deploy an engine that cannot be registered.',
+      );
+    }
+    return dest;
+  };
 
   const emitLog = (level: 'info' | 'ok' | 'warn' | 'fail', msg: string): void => {
     void appendLog(runId, appUserId, level, msg); // DB — keep rich Unicode
@@ -2178,7 +2191,18 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
         // path yet — reported honestly.
         const nonFile = ks.filter((k) => k.kind !== 'FileUpload' && k !== adkWebsiteSource);
         {
-          const other = nonFile.filter((k) => !dvSnapshotSources.includes(k) && !spConnectorSources.includes(k));
+          // A source the Confluence crawler already grounded is NOT "not migrated". Its
+          // pages are in a data store attached to this agent, and the fidelity report says
+          // so on the same run — leaving it in this list produced a warning that
+          // contradicted the report and told the customer their knowledge was left behind
+          // when it had not been (live 2026-08-12: "7 page(s) ready" and "2 knowledge
+          // source(s) NOT migrated" about the same two sources, in the same run).
+          const cfCrawled = preCfResult?.dataStoreId
+            ? nonFile.filter((k) => Array.isArray(k.confluenceSpaceNames) && k.confluenceSpaceNames.length > 0)
+            : [];
+          const other = nonFile.filter(
+            (k) => !dvSnapshotSources.includes(k) && !spConnectorSources.includes(k) && !cfCrawled.includes(k),
+          );
 
           if (other.length) {
             emitLog(

@@ -4,6 +4,7 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import { serviceAccountConfigured } from './auth/google.js';
 import { connectMongo } from './db/mongo.js';
+import { reconcileInterruptedRuns } from './db/repos/migrations.js';
 import { authRouter, legacyAuthRouter } from './routes/auth.js';
 import { loginRouter } from './routes/login.js';
 import { attachUser, requireAuth } from './auth/appAuth.js';
@@ -59,6 +60,13 @@ async function start(): Promise<void> {
   // still boots (with in-memory session fallback) if the DB is unreachable.
   try {
     await connectMongo();
+    // Any run still marked `running` predates this process, so it died with whatever was
+    // running it. Closing them here is the only thing that stops "running" meaning
+    // "running, or crashed three days ago and nobody noticed".
+    const interrupted = await reconcileInterruptedRuns();
+    if (interrupted > 0) {
+      logger.warn(`${interrupted} migration run(s) were interrupted by a restart — marked interrupted; staged agents kept for a re-run.`);
+    }
   } catch (err) {
     logger.warn(`MongoDB unavailable — running without persistence: ${(err as Error).message}`);
   }

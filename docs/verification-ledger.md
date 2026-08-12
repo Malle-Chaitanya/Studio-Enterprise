@@ -1033,6 +1033,94 @@ in the first within a 6m41s wait. That matches the indexing lag the code already
 report a knowledge source as failed when it would have succeeded minutes later. Recorded as
 **open**, not fixed.
 
+### 1.22 A live migration that actually completed (2026-08-12)
+
+The first end-to-end LIVE migration to finish, after §1.21's two false starts (one my
+harness, one my own edit restarting the dev server mid-deploy).
+
+```
+08:27:13  live run started
+08:29:09  Confluence: 7 page(s) ready — data store queued for grounding.
+08:29:09  Confluence_agent: source changed since last migration
+          (configured connectors changed, instructions changed) — redeploying via ADK.
+08:32:21  adk: updated existing agent in place (no creation quota used)
+08:32:21  Confluence_agent: deployed via ADK (ENABLED).
+08:32:35  Confluence_agent → gemini-enterprise-…/17674689114292745852
+          · deployed=true shared=true verified=true
+
+RUN done: 1/1 created · 1 deployed · 1 shared · 1 verified      (5m22s)
+```
+
+Verification asked the deployed agent a real question and it answered from the migrated
+knowledge:
+
+```
+verifySample: I can access documents such as the "Architecture Overview" and the
+              "Deployment Guide" for the CloudFuze migration platform.
+```
+
+Grade **P** for: the live path completes; idempotency updates in place rather than
+duplicating (`no creation quota used`); the Confluence crawl grounds the agent per-agent
+via VertexAiSearchTool; sharing and verification run.
+
+**The ACL gate on a live run — proven separately, same agent.** Without the
+acknowledgement the run stops between the phases, creates nothing, and names both sources.
+With it, the run proceeds and both sources carry an `acl:` note into the report. Grade **P**.
+
+**Confluence indexing settled.** §1.21e recorded a run that indexed 0 pages. Two subsequent
+runs both produced 7. Same agent, same spaces, same credentials — so the 0 was Discovery
+Engine indexing lag inside the wait window, not a broken crawl. It remains true that a live
+migration can report a knowledge source as failed when it would have succeeded minutes
+later; the `pendingGroundingRechecks` sweep exists for exactly that and was not needed here.
+
+**A contradiction inside a successful run.** The same run said both:
+
+```
+[ok]   Confluence: 7 page(s) ready — data store queued for grounding.
+[warn] 2 knowledge source(s) NOT migrated (needs a connector or manual step):
+       Engineering, Chaitanya Malle, Demo Company Wiki→confluence-crawler, …
+```
+
+The report was right — `[mapped] knowledge:Confluence: 7 Confluence page(s) from 2
+space(s) grounded via ADK VertexAiSearchTool` — and the agent demonstrably answers from
+those pages. The WARN was the liar: the `other` list excluded Dataverse-snapshot and
+SharePoint-connector sources but never the Confluence ones the crawler had just handled.
+
+That is worse than a cosmetic log bug. It is a customer-facing claim that knowledge was
+left behind on a run where it was not — an overclaim in reverse — and a warning that
+contradicts the report trains people to ignore the warnings that are real. Fixed by
+excluding crawled Confluence sources from the list.
+
+**Destination validation, closing §1.21b.** The exact body that previously cost a built,
+billable Reasoning Engine to reject now fails at plan time, before extraction:
+
+```
+POST /api/migrate/plan  {"project":"…","app":"cf-knowledge-search"}   ← no `engine`
+  -> 400 {"error":"invalid_destination","detail":"The destination for
+      https://orga243378d.crm.dynamics.com is missing its project or Gemini app.
+      Pick both on the Select & Map Environments step before migrating."}
+
+POST /api/migrate/plan  {"project":"…","engine":"…","assistant":"default_assistant"}
+  -> 200 {"totalAgents":1,…}
+```
+
+Guarded in two places on purpose: the route (cheapest) and `targetFor()` in the
+orchestrator, because a plan can reach the orchestrator from a resumed session and
+"validated at the edge" is not "cannot happen". Grade **P**.
+
+**Runs stranded at `running`.** A run only leaves `running` because `finishRun` says so,
+and that call is in-process — so any crash, deploy or `tsx watch` restart strands the row
+forever. Measured: 5 such rows, the newest caused by me editing a server file while a
+migration was deploying. `reconcileInterruptedRuns()` now closes them on boot as
+`interrupted` (not `failed` — we do not know how far they got, and the staged rows survive
+for a resume). Proven: 5 → 0 on the next restart. Grade **P**.
+
+**Still open from this run.** Web browsing is dropped whenever an agent also has knowledge
+("ADK can't combine VertexAiSearchTool grounding with googleSearch"), reported as `lost`.
+Sharing lands at ALL_USERS because ADK registration does that by default and the source was
+narrower — reported as `needs-review`, with 1 principal auto-granted. Both are honest
+notes, neither is fixed.
+
 ---
 
 ## 2b. Work landed overnight 2026-08-11/12 — graded
