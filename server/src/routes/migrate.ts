@@ -30,6 +30,7 @@ import {
   connectorsSharingCredentials,
 } from '../services/connectorCredentials.js';
 import { REGISTRY_BY_ID, CREDENTIAL_GROUPS } from '../connectors/registry.js';
+import { resolveOpIndex } from '../connectors/captureOpIndex.js';
 import { MS_APP_REG_FIELDS } from '../services/connectorToolBuilder.js';
 import type { DestinationOptions, GeminiDestination, MigrationResult, MigrationScope } from '../types.js';
 
@@ -540,9 +541,63 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
     suppliedFieldsByScope.set(scope, set);
   }
 
+  // A CUSTOM connector can never be in the registry, so it used to fall straight through
+  // to `unknown: true` — no name, no fields, no way for the customer to supply its token.
+  // Now that such a connector BINDS from its published definition, leaving it unknown is
+  // the worse half of a working feature: the tools deploy and then fail to authenticate,
+  // with the one screen that could have fixed it showing nothing to fill in. Resolve the
+  // captured definition and describe the credential it states it wants.
+  // A custom connector is defined PER ENVIRONMENT, so the lookup needs the environment id,
+  // not just the tenant. Prefer the one the plan is actually migrating; the caller may also
+  // name it explicitly. Without one we simply do not describe the connector — better than
+  // guessing an environment and reporting another one's connector.
+  const reqEnvUrl = String(req.query.env ?? '') || session.plan?.units?.[0]?.envUrl || '';
+  const envId = reqEnvUrl
+    ? session.environments?.find((e) => e.url.replace(/\/$/, '') === reqEnvUrl.replace(/\/$/, ''))?.id
+    : undefined;
+  const capCtx =
+    session.tenantId && envId
+      ? { tenantId: session.tenantId, environmentId: envId, scope: credentialScope(session) }
+      : undefined;
+  const discovered = new Map<string, { displayName: string; bindable: boolean }>();
+  if (capCtx) {
+    for (const id of ids) {
+      if (REGISTRY_BY_ID.has(id)) continue;
+      const index = await resolveOpIndex(id, capCtx).catch(() => undefined);
+      if (index) discovered.set(id, { displayName: index.displayName, bindable: Boolean(index.vendorBinding) });
+    }
+  }
+
   const connectors = ids.map((id) => {
     const def = REGISTRY_BY_ID.get(id);
-    if (!def) return { connectorId: id, unknown: true };
+    if (!def) {
+      const d = discovered.get(id);
+      // Only claim a credential field where the definition told us what it wants. An
+      // unbindable custom connector still gets its real NAME, which is the difference
+      // between "shared_get-20crm-…" and "Get CRM objects from Hubspot" in the report.
+      if (!d) return { connectorId: id, unknown: true };
+      return {
+        connectorId: id,
+        name: d.displayName,
+        custom: true,
+        unknown: !d.bindable,
+        category: 'custom',
+        authKind: 'bearer' as const,
+        fields: d.bindable
+          ? [
+              {
+                key: 'api_key',
+                label: `${d.displayName} API token`,
+                help:
+                  'This is a custom connector your team published. Its definition says it authenticates ' +
+                  'with a token sent as an Authorization header — paste the same token the connector uses today.',
+                required: true,
+                supplied: savedIds.has(id),
+              },
+            ]
+          : [],
+      };
+    }
     const group = def.credentialGroup ? CREDENTIAL_GROUPS[def.credentialGroup] : undefined;
     const siblings = connectorsSharingCredentials(id);
     // A sibling already configured means the shared credential exists — the customer

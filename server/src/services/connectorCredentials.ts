@@ -103,7 +103,25 @@ export function connectorCredentialFields(
   connectorId: string,
 ): Array<CredentialField & { shared: boolean; scope: string }> {
   const def = REGISTRY_BY_ID.get(connectorId);
-  if (!def) return [];
+  // A CUSTOM connector has no registry entry and never will. Returning [] here meant the
+  // save path accepted no field for it, so even after the requirements screen learned to
+  // ask for a token there was nowhere to put the answer. Custom connectors that bind do so
+  // as `bearer-token` — a single secret sent as an Authorization header — so describe
+  // exactly that one field. Its own scope, never a shared group: a token that happens to
+  // reach the same vendor is still a different credential from the first-party one.
+  if (!def) {
+    if (!/^shared_/i.test(connectorId)) return [];
+    return [
+      {
+        key: 'api_key',
+        label: 'API token',
+        type: 'password' as const,
+        hint: 'Token for this custom connector, sent as an Authorization header.',
+        shared: false,
+        scope: connectorId,
+      },
+    ];
+  }
   const groupFields = def.credentialGroup
     ? (CREDENTIAL_GROUPS[def.credentialGroup]?.credentials ?? []).map((f) => ({
         ...f,
