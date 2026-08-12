@@ -1,12 +1,10 @@
+/** What does our own deployment record say for these agents? Read-only. */
 import 'dotenv/config';
-import { MongoClient } from 'mongodb';
-import { config } from '../config.js';
-const c = await MongoClient.connect(config.MONGO_HOST);
-const db = c.db(config.CSGE_DB);
-const colls = (await db.listCollections().toArray()).map(x => x.name).filter(n => /adkDeployment/i.test(n));
-for (const n of colls) {
-  for (const d of await db.collection(n).find({}).toArray() as any[]) {
-    console.log(`${n}: agentId=${d.agentId} project=${d.project} sourceId=${d.sourceId}`);
-  }
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+await connectMongo();
+const rows = await getDb().collection('adkDeployments').find({}).toArray();
+for (const r of rows as any[]) {
+  console.log(`${(r.displayName ?? r.sourceId ?? '?').padEnd(34)} agentId=${r.agentId ?? '-'} engine=${String(r.reasoningEngine ?? '').split('/').pop()} updated=${r.updatedAt ?? r.createdAt ?? '-'}`);
 }
-await c.close(); process.exit(0);
+process.exit(0);

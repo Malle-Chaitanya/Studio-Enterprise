@@ -80,9 +80,20 @@ const saToken = await getSaToken();
 const dest = await resolveDestination(process.env.E2E_PROJECT ?? 'studio-enterprise-migration', saToken);
 console.log(`destination: ${dest.project} / ${dest.engine}`);
 
+// Repoint the agent the customer ALREADY has instead of adding a second one beside it.
+// Omitting this is exactly the bug it looks like from the console: the new agent is
+// ENABLED and working, but it sits under the same display name as the old one, so the
+// customer sees "nothing changed". The real pipeline passes existingAgentId from
+// adkDeployments for this reason; the first version of this probe did not.
+const prior = (await getDb().collection('adkDeployments').findOne({ sourceId: ir.sourceId })) as
+  | { agentId?: string }
+  | null;
+if (prior?.agentId) console.log(`existing agent ${prior.agentId} — will be repointed, not duplicated`);
+
 const deployed = await publishAgentToGallery(dest, saToken, ir, {
   instruction: mapped.instruction,
   liveConnectors,
+  existingAgentId: prior?.agentId,
 });
 console.log(`deploy: ok=${deployed.ok} agent=${deployed.agentId ?? '-'} state=${deployed.state ?? '-'} secretIam=${deployed.secretIamGranted}`);
 if (deployed.error) console.log(`deploy error: ${deployed.error}`);
