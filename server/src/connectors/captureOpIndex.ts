@@ -22,7 +22,7 @@ import { loadOpIndex } from './opIndex.js';
 import { getCachedOpIndex, putCachedOpIndex } from '../db/repos/connectorOpIndex.js';
 import type { ConnectorOpIndex, OpIndexOperation, OpIndexParameter, VendorAuth } from './operationBinding.js';
 
-const POWERAPPS_AUDIENCE = 'https://service.powerapps.com';
+export const POWERAPPS_AUDIENCE = 'https://service.powerapps.com';
 /** A connector's shape changes rarely; a fortnight keeps us current without re-fetching per run. */
 const CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -91,7 +91,7 @@ function distil(connectorId: string, body: Record<string, unknown>): ConnectorOp
  * Rejecting it meant every custom connector was unresolvable regardless of permissions.
  * `.`, `/` and `\` remain excluded, so no hyphen can traverse anywhere.
  */
-const SAFE_CONNECTOR_ID = /^[a-z0-9_-]+$/i;
+export const SAFE_CONNECTOR_ID = /^[a-z0-9_-]+$/i;
 
 /**
  * Turn a connector's ORIGINAL swagger into an index plus the binding it implies.
@@ -110,7 +110,7 @@ const SAFE_CONNECTOR_ID = /^[a-z0-9_-]+$/i;
  * model routes on. Recreating the tools without it produces four tools the model cannot
  * tell apart.
  */
-function distilOriginalSwagger(
+export function distilOriginalSwagger(
   connectorId: string,
   displayName: string,
   sw: Record<string, unknown>,
