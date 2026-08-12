@@ -1890,9 +1890,62 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               // them unsupported connectors were "recorded in the migration report as a
               // gap" — until now that claim was simply untrue.
               const wiredConnectorIds = new Set(scopedConnectors.map((c) => c.id));
+              // Which operations actually became callable tools, per connector. An MCP
+              // server is only "migrated" to the extent its declared tools rebuilt —
+              // saying "mapped" because the connector is wired would claim capability we
+              // did not verify per operation.
+              const boundOpsByConnector = new Map<string, Set<string>>(
+                [...boundBuild.byConnector].map(([id, specs]) => [id, new Set(specs.map((s) => s.operationId))]),
+              );
+              // Agents in THIS run, so a connected-agent tool can say whether its target
+              // is migrating alongside it (reconnect them) or is not in scope at all
+              // (migrate it first). "Migrate the other agent" is useless advice when the
+              // other agent is already three rows down in the same migration.
+              const siblingNames = staged
+                .map((s) => s.mapped?.ir.name ?? s.displayName ?? s.name ?? '')
+                .filter((n) => n && n !== row.mapped!.ir.name);
+
               for (const tool of row.mapped!.ir.agentTools ?? []) {
                 const wired = !!tool.connectorId && wiredConnectorIds.has(tool.connectorId);
                 const opText = tool.operationId ? ` (${tool.operationId})` : '';
+
+                if (tool.kind === 'mcp-server') {
+                  const declared = tool.mcp?.tools ?? [];
+                  const boundOps = boundOpsByConnector.get(tool.connectorId ?? '') ?? new Set<string>();
+                  const rebuilt = declared.filter((op) => boundOps.has(op));
+                  const missed = declared.filter((op) => !boundOps.has(op));
+                  result.fidelity.push({
+                    component: `tool:${tool.name}`,
+                    status: rebuilt.length === 0 ? 'lost' : missed.length ? 'partial' : 'mapped',
+                    detail:
+                      rebuilt.length === 0
+                        ? `MCP server (${tool.connectorId ?? 'unknown connector'}) was NOT migrated. Copilot reaches it through the Power Platform proxy — the agent stores no server address — and ` +
+                          (declared.length
+                            ? 'none of the tools it declared could be rebuilt as direct API calls.'
+                            : `the source agent did not record which tools it used (${tool.mcp?.toolSelection ?? 'selection unknown'}), so there was nothing to rebuild.`)
+                        : `MCP server rebuilt as ${rebuilt.length} direct ${tool.connectorId} tool(s): ${rebuilt.join(', ')}. ` +
+                          'The migrated agent calls the vendor API directly instead of over MCP, so it loses MCP\'s dynamic tool discovery — it can only do what the source agent declared.' +
+                          (missed.length ? ` Not rebuilt: ${missed.join(', ')}.` : ''),
+                  });
+                  continue;
+                }
+
+                if (tool.kind === 'connected-agent') {
+                  // The tool name IS the target agent's display name in every payload
+                  // measured; match on it rather than on an id the payload never carries.
+                  const target = siblingNames.find(
+                    (n) => n.length > 3 && tool.name.toLowerCase().includes(n.toLowerCase()),
+                  );
+                  result.fidelity.push({
+                    component: `tool:${tool.name}`,
+                    status: 'needs-review',
+                    detail: target
+                      ? `This agent invoked another Copilot agent, "${target}", as a tool. "${target}" IS in this migration, but Gemini agents cannot call each other, so the two arrive as independent agents — the delegation does not happen automatically and must be rebuilt (e.g. fold the other agent's instructions in, or route users to it).`
+                      : `This agent invoked another Copilot agent as a tool ("${tool.name.trim()}"), and that agent is NOT part of this migration. Its behaviour is therefore absent entirely — migrate it too, then decide how the two should relate.`,
+                  });
+                  continue;
+                }
+
                 result.fidelity.push({
                   component: `tool:${tool.name}`,
                   status: wired ? 'mapped' : 'lost',
@@ -1900,13 +1953,9 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                     ? `Connector action${opText} — a live ${tool.connectorId} tool is wired on the migrated agent.`
                     : tool.kind === 'connector'
                       ? `Connector action${opText} on ${tool.connectorId ?? 'an unknown connector'} was NOT migrated — no credentials were configured for it, or the connector has no entry in our registry. The migrated agent cannot perform this action.`
-                      : tool.kind === 'mcp-server'
-                        ? `MCP server tool${opText} (${tool.connectorId ?? 'unknown'}) was NOT migrated — remote MCP servers attached in Copilot Studio have no equivalent in the migrated agent yet.`
-                        : tool.kind === 'connected-agent'
-                          ? 'This agent invoked ANOTHER Copilot agent as a tool. That relationship is not recreated — migrate the other agent and reconnect them manually.'
-                          : tool.kind === 'ai-builder'
-                            ? 'AI Builder model/prompt used as a tool — the prompt text is folded into the instruction where available, but the model itself is not migrated.'
-                            : `Tool of an unrecognised kind was found and preserved in the IR but not migrated${opText}.`,
+                      : tool.kind === 'ai-builder'
+                        ? 'AI Builder model/prompt used as a tool — the prompt text is folded into the instruction where available, but the model itself is not migrated.'
+                        : `Tool of an unrecognised kind was found and preserved in the IR but not migrated${opText}.`,
                 });
               }
 

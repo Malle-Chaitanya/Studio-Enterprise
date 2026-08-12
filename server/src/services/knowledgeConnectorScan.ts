@@ -13,6 +13,7 @@ import { readinessForCustomer } from '../connectors/readiness.js';
 import type { CaptureContext } from '../connectors/captureOpIndex.js';
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import type { DetectedConnector } from './thirdPartyConnectorScan.js';
+import { parseMcpBinding } from './toolPayload.js';
 
 interface BotKsComponent {
   /** Owning agent — lets us attribute a connector to the agent that needs it. */
@@ -143,14 +144,17 @@ export async function detectKnowledgeConnectors(
     }
   >();
 
-  const record = (connectorId: string, comp: BotKsComponent, certain: boolean, operation?: string): void => {
+  // `operations` is a LIST, not one id: an MCP server component declares several
+  // operations at once, and calling record() per operation would count the same component
+  // six times in `flowCount` — which the UI shows as how many places use the connector.
+  const record = (connectorId: string, comp: BotKsComponent, certain: boolean, operations: string[] = []): void => {
     if (!connectorId) return; // sources that need no credentials (Dataverse, public site)
     const existing = connectorHits.get(connectorId)
       ?? { flowCount: 0, flowNames: new Set<string>(), agentNames: new Set<string>(), certain: false, operations: new Set<string>() };
     existing.flowCount++;
     existing.certain = existing.certain || certain;
     if (comp.name) existing.flowNames.add(comp.name);
-    if (operation) existing.operations.add(operation);
+    for (const op of operations) existing.operations.add(op);
     const owner = comp._parentbotid_value;
     if (owner && botNames?.get(owner)) existing.agentNames.add(botNames.get(owner)!);
     connectorHits.set(connectorId, existing);
@@ -163,6 +167,14 @@ export async function detectKnowledgeConnectors(
     // capture it in the same pass — it is the difference between "needs Jira
     // credentials" and "calls ListIssues, GetIssue_V2, …".
     const operationId = /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1];
+
+    // An MCP server's `operationId` names the SERVER (`mcp_JiraIssueManagement`), not
+    // anything the connector can perform, so listing it on the credentials screen tells
+    // the customer nothing they can check. The tools the author allowed ARE ordinary
+    // operations on the same connector (verified live: all six of the Jira MCP server's
+    // declared tools exist in shared_jira's index), so name those instead.
+    const mcpTools = parseMcpBinding(data)?.tools ?? [];
+    const operations = mcpTools.length ? mcpTools : operationId ? [operationId] : [];
 
     // Tier 1a — api names appearing structurally (connection references, connector actions).
     //
@@ -180,7 +192,7 @@ export async function detectKnowledgeConnectors(
     // bug: every downstream lookup keys on it, so the whole connector silently becomes a
     // different, non-existent one.
     for (const m of data.matchAll(/\bshared_[a-z0-9_-]+/gi)) {
-      record(m[0].toLowerCase(), comp, true, operationId);
+      record(m[0].toLowerCase(), comp, true, operations);
     }
 
     // Tier 1b — the source kind enum.

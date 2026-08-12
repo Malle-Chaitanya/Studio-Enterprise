@@ -84,7 +84,53 @@ export async function buildBoundToolSpecs(
   const policyWarned = new Set<string>();
   const usedNames = new Set<string>();
 
-  for (const tool of ir.agentTools ?? []) {
+  /**
+   * MCP servers, expanded into the operations they expose.
+   *
+   * A Copilot MCP tool carries NO server URL — measured across all 6 in the test tenant.
+   * It is reached through the Power Platform proxy, which a migrated agent cannot use, so
+   * there is no MCP endpoint for us to call and no amount of deployer code changes that.
+   *
+   * What it DOES carry, when the author picked specific tools, is the list of tools the
+   * server exposes — and those turn out to be ordinary operations on the same connector:
+   *
+   *     Jira MCP Server  operationId mcp_JiraIssueManagement  toolSelection specific
+   *       tools: GetCurrentUser, ListIssues, ListIssues_Datacenter,
+   *              ListProjects, ListResources, ListIssueTypes_V2
+   *
+   * All six are in shared_jira's operation index. So the CAPABILITY is reproducible even
+   * though the transport is not: bind each declared tool as a direct vendor call. The
+   * agent loses MCP's dynamic discovery and keeps what it actually used.
+   *
+   * When `toolSelection` is not 'specific' there is no list, and guessing which of a
+   * server's tools an agent relied on would be inventing capability. Those are refused by
+   * name below instead.
+   */
+  const expanded = (ir.agentTools ?? []).flatMap((tool) => {
+    if (tool.kind !== 'mcp-server') return [tool];
+    const declared = tool.mcp?.tools ?? [];
+    if (!tool.connectorId || declared.length === 0) return [tool];
+    return declared.map((op) => ({
+      ...tool,
+      kind: 'connector' as const,
+      name: `${tool.name} - ${op}`,
+      operationId: op,
+      // The author pinned nothing on an MCP tool — the server decided the arguments — so
+      // every argument is the model's to supply, which is what an empty inputs list means.
+      inputs: undefined,
+      // The MCP tool's own description names the SERVER ("Jira MCP Server"), so copying
+      // it onto all six operations gives the model six identically-described tools it
+      // cannot choose between. Drop it and let the connector's per-operation description
+      // answer — that is what MCP itself would have advertised at run time.
+      description: undefined,
+    }));
+  });
+
+  // An MCP server we could NOT expand is reported by the orchestrator's per-tool pass,
+  // which knows how many of the declared tools actually bound. Emitting a note here too
+  // would put two `tool:<name>` entries in the same report for one tool.
+
+  for (const tool of expanded) {
     if (tool.kind !== 'connector' || !tool.connectorId || !tool.operationId) continue;
 
     const index = await resolveOpIndex(tool.connectorId, ctx);

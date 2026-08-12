@@ -1224,6 +1224,109 @@ still do not migrate. Only the accusation of silence was false.
 
 ---
 
+### 1.24 MCP servers and connected agents — what survives, and what cannot (2026-08-13)
+
+Two tool kinds were extracted, counted, and then migrated by nobody. `_diag_mcp_and_agents.ts`
+over all four environments:
+
+```
+[mcp-server] AA → Jira - Jira MCP Server
+    mcp: {"operationId":"mcp_JiraIssueManagement","toolSelection":"specific",
+          "tools":["GetCurrentUser","ListIssues","ListIssues_Datacenter",
+                   "ListProjects","ListResources","ListIssueTypes_V2"]}
+[connected-agent] AA →  [Internal]TransciptParserAgent
+[connected-agent] AA → Knowledge Assistant
+[mcp-server] Case Enrichment Onboarding Agent → Microsoft Dataverse MCP Serv
+    mcp: {"operationId":"InvokeMCP","toolSelection":"unknown"}   (x4)
+[mcp-server] Service Operations Agent → D365 Contact Center Admin MCP
+    mcp: {"operationId":"msdyn_D365ContactCenterAdminMCPServer","toolSelection":"unknown"}
+
+mcp-server:      6 tool(s), 0 with a URL in the extracted binding
+connected-agent: 2 tool(s)
+    " [Internal]TransciptParserAgent" → resolves to agent " [Internal]TransciptParserAgent"
+    "Knowledge Assistant" → resolves to agent "Knowledge Assistant"
+```
+
+**Zero of six carry a server URL.** MCP in Copilot is tunnelled through the Power Platform
+proxy, so the transport cannot be migrated — that is a fact about the payload, not a gap in
+our deployer. What CAN be migrated is the capability, because where `toolSelection` is
+`specific` the declared tool names turn out to be ordinary operations on the same connector:
+
+```
+shared_jira index: 65 operations
+  GetCurrentUser  PRESENT   ListIssues     PRESENT   ListIssues_Datacenter  PRESENT
+  ListProjects    PRESENT   ListResources  PRESENT   ListIssueTypes_V2      PRESENT
+```
+
+So `buildBoundToolSpecs` now expands an MCP server into one bound operation per declared
+tool. `_diag_agent_detail.ts "AA"`, after (**P**):
+
+```
+  bound calls for shared_jira:
+    GET   https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/myself
+       description: Get current user
+    GET   https://api.atlassian.com/ex/jira/{cloudId}/rest/api/2/search
+       description: Get list of issues
+    GET   https://api.atlassian.com/ex/jira/{cloudId}/rest/api/datacenter/search
+       description: Get list of issues (Datacenter)
+    GET   https://api.atlassian.com/ex/jira/{cloudId}/rest/api/project
+       description: Get projects
+    GET   https://api.atlassian.com/ex/jira/{cloudId}/rest/api/oauth/token/accessible-resources
+       description: Get list of Resources
+    GET   https://api.atlassian.com/ex/jira/{cloudId}/rest/api/v2/types/issue/createmeta
+       description: Get issue types (V2)
+```
+
+Six real Atlassian URLs from a tool that produced none. The first attempt gave all six the
+description `Jira MCP Server` — the MCP tool's own text names the SERVER, so copying it
+onto every operation produced six tools a model cannot choose between. Dropping it and
+letting the connector's per-operation description answer is what produced the output above.
+
+**What is NOT rebuilt, and is now said so by name.** Five of the six MCP tools declare no
+list (`toolSelection: unknown`). Guessing which of a server's tools an agent used would be
+inventing capability, so they are refused:
+
+```
+  [none] Microsoft Dataverse MCP Server   (tool (MCP server))
+      MCP server with no server address and no declared tool list (unknown) — nothing to rebuild.
+```
+
+**Connected agents.** Both resolve to real agents by name. Gemini agents cannot call each
+other, so this is `needs-review`, never `mapped` — but the report now distinguishes a target
+that is in the same migration from one that is not, because "migrate the other agent" is
+useless advice when it is three rows down in the same run.
+
+**Where it shows.** Three surfaces were checked, not assumed:
+
+- Connectors screen (`_diag_connector_screen.ts "AA"`, **P**) — the scan is a regex over raw
+  component data, so it recorded `mcp_JiraIssueManagement`, a server name no connector can
+  perform. It now names the declared tools:
+  ```
+    shared_jira  [shared_jira]
+      used by:    AA
+      operations: GetCurrentUser, ListIssueTypes_V2, ListIssues, ListIssues_Datacenter, ListProjects, ListResources
+  ```
+- Assessment / Explore (`_diag_assess_tools.ts "AA"`, **P**) — the pre-migration assessment
+  listed instructions, topics, knowledge and capabilities and **not one tool**, so an agent
+  whose whole job was calling Jira read as trivially migratable. Tools are now components
+  with dependencies:
+  ```
+  [partial] Jira MCP Server   (tool (MCP server))
+      Rebuilt as 6 direct shared_jira call(s) (GetCurrentUser, …) — needs that connector's
+      credentials. MCP itself is not migrated, so the agent can only do what this list names.
+  [manual] Knowledge Assistant   (tool (connected agent))
+      Invokes another Copilot agent as a tool. Gemini agents cannot call each other …
+  ```
+- Migration report — the per-tool pass previously said every MCP server "was NOT migrated"
+  unconditionally. It now grades on how many declared tools actually bound: `mapped`, or
+  `partial` naming the ones that did not, or `lost`. **T** — typecheck + 102 unit tests; no
+  live migration has been run since this change.
+
+Honest limits: the migrated agent loses MCP's dynamic discovery (it can only do what the
+source declared), and the two connected-agent relationships are reported, not rebuilt.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run

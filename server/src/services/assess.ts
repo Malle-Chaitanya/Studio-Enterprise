@@ -167,6 +167,64 @@ export function assessAgent(ir: AgentIR): AgentAssessment {
     });
   }
 
+  // ── Tools ─────────────────────────────────────────────────────────────────
+  //
+  // The assessment listed instructions, topics, knowledge and capabilities — and not one
+  // TOOL, so an agent whose whole job was calling Jira and HubSpot could be assessed as
+  // trivially migratable. Tools are the part most likely to need setup (a credential, a
+  // connector we cannot rebuild, another agent entirely), so they belong here, BEFORE the
+  // customer commits to a migration rather than in the report afterwards.
+  // Five tools on one connector is ONE credential to supply, not five dependencies.
+  const credentialDeps = new Set<string>();
+  const needCredential = (connectorId?: string): void => {
+    if (!connectorId || credentialDeps.has(connectorId)) return;
+    credentialDeps.add(connectorId);
+    dependencies.push({ type: 'Connector credential', ref: connectorId, from: ir.name });
+  };
+  for (const tool of ir.agentTools ?? []) {
+    const label = tool.displayName || tool.name;
+    if (tool.kind === 'mcp-server') {
+      const declared = tool.mcp?.tools ?? [];
+      components.push({
+        component: label,
+        kind: 'tool (MCP server)',
+        // 'partial' even when we can rebuild: the migrated agent calls the vendor API
+        // directly and loses MCP's dynamic tool discovery, so it is never a like-for-like.
+        compatibility: declared.length && tool.connectorId ? 'partial' : 'none',
+        note:
+          declared.length && tool.connectorId
+            ? `Rebuilt as ${declared.length} direct ${tool.connectorId} call(s) (${declared.join(', ')}) — needs that connector's credentials. MCP itself is not migrated, so the agent can only do what this list names.`
+            : `MCP server with no server address and no declared tool list (${tool.mcp?.toolSelection ?? 'selection unknown'}) — nothing to rebuild.`,
+      });
+      needCredential(tool.connectorId);
+      continue;
+    }
+    if (tool.kind === 'connected-agent') {
+      components.push({
+        component: label,
+        kind: 'tool (connected agent)',
+        compatibility: 'manual',
+        note: 'Invokes another Copilot agent as a tool. Gemini agents cannot call each other — migrate that agent too and decide how the two should relate.',
+      });
+      dependencies.push({ type: 'Connected agent', ref: label.trim(), from: ir.name });
+      continue;
+    }
+    components.push({
+      component: label,
+      kind: `tool (${tool.kind})`,
+      compatibility: tool.kind === 'connector' && tool.connectorId ? 'partial' : 'manual',
+      note:
+        tool.kind === 'connector'
+          ? `Calls ${tool.connectorId ?? 'an unidentified connector'}${tool.operationId ? ` (${tool.operationId})` : ''} — rebuilt as a direct API call once that connector's credentials are supplied.`
+          : tool.kind === 'flow'
+            ? 'Invokes a Power Automate flow. Flows are not migrated in this phase — rebuild it separately.'
+            : tool.kind === 'ai-builder'
+              ? 'Uses an AI Builder prompt/model. The prompt text is folded into the instruction where available; the model itself is not migrated.'
+              : 'Tool of a kind with no Gemini equivalent yet — preserved in the extraction, not recreated.',
+    });
+    needCredential(tool.connectorId);
+  }
+
   // ── Starter prompts ────────────────────────────────────────────────────
   if (ir.starterPrompts.length) {
     components.push({
