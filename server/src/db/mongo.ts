@@ -125,6 +125,18 @@ async function ensureCollections(): Promise<void> {
     { unique: true },
   );
 
+  // 11b. connectorOpIndexes — a connector's operation schema as captured from the
+  //      CUSTOMER'S own Power Platform environment. The committed fixtures are another
+  //      tenant's view; a customer installs a different set of connectors, sometimes at
+  //      different versions, so their environment is the authority and this is the cache.
+  //      Not secret, but it does reveal which connectors a customer has installed, so it
+  //      is scoped like everything else.
+  await ensure('connectorOpIndexes');
+  await db.collection('connectorOpIndexes').createIndex(
+    { scope: 1, environmentId: 1, connectorId: 1 },
+    { unique: true },
+  );
+
   // 12. entraAppCredentials — per (customer, Microsoft tenant) reference to a
   //     Secret Manager-stored Entra app credential, so a NEW site under an
   //     already-onboarded tenant can auto-provision a connector without asking
@@ -194,5 +206,5 @@ async function ensureCollections(): Promise<void> {
     logger.info('Seeded 2 default app users');
   }
 
-  logger.info('All 15 collections verified with indexes (multi-tenant scoped)');
+  logger.info('All 16 collections verified with indexes (multi-tenant scoped)');
 }

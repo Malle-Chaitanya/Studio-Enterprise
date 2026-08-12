@@ -9,7 +9,8 @@
  */
 
 import { logger } from '../logger.js';
-import { readinessFor } from '../connectors/readiness.js';
+import { readinessForCustomer } from '../connectors/readiness.js';
+import type { CaptureContext } from '../connectors/captureOpIndex.js';
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import type { DetectedConnector } from './thirdPartyConnectorScan.js';
 
@@ -67,6 +68,12 @@ export async function detectKnowledgeConnectors(
   /** botId → agent name, so the UI can say WHICH agent needs each connector rather
    *  than showing one undifferentiated list. */
   botNames?: Map<string, string>,
+  /**
+   * Lets readiness be answered from the CUSTOMER'S own connector definitions instead of a
+   * capture of ours. Optional so offline and test callers still work — without it the
+   * answer falls back to the committed fixtures, which is a different tenant's view.
+   */
+  captureCtx?: CaptureContext,
 ): Promise<DetectedConnector[]> {
   if (botIds.length === 0) return [];
 
@@ -213,7 +220,11 @@ export async function detectKnowledgeConnectors(
       // can be `unsupported` (no registry entry) and still fully bindable — Dataverse is
       // exactly that case — so the two flags are answering different questions and both
       // are reported.
-      readiness: readinessFor(connectorId, hit.operations.size ? [...hit.operations] : undefined),
+      readiness: await readinessForCustomer(
+        connectorId,
+        hit.operations.size ? [...hit.operations] : undefined,
+        captureCtx,
+      ),
     });
   }
 

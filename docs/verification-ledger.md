@@ -461,6 +461,74 @@ disagreeing is what made it visible.
 
 ---
 
+### 1.14 Per-customer connector capture works, including connectors we never shipped (2026-08-12)
+
+`npx tsx src/spikes/_test_capture_op_index.ts`
+
+```
+env CloudFuze Migration Test (7f9f87cc-…)  scope ms-807d6772-…
+
+shared_confluence        live capture: 5 ops (Confluence)   2406ms
+                         resolve:      5 ops                   5ms (cache hit)
+shared_bitbucket         live capture: 20 ops (Bitbucket)   1098ms
+                         resolve:      20 ops                  7ms (cache hit)
+shared_notaconnector     live capture: not available         977ms
+                         resolve:      undefined
+
+cached rows for this customer: shared_bitbucket=20, shared_confluence=5
+offline fallback (no ctx):    5 ops from fixture
+```
+
+Grade **P**. The load-bearing row is `shared_bitbucket`: **20 operations captured for a
+connector this repo ships no fixture for**. Coverage is no longer limited to what CloudFuze
+happened to capture — a customer's own environment answers for the connectors a customer
+actually installed. A connector that does not exist there returns undefined rather than an
+error, and with no context at all the committed fixture still answers offline.
+
+Cache hits are 5–7 ms against 1–2.4 s for a live capture, and the cache is keyed by
+`{credentialScope, environmentId, connectorId}` with a 14-day TTL — a stale index would
+describe paths a connector no longer has, and that failure would surface at inference as a
+404 with nothing pointing back here.
+
+Still hand-maintained, and honestly so: `VENDOR_BINDINGS` says where a vendor lives and what
+credential it wants. Bitbucket's operations are now captured but it has no binding entry, so
+readiness reports `unknown-connector` with a reason rather than inventing a host.
+
+### 1.15 Secret isolation was nominal — measured, not suspected (2026-08-12)
+
+`npx tsx src/spikes/_diag_secret_scoping.ts`
+
+```
+migrationSessions:     default=2
+connectorCredentials:  default=10
+adkDeployments:        default=5
+stagedAgents:          default=93
+distinct Microsoft tenants seen: 1
+distinct Google projects seen:   1
+  cred default / shared_jira       -> studio-enterprise-atlassian-api-token @ studio-enterprise-migration
+  cred default / shared_confluence -> studio-enterprise-atlassian-api-token @ studio-enterprise-migration
+```
+
+Every row in every scoped collection is `appUserId: 'default'`, because no route sets it —
+sign-in was never wired. And every stored secret id is the **legacy un-scoped** name, since
+`priorRecord.secretIds` reuse keeps an id alive once written. Grade **P** for the finding.
+
+With one customer this is harmless, which is why it survived. With two customers on one
+deployment it is a shared credential namespace: B's Atlassian token overwrites A's, and A's
+deployed agent then calls Atlassian with B's credential. `appUserId` appearing in every
+filter and every secret id reads like isolation and provided none.
+
+Fixed in `b75d838`: `credentialScope(session)` prefers `appUserId` and falls back to the
+Microsoft tenant id (a real discriminator, from the OAuth flow, already on the session); the
+owner parameter on `connectorSecretId` is now required, and the compiler immediately caught
+a caller that had been relying on the silent legacy fallback; purge verifies ownership
+labels before destroying anything.
+
+**Still open (§4.5):** the Mongo scope key is unchanged, so per-collection `appUserId`
+filters remain a no-op until sign-in lands or the collections are re-keyed.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
@@ -523,21 +591,22 @@ Until then "typecheck passes" is only true of app code, and must be said that wa
 Everything is pushed to `business`. Section 2's table is a snapshot of that moment and is
 kept as written; its grades still stand, because committing code does not execute it.
 
-### 4.4 Connector indexes are captured from ONE tenant
+### 4.4 ~~Connector indexes are captured from ONE tenant~~ — closed 2026-08-12
 
-`src/connectors/fixtures/*.ops.json` were captured from CloudFuze's own environments. This
-is a product for customer migrations, and a customer's Power Platform environment installs a
-different set of connectors, sometimes at different versions. Two consequences:
+Indexes are now captured from the customer's own environment and cached
+(`connectors/captureOpIndex.ts`, ledger 1.14). Committed fixtures remain the offline
+fallback and what the unit tests assert against.
 
-- A connector a customer uses that we never captured falls back to `readiness = undefined`
-  ("not yet supported"), which is honest but understates what we could do — the swagger for
-  it is fetchable from THEIR environment with the token we already mint.
-- A committed index can drift from the version a customer's environment actually has.
+### 4.5 Multi-tenant isolation in Mongo is still nominal
 
-The fix is to capture on demand per customer environment (same call as
-`_dump_connector_op_index.ts`), cache it keyed by `appUserId` + environment id, and keep the
-committed fixtures only as an offline fallback and as the thing the unit tests assert
-against. Not built yet.
+Every scoped collection filters by `appUserId`, and every row in every one of them is
+`'default'`, because no route sets it. Credential SECRETS are now keyed by
+`credentialScope(session)` (1.15), but Mongo is not: two customers on one deployment would
+see each other's sessions, staged agents, deployments and IR cache.
+
+The fix is either wiring sign-in (the `appUsers` collection and bcrypt hashing already
+exist, only the route is missing) or re-keying the collections to `credentialScope`. Both
+are data migrations and neither should be done as a side effect of feature work.
 
 ### 4.3 The registry does not match the tenant
 

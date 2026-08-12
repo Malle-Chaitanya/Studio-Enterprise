@@ -338,7 +338,17 @@ migrateRouter.post('/knowledge-connectors', async (req, res) => {
     } catch {
       /* attribution is a nicety; detection still works without it */
     }
-    const connectors = await detectKnowledgeConnectors(envUrl, dvToken, botIds, botNames);
+    // Answer readiness from the CUSTOMER'S own connector definitions where we can reach
+    // them, not from a capture of ours. Their environment decides which connectors exist
+    // and at what version; a fixture is only a fallback. The environment GUID differs from
+    // the org URL, so resolve it from the session's discovered environments.
+    const envId = session.environments?.find(
+      (e) => e.url.replace(/\/$/, '') === envUrl.replace(/\/$/, ''),
+    )?.id;
+    const captureCtx = envId
+      ? { tenantId: session.tenantId, environmentId: envId, scope: credentialScope(session) }
+      : undefined;
+    const connectors = await detectKnowledgeConnectors(envUrl, dvToken, botIds, botNames, captureCtx);
     res.json({ connectors });
   } catch (err) {
     res.status(502).json({ error: 'knowledge_connector_scan_failed', detail: (err as Error).message });

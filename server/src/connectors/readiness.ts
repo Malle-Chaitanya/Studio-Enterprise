@@ -7,6 +7,7 @@
  * touching the filesystem.
  */
 import { loadOpIndex } from './opIndex.js';
+import { resolveOpIndex, type CaptureContext } from './captureOpIndex.js';
 import { connectorReadiness, type ConnectorReadiness } from './operationBinding.js';
 
 /**
@@ -39,4 +40,21 @@ export function readinessSummary(r: ConnectorReadiness | undefined, connectorId:
     `${r.displayName}: ${r.bindable.length} of ${r.bindable.length + r.blocked.length} operation(s) ` +
     `will be recreated. ${first.operationId} will not — ${first.reason}`
   );
+}
+
+/**
+ * Readiness using the CUSTOMER's own connector definitions when we can reach them.
+ *
+ * Same answer shape as `readinessFor`, but it resolves the index from their environment
+ * first and only falls back to a committed fixture. Prefer this anywhere a session is in
+ * hand; `readinessFor` remains for pure/offline paths.
+ */
+export async function readinessForCustomer(
+  connectorId: string,
+  operations: string[] | undefined,
+  ctx: CaptureContext | undefined,
+): Promise<ConnectorReadiness | undefined> {
+  const index = await resolveOpIndex(connectorId, ctx);
+  if (!index) return undefined;
+  return connectorReadiness(index, operations ?? []);
 }
