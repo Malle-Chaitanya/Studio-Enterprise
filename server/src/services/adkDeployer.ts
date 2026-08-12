@@ -496,16 +496,37 @@ export function deployReasoningEngine(
  * an engine nothing points at still runs and still bills.
  * `force=true` also removes the sessions it accumulated.
  */
-async function deleteReasoningEngine(location: string, resourceName: string): Promise<boolean> {
+/**
+ * Delete a Reasoning Engine we deployed but could not register.
+ *
+ * Takes the caller's service-account token deliberately. This used to mint its own via
+ * `new GoogleAuth(...)` — Application Default Credentials — while every other call in this
+ * file uses the service account. On any host where ADC is absent or stale the delete
+ * failed with `invalid_grant: reauth related error (invalid_rapt)`, the failure was
+ * swallowed into a `return false`, and the engine stayed deployed and billable. Observed
+ * live 2026-08-12: 81 of 86 engines in the project had no owning record, which is what a
+ * cleanup path that can never succeed looks like from the outside.
+ *
+ * `force=true` because an engine that has sessions or memories attached refuses a plain
+ * delete.
+ */
+async function deleteReasoningEngine(
+  location: string,
+  resourceName: string,
+  saToken: string,
+): Promise<boolean> {
   try {
-    const { GoogleAuth } = await import('google-auth-library');
-    const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
-    const token = await auth.getAccessToken();
     const res = await fetch(
       `https://${location}-aiplatform.googleapis.com/v1beta1/${resourceName}?force=true`,
-      { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+      { method: 'DELETE', headers: { Authorization: `Bearer ${saToken}` } },
     );
-    return res.ok || res.status === 404;
+    if (res.ok || res.status === 404) return true;
+    // Say WHY. A bare false is what let a systematically-broken cleanup look like bad luck.
+    logger.warn(
+      { resourceName, status: res.status, body: (await res.text()).slice(0, 200) },
+      'adk: reasoning engine cleanup refused by the API',
+    );
+    return false;
   } catch (err) {
     logger.warn({ resourceName, err: (err as Error).message }, 'adk: reasoning engine cleanup failed');
     return false;
@@ -805,7 +826,7 @@ export async function publishAgentToGallery(
     // deleted by hand. Best-effort: if the delete fails we still report the
     // register error, and say the engine was left behind so someone can
     // remove it.
-    const cleanup = await deleteReasoningEngine(location, dep.reasoningEngine);
+    const cleanup = await deleteReasoningEngine(location, dep.reasoningEngine, saToken);
     logger.warn(
       { agent: ir.name, reasoningEngine: dep.reasoningEngine, cleaned: cleanup },
       'adk: registration failed — deployed reasoning engine ' + (cleanup ? 'deleted' : 'COULD NOT be deleted (still billable)'),

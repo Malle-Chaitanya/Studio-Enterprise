@@ -945,6 +945,94 @@ account is flagged `seededWithDevDefault` with a startup warning; in production 
 seeded without the env values and the log says why. The old password stays in git history
 either way — any deployment still using it must change it.
 
+### 1.21 The first LIVE migration attempt, and a billable leak it uncovered (2026-08-12)
+
+§1.18 proved the dry run through the UI. Running it LIVE found three things, one of which
+was my own test harness and is the least interesting of the three.
+
+**a) The ACL gate works on a live run.** First proof — until now it had only been reasoned
+about and skipped (dry runs bypass it by design).
+
+```
+[warn] ── Migration stopped: 1 agent(s) would lose source permissions ──
+[warn]   "Confluence_agent" has 2 knowledge source(s) from Confluence whose permissions
+         cannot be carried into Gemini…
+[warn]     • Engineering, Chaitanya Malle, Demo Company Wiki (Confluence, via confluence-crawler)
+[warn]     • testing confulence without page names in name section (Confluence, via confluence-crawler)
+AGENT Confluence_agent: created=False deployed=False error=acl_acknowledgement_required
+DONE: Stopped · 1 agent(s) need a permission-loss acknowledgement before migrating
+```
+
+Nothing was created. Grade **P**.
+
+**b) My harness sent the wrong destination shape, and the product spent money on it.**
+I hand-built the plan body with `{project, app}`; the UI sends `{project, engine,
+assistant}`. So `engine` was `undefined`:
+
+```
+ADK failed (register: 404: Engine "undefined" does not exist.)
+ (WARNING: the deployed Reasoning Engine could not be deleted and is still billable)
+```
+
+The 404 is my mistake. What is NOT my mistake is that the pipeline deployed a Reasoning
+Engine BEFORE anything validated the destination, and then could not clean it up. Recorded
+as **X** against "a bad destination fails cheaply".
+
+**c) The cleanup path could never have worked, and 81 engines prove it.** Counting engines
+against `adkDeployments`:
+
+```
+86 engines, 81 with no owning record
+  Agent1 × 15 · Migration Knowledge Advisor × 5 · Knowledge Assistant × 5 · …
+```
+
+`deleteReasoningEngine()` minted its own credentials with `new GoogleAuth(...)` —
+Application Default Credentials — while every other call in `adkDeployer.ts` uses the
+service account. On a host where ADC is absent or stale it fails, and the failure was
+swallowed into `return false`. Reproduced directly: a spike using the same ADC path
+returned
+
+```
+invalid_grant: reauth related error (invalid_rapt)
+```
+
+So every registration failure since the beginning has leaked an always-on billable engine,
+and the log line ("could not be deleted") read like bad luck rather than a systematic
+break. Fixed by passing the caller's `saToken` and logging the API's actual refusal instead
+of a bare boolean. Grade **P** for the diagnosis; **U** for the fix, which has not yet had
+a registration failure to clean up.
+
+**d) "Orphan" needed a better definition than ours.** My first count called
+`7686282818770436096` an orphan — the live Confluence_agent that answers Confluence
+questions. `adkDeployments` holds 5 rows for 86 engines because agents repointed by hand
+during repair work were never recorded. The authority on what is live is the GALLERY, not
+our database. `scripts/reapOrphanEngines.ts` checks both and aborts rather than guessing if
+it cannot read either:
+
+```
+86 engine(s) — serving a gallery agent: 16 — recorded in adkDeployments: 5
+  KEEP 7686282818770436096  Confluence_agent   SERVING a gallery agent
+  …
+62 unreferenced engine(s); 25 kept.   Report only — nothing was deleted.
+```
+
+Report-only by default and `--older-than` guarded. Grade **P** for the report; the delete
+path is **U** and stays that way until an operator authorizes it.
+
+**e) Confluence indexing is not deterministic.** Same agent, same 6 spaces, two runs 10
+minutes apart:
+
+```
+07:45:24 [warn]  Confluence crawl failed: Import completed but 0 pages were indexed.
+07:54:01 [ok]    Confluence: 7 page(s) ready — data store queued for grounding.
+```
+
+Pages were fetched and uploaded to GCS in both runs; Discovery Engine reported 0 indexed
+in the first within a 6m41s wait. That matches the indexing lag the code already documents
+(and the `pendingGroundingRechecks` sweep exists for), but it means a live migration can
+report a knowledge source as failed when it would have succeeded minutes later. Recorded as
+**open**, not fixed.
+
 ---
 
 ## 2b. Work landed overnight 2026-08-11/12 — graded
