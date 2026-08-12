@@ -324,6 +324,46 @@ export async function grantSecretAccessToServiceAgent(
   return { granted, failed };
 }
 
+export interface SecretOwnership {
+  /** The secret exists and we could read its metadata. */
+  found: boolean;
+  /** `app_user` label written at save time, when present. */
+  owner?: string;
+  /** True when the secret carries our management label. */
+  managed?: boolean;
+}
+
+/**
+ * Who does a secret belong to?
+ *
+ * Deleting by id alone is unsafe in this product: ids written before customer scoping
+ * (`studio-enterprise-atlassian-api-token`) contain no owner at all, and on a deployment
+ * serving several customers that same id backs ALL of them. One customer purging Jira
+ * would destroy the credential another customer's deployed agent is still reading, with
+ * no way back — destroy is irreversible.
+ *
+ * Labels are the only owner statement attached to the secret itself, so they are what the
+ * delete path checks. A secret we cannot read metadata for is reported `found: false` and
+ * must be left alone rather than assumed ours.
+ */
+export async function getSecretOwnership(
+  saToken: string,
+  project: string,
+  secretId: string,
+): Promise<SecretOwnership> {
+  try {
+    const res = await fetch(`${HOST}/projects/${project}/secrets/${secretId}`, {
+      headers: { Authorization: `Bearer ${saToken}` },
+    });
+    if (!res.ok) return { found: false };
+    const json = (await res.json()) as { labels?: Record<string, string> };
+    const labels = json.labels ?? {};
+    return { found: true, owner: labels.app_user, managed: labels.managed_by === 'studio-enterprise' };
+  } catch {
+    return { found: false };
+  }
+}
+
 /**
  * Permanently delete a secret and every version of it.
  *

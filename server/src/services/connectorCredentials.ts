@@ -65,7 +65,7 @@ function secretSafe(part: string): string {
 export function connectorSecretId(
   connectorIdOrScope: string,
   field: string,
-  appUserId?: string,
+  ownerScope: string,
 ): string {
   // Accepts either a connector id (resolved through its group) or an explicit scope,
   // so callers that already know the scope — or use a non-registry scope like
@@ -73,8 +73,12 @@ export function connectorSecretId(
   const scope = REGISTRY_BY_ID.has(connectorIdOrScope)
     ? connectorFieldScope(connectorIdOrScope, field)
     : connectorIdOrScope;
-  if (!appUserId) return legacyConnectorSecretId(connectorIdOrScope, field);
-  return `studio-enterprise-${secretSafe(appUserId)}-${secretSafe(scope)}-${secretSafe(field)}`;
+  // `ownerScope` is REQUIRED and the parameter is not optional, deliberately. It used to
+  // be, falling back to the un-scoped legacy id when omitted — so a caller that simply
+  // forgot it wrote into the namespace EVERY customer shares, silently. That is a
+  // cross-tenant credential overwrite produced by an omission the compiler allowed. Use
+  // `credentialScope(session)`; never pass a client-supplied value.
+  return `studio-enterprise-${secretSafe(ownerScope)}-${secretSafe(scope)}-${secretSafe(field)}`;
 }
 
 /**

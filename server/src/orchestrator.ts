@@ -35,7 +35,7 @@ import { planTopicsMigration } from './services/topicsMigration.js';
 import { normalizeSharePointSiteUrl } from './services/knowledgePlanner.js';
 import { verifyAgent } from './services/verify.js';
 import { preflightQuota, nextQuotaResetUtc } from './services/quota.js';
-import { DEFAULT_APP_USER_ID, newId, type Session } from './sessionStore.js';
+import { DEFAULT_APP_USER_ID, credentialScope, newId, type Session } from './sessionStore.js';
 import { appendLog, finishRun, saveResult, startRun } from './db/repos/migrations.js';
 import { cacheAgentIR } from './db/repos/agentIR.js';
 import { listStaged, markStaged, stageAgent } from './db/repos/staged.js';
@@ -735,7 +735,10 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // back deployed agents — recomputing would point a working agent at a secret that
   // does not exist, and every tool call would 403 at inference behind a green deploy.
   const secretIdOpts = {
-    appUserId,
+    // The customer's isolation key, not the Mongo scope key: `appUserId` is 'default' for
+    // everyone until sign-in is wired, and secret ids built from it collide across
+    // customers. See credentialScope() in sessionStore.ts.
+    ownerScope: credentialScope(session),
     storedSecretIds: Object.fromEntries(
       durableConnectorRecords.map((c) => [c.connectorId, c.secretIds ?? {}]),
     ),

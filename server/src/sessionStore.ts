@@ -65,6 +65,33 @@ export interface Session {
 /** Used until real login is wired; every session/run is scoped to this. */
 export const DEFAULT_APP_USER_ID = 'default';
 
+/**
+ * The isolation key for anything a customer OWNS — Secret Manager ids above all.
+ *
+ * `appUserId` is the intended key, but no route sets it: sign-in was never wired, so every
+ * session in the product today carries the literal string 'default'. Measured 2026-08-12 —
+ * every row in `migrationSessions`, `connectorCredentials`, `adkDeployments` and
+ * `stagedAgents` is `appUserId: 'default'`. On a single-customer install that is harmless.
+ * On one deployment serving several customers it means one shared credential namespace:
+ * customer B's Atlassian token overwrites customer A's, and A's deployed agent then calls
+ * Atlassian with B's credential.
+ *
+ * Until login exists, the Microsoft tenant id is a real discriminator and is already on the
+ * session — it comes from the OAuth flow, not from anything the client can assert. Using it
+ * gives genuine per-customer isolation now, and `appUserId` takes precedence the moment
+ * sign-in lands, so nothing has to be undone.
+ *
+ * Not a substitute for authentication: it separates customers who connect different
+ * Microsoft tenants. Two users inside ONE tenant still share a namespace, which is correct
+ * for this product (they are the same customer) but must not be mistaken for user-level
+ * isolation.
+ */
+export function credentialScope(session: Pick<Session, 'appUserId' | 'tenantId'>): string {
+  if (session.appUserId && session.appUserId !== DEFAULT_APP_USER_ID) return session.appUserId;
+  if (session.tenantId) return `ms-${session.tenantId}`;
+  return DEFAULT_APP_USER_ID;
+}
+
 const COLL = 'migrationSessions';
 
 // In-memory fallback (only used when Mongo is unreachable).

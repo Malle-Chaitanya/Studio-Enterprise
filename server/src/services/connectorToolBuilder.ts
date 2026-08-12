@@ -55,16 +55,21 @@ export interface ResolvedConnector {
  * inference with a green deployment behind it.
  */
 export interface SecretIdOptions {
-  appUserId?: string;
+  /**
+   * The customer's isolation key (`credentialScope(session)`). Required: when this was
+   * optional, omitting it silently produced the un-scoped legacy id, i.e. the namespace
+   * every customer shares.
+   */
+  ownerScope: string;
   /** connectorId → (field key → real Secret Manager id), as recorded when saved. */
   storedSecretIds?: Record<string, Record<string, string>>;
 }
 
 /** The id to use for one connector field: what was stored, else a tenant-scoped name. */
-function secretIdFor(connectorId: string, field: string, opts?: SecretIdOptions): string {
+function secretIdFor(connectorId: string, field: string, opts: SecretIdOptions): string {
   const stored = opts?.storedSecretIds?.[connectorId]?.[field];
   if (stored) return stored;
-  return connectorSecretId(connectorId, field, opts?.appUserId);
+  return connectorSecretId(connectorId, field, opts.ownerScope);
 }
 
 /**
@@ -76,7 +81,7 @@ export async function resolveConnectorSecrets(
   saToken: string,
   projectId: string,
   connectorIds: string[],
-  opts?: SecretIdOptions,
+  opts: SecretIdOptions,
 ): Promise<ResolvedConnector[]> {
   const results: ResolvedConnector[] = [];
 
@@ -159,7 +164,7 @@ export interface LiveConnectorSpec {
  */
 export function buildLiveConnectorSpecs(
   connectorIds: string[],
-  opts?: SecretIdOptions,
+  opts: SecretIdOptions,
 ): LiveConnectorSpec[] {
   return buildLiveConnectorSpecsDetailed(connectorIds, opts).specs;
 }
@@ -176,7 +181,7 @@ export function buildLiveConnectorSpecs(
  */
 export function buildLiveConnectorSpecsDetailed(
   connectorIds: string[],
-  opts?: SecretIdOptions,
+  opts: SecretIdOptions,
 ): { specs: LiveConnectorSpec[]; unsupported: string[] } {
   const specs: LiveConnectorSpec[] = [];
   const unsupported: string[] = [];
@@ -241,7 +246,27 @@ function connectorCapabilityHint(kind: string): string {
   return 'call its REST API to read data or perform an action on the user\'s behalf';
 }
 
-export function buildLiveConnectorInstruction(specs: LiveConnectorSpec[]): string {
+/**
+ * The instruction text needs only a connector's identity, never its secret ids. Taking the
+ * narrow shape lets callers that are writing INSTRUCTIONS (the mapper) describe connectors
+ * without constructing secret ids they have no customer scope for — the previous signature
+ * forced the mapper to build full specs, which is what made an un-scoped id reachable from
+ * a path that never needed one.
+ */
+export type ConnectorCapabilityRef = Pick<LiveConnectorSpec, 'id' | 'kind' | 'name'>;
+
+/** Registry-only refs for instruction text. Unknown ids are skipped, not invented. */
+export function connectorCapabilityRefs(connectorIds: string[]): ConnectorCapabilityRef[] {
+  const refs: ConnectorCapabilityRef[] = [];
+  for (const id of connectorIds) {
+    const def = REGISTRY_BY_ID.get(id);
+    if (!def) continue;
+    refs.push({ id, kind: id.replace(/^shared_/, ''), name: def.name });
+  }
+  return refs;
+}
+
+export function buildLiveConnectorInstruction(specs: ConnectorCapabilityRef[]): string {
   if (specs.length === 0) return '';
   const lines = [
     '',

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { runMigration } from '../orchestrator.js';
 import { renderReportExcel } from '../services/report.js';
 import { resolveScope } from '../services/scope.js';
-import { getSession, updateSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
+import { getSession, updateSession, credentialScope, DEFAULT_APP_USER_ID } from '../sessionStore.js';
 import {
   upsertConnectorCredential,
   listConnectorCredentials,
@@ -19,7 +19,7 @@ import { migrateSharePointDriveItem } from '../services/knowledgeDataStoreExecut
 import { detectThirdPartyConnectors } from '../services/thirdPartyConnectorScan.js';
 import { detectKnowledgeConnectors } from '../services/knowledgeConnectorScan.js';
 import { listBots } from '../services/dataverse.js';
-import { upsertSecretIfChanged, preflightSecretAccess, deleteSecret, getEntraSecret } from '../services/secretManager.js';
+import { upsertSecretIfChanged, preflightSecretAccess, deleteSecret, getSecretOwnership, getEntraSecret } from '../services/secretManager.js';
 import { validateConnectorCredentials } from '../services/connectorValidator.js';
 import { logger } from '../logger.js';
 import { serviceAccountEmail } from '../auth/google.js';
@@ -411,13 +411,16 @@ migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
     for (const { field, value } of creds) {
       // Reuse the id this field was stored under before, so an update lands on the
       // secret the already-deployed agents read rather than creating a parallel one.
-      const secretId = priorRecord?.secretIds?.[field] ?? connectorSecretId(connectorId, field, appUserId);
+      const secretId = priorRecord?.secretIds?.[field] ?? connectorSecretId(connectorId, field, credentialScope(session));
       // Labels are the only way to tell later which tenant and connector a secret
       // belongs to — the id alone cannot be queried, so without these there is no way
       // to enumerate a customer's credentials in order to audit or remove them.
       await upsertSecretIfChanged(saToken, secretsProject, secretId, value, {
         managed_by: 'studio-enterprise',
-        app_user: appUserId,
+        // The OWNER scope, not the Mongo key: appUserId is 'default' for every customer
+        // until sign-in is wired, which would label every customer's secret identically
+        // and make the delete path's ownership check meaningless.
+        app_user: credentialScope(session),
         connector: connectorId,
       });
       secretIds.push(secretId);
@@ -617,8 +620,36 @@ migrateRouter.delete('/connector-credentials', async (req, res) => {
         .flatMap((r) => Object.values(r.secretIds ?? {})),
     );
     const saToken = await getSaToken(session.gEmail);
+    const scope = credentialScope(session);
     for (const secretId of new Set(Object.values(record.secretIds ?? {}))) {
       if (stillUsed.has(secretId)) continue;
+      // Destroy is irreversible, and an id is not proof of ownership: credentials saved
+      // before customer scoping carry no owner in the id, so on a deployment serving more
+      // than one customer the same id can back several of them. Check the label on the
+      // secret itself and refuse anything that is not demonstrably this customer's.
+      const owner = await getSecretOwnership(saToken, record.project, secretId);
+      if (!owner.found) {
+        purgeErrors.push(`${secretId}: could not read the secret's metadata, so it was left in place`);
+        continue;
+      }
+      if (!owner.managed) {
+        purgeErrors.push(`${secretId}: not managed by Studio Migrate — left in place`);
+        continue;
+      }
+      if (owner.owner && owner.owner !== scope) {
+        purgeErrors.push(`${secretId}: belongs to another customer — left in place`);
+        logger.warn({ secretId, project: record.project }, 'purge refused: secret owned by a different scope');
+        continue;
+      }
+      if (!owner.owner) {
+        // Written before ownership labelling. It may back another customer's running
+        // agent, and there is no way to tell from here.
+        purgeErrors.push(
+          `${secretId}: saved before ownership labelling, so it cannot be proven to be yours — left in place. ` +
+            'Delete it from Secret Manager directly if you are sure.',
+        );
+        continue;
+      }
       const del = await deleteSecret(saToken, record.project, secretId);
       if (del.ok) purged.push(secretId);
       else purgeErrors.push(`${secretId}: ${del.error}`);
@@ -672,7 +703,7 @@ migrateRouter.post('/ms-connector-credentials', async (req, res) => {
       // Absent field means "leave as is" — the client omits what the admin did not
       // retype. An empty string would be a real value and is not treated as one here.
       if (!value) continue;
-      const secretId = priorMs?.secretIds?.[field.key] ?? connectorSecretId('ms_graph', field.key, appUserId);
+      const secretId = priorMs?.secretIds?.[field.key] ?? connectorSecretId('ms_graph', field.key, credentialScope(session));
       await upsertSecretIfChanged(saToken, secretsProject, secretId, value, {
         managed_by: 'studio-enterprise',
         app_user: appUserId,
