@@ -138,6 +138,13 @@ export interface AdkSpec {
      * model nicely in an instruction is not.
      */
     scopeUri?: string;
+    /**
+     * Every folder/site the source agent named, when it named more than one. An agent
+     * with "HR Policies" and "IT Runbooks" attached could reach both; scoping its tools
+     * to the first left the second unreachable while the report still said SharePoint
+     * was migrated. `scopeUri` remains for the single-source case.
+     */
+    scopeUris?: string[];
   }>;
   /**
    * Migrated Copilot topics, deployed as ADK sub-agents INSIDE this one Reasoning

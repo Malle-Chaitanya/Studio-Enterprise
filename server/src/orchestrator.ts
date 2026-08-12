@@ -190,50 +190,25 @@ async function resolveSharePointCopyModeSources(
     try {
       const shared = await resolveShareUrlSmart(graphToken, url);
 
-      // A FOLDER of several files is not an ambiguity to punt on — the author pointed the
-      // agent at that folder, so every file in it is in scope, and copying them all is what
-      // reproduces the source. It used to fall through to the native connector, which
-      // returns no content, so a 3-file folder migrated as nothing at all (live: the
-      // "TestingPermissions" source on CloudFuze Studio Migrate, whose migrationResults row
-      // reads `lost — connector data store(s) exist but attaching to the engine failed`).
+      // A FOLDER of several files is deliberately NOT copied.
       //
-      // Bounded, because a library can hold thousands of files and an unbounded copy would
-      // enlarge the agent rather than migrate it. Truncation is REPORTED, never silent.
-      if (shared.kind === 'folder-multiple-files' && shared.candidates?.length) {
-        const MAX_FOLDER_FILES = 25;
-        const take = shared.candidates.slice(0, MAX_FOLDER_FILES);
-        let copied = 0;
-        for (const item of take) {
-          const b = await downloadDriveItemBytes(graphToken, item);
-          if (!b) continue;
-          const one = await migrateFileToDocumentStore(project, saToken, agentSourceId, {
-            name: item.name,
-            bytes: b.bytes,
-            mimeType: b.contentType || 'application/octet-stream',
-          });
-          if (!one.resourcePath || !one.dataStoreId) continue;
-          resolved.push({ src, resourcePath: one.resourcePath, dataStoreId: one.dataStoreId, fileName: item.name });
-          copied++;
-        }
-        if (copied === 0) {
-          remaining.push(src);
-          logs.push({ level: 'warn', text: `    "${src.name}": folder with ${shared.candidates.length} file(s), but none could be copied — falling back to the native connector attempt.` });
-          continue;
-        }
-        logs.push({
-          level: 'ok',
-          text:
-            `    "${src.name}": folder reference — copied ${copied}/${shared.candidates.length} file(s) via Microsoft Graph and grounded each like an uploaded file` +
-            (shared.candidates.length > MAX_FOLDER_FILES ? ` (capped at ${MAX_FOLDER_FILES}; ${shared.candidates.length - MAX_FOLDER_FILES} not copied)` : '') + '.',
-        });
-        continue;
-      }
-
-      // 'file' and 'folder-single-file' are BOTH a confident single-item
-      // match (see graphFiles.ts's resolveShareUrlSmart). 'not-found' still
-      // falls through to the native-connector attempt below.
+      // The rule the product follows: a source that names ONE FILE is fetched and stored
+      // (indexed, semantically searchable); anything broader — a folder, a library, a
+      // whole site — is served by the live SharePoint tools instead. Copying a folder
+      // would produce a point-in-time duplicate of content that goes stale, drop
+      // SharePoint's permissions on every file in it, and grow without limit; the tools
+      // read the same files on demand, current, scoped to the folder the author named.
+      //
+      // 'not-found' also falls through, since there is nothing to fetch either way.
+      // 'file' and 'folder-single-file' are BOTH a confident single-file match — see
+      // graphFiles.ts's resolveShareUrlSmart, where a folder holding exactly one file IS
+      // that file as far as the author was concerned.
       if ((shared.kind !== 'file' && shared.kind !== 'folder-single-file') || !shared.item) {
         remaining.push(src);
+        logs.push({
+          level: 'info',
+          text: `    "${src.name}": ${shared.kind === 'not-found' ? 'could not be resolved' : 'is a folder, not one file'} — not copied; the migrated agent reads it live through its SharePoint tools instead.`,
+        });
         continue;
       }
       const bytes = await downloadDriveItemBytes(graphToken, shared.item);
@@ -1401,17 +1376,65 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       const spGraphSources = ks.filter(
         (s) => s.kind !== 'FileUpload' && /sharepoint\.com/i.test(s.reference ?? s.references?.[0] ?? ''),
       );
+      // EVERY named source becomes a tool scope, not just the one we crawl. An agent with
+      // two SharePoint sources attached could read both in Copilot; scoping its tools to
+      // sources[0] silently removed the second while the report still said SharePoint was
+      // migrated. The union of the author's own paths is exactly the source agent's reach —
+      // one path wider (a common parent, the whole site) is not.
+      // A source copy mode already fetched is NOT a tool scope. It named one file, so it
+      // is stored and searchable; handing that same file path to the folder tools would
+      // give them a scope with no children to list. Broad sources — the ones copy mode
+      // deliberately left alone — are exactly what the tools are for.
+      const spUncovered = spGraphSources.filter((s) => !spCopyModeCoveredSrcs.has(s));
+      const spScopeUris = [
+        ...new Set(
+          spUncovered
+            .map((s) => (s.reference ?? s.references?.[0] ?? '').trim())
+            .filter((u) => /^https?:\/\//i.test(u)),
+        ),
+      ];
       // Microsoft app credentials come from the shared ms_graph group — the same set
       // every Microsoft connector uses, saved once by the customer.
       const msCreds = resolvedConnectors.find((c) =>
         c.connectorId === 'shared_sharepointonline' || c.connectorId === 'shared_onedrive',
       )?.fields;
-      if (spGraphSources.length && dest.project && msCreds?.tenant_id && msCreds?.client_id && msCreds?.client_secret) {
-        spScopeUri = spGraphSources[0].reference ?? spGraphSources[0].references?.[0] ?? '';
+      const spHasCreds = Boolean(msCreds?.tenant_id && msCreds?.client_id && msCreds?.client_secret);
+      // Broad sources are TOOL-SERVED, not bulk-copied.
+      //
+      // This block used to crawl the whole site and index everything under it. That is a
+      // point-in-time duplicate that goes stale, strips SharePoint's permissions from
+      // every file it copies, and can be far larger than what the author attached. With
+      // the same credentials the agent gets live, folder-scoped list/read tools that
+      // answer from the CURRENT file — so the crawl now runs only when those tools cannot
+      // (no credentials), and specific FILES are still fetched and indexed by copy mode
+      // above, which is what makes them semantically searchable.
+      const spToolServed = spHasCreds && spScopeUris.length > 0;
+      if (spToolServed) {
+        spScopeUri = spScopeUris[0];
+        emitLog(
+          'info',
+          `    SharePoint: ${spScopeUris.length} source(s) served by live tools (list/read, scoped to ${spScopeUris.length === 1 ? 'the folder' : 'the folders'} this agent named) — not bulk-copied.`,
+        );
+        for (const uri of spScopeUris) {
+          result.fidelity.push({
+            component: `knowledge:${uri}`,
+            status: 'mapped',
+            detail:
+              'Reachable live: the migrated agent lists and reads files under this path through Microsoft Graph, using the ' +
+              'app credentials you supplied, at question time. Content is current rather than a copy, and the tools cannot ' +
+              'reach outside this path. Note the agent reads with the app identity, so it can see everything under the path ' +
+              'regardless of who is asking.',
+          });
+        }
+      } else if (spUncovered.length && dest.project && spHasCreds && /^https?:\/\//i.test(spUncovered[0].reference ?? spUncovered[0].references?.[0] ?? '')) {
+        // Only ever crawl what copy mode did NOT already fetch; crawling a file we just
+        // indexed would duplicate it into a second data store. And only with a real
+        // address — an opaque config id here produced a crawl guaranteed to fail.
+        spScopeUri = spUncovered[0].reference ?? spUncovered[0].references?.[0] ?? '';
         emitLog('info', `    SharePoint: crawling ${spScopeUri} for grounding…`);
         preSpResult = await migrateSharePointToDataStore(
           dest.project, saToken, row.mapped.ir.sourceId,
-          { tenantId: msCreds.tenant_id, clientId: msCreds.client_id, clientSecret: msCreds.client_secret, siteUrl: spScopeUri },
+          { tenantId: msCreds!.tenant_id, clientId: msCreds!.client_id, clientSecret: msCreds!.client_secret, siteUrl: spScopeUri },
         ).catch((err): SharePointMigrationResult => {
           logger.warn({ err }, 'orchestrator: SharePoint pre-crawl threw; continuing');
           return { fileCount: 0, skipped: [], error: (err as Error).message };
@@ -1894,8 +1917,8 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               const withOps = opsByConnector.has(c.id) ? { ...c, operations: opsByConnector.get(c.id) } : c;
               const bound = boundBuild.byConnector.get(c.id);
               const withBound = bound?.length ? { ...withOps, boundOperations: bound } : withOps;
-              return /sharepoint|onedrive/i.test(withBound.kind) && spScopeUri
-                ? { ...withBound, scopeUri: spScopeUri }
+              return /sharepoint|onedrive/i.test(withBound.kind) && (spScopeUris.length || spScopeUri)
+                ? { ...withBound, scopeUri: spScopeUri, scopeUris: spScopeUris.length ? spScopeUris : undefined }
                 : withBound;
             });
             const boundCount = [...boundBuild.byConnector.values()].reduce((n, l) => n + l.length, 0);

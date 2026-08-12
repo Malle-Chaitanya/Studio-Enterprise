@@ -1551,6 +1551,58 @@ since; the folder-copy path and the two new notes have not appeared in a real re
 
 ---
 
+### 1.29 SharePoint: files are stored, everything else is tool-called (2026-08-13)
+
+The rule the product now follows, stated once so the code can be checked against it:
+
+| The author attached | What the migrated agent gets |
+|---|---|
+| ONE FILE (`daily_queries.txt`, `Q1.pdf`) | fetched through Graph and indexed — semantically searchable, point-in-time |
+| a folder, library or site | LIVE tools: `sharepoint_list_files` + `sharepoint_read_file`, scoped to that path |
+| a SharePoint API tool (`HttpRequest`) | the same live tools, folder-scoped (§1.28) |
+
+Three changes make the code match it.
+
+**1. Broad sources are no longer bulk-copied.** §1.28 had folder sources copying every file
+inside; that has been reverted. A copy of a folder goes stale, strips SharePoint's
+permissions from every file it duplicates, and can be far larger than what was attached.
+The whole-site crawl (`migrateSharePointToDataStore`) now runs ONLY when the live tools
+cannot — i.e. no app credentials — and never over a source copy mode already fetched (that
+would index the same file into a second data store).
+
+**2. Every named source scopes the tools, not just the first.** `scopeUri` came from
+`spGraphSources[0]`, so an agent with "HR Policies" and "IT Runbooks" attached could reach
+only one while the report claimed SharePoint was migrated. `adk_deploy.py` now takes
+`scopeUris[]`: `sharepoint_list_files` lists across all of them (tagging each item with its
+`source`, and reporting per-source errors instead of hiding them), and
+`sharepoint_read_file` tries each in turn. Every attempt still goes through `_scoped_path`,
+so a path that escapes one folder is rejected rather than retried against a wider one. The
+union of the author's own paths is the source agent's reach; a common parent would be wider.
+
+**3. A copied file is not also a tool scope.** Handing a FILE path to the folder tools
+gives them a scope with no children — so sources covered by copy mode are excluded from
+`scopeUris`, and broad sources (exactly what copy mode declines) are what the tools serve.
+
+**Reading inside the data already worked** and is unchanged — `sharepoint_read_file`
+extracts text from `.txt .md .csv .json .log .xml`, PDF (`pypdf`), Word (`python-docx`) and
+Excel (`openpyxl`), capped at 20 MB in and 60 000 characters out, with `truncated` reported
+rather than silently cut.
+
+The new grounding note says what the tool path costs, since it is not the same guarantee an
+indexed copy gives:
+
+> Reachable live: the migrated agent lists and reads files under this path through Microsoft
+> Graph … Content is current rather than a copy, and the tools cannot reach outside this
+> path. Note the agent reads with the app identity, so it can see everything under the path
+> regardless of who is asking.
+
+Grade **T**: `tsc --noEmit` clean in server and web, 109 unit tests pass, `adk_deploy.py`
+parses. No migration has run since, so multi-scope listing and the tool-served path have not
+been exercised against live SharePoint — that is the next thing to run, on `HR AGENT`
+(folder source) and `CloudFuze Studio Migrate` (3-file folder).
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run

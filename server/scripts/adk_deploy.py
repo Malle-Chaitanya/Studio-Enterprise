@@ -261,7 +261,16 @@ def _build_live_connector_tool(conn: dict, project: str):
         #      instruction asking it not to wander.
         #   2. Reading files. Graph returns raw bytes; the model needs text. Extraction
         #      (pdf/docx/xlsx) has to happen in the container.
-        scope_uri = conn.get("scopeUri") or ""
+        # EVERY folder/site the source agent named, not just the first one.
+        #
+        # A Copilot agent can attach several SharePoint sources ("HR Policies" and
+        # "IT Runbooks"); scoping the tools to sources[0] left the second one
+        # unreachable while the report still claimed SharePoint was migrated. The
+        # union of the named paths is exactly what the source agent could see —
+        # widening to a common parent, or to the whole tenant, is not.
+        scope_uris = [u for u in (conn.get("scopeUris") or []) if u]
+        if not scope_uris and conn.get("scopeUri"):
+            scope_uris = [conn["scopeUri"]]
 
         def _graph(path: str, token: str, raw: bool = False):
             import json as _json
@@ -274,8 +283,8 @@ def _build_live_connector_tool(conn: dict, project: str):
                 data = resp.read()
             return data if raw else _json.loads(data.decode("utf-8"))
 
-        def _resolve_scope(token: str):
-            """Turn the SharePoint URL into (siteId, folderPath). Cached per container."""
+        def _resolve_scope(token: str, scope_uri: str = ""):
+            """Turn one SharePoint URL into (siteId, folderPath)."""
             import urllib.parse
             if not scope_uri:
                 return None, ""
@@ -332,27 +341,41 @@ def _build_live_connector_tool(conn: dict, project: str):
             Returns:
                 dict with `items` (name, isFolder, size, lastModified, id) or `error`.
             """
-            try:
-                token = _mint_token(_fill)
-                site_id, folder = _resolve_scope(token)
-                if not site_id:
-                    return {"error": "no SharePoint scope configured for this agent"}
-                path = _scoped_path(folder, subfolder)
-                url = (
-                    f"/sites/{site_id}/drive/root:/{path}:/children"
-                    if path else f"/sites/{site_id}/drive/root/children"
-                )
-                data = _graph(url, token)
-            except Exception as e:  # noqa: BLE001
-                return {"error": f"SharePoint list failed: {e}"}
-            items = [{
-                "name": i.get("name"),
-                "isFolder": "folder" in i,
-                "size": i.get("size"),
-                "lastModified": i.get("lastModifiedDateTime"),
-                "id": i.get("id"),
-            } for i in data.get("value", [])]
-            return {"folder": scope_uri, "subfolder": subfolder, "items": items, "count": len(items)}
+            if not scope_uris:
+                return {"error": "no SharePoint scope configured for this agent"}
+            items = []
+            errors = []
+            for scope_uri in scope_uris:
+                try:
+                    token = _mint_token(_fill)
+                    site_id, folder = _resolve_scope(token, scope_uri)
+                    if not site_id:
+                        continue
+                    path = _scoped_path(folder, subfolder)
+                    url = (
+                        f"/sites/{site_id}/drive/root:/{path}:/children"
+                        if path else f"/sites/{site_id}/drive/root/children"
+                    )
+                    data = _graph(url, token)
+                except Exception as e:  # noqa: BLE001
+                    # One unreachable source must not hide the others; report per source.
+                    errors.append(f"{scope_uri}: {e}")
+                    continue
+                for i in data.get("value", []):
+                    items.append({
+                        "name": i.get("name"),
+                        "isFolder": "folder" in i,
+                        "size": i.get("size"),
+                        "lastModified": i.get("lastModifiedDateTime"),
+                        "id": i.get("id"),
+                        "source": scope_uri,
+                    })
+            if not items and errors:
+                return {"error": "SharePoint list failed — " + "; ".join(errors)}
+            out = {"folders": scope_uris, "subfolder": subfolder, "items": items, "count": len(items)}
+            if errors:
+                out["partialErrors"] = errors
+            return out
 
         def sharepoint_read_file(file_path: str) -> dict:
             """Read the TEXT CONTENT of a file in the connected SharePoint folder, so you
@@ -371,19 +394,34 @@ def _build_live_connector_tool(conn: dict, project: str):
             import io
             MAX_BYTES = 20 * 1024 * 1024
             MAX_CHARS = 60000
-            try:
-                token = _mint_token(_fill)
-                site_id, folder = _resolve_scope(token)
-                if not site_id:
-                    return {"error": "no SharePoint scope configured for this agent"}
-                full = _scoped_path(folder, file_path)
-                meta = _graph(f"/sites/{site_id}/drive/root:/{full}", token)
-                size = meta.get("size") or 0
-                if size > MAX_BYTES:
-                    return {"error": f"file is {size} bytes, too large to read inline"}
-                blob = _graph(f"/sites/{site_id}/drive/root:/{full}:/content", token, raw=True)
-            except Exception as e:  # noqa: BLE001
-                return {"error": f"SharePoint read failed: {e}"}
+            if not scope_uris:
+                return {"error": "no SharePoint scope configured for this agent"}
+            # The model names a file, not which connected folder it lives in, so try each
+            # scope in turn. Every attempt still goes through _scoped_path, so a path that
+            # escapes a folder is rejected for that folder rather than silently retried
+            # against a wider one.
+            meta = None
+            blob = None
+            last_error = ""
+            for scope_uri in scope_uris:
+                try:
+                    token = _mint_token(_fill)
+                    site_id, folder = _resolve_scope(token, scope_uri)
+                    if not site_id:
+                        continue
+                    full = _scoped_path(folder, file_path)
+                    meta = _graph(f"/sites/{site_id}/drive/root:/{full}", token)
+                    size = meta.get("size") or 0
+                    if size > MAX_BYTES:
+                        return {"error": f"file is {size} bytes, too large to read inline"}
+                    blob = _graph(f"/sites/{site_id}/drive/root:/{full}:/content", token, raw=True)
+                    break
+                except Exception as e:  # noqa: BLE001
+                    last_error = f"{e}"
+                    meta = None
+                    continue
+            if blob is None or meta is None:
+                return {"error": f"SharePoint read failed: {last_error or 'file not found in any connected folder'}"}
 
             name = (meta.get("name") or file_path).lower()
             try:

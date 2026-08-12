@@ -81,7 +81,7 @@ describe('recoverSharePointUrlByName', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await recoverSharePointUrlByName(ENV, TOKEN, "Erik's Notes");
-    const url = String(fetchMock.mock.calls[0][0]);
+    const url = String((fetchMock.mock.calls as unknown as unknown[][])[0][0]);
     expect(decodeURIComponent(url)).toContain("name eq 'Erik''s Notes'");
   });
 
