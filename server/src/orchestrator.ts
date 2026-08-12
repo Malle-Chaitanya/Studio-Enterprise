@@ -1,4 +1,5 @@
 import { clientCredsToken } from './auth/microsoft.js';
+import { recoverSharePointUrlByName } from './services/sharePointUrlRecovery.js';
 import { getSaToken, serviceAccountEmail } from './auth/google.js';
 import { logger } from './logger.js';
 import { extractAgent, fetchFileAttachmentBytes, resolveSystemUserEmail } from './services/dataverse.js';
@@ -153,11 +154,11 @@ interface SharePointCopyModeResolution {
  * customer-side setup) and grounded exactly like a locally-uploaded file
  * (migrateFileToDocumentStore) — proven working end-to-end live 2026-08-06.
  *
- * Only handles the single-file case. A source that resolves to a folder,
- * whole site, or multiple ambiguous candidates is left in `remaining` for
- * the native-connector path to attempt (which, per the above, is not
- * currently expected to work either — but there is no other automated
- * option yet for a whole-site/library reference).
+ * Handles a single file, a folder that holds one file, and a folder of several files
+ * (each copied, bounded and reported). A source that resolves to nothing, or to a whole
+ * site/library, is left in `remaining` for the native-connector path to attempt (which,
+ * per the above, is not currently expected to work either — but there is no other
+ * automated option yet for a whole-site reference).
  */
 async function resolveSharePointCopyModeSources(
   project: string,
@@ -188,10 +189,49 @@ async function resolveSharePointCopyModeSources(
     }
     try {
       const shared = await resolveShareUrlSmart(graphToken, url);
+
+      // A FOLDER of several files is not an ambiguity to punt on — the author pointed the
+      // agent at that folder, so every file in it is in scope, and copying them all is what
+      // reproduces the source. It used to fall through to the native connector, which
+      // returns no content, so a 3-file folder migrated as nothing at all (live: the
+      // "TestingPermissions" source on CloudFuze Studio Migrate, whose migrationResults row
+      // reads `lost — connector data store(s) exist but attaching to the engine failed`).
+      //
+      // Bounded, because a library can hold thousands of files and an unbounded copy would
+      // enlarge the agent rather than migrate it. Truncation is REPORTED, never silent.
+      if (shared.kind === 'folder-multiple-files' && shared.candidates?.length) {
+        const MAX_FOLDER_FILES = 25;
+        const take = shared.candidates.slice(0, MAX_FOLDER_FILES);
+        let copied = 0;
+        for (const item of take) {
+          const b = await downloadDriveItemBytes(graphToken, item);
+          if (!b) continue;
+          const one = await migrateFileToDocumentStore(project, saToken, agentSourceId, {
+            name: item.name,
+            bytes: b.bytes,
+            mimeType: b.contentType || 'application/octet-stream',
+          });
+          if (!one.resourcePath || !one.dataStoreId) continue;
+          resolved.push({ src, resourcePath: one.resourcePath, dataStoreId: one.dataStoreId, fileName: item.name });
+          copied++;
+        }
+        if (copied === 0) {
+          remaining.push(src);
+          logs.push({ level: 'warn', text: `    "${src.name}": folder with ${shared.candidates.length} file(s), but none could be copied — falling back to the native connector attempt.` });
+          continue;
+        }
+        logs.push({
+          level: 'ok',
+          text:
+            `    "${src.name}": folder reference — copied ${copied}/${shared.candidates.length} file(s) via Microsoft Graph and grounded each like an uploaded file` +
+            (shared.candidates.length > MAX_FOLDER_FILES ? ` (capped at ${MAX_FOLDER_FILES}; ${shared.candidates.length - MAX_FOLDER_FILES} not copied)` : '') + '.',
+        });
+        continue;
+      }
+
       // 'file' and 'folder-single-file' are BOTH a confident single-item
-      // match (see graphFiles.ts's resolveShareUrlSmart) — only
-      // 'folder-multiple-files' (real ambiguity) and 'not-found' fall through
-      // to the native-connector attempt below.
+      // match (see graphFiles.ts's resolveShareUrlSmart). 'not-found' still
+      // falls through to the native-connector attempt below.
       if ((shared.kind !== 'file' && shared.kind !== 'folder-single-file') || !shared.item) {
         remaining.push(src);
         continue;
@@ -1229,10 +1269,59 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       //      return content today. If Google ever fixes the native connector,
       //      the honest "needs-review" note on the connector attempt is the
       //      trigger to revisit whether copy mode is still needed.
+      // Some sources kept an opaque config-record id instead of a URL, so copy mode has
+      // no address to resolve and the whole source drops to the native connector, which
+      // returns no content. The address usually exists in the customer's own Dataverse on
+      // a SIBLING agent that stored the same source properly — recover it before copy mode
+      // runs, and say where it came from. See services/sharePointUrlRecovery.ts.
+      const spSourcesForCopy: KnowledgeSourceIR[] = [];
+      // A recovered source is a COPY of the IR object with the address filled in, and
+      // everything downstream ("was this source covered by copy mode?") compares sources
+      // by object identity. Without this map a recovered source would be reported as
+      // covered AND as still needing the native connector's caveat.
+      const originalOf = new Map<KnowledgeSourceIR, KnowledgeSourceIR>();
+      for (const src of spConnectorSources) {
+        const have = (src.reference ?? src.references?.[0] ?? '').trim();
+        if (/^https?:\/\//i.test(have)) {
+          spSourcesForCopy.push(src);
+          continue;
+        }
+        const rec = await recoverSharePointUrlByName(row.envUrl, await tokenFor(row.envUrl), src.name);
+        if (rec.status === 'recovered') {
+          const patched: KnowledgeSourceIR = { ...src, reference: rec.url };
+          originalOf.set(patched, src);
+          spSourcesForCopy.push(patched);
+          result.fidelity.push({
+            component: `knowledge:${src.name}`,
+            status: 'needs-review',
+            detail:
+              `"${src.name}" stored no address — Copilot kept only an internal configuration id for it. ` +
+              `The same source is attached to another agent in this environment (${rec.fromSchemaName}) which DID keep the ` +
+              `address, so that one was used: ${rec.url}. This is a name match, not an identifier match — confirm it is the ` +
+              'same file before relying on the answers.',
+          });
+          emitLog('ok', `    "${src.name}": no address stored; recovered one from a sibling knowledge source and using copy mode.`);
+        } else {
+          if (rec.status === 'ambiguous') {
+            result.fidelity.push({
+              component: `knowledge:${src.name}`,
+              status: 'needs-review',
+              detail:
+                `"${src.name}" stored no address, and other agents in this environment reference ${rec.urls.length} DIFFERENT ` +
+                `addresses under that same name (${rec.urls.join(', ')}). Picking one could ground this agent on the wrong ` +
+                'file, so none was chosen — set the correct source manually.',
+            });
+            emitLog('warn', `    "${src.name}": no address stored and ${rec.urls.length} different candidates share the name — not guessing.`);
+          }
+          spSourcesForCopy.push(src); // unchanged; copy mode will skip it as before
+        }
+      }
+
       let spCopyModeResolved: SharePointCopyModeResolution[] = [];
       if (spConnectorSources.length) {
-        const copyMode = await resolveSharePointCopyModeSources(dest.project, saToken, await graphToken(), row.sourceId, spConnectorSources);
-        spCopyModeResolved = copyMode.resolved;
+        const copyMode = await resolveSharePointCopyModeSources(dest.project, saToken, await graphToken(), row.sourceId, spSourcesForCopy);
+        // Map any recovered clone back to the IR object the rest of the run holds.
+        spCopyModeResolved = copyMode.resolved.map((r) => ({ ...r, src: originalOf.get(r.src) ?? r.src }));
         for (const l of copyMode.logs) emitLog(l.level, l.text);
       }
       // A source fully covered by copy mode doesn't need the native
@@ -1942,6 +2031,27 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                     detail: target
                       ? `This agent invoked another Copilot agent, "${target}", as a tool. "${target}" IS in this migration, but Gemini agents cannot call each other, so the two arrive as independent agents — the delegation does not happen automatically and must be rebuilt (e.g. fold the other agent's instructions in, or route users to it).`
                       : `This agent invoked another Copilot agent as a tool ("${tool.name.trim()}"), and that agent is NOT part of this migration. Its behaviour is therefore absent entirely — migrate it too, then decide how the two should relate.`,
+                  });
+                  continue;
+                }
+
+                // `HttpRequest` is Copilot's own escape hatch — its description says it
+                // "may execute any SharePoint REST API you have access to". The migrated
+                // agent gets `sharepoint_list_files` / `sharepoint_read_file` instead,
+                // locked to the folder the source agent named, because our app credential
+                // carries Sites.Read.All and there is no per-site application permission:
+                // reproducing HttpRequest faithfully would hand every user of the agent
+                // read access to every site in the tenant. That is a deliberate narrowing
+                // and the customer has to be told, not left to infer it from "mapped".
+                if (wired && tool.operationId === 'HttpRequest') {
+                  result.fidelity.push({
+                    component: `tool:${tool.name}`,
+                    status: 'partial',
+                    detail:
+                      `The source tool could call ANY ${tool.connectorId} REST endpoint. The migrated agent instead gets ` +
+                      'file listing and file reading, scoped to the folder this agent was connected to. Deliberate: our app ' +
+                      'credential can reach every site in the tenant, so reproducing the open-ended call would widen access ' +
+                      'well beyond what the Copilot agent had. Anything the original did beyond listing and reading files is not migrated.',
                   });
                   continue;
                 }

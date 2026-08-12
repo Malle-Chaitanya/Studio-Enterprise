@@ -1482,6 +1482,75 @@ project hold 0 documents).
 
 ---
 
+### 1.28 Fixing the four SharePoint failures (2026-08-13)
+
+§1.27 found 4 of 11 SharePoint sources falling back to the connector that returns no
+content. Each cause was diagnosed before anything was changed.
+
+**Cause 1 — the source stored no address (2 sources).** Copilot writes SharePoint knowledge
+in two shapes; `FederatedStructuredSearchSource` keeps only an opaque id:
+
+```
+ "raw": { "source": { "kind": "FederatedStructuredSearchSource",
+                      "skillConfiguration": "daily_queriestxt_ZEHQ13QHyGoE_iNOUiCtg" } }
+```
+
+`_probe_skillconfig.ts` established the id resolves to nothing — searching Dataverse for it
+returns only the component that already contains it. But the SAME source attached to other
+agents kept the address:
+
+```
+  daily_queries.txt  msdyn_c2messagegeneratoragent…  -> https://filefuze.sharepoint.com/Shared%20Documents/TestingPermissions/daily_queries.txt
+  daily_queries.txt  cr88d_KBGroundingTestAgent…     -> https://filefuze.sharepoint.com/Shared%20Documents/TestingPermissions/daily_queries.txt
+  daily_queries.txt  cr88d_CSGEKnowledgeTestAgent…   -> (skillConfiguration only)
+```
+
+`services/sharePointUrlRecovery.ts` recovers it, requiring an exact name match AND unanimity
+across every matching row — two rows disagreeing is returned as `ambiguous`, not resolved by
+picking one, because grounding an agent on the wrong file is worse than not grounding it. It
+is still a name match, so every recovery emits a `needs-review` note naming the component the
+address came from. Live (`_probe_url_recovery.ts`), **P**:
+
+```
+  NOT-FOUND  Knowledge Assistant :: TestingPermissions
+  RECOVERED  Knowledge Assistant :: daily_queries.txt
+             https://filefuze.sharepoint.com/Shared%20Documents/TestingPermissions/daily_queries.txt
+             from msdyn_c2messagegeneratoragent.topic.daily_queriestxt_Sub5wzEcEfZNleCgziYLd
+
+1 address(es) recovered · 1 left for a human
+```
+
+7 unit tests, including the refusals: two addresses under one name, a Confluence URL in the
+payload, a name too short to identify anything, and a 403 degrading rather than throwing.
+
+**Cause 2 — a folder of several files (1 source).** This was treated as an ambiguity and
+punted to the native connector, so a 3-file folder migrated as nothing — which is exactly
+the `lost` row already sitting in `migrationResults` for `CloudFuze Studio Migrate`. But the
+author pointed the agent at that folder, so every file in it is in scope: copy mode now
+copies each one (bounded at 25, truncation reported, never silent). **T** — typechecks and
+the path is exercised only when a folder source runs.
+
+**Cause 3 — `not-found` (1 source).** "Documents" resolves to nothing through Graph and is
+too generic to recover by name. Correctly refused; left for a human.
+
+**Two honesty fixes shipped alongside**, both cases of the screen describing a worse path
+than the one that runs, or a narrower capability than the label implied:
+
+- The plan said *"Reconnected via Gemini's native connector — requires identity-federation
+  setup"* for sources that actually take copy mode. It now states what happens: fetched
+  through Graph with the customer's app credentials, point-in-time, **and that SharePoint
+  permissions are not carried over**.
+- `shared_sharepointonline.HttpRequest` reported as `mapped`. The source tool could call any
+  SharePoint REST endpoint; the migrated agent gets folder-scoped list/read instead, because
+  our credential carries `Sites.Read.All` and there is no per-site application permission —
+  reproducing it would widen access to every site in the tenant. Now `partial`, saying so.
+
+Grade for the whole change: **T** — `tsc --noEmit` clean in server and web, 109 unit tests
+pass, and the recovery function is proven against live Dataverse. No migration has been run
+since; the folder-copy path and the two new notes have not appeared in a real report yet.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run

@@ -269,7 +269,21 @@ function detailOf(a: KnowledgeMigrationAction): string {
         ? `${a.files?.length ?? 0} file(s) uploaded to the agent's Knowledge (agentFiles) and indexed by Gemini.`
         : 'Objects transferred to Google Cloud Storage and imported — needs source credentials.';
     case 'reconnect':
-      return `Reconnected via Gemini's native connector — requires identity-federation setup for access control.`;
+      // This used to promise Gemini's native connector, which the migration does NOT use
+      // for SharePoint: `orchestrator.ts` tries COPY MODE first (resolve the address
+      // through Microsoft Graph, download the item, index it) because the native connector
+      // authenticates against SharePoint REST, which needs a certificate-minted app token
+      // customers cannot produce — the three pre-existing connectors in the test project
+      // hold zero documents. Describing the fallback as the plan made the screen promise a
+      // path we had already proven broken, while the run quietly did the better thing.
+      return a.geminiTarget === 'sharepoint-connector'
+        ? 'Copied into Gemini and indexed: the file is fetched through Microsoft Graph with the ' +
+          "app credentials you supply, because Gemini's native SharePoint connector cannot read " +
+          'content with a client secret. Point-in-time copy — re-run the migration to refresh — ' +
+          'and SharePoint permissions are NOT carried over: anyone who can use the agent can read it. ' +
+          'A source that points at a whole site or a folder of several files falls back to the native ' +
+          'connector, which is reported separately.'
+        : "Reconnected via Gemini's native connector — requires identity-federation setup for access control.";
     case 'dataverse-snapshot':
       return 'Reference table exported to a Gemini structured data store (snapshot — refreshable; confirm no row-level-secured data).';
     case 'rebuild-as-tool':
