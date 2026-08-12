@@ -155,6 +155,20 @@ export function Explore() {
                 <span className="chip">{e.flows} flows</span>
               </div>
             )}
+            {/* An unreachable environment silently narrows the migration scope, so say
+                why and how to fix it rather than leaving the customer at "403". */}
+            {!e.accessible && e.accessDenied && (
+              <div className="chips" style={{ display: 'block', opacity: 1 }}>
+                <p className="lead" style={{ margin: '4px 0 0', fontSize: 13 }}>
+                  {e.accessDenied.detail}
+                </p>
+                {e.accessDenied.fix && (
+                  <p className="lead" style={{ margin: '4px 0 0', fontSize: 13 }}>
+                    <strong>To include this environment:</strong> {e.accessDenied.fix}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>

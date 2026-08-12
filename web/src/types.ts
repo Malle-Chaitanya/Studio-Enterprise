@@ -52,6 +52,12 @@ export interface EnvironmentInfo {
   topics: number;
   knowledgeSources: number;
   flows: number;
+  /** Why an inaccessible environment is inaccessible, and the admin step that fixes it. */
+  accessDenied?: {
+    code: 'no_application_user' | 'forbidden' | 'unreachable';
+    detail: string;
+    fix?: string;
+  };
 }
 
 export type Compatibility = 'supported' | 'partial' | 'manual' | 'none';

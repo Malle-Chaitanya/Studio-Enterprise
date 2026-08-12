@@ -16,6 +16,34 @@ import {
 export const exploreRouter = Router();
 
 /**
+ * Turn a failed environment probe into something the customer can act on.
+ *
+ * Dataverse answers `0x80072560 — The user is not a member of the organization` when our
+ * app registration has no **application user** in that specific org. The token is fine and
+ * tenant-wide; the grant is per-environment, which is why two of a tenant's four
+ * environments can be invisible while the other two work perfectly. Reporting only
+ * "no access (403)" leaves the customer with a dead end and silently narrows the migration
+ * scope to whatever happened to be reachable.
+ */
+export function classifyEnvDenial(err: unknown): EnvInfo['accessDenied'] {
+  const msg = (err as Error)?.message ?? String(err);
+  if (/0x80072560|not a member of the organization/i.test(msg)) {
+    return {
+      code: 'no_application_user',
+      detail: 'Dataverse: the user is not a member of the organization (0x80072560).',
+      fix:
+        'In the Power Platform admin center, open this environment → Settings → Users + permissions → ' +
+        'Application users → New app user, add this app registration, and give it a role that can read ' +
+        'bots and botcomponents (System Administrator or a custom read role). The grant is per-environment.',
+    };
+  }
+  if (/\b40[13]\b|forbidden|unauthorized/i.test(msg)) {
+    return { code: 'forbidden', detail: msg.slice(0, 300) };
+  }
+  return { code: 'unreachable', detail: msg.slice(0, 300) };
+}
+
+/**
  * Discovery + assessment API — powers the migration wizard's environment →
  * agent → assessment drill-down. All read-only; touches Copilot Studio only.
  */
@@ -57,7 +85,7 @@ exploreRouter.get('/environments', async (req, res) => {
         return { ...base, accessible: true, ...inv };
       } catch (err) {
         logger.debug({ err, env: env.url }, 'environment probe failed');
-        return base;
+        return { ...base, accessDenied: classifyEnvDenial(err) };
       }
     }),
   );

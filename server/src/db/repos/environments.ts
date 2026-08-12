@@ -24,6 +24,15 @@ export interface EnvInfo {
   topics: number;
   knowledgeSources: number;
   flows: number;
+  /**
+   * Why an inaccessible environment is inaccessible, and what to do about it.
+   *
+   * `accessible: false` alone is a dead end: the customer sees "no access (403)" with no
+   * cause and no remedy, and a whole environment's agents quietly leave the migration
+   * scope. Measured 2026-08-12: 2 of this tenant's 4 environments were invisible for a
+   * reason that takes an admin two minutes to fix.
+   */
+  accessDenied?: { code: 'no_application_user' | 'forbidden' | 'unreachable'; detail: string; fix?: string };
 }
 
 export async function getCachedEnvironments(
