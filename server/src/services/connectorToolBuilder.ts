@@ -12,8 +12,9 @@
  * connector-powered workflows.
  */
 
+import type { BoundToolSpec } from '../connectors/boundToolSpec.js';
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
-import { connectorSecretId, connectorCredentialFields } from './connectorCredentials.js';
+import { connectorSecretId, connectorCredentialFields, connectorsSharingCredentials } from './connectorCredentials.js';
 import { logger } from '../logger.js';
 import type { AgentIR } from '../types.js';
 
@@ -69,6 +70,16 @@ export interface SecretIdOptions {
 function secretIdFor(connectorId: string, field: string, opts: SecretIdOptions): string {
   const stored = opts?.storedSecretIds?.[connectorId]?.[field];
   if (stored) return stored;
+  // A credential GROUP is one credential. When the customer configured Confluence, Jira's
+  // token is the same secret under the same id — and the record is filed under whichever
+  // connector they happened to save first. Without this, a newly-detected sibling computes
+  // a fresh id, finds nothing behind it, and every tool call 403s at inference with a green
+  // deployment behind it. Live case: the HubSpot Agent uses `shared_hubspotcrm`, while the
+  // stored record is `shared_hubspotcrmv2` — same private app token.
+  for (const sibling of connectorsSharingCredentials(connectorId)) {
+    const inherited = opts?.storedSecretIds?.[sibling]?.[field];
+    if (inherited) return inherited;
+  }
   return connectorSecretId(connectorId, field, opts.ownerScope);
 }
 
@@ -142,6 +153,12 @@ export interface LiveConnectorSpec {
   scope?: string;
   basicUserField?: string;
   basicSecretField?: string;
+  /**
+   * One entry per operation the SOURCE agent actually invoked, with the author's fixed
+   * arguments baked in (see connectors/boundToolSpec.ts). When present the container builds
+   * one typed function tool per operation instead of the generic path-guessing REST tool.
+   */
+  boundOperations?: BoundToolSpec[];
 }
 
 /**

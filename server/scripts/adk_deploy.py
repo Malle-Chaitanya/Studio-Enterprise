@@ -639,6 +639,193 @@ def _build_live_connector_tool(conn: dict, project: str):
 
         return confluence_live_search
 
+    # ── Bound operations: the call the SOURCE agent actually made ───────────────
+    #
+    # The generic tool below asks the model to invent a path. That is the weakest
+    # possible reproduction: Copilot pinned `entityName` to one table, and a model free
+    # to choose picks any table, or none. When the server sends `boundOperations` we
+    # instead build ONE typed function per operation the source agent invoked, with the
+    # author's fixed arguments baked in and only the arguments they left open in the
+    # signature (see connectors/boundToolSpec.ts).
+    #
+    # URL, verb and parameters come from the connector's own swagger, captured from the
+    # CUSTOMER's environment. Auth reuses `_auth_header` above, so there is exactly one
+    # implementation of each credential kind.
+    bound_ops = conn.get("boundOperations") or []
+
+    # `{cloudId}` and friends are tenant facts, not model arguments. The server fills
+    # what it already knows; the rest are resolved here, once per container.
+    context_cache: dict = {}
+
+    def _context(name: str, supplied: dict) -> str:
+        if supplied.get(name):
+            return supplied[name]
+        if name in context_cache:
+            return context_cache[name]
+        if name == "cloudId":
+            # Atlassian identifies a site by an opaque cloud id, derivable from the site
+            # URL the customer already gave us — so we never ask an admin for a GUID.
+            import json as _json
+            import urllib.request
+
+            base = _secret("base_url").rstrip("/")
+            req = urllib.request.Request(base + "/_edge/tenant_info")
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                cloud_id = _json.loads(resp.read().decode("utf-8")).get("cloudId", "")
+            context_cache[name] = cloud_id
+            return cloud_id
+        raise RuntimeError("no value for '" + name + "' - the migrated tool cannot build its URL")
+
+    def _make_bound_tool(op: dict):
+        """Build one typed ADK function tool for one bound operation."""
+        import json as _json
+        import re as _re
+        import urllib.parse
+        import urllib.request
+
+        method = (op.get("method") or "GET").upper()
+        url_tpl = op.get("urlTemplate") or ""
+        fixed = op.get("fixedArgs") or {}
+        model_args = op.get("modelArgs") or []
+        ctx_required = op.get("contextRequired") or []
+        ctx_values = op.get("contextValues") or {}
+        op_id = op.get("operationId") or "operation"
+
+        # Only a legal Python identifier can be in a signature. OData names like `$filter`
+        # are not, so they are exposed with the punctuation stripped and mapped back when
+        # the request is built — the alternative is losing the ability to filter at all.
+        def py_name(n):
+            return _re.sub(r"[^0-9a-zA-Z_]", "_", n).strip("_") or "arg"
+
+        seen = set()
+        unique_args = []
+        for a in model_args:
+            pn = py_name(a.get("name") or "")
+            if pn in seen:
+                continue
+            seen.add(pn)
+            unique_args.append((pn, a))
+
+        def _invoke(**kwargs) -> dict:
+            try:
+                auth_header = _auth_header(_fill)
+            except Exception as e:  # noqa: BLE001
+                return {"error": "auth failed (" + str(auth_kind) + "): " + str(e)}
+
+            path_params, query, headers = {}, {}, {}
+            body_val = None
+            for name, meta in fixed.items():
+                where = meta.get("in") or "query"
+                val = meta.get("value")
+                if where == "path":
+                    path_params[name] = val
+                elif where == "header":
+                    headers[name] = str(val)
+                elif where == "body":
+                    body_val = val
+                else:
+                    query[name] = val
+            for pn, a in unique_args:
+                val = kwargs.get(pn)
+                if val is None or val == "" or val == 0 or val is False:
+                    continue
+                where = a.get("in") or "query"
+                if where == "path":
+                    path_params[a["name"]] = val
+                elif where == "header":
+                    headers[a["name"]] = str(val)
+                elif where == "body":
+                    body_val = val
+                else:
+                    query[a["name"]] = val
+
+            url = url_tpl
+            try:
+                for c in ctx_required:
+                    url = url.replace("{" + c + "}", _context(c, ctx_values))
+            except Exception as e:  # noqa: BLE001
+                return {"error": str(e)}
+            for name, val in path_params.items():
+                url = url.replace("{" + name + "}", urllib.parse.quote(str(val), safe=""))
+            missing = _re.findall(r"\{(\w+)\}", url)
+            if missing:
+                return {"error": "missing required value(s) for " + ", ".join(missing)}
+            if query:
+                url = url + "?" + urllib.parse.urlencode(query)
+
+            req_headers = {"Accept": "application/json"}
+            req_headers.update(headers)
+            if auth_header:
+                req_headers["Authorization"] = auth_header
+            data = None
+            if body_val is not None and method in ("POST", "PUT", "PATCH"):
+                payload = body_val if isinstance(body_val, str) else _json.dumps(body_val)
+                data = payload.encode("utf-8")
+                req_headers["Content-Type"] = "application/json"
+            req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    raw = resp.read().decode("utf-8")
+                    try:
+                        return {"status": resp.status, "body": _json.loads(raw)}
+                    except Exception:  # noqa: BLE001
+                        return {"status": resp.status, "body": raw[:4000]}
+            except Exception as e:  # noqa: BLE001
+                # Quote the failure. A vague error invites the model to narrate a
+                # plausible answer instead of reporting that it could not look.
+                try:
+                    detail = e.read().decode("utf-8")[:500]  # type: ignore[attr-defined]
+                except Exception:  # noqa: BLE001
+                    detail = str(e)
+                return {"error": conn_name + " " + op_id + " failed: " + detail}
+
+        # ADK describes a tool to the model from its SIGNATURE and docstring, so the
+        # signature has to be real. Generated here rather than **kwargs, which ADK
+        # cannot turn into a FunctionDeclaration.
+        parts = []
+        for pn, a in unique_args:
+            t = a.get("type")
+            if t == "integer":
+                parts.append(pn + ": int = 0")
+            elif t == "boolean":
+                parts.append(pn + ": bool = False")
+            else:
+                parts.append(pn + ': str = ""')
+        sig = ", ".join(parts)
+        call_args = ", ".join(pn + "=" + pn for pn, _ in unique_args)
+        fn_name = op.get("toolName") or ("call_" + op_id.lower())
+        src = "def " + fn_name + "(" + sig + ") -> dict:\n    return _invoke(" + call_args + ")\n"
+        ns = {"_invoke": _invoke}
+        exec(src, ns)  # noqa: S102 - generated from our own spec, never from model output
+        fn = ns[fn_name]
+
+        arg_doc = ""
+        for pn, a in unique_args:
+            arg_doc += "    " + pn + ": " + str(a.get("description") or a.get("name") or "")
+            arg_doc += " (required)\n" if a.get("required") else "\n"
+        pinned = ", ".join(k + "=" + str(v.get("value")) for k, v in fixed.items())
+        doc = str(op.get("description") or op_id) + "\n\n"
+        doc += "Calls " + conn_name + " (" + op_id + "). Migrated from Microsoft Copilot Studio.\n"
+        if pinned:
+            doc += "Fixed by the original agent: " + pinned + "\n"
+        if arg_doc:
+            doc += "\nArgs:\n" + arg_doc
+        doc += "\nReturns:\n    dict with `status` and `body`, or `error`.\n"
+        fn.__doc__ = doc
+        return fn
+
+    if bound_ops:
+        built = []
+        for op in bound_ops:
+            try:
+                built.append(_make_bound_tool(op))
+            except Exception as e:  # noqa: BLE001
+                # One malformed operation must not cost the agent every other tool. If
+                # NOTHING can be built we fall through to the generic tool below.
+                print("[warn] bound tool build failed for " + str(op.get("operationId")) + ": " + str(e), flush=True)
+        if built:
+            return built
+
     # Generic REST connector: base URL + auth header from the registry, resolved
     # from Secret Manager the same way.
     def call_external_api(path: str, method: str = "GET", body: str = "") -> dict:

@@ -216,6 +216,41 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
   },
 
   {
+    // The two HubSpot ids agents in the field ACTUALLY use (live census 2026-08-12,
+    // ledger 1.10): `shared_hubspotcrm` on the HubSpot Agent and `shared_hubspotsettingsv2`
+    // on two agents. Neither had a registry entry, so both were reported unsupported and no
+    // tool was ever built — while `shared_hubspot`, which the registry did have, appears in
+    // no agent at all. The registry ids were guessed from product names; these are measured.
+    id: 'shared_hubspotcrm',
+    name: 'HubSpot CRM (Independent Publisher)',
+    category: 'crm',
+    icon: '🟠',
+    docsUrl: 'https://developers.hubspot.com/docs/api/crm/understanding-the-crm',
+    credentialGroup: 'hubspot',
+    credentials: [],
+    requiredPermissions: ['crm.objects.contacts.read', 'crm.objects.companies.read'],
+    permissionsHint:
+      'Same private app token as every other HubSpot connector — the customer is not asked twice.',
+    baseUrlTemplate: 'https://api.hubapi.com',
+    authHeaderTemplate: 'Bearer {api_key}',
+  },
+
+  {
+    id: 'shared_hubspotsettingsv2',
+    name: 'HubSpot Settings V2 (Independent Publisher)',
+    category: 'crm',
+    icon: '🟠',
+    docsUrl: 'https://developers.hubspot.com/docs/api/settings/account-information-api',
+    credentialGroup: 'hubspot',
+    credentials: [],
+    requiredPermissions: ['oauth'],
+    permissionsHint:
+      'Account-info endpoints need only the token itself; no CRM object scopes are involved.',
+    baseUrlTemplate: 'https://api.hubapi.com',
+    authHeaderTemplate: 'Bearer {api_key}',
+  },
+
+  {
     id: 'shared_salesforce',
     name: 'Salesforce',
     category: 'crm',

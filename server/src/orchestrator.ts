@@ -10,7 +10,10 @@ import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
+import { connectorsSharingCredentials } from './services/connectorCredentials.js';
 import { readinessFor } from './connectors/readiness.js';
+import { buildBoundToolSpecs } from './connectors/boundToolSpec.js';
+import type { CaptureContext } from './connectors/captureOpIndex.js';
 import { REGISTRY_BY_ID } from './connectors/registry.js';
 import { needsAclAcknowledgement, aclDisclosureFor, aclDisclosureSummary } from './services/aclDisclosure.js';
 import { migrateSharePointToDataStore } from './services/sharePointMigrator.js';
@@ -734,6 +737,16 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // now, but credentials saved before that scoping live under the old name and already
   // back deployed agents — recomputing would point a working agent at a secret that
   // does not exist, and every tool call would 403 at inference behind a green deploy.
+  // Resolve connector definitions from the CUSTOMER'S own environment (their installed
+  // connectors, their versions) rather than the fixtures captured in ours.
+  const captureCtxFor = (envUrl: string): CaptureContext | undefined => {
+    const envId = session.environments?.find(
+      (e) => e.url.replace(/\/$/, '') === envUrl.replace(/\/$/, ''),
+    )?.id;
+    if (!envId || !session.tenantId) return undefined;
+    return { tenantId: session.tenantId, environmentId: envId, scope: credentialScope(session) };
+  };
+
   const secretIdOpts = {
     // The customer's isolation key, not the Mongo scope key: `appUserId` is 'default' for
     // everyone until sign-in is wired, and secret ids built from it collide across
@@ -743,7 +756,19 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       durableConnectorRecords.map((c) => [c.connectorId, c.secretIds ?? {}]),
     ),
   };
-  const savedConnectors = [...new Set([...(plan.savedConnectors ?? []), ...durableConnectorIds])];
+  // Connectors that SHARE a credential group with something the customer configured are
+  // configured too — one Atlassian token is Confluence and Jira; one HubSpot private app
+  // token is every HubSpot connector. Without this expansion an agent using a sibling id
+  // (live: `shared_hubspotcrm` where the saved record says `shared_hubspotcrmv2`) got no
+  // tool at all, and the report called it an unsupported connector rather than the
+  // already-satisfied credential it actually was.
+  const savedConnectors = [
+    ...new Set([
+      ...(plan.savedConnectors ?? []),
+      ...durableConnectorIds,
+      ...durableConnectorIds.flatMap((id) => connectorsSharingCredentials(id)),
+    ]),
+  ];
   if (durableConnectorIds.length && !(plan.savedConnectors ?? []).length) {
     emitLog('info', `Connectors from saved credentials: ${durableConnectorIds.join(', ')}`);
   }
@@ -1644,12 +1669,33 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               );
             }
 
+            // Reproduce the CALL, not just the capability: one typed tool per operation the
+            // source agent invoked, with the arguments its author pinned. Falls back to the
+            // generic REST tool for any connector this produces nothing for, so a connector
+            // we cannot bind still deploys with the behaviour it had yesterday.
+            const boundBuild = await buildBoundToolSpecs(row.mapped!.ir, captureCtxFor(row.envUrl), {
+              dataverseOrgUrl: row.envUrl ?? '',
+            });
+            result.fidelity.push(...boundBuild.notes);
+            for (const note of boundBuild.notes) {
+              if (note.status === 'lost') emitLog('warn', `  ${row.name}: ${note.detail}`);
+            }
+
             const scopedConnectors = applicable.map((c) => {
               const withOps = opsByConnector.has(c.id) ? { ...c, operations: opsByConnector.get(c.id) } : c;
-              return /sharepoint|onedrive/i.test(withOps.kind) && spScopeUri
-                ? { ...withOps, scopeUri: spScopeUri }
-                : withOps;
+              const bound = boundBuild.byConnector.get(c.id);
+              const withBound = bound?.length ? { ...withOps, boundOperations: bound } : withOps;
+              return /sharepoint|onedrive/i.test(withBound.kind) && spScopeUri
+                ? { ...withBound, scopeUri: spScopeUri }
+                : withBound;
             });
+            const boundCount = [...boundBuild.byConnector.values()].reduce((n, l) => n + l.length, 0);
+            if (boundCount) {
+              emitLog(
+                'info',
+                `    ${row.name}: ${boundCount} connector operation(s) rebuilt as exact API calls with the source agent's own arguments.`,
+              );
+            }
 
             // Copilot topics become ADK sub-agents INSIDE this deployment. Not one
             // Reasoning Engine per topic: that would multiply cost and burn the ~7/day

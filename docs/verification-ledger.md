@@ -529,6 +529,74 @@ filters remain a no-op until sign-in lands or the collections are re-keyed.
 
 ---
 
+### 1.16 A migrated agent reproduced a Copilot call — end to end (2026-08-12)
+
+The claim this whole plan has been building toward, and the first time it is grade **P**.
+
+**Step 1 — the binding produces a working request.** `_test_bound_call.ts` builds the specs
+exactly as the deploy path does and issues the request from Node with the customer's stored
+credentials, so a failure is attributable to the binding rather than to the container:
+
+```
+── get_pages  (shared_confluence GetPages)
+   GET https://api.atlassian.com/ex/confluence/{cloudId}/wiki/api/v2/pages
+   context: cloudId  auth=atlassian-basic
+   resolved cloudId from https://cf2020.atlassian.net/_edge/tenant_info: ok
+   -> 200 OK  {"results":[{"authorId":"712020:…","createdAt":"2025-03-17T16:29:22.706Z",…
+
+── list_companies  (shared_hubspotcrm CompaniesList)
+   GET https://api.hubapi.com/crm/v3/objects/companies
+   model:   limit, properties, archived
+   -> 200 OK  {"results":[{"id":"9618496085","properties":{"name":"Thai Otsuka",…
+
+── get_api_usage  (shared_hubspotsettingsv2 GetTheDailyApiUsageAndLimitsForAHubspotAccount)
+   GET https://api.hubapi.com/account-info/v3/api-usage/daily
+   -> 404 FAILED
+```
+
+**Step 2 — deployed, and the tool actually fired.**
+
+```
+Confluence_agent  -> reasoningEngines/7686282818770436096  ENABLED  secretIam=true
+  Q: Use your Confluence tool and list the titles of a few pages you can see.
+  A: Box to OneDrive DOC.pdf / Getting started in Confluence / 2. Engineering Notes /
+     4.1.1.1 Level 3 — API Documentation
+  toolCalled: true   toolSucceeded: true
+
+HubSpot Agent     -> reasoningEngines/6830598889570041856  ENABLED  secretIam=true
+  Q: Use your HubSpot tool to list a few company names.
+  A: Thai Otsuka, NOS, Advent Health Group, arizk822, REFUELS
+  toolCalled: true   toolSucceeded: true
+```
+
+Those page titles and company names are live vendor data, not indexed knowledge and not
+model invention — `toolSucceeded` is set only by a non-error `function_response`. The chain
+that produced them is: Dataverse payload → operationId + author's bound arguments → the
+customer's own swagger → vendor URL → typed ADK function tool → 200 from Atlassian/HubSpot.
+
+**The 404 is kept, not hidden.** `GetTheDailyApiUsageAndLimitsForAHubspotAccount` resolves
+to a real path from the swagger and HubSpot answers 404 for it with a private-app token.
+So a resolved verb+path is NOT the same as a working call, exactly as §1.11 warned. That
+operation is deployed as a tool that will report its own failure rather than being silently
+dropped, and it is the argument for plan step 6 (per-operation validation before the
+capability report).
+
+**Two credential-plumbing gaps found by doing this, both fixed:**
+
+- The HubSpot Agent uses `shared_hubspotcrm` while the stored record is
+  `shared_hubspotcrmv2` — the same private app token, one credential group. Nothing
+  inherited it, so the connector was treated as unconfigured and no tool was built. Secret
+  ids now fall back to a credential-group sibling's stored id, and the orchestrator expands
+  configured connectors to their group siblings.
+- `shared_hubspotcrm` and `shared_hubspotsettingsv2` had no registry entries at all (they
+  are the ids agents actually use — §1.10), so they were reported unsupported. Added.
+
+**Honest limits.** Two agents, three operations, two vendors, one tenant. Both are GET
+operations with no fixed arguments; the Power Fx demotion path and the Dataverse
+`aad-token` path are written and typechecked but have not run in a deployed agent.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
