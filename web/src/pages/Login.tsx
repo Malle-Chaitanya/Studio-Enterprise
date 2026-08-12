@@ -12,8 +12,10 @@ const CHECK = (
  * Sign-in screen — matches GEM_CO's split-screen login exactly (deep-blue left
  * panel + white card on the right), copy adapted to Copilot Studio → Gemini.
  *
- * Proving-ground note: submit currently navigates into the app. When the shared
- * GEM_CO auth (appUsers/bcrypt + session) lands, wire this to POST /api/login.
+ * This used to be a doorway with no lock: it POSTed to `/api/login`, which did not exist,
+ * and treated everything except a 401 as success — so any input signed you in. Now only a
+ * 2xx proceeds, and the httpOnly cookie the server sets is what every later request is
+ * authorized by.
  */
 export function Login() {
   const navigate = useNavigate();
@@ -27,25 +29,30 @@ export function Login() {
     setError('');
     setBusy(true);
     try {
-      // Try the real endpoint first (present once GEM_CO auth is wired).
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // The server answers with an httpOnly session cookie; without credentials the
+        // browser would drop it and every later request would be anonymous.
+        credentials: 'include',
         body: JSON.stringify({ email, password }),
       });
-      // No real auth backend exists yet (see note above) — only a 401 means
-      // actual bad credentials. Everything else (404 "not implemented", a
-      // transient 5xx from the dev proxy, etc.) proceeds, same as the catch
-      // block below for a fully unreachable server.
-      if (res.status !== 401) {
-        { const sid = await resumeSession(); navigate(sid ? `/home?session=${sid}` : '/home'); }
+      if (res.ok) {
+        const sid = await resumeSession();
+        navigate(sid ? `/home?session=${sid}` : '/home');
         return;
       }
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      setError(data.error || 'Invalid email or password.');
+      const data = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+      // Distinguish "wrong password" from "the accounts database is down" — telling an
+      // operator their credentials are wrong when the server cannot check them sends them
+      // hunting for the wrong problem.
+      setError(
+        res.status === 503
+          ? data.detail || 'Sign-in is temporarily unavailable. Try again shortly.'
+          : 'Invalid email or password.',
+      );
     } catch {
-      // No auth backend yet — proceed (proving ground).
-      { const sid = await resumeSession(); navigate(sid ? `/home?session=${sid}` : '/home'); }
+      setError('Could not reach the server. Check it is running and try again.');
     } finally {
       setBusy(false);
     }

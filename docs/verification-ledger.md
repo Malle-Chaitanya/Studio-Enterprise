@@ -853,6 +853,98 @@ is nothing to preserve) and unattributed `intelligentmemory` rows, which get an 
 environment-level note on every agent in the run rather than being silently left behind or
 silently attached to an agent that never learned them.
 
+### 1.20 Sign-in exists, and a session id stops being a bearer token (2026-08-12)
+
+§4.5 and §1.18 recorded the same hole from two ends: the login page signed anyone in, and
+every migration-scoped row carried `appUserId: 'default'`. The collections had always
+filtered by `appUserId` — the filter was real, the value was the same for everyone, so the
+isolation was decorative.
+
+**What now exists.** `POST /api/login` verifies against the `appUsers` bcrypt hashes that
+were written months ago and never called, and mints an opaque 32-byte token stored
+server-side in `appLoginSessions` (TTL 7 days). The cookie carries only the token, so the
+browser never learns an `appUserId` and therefore cannot assert one. No JWT: a revocable
+row is what lets sign-out actually end a session.
+
+```
+Set-Cookie: csge_auth=…; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax
+```
+
+**Proven, by probe, in this order:**
+
+```
+1. migration route with NO cookie      -> 401 {"error":"not_signed_in"}
+2. login with WRONG password           -> 401 {"error":"invalid_credentials"}
+3. login with the seeded password      -> 200 {"email":"admin@cloudfuze.com",…}
+4. cookie set?                            csge_auth cookies: 1
+5. same migration route WITH cookie    -> 200 {"environments":[…]}
+6. /api/me                             -> 200 {"email":"admin@cloudfuze.com","role":"admin"}
+7. health still open                   -> 200
+8. logout, then the route again        -> logout 200, then 401 {"error":"not_signed_in"}
+```
+
+Grade **P**.
+
+**The isolation itself — the part that mattered.** `requireAuth` only proves you are *a*
+user. A migration session id is passed by the client on every route, so without a second
+check it remains the credential: anyone holding one reads that customer's environments,
+staged agents and connector configuration. `enforceSessionOwnership` is mounted on the
+scoped routers (not inside `getSession`, so a route added later inherits it rather than
+having to remember it). Against a throwaway session owned by another user:
+
+```
+admin asks for another customer's session:  -> 403 {"error":"session_not_yours"}
+admin asks for a session it does own:       -> 200 {"environments":[…]}
+```
+
+Grade **P**. In the browser: a wrong password now stays on the login screen with "Invalid
+email or password" (it previously proceeded), and the correct password lands in the app.
+
+**What is deliberately still open, and why.**
+
+- `/api/health` and `/api/auth/*` are unauthenticated. The OAuth callbacks arrive as
+  redirects from Microsoft and Google; a 401 there breaks the connect handshake rather
+  than protecting anything, and they carry their own one-time `state`.
+- Sessions created before today still carry `'default'` and are reachable by any signed-in
+  user. Locking them out would strand every already-connected customer behind a migration
+  they cannot run. This is a KNOWN residual hole with a stated closing move, and it is
+  counted out loud on every boot:
+
+  ```
+  WARN: 2 migration session(s) still owned by the placeholder 'default' user — any
+        signed-in user can reach them. Run `npx tsx src/scripts/rekeyAppUser.ts`…
+  ```
+
+**The re-key, dry-run only so far.** `src/scripts/rekeyAppUser.ts` resolves the target from
+`appUsers` by email (an id typed by hand that matches no account would attribute every row
+to someone who cannot sign in) and defaults to printing what it would do:
+
+```
+DRY RUN — 'default' → admin@cloudfuze.com (6a7168dfc40369e8807f5cc3)
+  migrationSessions      2      migrationRuns         34     migrationResults      96
+  migrationLogs        706      agentIRCache          60     environmentsCache      1
+  stagedAgents         102      connectorCredentials  10     adkDeployments         5
+  knowledgeConnectors    1      identityMap/connectorOpIndex/authSessions 0
+would move 1017 row(s). Nothing was changed.
+```
+
+Grade **P** for the dry run; **U** for the commit path — it has not been executed, and it
+will not be until an operator names the owner. It is not run on boot on purpose: a silent
+re-key at startup attributes whatever is in the database to whoever deploys next, which is
+the exact cross-tenant mistake this work exists to prevent. Secret Manager ids are NOT
+rewritten — `connectorCredentials` rows keep the ids they were stored under and deployed
+agents read those exact ids, so re-keying changes who can see the record, not where the
+secret lives.
+
+**Seeded accounts.** `admin@cloudfuze.com / CloudFuze@2026` and `demo@cloudfuze.com /
+Demo@2026` were literals in `db/mongo.ts`, created on first boot. A published default
+credential on this tool is a compromise of the CUSTOMERS, not of us: it holds two clouds'
+admin tokens. Seeding now reads `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` /
+`SEED_DEMO_*`; outside production the old values remain as a development fallback and the
+account is flagged `seededWithDevDefault` with a startup warning; in production nothing is
+seeded without the env values and the log says why. The old password stays in git history
+either way — any deployment still using it must change it.
+
 ---
 
 ## 2b. Work landed overnight 2026-08-11/12 — graded
@@ -923,16 +1015,20 @@ Indexes are now captured from the customer's own environment and cached
 (`connectors/captureOpIndex.ts`, ledger 1.14). Committed fixtures remain the offline
 fallback and what the unit tests assert against.
 
-### 4.5 Multi-tenant isolation in Mongo is still nominal
+### 4.5 Multi-tenant isolation in Mongo — mostly closed, one step left (updated 2026-08-12)
 
-Every scoped collection filters by `appUserId`, and every row in every one of them is
-`'default'`, because no route sets it. Credential SECRETS are now keyed by
-`credentialScope(session)` (1.15), but Mongo is not: two customers on one deployment would
-see each other's sessions, staged agents, deployments and IR cache.
+**Closed:** sign-in exists, every migration-scoped router requires it, and a session id is
+no longer a bearer token — asking for another user's session returns `403
+session_not_yours` (§1.20, proven). New sessions are stamped with the real owner, and a
+cloud connection made without a signed-in user is refused rather than defaulted.
 
-The fix is either wiring sign-in (the `appUsers` collection and bcrypt hashing already
-exist, only the route is missing) or re-keying the collections to `credentialScope`. Both
-are data migrations and neither should be done as a side effect of feature work.
+**Left open, by one explicit command:** the ~1017 rows that already exist still carry
+`'default'` and stay reachable by any signed-in user, because locking them out would
+strand the already-connected customer. `src/scripts/rekeyAppUser.ts --email <account>
+--commit` closes it; the dry run is proven, the commit has not been run. Until it is, the
+server warns on every boot with the remaining count.
+
+This is now a one-command data migration with a rehearsed dry run, not an unwired design.
 
 ### 4.3 The registry does not match the tenant
 

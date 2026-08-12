@@ -38,6 +38,10 @@ function AppHeader() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session }),
       });
+      // Ending the CLOUD session is not the same as ending the SIGN-IN. Without this the
+      // auth cookie survives, so returning to the app skips the login screen entirely —
+      // which on a shared machine hands the next person the previous user's account.
+      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
     } catch {
       /* signing out must never strand someone on the page they are leaving */
     }

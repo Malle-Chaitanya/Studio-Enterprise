@@ -5,6 +5,9 @@ import { logger } from './logger.js';
 import { serviceAccountConfigured } from './auth/google.js';
 import { connectMongo } from './db/mongo.js';
 import { authRouter, legacyAuthRouter } from './routes/auth.js';
+import { loginRouter } from './routes/login.js';
+import { attachUser, requireAuth } from './auth/appAuth.js';
+import { enforceSessionOwnership } from './auth/sessionOwnership.js';
 import { destinationRouter } from './routes/destination.js';
 import { exploreRouter } from './routes/explore.js';
 import { agentRouter } from './routes/agent.js';
@@ -16,6 +19,10 @@ const app = express();
 
 app.use(cors({ origin: config.WEB_ORIGIN, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
+// Resolve the signed-in user on every request. Attaching it globally (rather than only
+// where it is required) means an open route can still record WHO acted, without any route
+// having to trust a client-supplied identity.
+app.use(attachUser);
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -26,12 +33,24 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+// Sign-in for the tool itself. Open by necessity — it is how you get a session.
+app.use(loginRouter);
+
+// /api/auth is the CUSTOMER cloud handshake (Microsoft + Google OAuth). It stays open:
+// the callbacks arrive as redirects from Microsoft and Google, and a 401 there would
+// break the connect flow rather than protect anything. They carry their own one-time
+// state parameter.
 app.use('/api/auth', authRouter);
-app.use('/api/explore', exploreRouter);
-app.use('/api/destination', destinationRouter);
-app.use('/api/identity', identityRouter);
-app.use('/api/agent', agentRouter);
-app.use('/api/migrate', migrateRouter);
+
+// Everything below touches customer migration data. Two gates, in order: prove you are a
+// user, then prove the session you named is yours. Applied at the router so a route added
+// later inherits both instead of having to remember them.
+const scoped = [requireAuth, enforceSessionOwnership];
+app.use('/api/explore', scoped, exploreRouter);
+app.use('/api/destination', scoped, destinationRouter);
+app.use('/api/identity', scoped, identityRouter);
+app.use('/api/agent', scoped, agentRouter);
+app.use('/api/migrate', scoped, migrateRouter);
 // Legacy redirect-URI aliases (/callback/microsoft, /callback/google).
 app.use('/', legacyAuthRouter);
 
