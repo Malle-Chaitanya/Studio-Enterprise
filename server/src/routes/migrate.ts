@@ -589,8 +589,9 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
                 key: 'api_key',
                 label: `${d.displayName} API token`,
                 help:
-                  'This is a custom connector your team published. Its definition says it authenticates ' +
-                  'with a token sent as an Authorization header — paste the same token the connector uses today.',
+                  'This is a custom connector your team published. Its definition sends this value verbatim ' +
+                  'as the Authorization header, so paste it exactly as the connector holds it today — ' +
+                  'including any scheme prefix such as "Bearer ".',
                 required: true,
                 supplied: savedIds.has(id),
               },

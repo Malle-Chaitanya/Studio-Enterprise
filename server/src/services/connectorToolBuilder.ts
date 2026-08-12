@@ -199,12 +199,55 @@ export function buildLiveConnectorSpecs(
 export function buildLiveConnectorSpecsDetailed(
   connectorIds: string[],
   opts: SecretIdOptions,
+  /**
+   * Connector ids that are CUSTOM but bindable, with their display names. Passed in
+   * rather than looked up here because resolving one needs a network call to the
+   * customer's environment and this function is synchronous by design.
+   */
+  customConnectorIds?: Set<string>,
+  customNames?: Map<string, string>,
 ): { specs: LiveConnectorSpec[]; unsupported: string[] } {
   const specs: LiveConnectorSpec[] = [];
   const unsupported: string[] = [];
   for (const connectorId of connectorIds) {
     const def = REGISTRY_BY_ID.get(connectorId);
     if (!def) {
+      // A CUSTOM connector is never in the registry and never will be. Skipping it here
+      // was the last mile: its operations bind, its credential is stored, and the bound
+      // specs are built — but tools are attached to the agent through `liveConnectorSpecs`,
+      // so with no spec the whole thing still landed in the report as "NOT migrated — no
+      // credentials were configured for it", which was doubly wrong. Measured on a live
+      // run of "Hubspot agentt": four operations rebuilt, four operations reported lost.
+      //
+      // Everything a spec needs is already known from the binding: the base URL travels on
+      // each bound operation's urlTemplate, and a custom connector that binds does so as
+      // `bearer-token`, which is exactly `authKind: 'bearer'` with one secret field. The
+      // customer's own credential record supplies the id.
+      if (customConnectorIds?.has(connectorId)) {
+        const secretIds: Record<string, string> = {};
+        for (const field of connectorCredentialFields(connectorId)) {
+          secretIds[field.key] = secretIdFor(connectorId, field.key, opts);
+        }
+        specs.push({
+          id: connectorId,
+          kind: 'custom',
+          name: customNames?.get(connectorId) ?? connectorId,
+          secretIds,
+          authKind: 'bearer',
+          // Sent VERBATIM, which is what Power Platform does for a custom connector whose
+          // security definition is an apiKey in the Authorization header: the value the
+          // author typed becomes the header, scheme prefix and all. Anything cleverer
+          // would be us inventing an auth scheme the connector never declared.
+          //
+          // Omitting this was not a missing nicety. `_auth_header` in adk_deploy.py
+          // returns `fill(auth_header_tpl)` for the bearer kind, so an empty template
+          // produced an empty header — the deployed tool called api.hubapi.com with no
+          // credential at all and HubSpot answered "Authentication credentials not found",
+          // which reads like a wrong token and was actually no token.
+          authHeaderTemplate: '{api_key}',
+        });
+        continue;
+      }
       logger.warn({ connectorId }, 'buildLiveConnectorSpecs: connector not in registry, skipping');
       unsupported.push(connectorId);
       continue;

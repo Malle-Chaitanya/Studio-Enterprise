@@ -13,7 +13,7 @@ import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnecto
 import { connectorsSharingCredentials } from './services/connectorCredentials.js';
 import { readinessFor } from './connectors/readiness.js';
 import { buildBoundToolSpecs } from './connectors/boundToolSpec.js';
-import type { CaptureContext } from './connectors/captureOpIndex.js';
+import { resolveOpIndex, type CaptureContext } from './connectors/captureOpIndex.js';
 import { REGISTRY_BY_ID } from './connectors/registry.js';
 import { needsAclAcknowledgement, aclDisclosureFor, aclDisclosureSummary } from './services/aclDisclosure.js';
 import { migrateSharePointToDataStore } from './services/sharePointMigrator.js';
@@ -806,8 +806,27 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // the registry alone — deliberately NOT from resolvedConnectors, because these
   // specs travel into the deployment and must never carry a credential value. The
   // container reads each secret from Secret Manager on every tool call.
+  // CUSTOM connectors have no registry entry and never will, so they need resolving from
+  // the customer's own environment before the (synchronous) spec builder runs. Without
+  // this a custom connector that binds, and whose credential is stored, still produced no
+  // spec — and the report then said its tools were "NOT migrated — no credentials were
+  // configured", which was wrong twice over. Proven on a live run of "Hubspot agentt":
+  // four operations rebuilt as exact API calls, four operations reported lost.
+  const customConnectorIds = new Set<string>();
+  const customConnectorNames = new Map<string, string>();
+  for (const id of savedConnectors) {
+    if (REGISTRY_BY_ID.has(id)) continue;
+    const unit = plan.units[0];
+    const ctx = unit ? captureCtxFor(unit.envUrl) : undefined;
+    if (!ctx) continue;
+    const idx = await resolveOpIndex(id, ctx).catch(() => undefined);
+    if (idx?.vendorBinding) {
+      customConnectorIds.add(id);
+      customConnectorNames.set(id, idx.displayName);
+    }
+  }
   const { specs: liveConnectorSpecs, unsupported: unsupportedConnectorIds } =
-    buildLiveConnectorSpecsDetailed(savedConnectors, secretIdOpts);
+    buildLiveConnectorSpecsDetailed(savedConnectors, secretIdOpts, customConnectorIds, customConnectorNames);
   if (liveConnectorSpecs.length) {
     emitLog('info', `Live connector tools to wire: ${liveConnectorSpecs.map((c) => c.name).join(', ')}`);
   }

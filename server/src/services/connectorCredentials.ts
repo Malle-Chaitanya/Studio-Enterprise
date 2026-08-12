@@ -116,7 +116,9 @@ export function connectorCredentialFields(
         key: 'api_key',
         label: 'API token',
         type: 'password' as const,
-        hint: 'Token for this custom connector, sent as an Authorization header.',
+        hint:
+          'Sent verbatim as the Authorization header, exactly as Power Platform sends it — ' +
+          'include any scheme prefix the vendor needs (e.g. "Bearer pat-na1-…").',
         shared: false,
         scope: connectorId,
       },
