@@ -144,19 +144,48 @@ if (!COMMIT) {
   process.exit(0);
 }
 
+/**
+ * Delete one engine, backing off on quota.
+ *
+ * `Reasoning Engine Write Requests` is a per-minute quota and deletes count against it —
+ * a flat loop exhausted it after 12 and reported the remaining 59 as failures, which reads
+ * like "these could not be deleted" when the truth was "we asked too fast". Same rule the
+ * rest of the codebase follows for Gemini writes (services/rateLimiter.ts).
+ */
+async function deleteEngine(name: string): Promise<'deleted' | 'failed'> {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    // force=true: an engine with sessions or memories attached refuses a plain delete.
+    const res = await fetch(`https://${LOCATION}-aiplatform.googleapis.com/v1beta1/${name}?force=true`, {
+      method: 'DELETE',
+      headers: auth,
+    });
+    if (res.ok || res.status === 404) return 'deleted';
+    if (res.status === 429 || res.status === 503) {
+      const wait = Math.min(60_000, 5_000 * 2 ** attempt);
+      console.log(`    quota hit — waiting ${wait / 1000}s before retrying ${name.split('/').pop()}`);
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+    console.log(`  FAILED  ${name.split('/').pop()} -> ${res.status} ${(await res.text()).slice(0, 140)}`);
+    return 'failed';
+  }
+  console.log(`  FAILED  ${name.split('/').pop()} -> still quota-limited after 6 attempts`);
+  return 'failed';
+}
+
 let deleted = 0;
 for (const e of reap) {
-  // force=true: an engine with sessions or memories attached refuses a plain delete.
-  const res = await fetch(`https://${LOCATION}-aiplatform.googleapis.com/v1beta1/${e.name}?force=true`, {
-    method: 'DELETE',
-    headers: auth,
-  });
-  if (res.ok || res.status === 404) {
+  const outcome = await deleteEngine(e.name);
+  if (outcome === 'deleted') {
     deleted++;
     console.log(`  deleted ${e.name.split('/').pop()}`);
-  } else {
-    console.log(`  FAILED  ${e.name.split('/').pop()} -> ${res.status} ${(await res.text()).slice(0, 140)}`);
   }
+  // Pace the steady state as well as the failures: the quota is per minute, so spacing the
+  // calls is what keeps a large sweep from spending most of its time in backoff.
+  await new Promise((r) => setTimeout(r, 2_000));
 }
 console.log(`\ndeleted ${deleted}/${reap.length}.`);
+if (deleted < reap.length) {
+  console.log('Re-run to pick up the rest — the report is recomputed from live state each time.');
+}
 process.exit(0);
