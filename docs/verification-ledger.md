@@ -1327,6 +1327,56 @@ source declared), and the two connected-agent relationships are reported, not re
 
 ---
 
+### 1.25 Tool census — every agent, every tool, how many produce a real call (2026-08-13)
+
+"Can we find the tools on any agent, like the Hubspot one?" is only answerable by asking
+every agent. `_diag_tool_census.ts` runs the extractor and the REAL builder
+(`buildBoundToolSpecs`, against the customer's own connector definitions) over all four
+environments:
+
+```
+22 agent(s) with tools · 10 fully callable
+126 tool(s) found → 92 vendor call(s) built
+by kind: connector=106  ai-builder=1  mcp-server=6  connected-agent=2  ai-plugin=8  flow=3
+
+COULD NOT READ 2 environment(s) — agents there are absent from every number above:
+  CF_MANAGE — Dataverse GET bots?...
+  Microsoft 365 — Dataverse GET bots?...
+```
+
+Finding is now total: **126 of 126 tools are extracted and named**, across six kinds. The
+Hubspot case is closed on both sides:
+
+```
+  OK   Hubspot agentt                                 4 tool(s) → 4 call(s)
+  OK   HubSpot Agent                                  2 tool(s) → 2 call(s)
+  OK   D365 Sales - Configuration Agent               9 tool(s) → 9 call(s)
+  OK   confluence agent                               1 tool(s) → 1 call(s)
+```
+
+**Calling is not total, and the 34-tool gap is fully itemised** — every one names its kind
+and connector, none is silent:
+
+| Not callable | Count | Why |
+|---|---|---|
+| Google Drive operations | 11 | Connector paths (`/datasets/default/files/{id}`) are a Power Platform abstraction, not Drive API paths — needs a hand-written mapping |
+| `ai-plugin` tools | 8 | Custom API plugins; no connector id in the payload at all |
+| MCP servers, `toolSelection: unknown` | 5 | No tool list to rebuild (§1.24) — refused rather than guessed |
+| Power Automate flows | 3 | Only the flow id is in the payload; flows are a later phase |
+| Dataverse ops with a Power Fx required arg | 3 | e.g. `recordId` = `=Topic.EvaluationRequest.evaluationRecordId` — refused, because omitting a required filter returns the WRONG rows rather than an error |
+| Connected agents | 2 | Gemini agents cannot call each other (§1.24) |
+| `shared_sharepointonline.HttpRequest` | 1 | Arbitrary-URL passthrough, no fixed vendor path |
+| `ai-builder` custom prompt | 1 | Prompt folded into the instruction; the model is not migrated |
+
+The gap is 27% of tools and it is concentrated: Google Drive alone is a third of it. Note
+the census counts an MCP server as ONE tool but it yields six calls, which is why an
+"OK/GAP" verdict uses `calls >= tools`, not equality.
+
+**Still unread: 2 of 4 environments.** Every number above excludes them, and no claim about
+"any agent" covers agents we have never been allowed to list.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
