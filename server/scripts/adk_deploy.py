@@ -291,8 +291,17 @@ def _build_live_connector_tool(conn: dict, project: str):
             p = urllib.parse.urlparse(scope_uri)
             host = p.netloc
             parts = [urllib.parse.unquote(x) for x in p.path.split("/") if x]
-            # .../sites/<name>/<library>/<folders...>  or  /<library>/<folders...>
-            if parts and parts[0].lower() == "sites" and len(parts) >= 2:
+            # Three shapes appear in real tenants, and they are not interchangeable:
+            #   /sites/<name>/<library>/<folders...>          team site
+            #   /<library>/<folders...>                       the root site
+            #   /personal/<user>/Documents/<folders...>       OneDrive, on <tenant>-my
+            # Treating the third like the second resolved to the ROOT of the -my host and
+            # then looked for a folder literally named "personal/<user>/..." — a silent
+            # wrong scope, since Graph answers for the host either way.
+            if parts and parts[0].lower() == "personal" and len(parts) >= 2:
+                site_path = f"/personal/{parts[1]}"
+                rest = parts[2:]
+            elif parts and parts[0].lower() == "sites" and len(parts) >= 2:
                 site_path = f"/sites/{parts[1]}"
                 rest = parts[2:]
             else:
