@@ -444,7 +444,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'storage',
     icon: '📁',
     docsUrl: 'https://developers.google.com/drive/api/reference/rest/v3',
-    requiredPermissions: ['https://www.googleapis.com/auth/drive.readonly'],
+    requiredPermissions: ['https://www.googleapis.com/auth/drive'],
     permissionsHint: 'Either share each Drive folder with the service account\'s email address, or turn on domain-wide delegation in your Google Workspace admin console and approve this permission there.',
     credentials: [
       { key: 'service_account_json', label: 'Service Account JSON key', type: 'password',
@@ -459,7 +459,11 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     // A pasted access token lasts ~1h and customers cannot mint one. The JSON key is
     // durable: the runtime signs a JWT with it and gets a fresh token as needed.
     authKind: 'google-service-account',
-    scope: 'https://www.googleapis.com/auth/drive.readonly',
+    // 'drive' (not 'drive.readonly') on purpose — confirmed live 2026-08-10 that a
+    // Workspace admin authorizing DWD for 'drive' does NOT also authorize the
+    // separate 'drive.readonly' scope string (exact-match, not hierarchical), so a
+    // customer who only grants the broad scope still needs this to be the same one.
+    scope: 'https://www.googleapis.com/auth/drive',
   },
 
   // ── Marketing ──────────────────────────────────────────────────────────────
