@@ -165,7 +165,21 @@ export async function detectKnowledgeConnectors(
     const operationId = /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1];
 
     // Tier 1a — api names appearing structurally (connection references, connector actions).
-    for (const m of data.matchAll(/\bshared_[a-z0-9_]+/gi)) {
+    //
+    // HYPHENS INCLUDED. A custom connector is named after its display name with the
+    // spaces percent-encoded, so "Get CRM objects from Hubspot" is
+    // `shared_get-20crm-20objects-20from-20hubspot-5fdd816392-…`. The character class here
+    // was `[a-z0-9_]+`, which stopped at the first hyphen and recorded `shared_get` — an
+    // id belonging to no connector at all. The customer then saw a card titled
+    // "shared_get" saying "We don't support this connector yet", for a connector that
+    // binds, has a credential field, and calls api.hubapi.com. Reported live from the
+    // Connector Credentials screen, 2026-08-12.
+    //
+    // This is the THIRD independent copy of this regex found today (connectorRef.ts and
+    // opIndex.ts/captureOpIndex.ts were the others). Truncating an id is not a cosmetic
+    // bug: every downstream lookup keys on it, so the whole connector silently becomes a
+    // different, non-existent one.
+    for (const m of data.matchAll(/\bshared_[a-z0-9_-]+/gi)) {
       record(m[0].toLowerCase(), comp, true, operationId);
     }
 
@@ -195,6 +209,12 @@ export async function detectKnowledgeConnectors(
   const results: DetectedConnector[] = [];
   for (const [connectorId, hit] of connectorHits) {
     const def = REGISTRY_BY_ID.get(connectorId);
+    // Resolved BEFORE the verdict below, because it is what the verdict now depends on.
+    const readiness = await readinessForCustomer(
+      connectorId,
+      hit.operations.size ? [...hit.operations] : undefined,
+      captureCtx,
+    );
     // A connector with no registry entry is one we cannot CALL — it is not one the
     // customer does not have. Dropping it here produced a clean-looking report that
     // never mentioned it: "Enterprise Migration Knowledge" uses shared_hubspotcrmv2
@@ -211,7 +231,13 @@ export async function detectKnowledgeConnectors(
       // 'certain' when Copilot Studio itself named the connector; 'heuristic' when we
       // inferred it from editable text on a generic federated source.
       confidence: hit.certain ? 'certain' : 'heuristic',
-      unsupported: def ? undefined : true,
+      // "Unsupported" must mean WE CANNOT CALL IT, not "absent from a hand-written
+      // table". A custom connector can never have a registry entry, yet a bindable one
+      // reaches its vendor API perfectly well — so keying this off the registry alone
+      // told the customer "We don't support this connector yet" about four HubSpot
+      // operations that bind, carry their real descriptions, and have a credential field
+      // on this very screen. Reported from the UI 2026-08-12.
+      unsupported: def || readiness?.bindable.length ? undefined : true,
       // The exact operations this agent invokes. "Uses Jira" is not enough to rebuild
       // an agent — Jira exposes dozens of operations and this one chose five.
       operations: hit.operations.size ? [...hit.operations].sort() : undefined,
@@ -220,11 +246,7 @@ export async function detectKnowledgeConnectors(
       // can be `unsupported` (no registry entry) and still fully bindable — Dataverse is
       // exactly that case — so the two flags are answering different questions and both
       // are reported.
-      readiness: await readinessForCustomer(
-        connectorId,
-        hit.operations.size ? [...hit.operations] : undefined,
-        captureCtx,
-      ),
+      readiness,
     });
   }
 
