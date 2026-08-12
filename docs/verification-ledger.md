@@ -337,6 +337,84 @@ produced evidence.
 
 ---
 
+### 1.12 Source and tool SHAPES — what agents are actually made of (2026-08-12)
+
+`npx tsx src/spikes/_diag_source_and_tool_shapes.ts`, both environments, read-only.
+
+**Knowledge sources — 29 total, every one scoped to a sub-resource, not a whole system.**
+
+Copilot stores them all as `KnowledgeSourceConfiguration`; the *scope* lives in the
+generated description and the config body:
+
+```
+"...answers questions found in the following Confluence items: Engineering, Demo Company Wiki"
+"...answers questions found in the following Dataverse items: CF ICP Profile, FAQ Entry"
+"...provides information found in daily_queries.txt SharePoint."
+siteUrl=https://filefuze-my.sharepoint.com/personal/erik_filefuze_co/Documents/HR%20Neutara%20Poli…
+"...searches information on the web found in https://lookup.icann.org website"
+```
+
+So the unit an author picks is a named space, a named table, a named file, a specific
+folder path, a specific site — never "all of SharePoint". Grade **P**. Fidelity
+consequence: a strategy that indexes a whole site or a whole drive when the author named
+one folder does not preserve the agent, it enlarges it. Scope narrowing is a correctness
+requirement, not an optimisation.
+
+**Tools — 63 TaskDialogs, and only two thirds are connector calls.**
+
+| Action kind | Count | What it is |
+|---|---|---|
+| `InvokeConnectorTaskAction` | 43 | A connector operation — the only kind `operationBinding.ts` covers |
+| `InvokeAIPluginTaskAction` | 8 | An AI plugin / custom API the author added in Copilot |
+| `InvokeExternalAgentTaskAction` | 6 | An **MCP server** (e.g. Jira MCP, with an explicit tool allow-list) |
+| `InvokeFlowTaskAction` | 3 | A Power Automate flow, identified only by `flowId` |
+| `InvokeConnectedAgentTaskAction` | 2 | Another Copilot agent |
+| `InvokeAIBuilderModelTaskAction` | 1 | An AI Builder prompt (already resolved by `buildAiPromptMap`) |
+
+`with modelDescription: 54/63 · with operationId: 49/63 · with input bindings: 37/63`
+
+**The plan's step-3b fear is disproven: the author's bound arguments ARE in the payload.**
+
+```yaml
+inputs:
+  - kind: ManualTaskInput
+    propertyName: entityName
+    value: msdyn_transformationjobs
+  - kind: ManualTaskInput
+    propertyName: "'$filter'"
+    value: =Concatenate("statecode ne 1 and … msdyn_telephonenumber eq '", Global.SelectedPhoneNumber, "'")
+  - kind: ManualTaskInput
+    propertyName: "'$top'"
+    value: 1
+action:
+  kind: InvokeConnectorTaskAction
+  connectionProperties: { mode: Invoker }
+  operationId: ListRecordsWithOrganization
+```
+
+Two input kinds: `ManualTaskInput` (the author fixed the value) and `AutomaticTaskInput`
+(the model fills it, with an entity type). Together with the `outputs` block and
+`dynamicOutputSchema` — which types the result down to individual columns — this is enough
+to reproduce the call, not merely a call of the same shape. Grade **P** for the payloads
+being present and parseable.
+
+The honest limit: `ManualTaskInput.value` can be a **Power Fx expression** referencing
+runtime state (`Global.SelectedPhoneNumber`, `Concatenate(...)`). A literal migrates
+directly; an expression needs either a Power Fx subset evaluator or demotion to a
+model-supplied argument with a `needs-review` note. It must not be copied through as
+literal text — that produces a filter string containing the word `Concatenate`.
+
+`connectionProperties.mode: Invoker` on both sampled connector tools. Per-user auth is the
+normal case in this tenant, not the exception — which raises the priority of D7.
+
+**What we extract today vs what is there:** `modelDescription`, `operationId`,
+`connectorId`, `connectionAuthMode` and `outputs` are extracted (`dataverse.ts:637`).
+`inputs`, `dynamicOutputSchema`, the MCP tool allow-list, `flowId` and the AI-plugin
+identity are **not**. They are in the payload we already hold — this is an extraction gap,
+not an access problem.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
