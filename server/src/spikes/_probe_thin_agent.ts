@@ -65,7 +65,7 @@ for (const env of await discoverEnvironments(tenantId)) {
     const hasMessage = /SendActivity|sendActivity/.test(payload);
     if (hasConnector) console.log('     >> CONTAINS A CONNECTOR CALL');
     if (hasMessage) console.log('     >> sends a message');
-    if (payload.length && payload.length < 700) {
+    if (payload.length && payload.length < 2500) {
       console.log('     ── full payload (short) ──');
       console.log(payload.split('\n').map((l) => `     | ${l}`).join('\n'));
     }

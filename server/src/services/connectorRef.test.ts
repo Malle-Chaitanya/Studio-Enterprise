@@ -3,6 +3,7 @@ import {
   connectorIdFromConnectionReference,
   connectorIdFromOperation,
   resolveConnectorId,
+  connectorIdFromArmPath,
   connectionAuthModeFrom,
 } from './connectorRef.js';
 
@@ -116,6 +117,68 @@ describe('resolveConnectorId (topic-embedded actions)', () => {
     expect(connectorIdFromOperation('GetOrganizationProfile')).toBeUndefined();
     expect(connectorIdFromOperation('WithOrganizationDetails')).toBeUndefined();
     expect(connectorIdFromOperation('UpdateRecordWithOrganization')).toBe('shared_commondataserviceforapps');
+  });
+});
+
+describe('ConnectorTool rows (the flat shape)', () => {
+  // Verbatim from "Hubspot agentt", captured 2026-08-12 by spikes/_probe_thin_agent.ts.
+  // The agent is FOUR of these and nothing else, and extracted as thinContent — the
+  // product reported "nothing authored to migrate" about an agent made entirely of
+  // HubSpot calls.
+  const ARM =
+    '/providers/Microsoft.PowerApps/apis/shared_get-20crm-20objects-20from-20hubspot-5fdd816392-2363868395b0ae9b';
+  const REF =
+    'cr88d_hubspotagentt_XSK2Qk.cr.shared_get-20crm-20objects-20from-20hubspot-5fdd816392-2363868395b0ae9b';
+
+  it('takes the connector straight from the ARM path', () => {
+    expect(resolveConnectorId(REF, 'GetDeals', ARM)).toEqual({
+      connectorId: 'shared_get-20crm-20objects-20from-20hubspot-5fdd816392-2363868395b0ae9b',
+      confidence: 'exact',
+    });
+  });
+
+  it('outranks every other signal, including the operation family', () => {
+    expect(
+      resolveConnectorId('QMA.Incident.DVPluginConnection', 'GetItemWithOrganization', ARM).connectorId,
+    ).toBe('shared_get-20crm-20objects-20from-20hubspot-5fdd816392-2363868395b0ae9b');
+  });
+
+  it('ignores an ARM path that is not a connector resource', () => {
+    expect(connectorIdFromArmPath('/providers/Microsoft.PowerApps/flows/abc')).toBeUndefined();
+    expect(connectorIdFromArmPath(undefined)).toBeUndefined();
+    expect(connectorIdFromArmPath('')).toBeUndefined();
+  });
+
+  // The truncation bug. `shared_get` is not a connector — it is the first hyphen-free
+  // slice of one, so the tool was reported unsupported under a name that does not exist.
+  it('keeps hyphens in a custom connector id instead of truncating at the first one', () => {
+    expect(connectorIdFromConnectionReference(REF)).toBe(
+      'shared_get-20crm-20objects-20from-20hubspot-5fdd816392-2363868395b0ae9b',
+    );
+    expect(connectorIdFromConnectionReference(REF)).not.toBe('shared_get');
+  });
+
+  it('does not change first-party ids by allowing hyphens', () => {
+    expect(
+      connectorIdFromConnectionReference('crf37_Confluenceagent.shared_confluence.cbc262ecb6fe401294af380b08d029d6'),
+    ).toBe('shared_confluence');
+    expect(
+      connectorIdFromConnectionReference(
+        'crf37_DevHelpDeskAgent.shared_sharepointonline.shared-sharepointonl-0a728318-c54b-42b5-a054-732e262fffd9',
+      ),
+    ).toBe('shared_sharepointonline');
+  });
+
+  // A ConnectorTool states authMode flat. Reading it as "unknown" would migrate a
+  // per-end-user tool under our one service credential without saying so.
+  it('reads the flat authMode as Invoker', () => {
+    const row = ['kind: ConnectorTool', 'authMode: Invoker', `connectorId: ${ARM}`, 'operationId: GetDeals'].join('\n');
+    expect(connectionAuthModeFrom(row)).toBe('invoker');
+  });
+
+  it('still reads the nested connectionProperties shape', () => {
+    const nested = ['kind: InvokeConnectorTaskAction', 'connectionProperties:', '  mode: Invoker'].join('\n');
+    expect(connectionAuthModeFrom(nested)).toBe('invoker');
   });
 });
 

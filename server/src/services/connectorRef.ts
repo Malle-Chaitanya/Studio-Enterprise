@@ -12,6 +12,35 @@
  */
 
 /**
+ * A `shared_*` connector id, HYPHENS INCLUDED.
+ *
+ * Custom connectors are named after their display name with the spaces percent-encoded, so
+ * "Get CRM objects from Hubspot" becomes
+ * `shared_get-20crm-20objects-20from-20hubspot-5fdd816392-2363868395b0ae9b`. The original
+ * character class `[a-z0-9_]+` stopped at the first hyphen and yielded `shared_get` — an id
+ * that belongs to no connector at all. It matched nothing in the registry, so the tool was
+ * reported unsupported under a NAME THAT DOES NOT EXIST, which is worse than reporting it
+ * unsupported: the customer cannot even look it up.
+ *
+ * Ends at `.` (segment boundary) or whitespace, so first-party ids are unaffected —
+ * `…​.shared_confluence.cbc262…` still yields `shared_confluence`.
+ */
+const SHARED_ID = /\b(shared_[a-z0-9_-]+)/i;
+
+/**
+ * `/providers/Microsoft.PowerApps/apis/shared_foo` → `shared_foo`.
+ *
+ * The `kind: ConnectorTool` row states its connector as an ARM resource path. That is the
+ * connector saying who it is — no inference, no parsing of a reference name that may or may
+ * not embed the id. Strongest evidence available; prefer it over everything else.
+ */
+export function connectorIdFromArmPath(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  const id = /\/apis\/([^/\s]+)\s*$/.exec(path.trim())?.[1];
+  return id ? id.toLowerCase() : undefined;
+}
+
+/**
  * `<prefix>.shared_jira.<guid>` → `shared_jira`.
  *
  * The middle dot-segment is the connector id. First-party connectors are `shared_*`;
@@ -23,7 +52,7 @@
  * connector is at least NAMED — we still cannot call it, but the customer is told.
  */
 export function connectorIdFromConnectionReference(ref: string): string | undefined {
-  const firstParty = /\b(shared_[a-z0-9_]+)/i.exec(ref)?.[1];
+  const firstParty = SHARED_ID.exec(ref)?.[1];
   if (firstParty) return firstParty.toLowerCase();
   // `<solutionprefix>_<logicalname>.<connectorid>.<connectionrefid>` — take the middle.
   const parts = ref.split('.').filter(Boolean);
@@ -81,9 +110,12 @@ export function connectorIdFromOperation(operationId: string | undefined): strin
 export function resolveConnectorId(
   ref: string | undefined,
   operationId?: string,
+  armPath?: string,
 ): { connectorId?: string; confidence: 'exact' | 'inferred' | 'named-only' | 'unknown' } {
+  const fromArm = connectorIdFromArmPath(armPath);
+  if (fromArm) return { connectorId: fromArm, confidence: 'exact' };
   if (ref) {
-    const firstParty = /\b(shared_[a-z0-9_]+)/i.exec(ref)?.[1];
+    const firstParty = SHARED_ID.exec(ref)?.[1];
     if (firstParty) return { connectorId: firstParty.toLowerCase(), confidence: 'exact' };
   }
   const fromOp = connectorIdFromOperation(operationId);
@@ -112,6 +144,13 @@ export function resolveConnectorId(
  * audit fields. The bot-level `authenticationmode` does not discriminate either.
  */
 export function connectionAuthModeFrom(data: string): 'invoker' | 'maker' | undefined {
+  // `kind: ConnectorTool` rows state it as a top-level `authMode:` instead of nesting it
+  // under connectionProperties. Missing this does not lose the tool, it loses the fact
+  // that the tool runs as the END USER — and migrating an Invoker tool under our single
+  // service credential silently hands every user the service account's whole view. A
+  // privilege escalation reported as a clean migration.
+  const flat = /^\s*authMode:\s*(\w+)\s*$/m.exec(data)?.[1];
+  if (flat) return /^invoker$/i.test(flat) ? 'invoker' : 'maker';
   const mode = /^\s*connectionProperties:\s*$[\s\S]{0,200}?^\s*mode:\s*(\w+)\s*$/m.exec(data)?.[1];
   if (!mode) return undefined;
   return /^invoker$/i.test(mode) ? 'invoker' : 'maker';

@@ -602,9 +602,24 @@ function collectStrings(node: unknown, keyMatch: (k: string) => boolean, out: st
  * `kind:` on the first meaningful line of `data`: `AdaptiveDialog` for an authored
  * topic, `TaskDialog` for something the agent can invoke.
  */
+/**
+ * Which componenttype-9 rows are TOOLS rather than topics.
+ *
+ * `TaskDialog` was the only shape recognised. Copilot Studio also writes a flatter
+ * `ConnectorTool` row — measured 2026-08-12, 5 rows across 2 agents in the test tenant,
+ * including one ("Hubspot agentt") whose ENTIRE content is four ConnectorTool rows. Not
+ * matching meant no tool, no note, and `thinContent: true`: the product told the customer
+ * there was nothing authored to migrate about an agent built entirely out of HubSpot calls.
+ * A false all-clear, which is the one outcome this pipeline exists to prevent.
+ */
 function isAgentToolComponent(c: BotComponent): boolean {
   const data = c.data || c.content || '';
-  return /^\s*kind:\s*TaskDialog\s*$/m.test(data);
+  return /^\s*kind:\s*(TaskDialog|ConnectorTool)\s*$/m.test(data);
+}
+
+/** A componenttype-9 row that is a named sub-agent with its own instructions. */
+function isInlineSkillComponent(c: BotComponent): boolean {
+  return /^\s*kind:\s*InlineAgentSkill\s*$/m.test(c.data || c.content || '');
 }
 
 // connectorIdFromConnectionReference / connectionAuthModeFrom moved to
@@ -630,8 +645,41 @@ const TASK_ACTION_KIND: Record<string, AgentToolKind> = {
  * shapes we have not seen, which would drop the whole tool. An unrecognised action
  * kind is preserved as 'unknown' — never discarded.
  */
+/**
+ * The flat `ConnectorTool` row shape:
+ *
+ *     kind: ConnectorTool
+ *     authMode: Invoker
+ *     connectionReference: cr88d_hubspotagentt_XSK2Qk.cr.shared_get-20crm-…
+ *     connectorId: /providers/Microsoft.PowerApps/apis/shared_get-20crm-…
+ *     operationId: GetDeals
+ *
+ * Everything a bound call needs is stated outright — no nested action, no binding block.
+ * The ARM `connectorId` is authoritative, so these need none of the inference the
+ * TaskDialog and topic-embedded shapes do. Inputs are absent because the author pinned
+ * nothing: every argument is the model's to supply, which is exactly what the binder
+ * defaults to.
+ */
+function parseConnectorToolRow(c: BotComponent): AgentToolIR {
+  const data = c.data || c.content || '';
+  const armPath = /^\s*connectorId:\s*(\S+)\s*$/m.exec(data)?.[1];
+  const connectionReference = /^\s*connectionReference:\s*(\S+)\s*$/m.exec(data)?.[1];
+  const operationId = /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1] || undefined;
+  return {
+    name: c.name ?? '(unnamed tool)',
+    kind: 'connector',
+    displayName: /^\s*modelDisplayName:\s*(.+)$/m.exec(data)?.[1]?.trim() || c.name || undefined,
+    description: /^\s*modelDescription:\s*(.+)$/m.exec(data)?.[1]?.trim() || undefined,
+    connectorId: resolveConnectorId(connectionReference, operationId, armPath).connectorId,
+    connectionAuthMode: connectionAuthModeFrom(data),
+    operationId,
+    schemaName: c.schemaname ?? undefined,
+  };
+}
+
 function parseAgentTool(c: BotComponent): AgentToolIR {
   const data = c.data || c.content || '';
+  if (/^\s*kind:\s*ConnectorTool\s*$/m.test(data)) return parseConnectorToolRow(c);
   const rawKind = /^\s*kind:\s*(Invoke\w*TaskAction)\s*$/m.exec(data)?.[1] ?? '';
   const connectionReference = /^\s*connectionReference:\s*(\S+)\s*$/m.exec(data)?.[1] ?? '';
   const outputs = [...data.matchAll(/^\s*-\s*propertyName:\s*(\S+)\s*$/gm)].map((m) => m[1]);
@@ -723,6 +771,68 @@ function parseTopic(c: BotComponent): TopicIR {
     usesAdaptiveCards,
     isSystem: SYSTEM_TOPIC_NAMES.has(c.name),
     graph,
+  };
+}
+
+/**
+ * `kind: InlineAgentSkill` → a TopicIR, because that is what it is.
+ *
+ * The row wraps a markdown document with YAML front matter:
+ *
+ *     kind: InlineAgentSkill
+ *     content: |-
+ *       ---
+ *       name: query-hubspot-crm
+ *       description: |-
+ *         Looks up existing HubSpot contacts, companies, deals, or tickets…
+ *       ---
+ *       You are the HubSpot CRM Assistant for CloudFuze employees.
+ *       ROLE …  SCOPE …  TONE …  OUT OF SCOPE …
+ *
+ * That body is a named sub-agent's INSTRUCTIONS — the richest authored content on
+ * "Hubspot agentt", and the reason its `instructions: 0` reading was so misleading: the
+ * behaviour is here, not in GptComponentMetadata. It carries the read-only constraint and
+ * the explicit "you cannot run live counts" refusal, so dropping it would migrate an agent
+ * that keeps the capability and loses every guard rail the author put on it.
+ *
+ * Mapped onto TopicIR rather than a new IR field on purpose: a named unit with a
+ * description and instructions is exactly what the ADK deployer already turns into a topic
+ * sub-agent, and changing the IR shape needs Architect sign-off (architecture-boundaries).
+ */
+function parseInlineSkill(c: BotComponent): TopicIR {
+  const raw = c.data || c.content || '';
+  // `content: |-` then an indented block. Strip the YAML key and de-indent.
+  const block = /^\s*content:\s*\|-?\s*\n([\s\S]*)$/m.exec(raw)?.[1] ?? raw;
+  const indent = /^([ \t]*)\S/m.exec(block)?.[1] ?? '';
+  const body = indent ? block.replace(new RegExp(`^${indent}`, 'gm'), '') : block;
+
+  const fm = /^---\s*\n([\s\S]*?)\n---\s*\n?/.exec(body);
+  const front = fm?.[1] ?? '';
+  const instructions = (fm ? body.slice(fm[0].length) : body)
+    // A Copilot authoring marker, not content.
+    .replace(/^\s*<!--\s*bic:[^>]*-->\s*$/gm, '')
+    .trim();
+
+  const name = /^\s*name:\s*(.+)$/m.exec(front)?.[1]?.trim() || c.name || '(unnamed skill)';
+  // `description: |-` block, else a single-line description.
+  const descBlock = /^\s*description:\s*\|-?\s*\n([\s\S]*?)(?=\n\s*\w+:|$)/m.exec(front)?.[1];
+  const description = (descBlock ?? /^\s*description:\s*(.+)$/m.exec(front)?.[1] ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return {
+    id: c.botcomponentid,
+    name,
+    raw,
+    triggerPhrases: [],
+    modelDescription: description || undefined,
+    // The instructions ARE the summary here — this is what the sub-agent must be told.
+    summary: instructions.slice(0, 4000),
+    messages: [],
+    usesAiBuilder: false,
+    usesAdaptiveCards: false,
+    isSystem: false,
+    graph: parseTopicGraph(raw),
   };
 }
 
@@ -1116,7 +1226,8 @@ export async function extractAgent(
   // with far fewer), while the operations it actually calls were never recorded.
   const type9 = components.filter((c) => c.componenttype === ComponentType.Topic);
   const toolComps = type9.filter((c) => isAgentToolComponent(c));
-  const topicComps = type9.filter((c) => !isAgentToolComponent(c));
+  const skillComps = type9.filter((c) => isInlineSkillComponent(c));
+  const topicComps = type9.filter((c) => !isAgentToolComponent(c) && !isInlineSkillComponent(c));
   const agentTools = toolComps.map(parseAgentTool);
 
   // Connector calls that live INSIDE a topic rather than as a standalone TaskDialog.
@@ -1160,7 +1271,9 @@ export async function extractAgent(
     ? parseGptMetadata(gptComp)
     : { instructions: '', description: '', capabilities: { webBrowsing: false, codeInterpreter: false }, starterPrompts: [] };
 
-  const topics = topicComps.map(parseTopic);
+  // Inline skills ride alongside topics: both become sub-agents downstream, and keeping
+  // them in one list means every consumer that already handles topics handles these too.
+  const topics = [...topicComps.map(parseTopic), ...skillComps.map(parseInlineSkill)];
   // Knowledge = configured sources (type 16) + author-uploaded files (type 14).
   // A minority of type-14 rows are actually embedded structured configs, not
   // files (see isEmbeddedConfigSource) — route those through the
@@ -1223,7 +1336,12 @@ export async function extractAgent(
     (t) => t.modelDescription || stripBindings(t.summary),
   );
   const hasAiPrompt = topics.some((t) => t.aiPrompt);
-  const thinContent = !gpt.instructions && !hasReadableTopicContent && !hasAiPrompt;
+  // TOOLS are authored content. "Hubspot agentt" is four HubSpot connector calls and
+  // nothing else, and reported thin — the report told the customer there was nothing to
+  // migrate about an agent whose entire purpose is those four calls. Thin must mean the
+  // agent does nothing, not that it does nothing we happened to look at.
+  const thinContent =
+    !gpt.instructions && !hasReadableTopicContent && !hasAiPrompt && agentTools.length === 0;
 
   const unmapped: string[] = [];
 
