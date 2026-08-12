@@ -55,6 +55,26 @@ export interface ConnectorOpIndex {
   connectionAuth: Record<string, { type?: string; identityProvider?: string; resource?: string; scopes?: string[] }>;
   operationCount: number;
   operations: Record<string, OpIndexOperation>;
+  /**
+   * Binding derived at capture time instead of read from `VENDOR_BINDINGS`.
+   *
+   * CUSTOM connectors cannot be in a hand-maintained table — they are the customer's own,
+   * one per business, named after whatever they typed. But their published definition
+   * states the vendor host, base path and credential shape outright, so the entry that
+   * would have been hand-written can be derived. Set only when we read a real definition;
+   * `undefined` still falls through to the table, so nothing about first-party connectors
+   * changes.
+   */
+  vendorBinding?: VendorBinding;
+  /**
+   * How many Power Platform POLICIES the connector applies to a request.
+   *
+   * Policies rewrite the call before it reaches the backend — inject headers, remap query
+   * parameters, rewrite the host. We reproduce the swagger, not the policies, so a
+   * non-zero count means our call may differ from Copilot's in a way we cannot see. The
+   * count travels with the index so the caller can say so rather than assume zero.
+   */
+  policyCount?: number;
 }
 
 /**
@@ -246,7 +266,10 @@ function contextPlaceholders(template: string, params: OpIndexParameter[]): stri
  * operation will not migrate, per operation, before the run starts.
  */
 export function bindOperation(index: ConnectorOpIndex, operationId: string): BindingResult {
-  const binding = VENDOR_BINDINGS[index.connectorId];
+  // A binding derived from the connector's own published definition outranks the table:
+  // it came from the customer's actual environment, and for a custom connector there is no
+  // table entry to outrank.
+  const binding = index.vendorBinding ?? VENDOR_BINDINGS[index.connectorId];
   if (!binding) {
     return {
       status: 'unknown-connector',

@@ -80,6 +80,8 @@ export async function buildBoundToolSpecs(
 ): Promise<BoundToolBuild> {
   const byConnector = new Map<string, BoundToolSpec[]>();
   const notes: FidelityNote[] = [];
+  /** One policy warning per connector, not one per operation that uses it. */
+  const policyWarned = new Set<string>();
   const usedNames = new Set<string>();
 
   for (const tool of ir.agentTools ?? []) {
@@ -87,6 +89,24 @@ export async function buildBoundToolSpecs(
 
     const index = await resolveOpIndex(tool.connectorId, ctx);
     if (!index) continue; // reported elsewhere as an unsupported connector
+
+    // A custom connector can apply POLICIES that rewrite the request before it reaches the
+    // backend — inject headers, remap query parameters, change the host. We reproduce the
+    // published definition, not the policies, so where any exist our call may differ from
+    // Copilot's in a way neither we nor the customer can see from the outside. Say so once
+    // per connector rather than let a silently different call pass as a faithful one.
+    if (index.policyCount && !policyWarned.has(tool.connectorId)) {
+      policyWarned.add(tool.connectorId);
+      notes.push({
+        component: `connector:${tool.connectorId}`,
+        status: 'needs-review',
+        detail:
+          `${index.displayName} applies ${index.policyCount} Power Platform policy/policies that rewrite the ` +
+          'request before it reaches the vendor. The migrated tools call the vendor API directly from the ' +
+          'connector definition, so any header, parameter or host the policies changed is not reproduced — ' +
+          'compare a result against the original agent before relying on it.',
+      });
+    }
 
     const bound = bindOperation(index, tool.operationId);
     if (bound.status !== 'bindable') {
@@ -161,9 +181,17 @@ export async function buildBoundToolSpecs(
       operationId: tool.operationId,
       method: op.method,
       urlTemplate: op.urlTemplate,
-      // The author's own words about the tool are what the model routes on. Falling back to
-      // the operation id gives it something, but a description is far better.
-      description: tool.description || `${index.displayName} ${tool.operationId}`,
+      // The author's own words about the tool are what the model routes on. Where the agent
+      // stores none, the connector's own operation description is the next best thing and
+      // is often the SAME TEXT: Copilot Studio's Tool details pane renders "Retrieve a list
+      // of HubSpot deals" straight from the connector definition, because a ConnectorTool
+      // row persists no description at all. Reaching for it here is what stops four HubSpot
+      // tools arriving as "Get CRM objects from Hubspot GetDeals/GetTickets/…" — strings a
+      // model cannot choose between. The operation id remains the last resort.
+      description:
+        tool.description ||
+        index.operations[tool.operationId]?.summary ||
+        `${index.displayName} ${tool.operationId}`,
       fixedArgs,
       modelArgs,
       contextRequired: op.contextRequired,

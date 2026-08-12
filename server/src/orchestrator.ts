@@ -1687,8 +1687,20 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // never heard of (every CUSTOM connector, and any first-party one the customer
             // did not configure) was absent from that list and reported nowhere. The
             // registry is the authority on what we can build a tool for; ask it directly.
+            //
+            // The registry is no longer the ONLY authority. A CUSTOM connector can never
+            // have a registry entry — it is the customer's own, named after whatever they
+            // typed — but its published definition may still bind, so build the tools
+            // first and treat "produced a real call" as support. Without this the report
+            // would carry both a working tool and a `lost` note saying that same connector
+            // is unsupported, and a customer reading a contradiction cannot know which
+            // half to trust.
+            const boundBuild = await buildBoundToolSpecs(row.mapped!.ir, captureCtxFor(row.envUrl), {
+              dataverseOrgUrl: row.envUrl ?? '',
+            });
+            const boundConnectorIds = new Set(boundBuild.byConnector.keys());
             const unsupportedForThisAgent = [...usedConnectorIds].filter(
-              (id) => !REGISTRY_BY_ID.has(id),
+              (id) => !REGISTRY_BY_ID.has(id) && !boundConnectorIds.has(id),
             );
             for (const missingId of unsupportedForThisAgent) {
               const wanted = (opsByConnector.get(missingId) ?? []).map((o) => o.id);
@@ -1743,9 +1755,8 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // source agent invoked, with the arguments its author pinned. Falls back to the
             // generic REST tool for any connector this produces nothing for, so a connector
             // we cannot bind still deploys with the behaviour it had yesterday.
-            const boundBuild = await buildBoundToolSpecs(row.mapped!.ir, captureCtxFor(row.envUrl), {
-              dataverseOrgUrl: row.envUrl ?? '',
-            });
+            // (Built above, before the unsupported-connector pass, so that pass can tell a
+            // custom connector that binds from one that genuinely has no support.)
             result.fidelity.push(...boundBuild.notes);
             for (const note of boundBuild.notes) {
               if (note.status === 'lost') emitLog('warn', `  ${row.name}: ${note.detail}`);

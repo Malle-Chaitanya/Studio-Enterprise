@@ -130,9 +130,7 @@ for (const [k, v] of Object.entries(row?.properties ?? {})) {
 // operations the agent calls? A URL we cannot GET is no better than no URL.
 const defs = row?.properties?.apiDefinitions as { originalSwaggerUrl?: string } | undefined;
 const swurl = defs?.originalSwaggerUrl;
-console.log('
-── GET originalSwaggerUrl
-');
+console.log('\n── GET originalSwaggerUrl\n');
 if (!swurl) {
   console.log('  absent');
 } else {
@@ -152,6 +150,8 @@ if (!swurl) {
     for (const [pth, methods] of Object.entries(doc.paths ?? {})) {
       for (const [m, op] of Object.entries(methods)) {
         console.log(`    ${(op.operationId ?? '(no id)').padEnd(16)} ${m.toUpperCase().padEnd(6)} ${pth}`);
+        console.log(`      summary:     ${op.summary ?? '(none)'}`);
+        console.log(`      description: ${(op as { description?: string }).description ?? '(none)'}`);
       }
     }
   }

@@ -33,11 +33,19 @@ function fixturePath(connectorId: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Connector ids reach here from customer-controlled Dataverse payloads and become a
+ * filename, so they are whitelisted rather than escaped. Hyphens are allowed because
+ * custom connector ids contain them (`shared_get-20crm-20objects-20from-20hubspot-…`);
+ * `.`, `/` and `\` are still excluded, so nothing can escape the fixtures directory.
+ */
+const SAFE_CONNECTOR_ID = /^[a-z0-9_-]+$/i;
+
 /** The captured index, or undefined when this connector has never been captured. */
 export function loadOpIndex(connectorId: string): ConnectorOpIndex | undefined {
   // Reject anything that could escape the fixtures directory: connector ids arrive from
   // Dataverse payloads, which are customer-controlled input.
-  if (!/^[a-z0-9_]+$/i.test(connectorId)) return undefined;
+  if (!SAFE_CONNECTOR_ID.test(connectorId)) return undefined;
   if (cache.has(connectorId)) return cache.get(connectorId) ?? undefined;
 
   const p = fixturePath(connectorId);

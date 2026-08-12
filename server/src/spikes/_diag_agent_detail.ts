@@ -124,14 +124,28 @@ for (const env of envs) {
         opsByConnector.set(t.connectorId, [...(opsByConnector.get(t.connectorId) ?? []), t.operationId]);
       }
 
-      console.log(`\n  (2) orchestrator — connectors with NO registry entry:`);
+      // A CUSTOM connector can never have a registry entry but may still bind from its
+      // published definition, so "produced a real call" counts as support — matching
+      // orchestrator.ts. Without this the spike reports a connector as unsupported on the
+      // same run it prints four BINDS for it.
+      console.log(`\n  (2) orchestrator — connectors with no support (no registry entry AND no bound call):`);
       let noEntry = 0;
+      const boundConnectors = new Set(build?.byConnector.keys() ?? []);
       for (const [cid, ops] of opsByConnector) {
-        if (REGISTRY_BY_ID.has(cid)) continue;
+        if (REGISTRY_BY_ID.has(cid) || boundConnectors.has(cid)) continue;
         noEntry++;
         console.log(`    [lost] connector:${cid} — no connector support. Operations wanted: ${ops.join(', ')}`);
       }
       if (!noEntry) console.log('    (none)');
+
+      // What the tools will actually call — the point of the whole exercise.
+      for (const [cid, specs] of build?.byConnector ?? []) {
+        console.log(`\n  bound calls for ${cid.slice(0, 50)}:`);
+        for (const s of specs) {
+          console.log(`    ${s.method.padEnd(5)} ${s.urlTemplate}`);
+          console.log(`       description: ${(s.description || '(none)').slice(0, 90)}`);
+        }
+      }
 
       console.log(`\n  (3) orchestrator — per-OPERATION readiness (registered connectors):`);
       let blockedCount = 0;
