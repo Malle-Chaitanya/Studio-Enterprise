@@ -1192,9 +1192,35 @@ weakening it without a decision. Non-required expression inputs (`item.msdyn_nam
 
 **Jira: zero agents in this tenant.** Nothing to build, nothing to prove.
 
-**Still silently absent (outside the target four).** 12 operations across
-`shared_googledrive` (9) and `shared_get` (3) produce no bound call AND no note — same
-`continue` path, different cause (no registry fixture). Not fixed.
+**CORRECTION — they are not silently absent.** I wrote here that 12 operations across
+`shared_googledrive` and `shared_get` produce no bound call AND no note. Wrong, and wrong
+in the direction that matters: I accused the product of the exact dishonesty it is built to
+avoid, on the evidence of an instrument that reads ONE of three reporters.
+`_diag_tool_coverage.ts` only runs `buildBoundToolSpecs`. The orchestrator has two more
+passes — connectors with no `REGISTRY_BY_ID` entry (orchestrator.ts:1693) and per-operation
+`readinessFor` blocks (orchestrator.ts:1716) — and both emit `lost` notes with reasons.
+
+Measured on Migration Knowledge Advisor, the worst case in the tenant (18 tools, 1 binds):
+
+```
+  (1) fidelity notes from the BINDER: 0
+  (2) connectors with NO registry entry:
+      [lost] connector:shared_get — Operations wanted: GetDeals, GetContacts, GetCompanies
+  (3) per-OPERATION readiness:
+      [lost] shared_googledrive.ListRootFolder on Google Drive
+          Google Drive's connector paths (/datasets/default/files/{id}) are a Power
+          Platform abstraction, not Google Drive API paths…
+      … 11 blocked operations
+  >> 14 connector tool(s) produce no call; 12 note(s) across all three reporters.
+```
+
+14 unbound tools, 14 covered. Grade **P** for the reporting being complete.
+`_diag_agent_detail.ts` now runs all three passes so this instrument cannot make the claim
+again. The third time this session a count contradicted a proven fact and the count was the
+thing that was wrong.
+
+The capability gap is real and unchanged: Google Drive's 11 operations and `shared_get`'s 3
+still do not migrate. Only the accusation of silence was false.
 
 ---
 
