@@ -1081,6 +1081,53 @@ function parseFileAttachment(c: BotComponent): KnowledgeSourceIR {
  * The version key varies by experience, so scan any settings entry for a
  * content.description rather than pinning one version.
  */
+/**
+ * Agent-level settings from the NEWER authoring surface, which keeps them on
+ * `bot.configuration.agentSettings` rather than in a GptComponentMetadata component:
+ *
+ *     "agentSettings": {
+ *       "model":        { "series": "claude-opus-5" },
+ *       "instructions": {},
+ *       "enableMemory": true,
+ *       "web":          { "enableWebSearch": true }
+ *     }
+ *
+ * "Hubspot agentt" has NO type-15 component at all, so `capabilities.webBrowsing` fell back
+ * to false and extraction reported web browsing off for an agent whose Knowledge panel
+ * plainly reads "Search all websites". Reporting a capability as absent is not a neutral
+ * default — the fidelity report then has nothing to say about losing it, so the customer is
+ * told the migration was complete when a whole grounding source was dropped in silence.
+ *
+ * `enableMemory` matters for the same reason: memory migration cannot warn about memory it
+ * does not know is switched on.
+ */
+function parseAgentSettings(configuration?: string): {
+  webSearch?: boolean;
+  memoryEnabled?: boolean;
+  modelSeries?: string;
+} {
+  if (!configuration) return {};
+  try {
+    const cfg = JSON.parse(configuration) as {
+      agentSettings?: {
+        web?: { enableWebSearch?: boolean };
+        enableMemory?: boolean;
+        model?: { series?: string };
+      };
+    };
+    const s = cfg.agentSettings;
+    if (!s) return {};
+    return {
+      webSearch: typeof s.web?.enableWebSearch === 'boolean' ? s.web.enableWebSearch : undefined,
+      memoryEnabled: typeof s.enableMemory === 'boolean' ? s.enableMemory : undefined,
+      modelSeries: typeof s.model?.series === 'string' ? s.model.series : undefined,
+    };
+  } catch {
+    // A configuration blob we cannot parse is not a reason to fail extraction.
+    return {};
+  }
+}
+
 function parseConfigDescription(configuration?: string): string {
   const cfg = configuration ? (JSON.parse(configuration) as Record<string, unknown>) : null;
   const settings = (cfg?.settings ?? {}) as Record<string, { content?: { description?: string } }>;
@@ -1138,6 +1185,7 @@ export async function extractAgent(
   // 'description'", not a permissions issue) — descriptionColumnUnsupported
   // remembers that per-environment so we stop retrying a doomed query.
   let botDescription = '';
+  let agentSettings: ReturnType<typeof parseAgentSettings> = {};
   let gotCombined = false;
   // Some Dataverse orgs/solution versions reject the combined
   // `$select=configuration,description` with a 400 even though each column is
@@ -1153,6 +1201,7 @@ export async function extractAgent(
       );
       if (b.description) botDescription = String(b.description).trim();
       configDescription = parseConfigDescription(b.configuration);
+      agentSettings = parseAgentSettings(b.configuration);
       gotCombined = true;
     } catch (e) {
       combinedSelectUnsupported.set(url, true);
@@ -1176,6 +1225,7 @@ export async function extractAgent(
     ]);
     if (confResult.status === 'fulfilled') {
       configDescription = parseConfigDescription(confResult.value.configuration);
+      agentSettings = parseAgentSettings(confResult.value.configuration);
     } else {
       logger.warn(`configuration-only fetch failed for "${bot.name}": ${(confResult.reason as Error)?.message ?? confResult.reason}`);
     }
@@ -1267,9 +1317,19 @@ export async function extractAgent(
   const ksComps = components.filter((c) => c.componenttype === ComponentType.KnowledgeSource);
   const fileComps = components.filter((c) => c.componenttype === ComponentType.BotFileAttachment);
 
-  const gpt = gptComp
+  const gptParsed = gptComp
     ? parseGptMetadata(gptComp)
     : { instructions: '', description: '', capabilities: { webBrowsing: false, codeInterpreter: false }, starterPrompts: [] };
+  // Newer agents carry no GptComponentMetadata at all, so their web-search setting lives
+  // only on bot.configuration. Prefer whichever source actually states it; only fall back
+  // to the component's default when agentSettings is silent.
+  const gpt = {
+    ...gptParsed,
+    capabilities: {
+      ...gptParsed.capabilities,
+      webBrowsing: agentSettings.webSearch ?? gptParsed.capabilities.webBrowsing,
+    },
+  };
 
   // Inline skills ride alongside topics: both become sub-agents downstream, and keeping
   // them in one list means every consumer that already handles topics handles these too.
@@ -1344,6 +1404,17 @@ export async function extractAgent(
     !gpt.instructions && !hasReadableTopicContent && !hasAiPrompt && agentTools.length === 0;
 
   const unmapped: string[] = [];
+
+  // Agent-level settings we read but do not reproduce. Naming them is the whole point of
+  // `unmapped` — the report says what we left behind rather than pretending it was not
+  // there. Memory in particular is a live customer setting (the author switched it on in
+  // the Build pane) and the memory migration cannot warn about memory it never saw.
+  if (agentSettings.memoryEnabled) {
+    unmapped.push('agentSettings.enableMemory=true (Copilot memory is ON for this agent)');
+  }
+  if (agentSettings.modelSeries) {
+    unmapped.push(`agentSettings.model.series=${agentSettings.modelSeries} (source model choice; Gemini uses its own)`);
+  }
 
   // Evaluation data (componenttype 19) — the agent's authored TEST questions and
   // evaluation sets. Not runtime behaviour, so nothing is functionally lost by not

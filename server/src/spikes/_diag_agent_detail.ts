@@ -155,8 +155,13 @@ for (const env of envs) {
       );
     }
 
-    const un = ir.unmapped ? Object.keys(ir.unmapped) : [];
-    if (un.length) console.log(`\n  unmapped fields carried along: ${un.join(', ')}`);
+    // ir.unmapped is a string[]; Object.keys() on it yields indices, which is how
+    // "unmapped: 0, 1" got printed instead of the two field names it actually holds.
+    const un = Array.isArray(ir.unmapped) ? ir.unmapped : Object.values(ir.unmapped ?? {});
+    if (un.length) {
+      console.log(`\n  unmapped (read but NOT reproduced): ${un.length}`);
+      for (const u of un) console.log(`    - ${String(u).slice(0, 160)}`);
+    }
   }
 }
 
