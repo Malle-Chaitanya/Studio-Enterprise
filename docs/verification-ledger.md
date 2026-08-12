@@ -1424,6 +1424,64 @@ Grade for "these 32 will work in production": **U**.
 
 ---
 
+### 1.27 Correction — SharePoint is further along than 1.26 implied (2026-08-13)
+
+§1.26 graded SharePoint "not ready" on two signals: one unbindable tool
+(`shared_sharepointonline.HttpRequest`) and a planner that says sources are "reconnected
+via Gemini's native connector". Both are real, and the verdict drawn from them was wrong.
+
+`orchestrator.ts:185-225` tries **copy mode FIRST** — resolve the share URL through
+Microsoft Graph, download the item, upload it to a document data store — and only falls
+through to the native connector when the URL is genuinely ambiguous. That path was proven
+live on 2026-08-07 (commit `755915c`: "1/1 created, deployed, shared, verified, with
+topics deployed as sub-agents and SharePoint wired via VertexAiSearchTool"), and it exists
+precisely because Google's connector authenticates against SharePoint REST, which accepts
+app-only tokens only when minted with a certificate.
+
+So the honest question is not "does SharePoint work" but "how many sources resolve to a
+single file". `_diag_sp_paths.ts` runs the migration's own resolver over every SharePoint
+source in the tenant:
+
+```
+  COPY MODE Agent1 :: 2026 Agentic Coding Trends Report.pdf     kind=file
+  COPY MODE Enterprise Agent :: daily_queries.txt               kind=file
+  COPY MODE C2MessageGeneratorAgent :: daily_queries.txt        kind=file
+  COPY MODE HR Policy Assistant :: WFH Policy- Neutara…pdf      kind=file
+  COPY MODE HR Policy Assistant :: Neutara HR Leave…pdf         kind=file
+  COPY MODE IT Help Desk Agent :: Rollbar.docx                  kind=file
+  COPY MODE IT Help Desk Agent :: BAMBOO HR.docx                kind=file
+  FALLBACK  Knowledge Assistant :: TestingPermissions   — no URL captured on the source
+  FALLBACK  Knowledge Assistant :: daily_queries.txt    — no URL captured on the source
+  FALLBACK  CloudFuze Studio Migrate :: TestingPermissions  kind=folder-multiple-files (3)
+  FALLBACK  HR AGENT :: Documents                           kind=not-found
+
+7 source(s) take the proven copy-mode path · 4 fall back to the native connector
+```
+
+**7 of 11 take the proven path.** The 4 that do not split into three distinct causes, none
+of which is "SharePoint is broken":
+
+| Fallback cause | Count | What it actually is |
+|---|---|---|
+| No URL captured on the source | 2 | an EXTRACTION gap — the source names a site but we stored no address to resolve |
+| `folder-multiple-files` | 1 | a folder with 3 files; the resolver refuses to guess which one the author meant |
+| `not-found` | 1 | the named item ("Documents") did not resolve through Graph at all |
+
+Two things in §1.26 stand and should not be softened by this correction:
+
+1. The customer-facing plan still says "Reconnected via Gemini's native connector —
+   requires identity-federation setup" for sources that will actually take copy mode. The
+   run does the better thing and the screen describes the worse one. Wrong either way.
+2. `migrationResults` holds `partial` and `lost` rows for `CloudFuze Studio Migrate`'s
+   SharePoint site — which is exactly the `folder-multiple-files` source above, i.e. the
+   fallback failing, not copy mode failing.
+
+Grade: copy mode **P** (live 2026-08-07, and 7 sources resolve to a single file today);
+native-connector fallback **X** for content (three pre-existing connectors in the test
+project hold 0 documents).
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
