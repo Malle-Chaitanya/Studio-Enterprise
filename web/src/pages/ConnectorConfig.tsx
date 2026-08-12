@@ -388,7 +388,9 @@ function ReadinessPanel({ readiness }: { readiness?: ConnectorReadiness }) {
     }}>
       <strong>
         {ok
-          ? `All ${total} operation${total === 1 ? '' : 's'} map to ${readiness.displayName}'s own API.`
+          ? total === 1
+            ? `The one operation this agent uses maps to ${readiness.displayName}'s own API.`
+            : `All ${total} operations map to ${readiness.displayName}'s own API.`
           : `${readiness.bindable.length} of ${total} operations map to ${readiness.displayName}'s own API.`}
       </strong>
       {readiness.blocked.map((b) => (
@@ -726,6 +728,19 @@ function GroupSection({ session, members, reqs }: GroupSectionProps) {
         </div>
         {saved && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Saved</span>}
       </div>
+
+      {/* What each member can actually DO, shown whether or not credentials are saved.
+          Readiness is a statement about the operations, not about the token — hiding it
+          behind the unsaved state meant the connectors that share a credential group
+          (Atlassian, HubSpot — i.e. most of what we migrate) never showed it at all,
+          while a standalone connector did. The customer could not tell that an
+          operation was refused until the fidelity report. */}
+      {members.map((m) => (
+        <div key={m.connectorId}>
+          <OperationList operations={m.operations} />
+          <ReadinessPanel readiness={m.readiness} />
+        </div>
+      ))}
 
       {!saved && (
         <>

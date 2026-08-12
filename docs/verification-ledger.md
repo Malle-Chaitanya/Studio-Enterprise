@@ -662,6 +662,95 @@ the calls preserves the CAPABILITY; the sequencing does not survive, and the rep
 per tool. An honest migration of these agents is "here are the actions it could perform",
 not "here is the same agent".
 
+### 1.18 The first run through the actual browser UI — three things only the UI could show (2026-08-12)
+
+Everything before this was proven through spikes. Driving the real wizard
+(Connect → ChoosePair → MapUsers → SelectMap → SelectAgents → ConnectorConfig → Migrate)
+against `localhost:5173` found three defects the pipeline tests could not, because all
+three live between the server's answer and what the customer is shown.
+
+**a) The readiness panel never rendered for the connectors we actually migrate.** The
+server computes it and returns it:
+
+```
+POST /api/migrate/knowledge-connectors  (Confluence_agent)
+shared_confluence | readiness: {"bindable":["GetPages"],"blocked":[],"ready":true}
+```
+
+`ConnectorConfig.tsx` renders `<ReadinessPanel>` inside `ConnectorCard` (standalone
+connectors) but **not** inside `GroupSection` — and every connector that shares a
+credential group goes through `GroupSection`. Atlassian and HubSpot are both groups, so
+the two connectors this project has proven end to end were exactly the two whose
+readiness was silently dropped. `ReadinessPanel` returns `null` on absent readiness, so
+there was nothing on screen to notice. Fixed by rendering `OperationList` +
+`ReadinessPanel` per member, in both the saved and unsaved states — readiness is a claim
+about the operations, not about the token. Proven live after the fix:
+
+```
+🟠 HubSpot (one private app token) | Used by: HubSpot Settings V2, HubSpot CRM — HubSpot Agent
+   Operations used: GetTheDailyApiUsageAndLimitsForAHubspotAccount
+   The one operation this agent uses maps to HubSpot Settings V2's own API.
+   Operations used: CompaniesList
+   The one operation this agent uses maps to HubSpot CRM's own API.
+📝 Atlassian (one API token) | Used by: Confluence — Confluence_agent
+   Operations used: GetPages
+   The one operation this agent uses maps to Confluence's own API.
+```
+
+Grade **P**.
+
+**b) A dry run claimed an acknowledgement nobody gave.** The ACL gate deliberately does
+not stop a dry run (it writes nothing, and the dry run is how someone discovers the loss
+in the first place). But the code past the gate assumed it had been acknowledged:
+
+```
+06:07:23  Permission loss acknowledged for 1 agent(s) — proceeding. Each affected
+          source is recorded in the fidelity report.
+```
+
+Nothing was acknowledged — no gate was ever shown. The fidelity note carried the same
+claim ("This was explicitly acknowledged before the migration ran"), which is worse: the
+log scrolls away, the report is what someone reads six months later to decide whether the
+permission loss was accepted. Both now branch on `plan.acknowledgeAclLoss`. Proven live:
+
+```
+06:11:42  1 agent(s) would lose source permissions. A live run stops here until this is
+          acknowledged; each affected source is listed in the fidelity report.
+```
+
+Grade **P**.
+
+**c) A refresh turns "we could not tell" into "there is nothing".** The selected agents
+live only in `sessionStorage.csge_data_<session>`. Reloading `/connector-config` directly
+produced:
+
+> No outside connections found for the agents you selected — they only use built-in
+> Microsoft features and don't rely on any external service.
+
+for two agents that provably use Confluence and HubSpot. The scan ran over an empty set
+and the empty result was reported as a positive finding. Not fixed here (the fix is to
+carry the selection on the server plan, which is a state change, not a copy change) —
+recorded as **X** against the claim that the connector step is safe to reload.
+
+**What the run also confirmed, positively.** Both clouds reconnected from the stored
+session; 286 Microsoft users listed; 51 + 14 agents enumerated across two environments;
+3 connectors detected for the 2 selected agents with credentials remembered from the
+earlier work; dry run staged 2/2 and reported `Confluence_agent 2 auto / 5 needs review`,
+`HubSpot Agent 1 auto / 3 needs review` with nothing created in Gemini. One click produced
+exactly one run (`── Phase 1` appears once per click) — an apparent double-run in an
+earlier attempt was my own double navigation, not the product.
+
+**Still open from this run.** `detTools=0` on both agents during staging, while the
+connector step detected 3 connectors for the same two agents — the two counts disagree
+and only one of them can be right. That is the same shape of contradiction as §1.17a and
+is NOT yet explained.
+
+**And the login page is not a login page.** `web/src/pages/Login.tsx` POSTs to
+`/api/login`, which does not exist; anything other than a 401 proceeds, so any input
+signs in. `verifyLogin` in `db/repos/users.ts` is written and unused. This is §4.5's
+launch blocker seen from the front: multi-tenant isolation cannot be real while the
+identity is unauthenticated. Grade **X** against "the app has sign-in".
+
 ---
 
 ## 2b. Work landed overnight 2026-08-11/12 — graded

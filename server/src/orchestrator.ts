@@ -1002,16 +1002,25 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         component: `acl:${item.sourceName}`,
         status: 'needs-review' as const,
         detail:
-          `${item.detail} This was explicitly acknowledged before the migration ran. ` +
-          `It cannot be changed without deleting and re-indexing the data store.`,
+          `${item.detail} ${
+            plan.acknowledgeAclLoss
+              ? 'This was explicitly acknowledged before the migration ran.'
+              : 'A live run requires this to be acknowledged before anything is created.'
+          } It cannot be changed without deleting and re-indexing the data store.`,
       })),
     );
   }
   if (aclFlagged.length) {
+    // A dry run reaches here WITHOUT an acknowledgement (the gate above skips it), so
+    // saying "acknowledged" would credit the operator with a consent they never gave —
+    // and this log is what someone reads later to decide whether the loss was accepted.
     emitLog(
       'warn',
-      `Permission loss acknowledged for ${aclFlagged.length} agent(s) — proceeding. Each affected ` +
-        'source is recorded in the fidelity report.',
+      plan.acknowledgeAclLoss
+        ? `Permission loss acknowledged for ${aclFlagged.length} agent(s) — proceeding. Each affected ` +
+            'source is recorded in the fidelity report.'
+        : `${aclFlagged.length} agent(s) would lose source permissions. A live run stops here until ` +
+            'this is acknowledged; each affected source is listed in the fidelity report.',
     );
   }
 
