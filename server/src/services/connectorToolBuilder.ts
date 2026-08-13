@@ -439,7 +439,20 @@ export function agentConnectorIds(ir: AgentIR): Set<string> {
     (ir.agentTools ?? []).map((t) => t.connectorId).filter((id): id is string => !!id),
   );
   for (const ks of ir.knowledgeSources) {
-    if (ks.classification?.strategy === 'confluence-crawler') ids.add('shared_confluence');
+    // Keyed on the SOURCE being Confluence, not on the strategy it happens to carry
+    // today. Keying on `confluence-crawler` meant that rerouting these sources to a live
+    // tool would drop `shared_confluence` here, the orchestrator's per-agent filter would
+    // then remove the Confluence spec, and the agent would deploy with neither a data
+    // store nor a tool — reporting success the whole way. Every Confluence source is
+    // classified `confluence-crawler` today, so this changes nothing now; it stops the
+    // reroute from being a silent regression later.
+    if (
+      ks.classification?.strategy === 'confluence-crawler' ||
+      (ks.confluenceSpaceNames?.length ?? 0) > 0 ||
+      /confluence/i.test(ks.classification?.notes?.join(' ') ?? '')
+    ) {
+      ids.add('shared_confluence');
+    }
     if (ks.kind === 'SharePointSearchSource') ids.add('shared_sharepointonline');
   }
   return ids;

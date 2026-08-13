@@ -1,11 +1,16 @@
 # Rule: Testing Standard (CloudFuze Studio Migrate)
 
-There is no formal unit-test runner wired up yet. Testing today is done through a
-**diagnostic-script harness** and gstack `/qa` for the browser flow. This rule defines
-how to test until (and after) a runner is added.
+Testing runs on three levels: **vitest** for the pure transforms, a
+**diagnostic-script harness** for anything that needs a live tenant, and gstack `/qa` for
+the browser flow.
 
 ## Current reality
 
+- **`npm test` runs vitest** (`vitest run`, config in `server/vitest.config.ts`). 10 suites,
+  118 tests as of 2026-08-13 — `operationBinding`, `aclDisclosure`, `sharePointUrlRecovery`,
+  `connectorValidator`, `connectorCredentials`, `confluenceRouting`, `explore` and others.
+  Co-locate new ones as `*.test.ts` next to the module. This rule previously said no runner
+  existed; that was stale and cost a review cycle rediscovering it.
 - Verification of a live migration happens in-pipeline via
   [server/src/services/verify.ts](../../server/src/services/verify.ts), which smoke-tests each
   migrated Gemini agent and records the result on `MigrationResult.verified`.
