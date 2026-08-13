@@ -225,7 +225,15 @@ async function validateAtlassian(connectorId: string, v: Record<string, string>)
 
 /** HubSpot: a private app token is a bearer token; scopes show up as 403 on the probe. */
 async function validateHubSpot(v: Record<string, string>): Promise<ConnectorValidation> {
-  const token = (v.api_token ?? v.access_token ?? v.private_app_token ?? '').trim();
+  // `api_key` FIRST — it is the key the HubSpot credential group actually declares
+  // (registry.ts: `{ key: 'api_key', label: 'Private App Token' }`), and it was the one
+  // spelling this list did not contain. So every HubSpot save reported
+  // `invalid_credentials — A HubSpot private app token is required` no matter how good the
+  // token was: the validator was reading an empty string and blaming the customer for it
+  // (live 2026-08-13, shared_hubspotsettingsv2 and shared_hubspotcrm). A validator that can
+  // fail without ever calling the vendor is worse than no validator, because its verdict
+  // reads as the vendor's.
+  const token = (v.api_key ?? v.api_token ?? v.access_token ?? v.private_app_token ?? '').trim();
   if (!token) return { code: 'invalid_credentials', detail: 'A HubSpot private app token is required.' };
   const res = await fetchWithTimeout('https://api.hubapi.com/crm/v3/objects/contacts?limit=1', {
     headers: { Authorization: `Bearer ${token}` },

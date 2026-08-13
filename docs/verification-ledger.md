@@ -1789,6 +1789,45 @@ has been through a UI run yet — the next one is the test.
 
 ---
 
+### 1.34 The HubSpot token was fine — the validator was reading the wrong field (2026-08-13)
+
+From the UI run:
+
+```
+[04:20:09] connector credentials stored but did not validate  connectorId: shared_hubspotsettingsv2  code: invalid_credentials
+[04:20:11] connector credentials stored but did not validate  connectorId: shared_hubspotcrm         code: invalid_credentials
+```
+
+The registry declares the HubSpot group's field as `api_key`:
+
+```ts
+credentials: [{ key: 'api_key', label: 'Private App Token', type: 'password', placeholder: 'pat-na1-…' }]
+```
+
+`validateHubSpot()` read `v.api_token ?? v.access_token ?? v.private_app_token` — every
+spelling except the one the customer was actually asked to fill. So it read an empty string,
+returned `invalid_credentials — A HubSpot private app token is required` **without ever
+calling HubSpot**, and blamed the customer for a value they had supplied correctly.
+
+A validator that can fail before reaching the vendor is worse than no validator, because its
+verdict is read as the vendor's.
+
+**The runtime was never affected.** `authHeaderTemplate: 'Bearer {api_key}'` on both
+connectors resolves the same field the customer filled, so deployed tools carried the real
+token throughout — this was a false alarm on the save screen, not a broken migration.
+
+Fixed by reading `api_key` first. Six new unit tests pin the class of bug rather than the
+instance: they build the credential values from `CREDENTIAL_GROUPS` itself, so any group
+whose field key drifts from its validator now fails in CI instead of in front of a customer.
+They also assert the distinctions that matter — 401 is the vendor rejecting the token, 403
+is a missing scope (`permission_denied`, since retyping a token never fixes a scope), and an
+Atlassian 200 that identifies nobody is not a pass.
+
+Grade **T**: 115 unit tests pass (6 new), server + web typecheck clean. The next save from
+the UI is the live check.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
