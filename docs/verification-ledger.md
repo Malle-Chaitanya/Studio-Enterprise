@@ -1703,6 +1703,42 @@ part of the idempotency guarantee, not incidental to it.
 
 ---
 
+### 1.32 Deleting a migrated agent in Gemini used to produce a false success (2026-08-13)
+
+Asked what happens when a customer deletes a migrated agent in the Gemini console and
+re-runs the migration with a new token. Two answers, one of them a defect.
+
+**The new token is fine, and needs no redeploy.** Connector credentials are read at CALL
+time, not baked into the deployment: `scripts/adk_deploy.py:105` and
+`services/connectorToolBuilder.ts:26` both resolve
+`projects/{project}/secrets/{id}/versions/latest:access`. Saving a new token adds a version
+to the same secret, so the already-deployed agent picks it up on its next call. Nothing
+about Secret Manager blocks this — a rotated token takes effect without re-migrating.
+
+**Deleting the agent did NOT trigger a redeploy.** The skip path required no source drift
+and healthy knowledge stores:
+
+```ts
+if (!drift.changed && !unhealthyFiles.length && !unhealthySharePoint.length && !plan.forceRedeploy)
+  return { created: true, agentId: existing.agentId, alreadyExists: true };
+```
+
+Deleting the agent in the console changes nothing on the SOURCE and breaks no data store, so
+all three checks pass and the run reports `created: true` with the id of an agent that no
+longer exists. Every other kind of destination damage was covered — a deleted knowledge data
+store (found live 2026-08-06), a dropped SharePoint store — but not the agent itself. And
+`forceRedeploy` exists only in the API: `grep -rn "forceRedeploy" web/src` returns nothing,
+so the UI has no way to ask for one.
+
+Fixed by checking existence on the skip path only (one GET, no cost on a real deploy): a
+missing agent now recreates, logs it, and records a `needs-review` note saying the id has
+changed so bookmarks pointing at the old one get updated.
+
+Grade **T** — typecheck clean in server and web, 109 unit tests pass. Not yet exercised
+against a genuinely deleted agent; the next UI run is that test.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run

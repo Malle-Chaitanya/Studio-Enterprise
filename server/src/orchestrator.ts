@@ -1640,10 +1640,36 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                 .filter((src) => !spCopyModeCoveredSrcs.has(src) && !spCoveredNames.has(src.name))
                 .map((src) => src.name);
 
-              // Three independent reasons to redeploy: the source changed, the destination
-              // broke, or a human asked for it. forceRedeploy is last because it is the
-              // only one that is a decision rather than an observation.
-              if (!drift.changed && !unhealthyFiles.length && !unhealthySharePoint.length && !plan.forceRedeploy) {
+              // Does the agent we would "reuse" still EXIST?
+              //
+              // Deleting an agent in the Gemini console is a normal thing for a customer to
+              // do — start over, clean up a test. Nothing about that deletion touches the
+              // source agent, so drift stays clean, the knowledge stores stay healthy, and
+              // the skip below fired: the run reported `created: true` with the id of an
+              // agent that is no longer there. A report that says migrated about a
+              // non-existent agent is the worst failure this pipeline has, and it is the
+              // one shape of destination damage the health checks above did not cover.
+              //
+              // One GET, only on the skip path, so it costs nothing on a real deploy.
+              const stillThere = await getAgent(dest, saToken, existing.agentId).catch(() => null);
+              if (!stillThere) {
+                emitLog(
+                  'warn',
+                  `  ${row.name}: the previously migrated agent no longer exists in Gemini (deleted out-of-band) — recreating it.`,
+                );
+                result.fidelity.push({
+                  component: 'resync',
+                  status: 'needs-review',
+                  detail:
+                    `The agent migrated earlier (id ${existing.agentId}) was not found in Gemini — it was deleted outside this tool. ` +
+                    'It has been recreated, so its id has changed; update any link or bookmark that pointed at the old one.',
+                });
+              }
+
+              // Four independent reasons to redeploy: the source changed, its knowledge
+              // broke, the agent itself is gone, or a human asked. forceRedeploy is last
+              // because it is the only one that is a decision rather than an observation.
+              if (stillThere && !drift.changed && !unhealthyFiles.length && !unhealthySharePoint.length && !plan.forceRedeploy) {
                 usedAdk = true;
                 return { created: true, agentId: existing.agentId, alreadyExists: true };
               }
