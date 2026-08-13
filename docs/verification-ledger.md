@@ -1938,6 +1938,47 @@ from §1.34 is not being persisted onto `connectorCredentials`. Not yet investig
 
 ---
 
+### 1.37 The HubSpot agent works, and its one refusal is parity, not a gap (2026-08-13)
+
+Redeployed with §1.36's fix. The run recreated the agent the customer had deleted and
+verified it:
+
+```
+getAgent 9037777677775865129 failed (404)
+Hubspot agentt: the previously migrated agent (9037777677775865129) no longer exists in Gemini - deleted outside this tool. Recreating it.
+Hubspot agentt: 4 connector operation(s) rebuilt as exact API calls with the source agent's own arguments.
+Hubspot agentt -> gemini-enterprise-17847887_1784788734248/3352958275164371254 - deployed=true shared=true verified=true
+```
+
+The customer then asked it real questions and reports accurate HubSpot data coming back.
+`GetCompanies` — the operation that produced §1.36's authentication error — now answers.
+Grade: **P** for the auth fix; the header change is exercised by every one of the four calls.
+
+**The one refusal is faithful, not a defect.** Asked *"how many contacts are there in sales
+qualified leads?"*, the migrated agent said the tools cannot filter by lead status. The SOURCE
+Copilot agent refuses identically: *"The Get Contacts tool does not return the lifecycle stage
+property, so it's not possible to filter or count contacts by Sales Qualified Lead stage
+through this agent."* Both refuse because the agent's own `GetContacts` operation does not
+request `lifecyclestage`. Migrating that limitation is correct behaviour — teaching Gemini to
+answer it would give the migrated agent a capability the source never had. Filed as a possible
+future enhancement (richer property binding / HubSpot search endpoint), NOT as a fidelity loss.
+
+Also logged in the same run, and worth keeping visible:
+
+- `web browsing dropped — ADK can't combine VertexAiSearchTool grounding with googleSearch on
+  the same agent` — recorded as a fidelity note, as it should be.
+- `ADK agent is ALL_USERS (platform default) but source was not org-wide — auto-granted 1
+  principal` — the destination is shared more widely than the source.
+- The connectors screen asked for Microsoft and Atlassian credentials for a HubSpot-only
+  selection. Harmless at deploy time — the run proves the filter holds:
+  `Hubspot agentt: 1 connector(s) apply to this agent; not wiring HubSpot CRM…, Confluence,
+  Jira / Atlassian, SharePoint Online, … (configured, but this agent does not reference them).`
+  The cause is that the PA-flow scan is environment-wide (`detectThirdPartyConnectors` takes no
+  `botIds`; `thirdPartyConnectorScan.ts:4` says so) and the knowledge scan is scoped to the
+  browser's `sessionStorage` selection rather than the server-side plan. Cosmetic, unfixed.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
