@@ -25,13 +25,56 @@ real login user.
 
 ## The hostname
 
-`deploy/nginx-csge.conf` says `csge.example.com`. Point a DNS A record at the server
-first, then put the real name in `server_name`. Until DNS exists the site is reachable
-only by IP, and certbot cannot issue a certificate.
+**`studioent.cftools.live`** — A record verified on 2026-08-13:
 
-Do **not** use `server_name _` as a shortcut: this nginx already serves
-`aicommunication.cftools.live`, `aitoolsmigration` and `ats.cftools.live`, and the
-catch-all would swallow their unmatched traffic.
+```
+$ nslookup studioent.cftools.live
+Addresses:  208.70.248.68
+```
+
+`deploy/nginx-csge.conf` already carries that `server_name`. Do **not** replace it with
+`server_name _`: this nginx also serves `aicommunication.cftools.live`,
+`aitoolsmigration` and `ats.cftools.live`, and the catch-all would swallow their
+unmatched traffic.
+
+### TLS
+
+Install the port-80 config first and confirm the site answers over HTTP, then:
+
+```bash
+sudo certbot --nginx -d studioent.cftools.live
+```
+
+certbot rewrites `sites-available/csge` in place — it adds the 443 block and the
+80→443 redirect. Never hand-write TLS into that file and then re-run certbot over it.
+
+### The three .env values the domain forces
+
+`server/src/config.ts` defaults all three to localhost. Left at the defaults behind a
+real hostname, every browser call is blocked by CORS and both sign-ins dead-end.
+`/data/studio-ent/.env` must set:
+
+```
+WEB_ORIGIN=https://studioent.cftools.live
+MS_REDIRECT_URI=https://studioent.cftools.live/callback/microsoft
+GOOGLE_REDIRECT_URI=https://studioent.cftools.live/callback/google
+```
+
+- `WEB_ORIGIN` is the pinned CORS origin (`server.ts:21`, `origin: config.WEB_ORIGIN,
+  credentials: true`) **and** the target of the OAuth popup's `postMessage`
+  (`routes/auth.ts:151`). A mismatch shows up as a popup that signs in fine and then
+  never closes.
+- Both redirect URIs must be added **verbatim** to the Azure app registration and the
+  Google OAuth client. These must match exactly — an unregistered redirect is rejected
+  by the provider before our code ever runs.
+- Use `https://` only after certbot has run. If you test on plain HTTP first, the
+  values must say `http://` for that window, and both provider registrations need the
+  http form too — which is why it is less work to get the certificate first.
+
+The callbacks live at the **root**, not under `/api/` (`server.ts:56` mounts
+`legacyAuthRouter` at `/`). `nginx-csge.conf` has a `location /callback/` proxy block
+for exactly this reason; without it the SPA catch-all answers the callback with
+`index.html` and the auth code is dropped.
 
 ## Node version
 
@@ -65,6 +108,9 @@ cp deploy/nginx-csge.conf /etc/nginx/sites-available/csge
 ln -sf /etc/nginx/sites-available/csge /etc/nginx/sites-enabled/csge
 nginx -t
 systemctl reload nginx
+
+# TLS, after the site answers on port 80.
+certbot --nginx -d studioent.cftools.live
 ```
 
 ## Sudoers for the automated deploy (add now, needed later)
@@ -132,3 +178,6 @@ buffering the SSE stream and the `proxy_buffering off` block did not take effect
 | progress bar jumps from 0% to done | nginx buffering the SSE stream |
 | stale UI after a deploy | `index.html` cached; check the `no-store` header actually reaches the browser |
 | `sudo: a terminal is required` during the automated deploy | the sudoers rule above is missing |
+| OAuth popup signs in, then hangs on a blank page and never closes | `location /callback/` missing from nginx (SPA answered with `index.html`), or `WEB_ORIGIN` still localhost so the popup's `postMessage` targets the wrong origin |
+| provider rejects sign-in before reaching our server | `MS_REDIRECT_URI` / `GOOGLE_REDIRECT_URI` not registered verbatim in the Azure app / Google OAuth client |
+| browser console shows CORS blocked on every `/api/` call | `WEB_ORIGIN` in `/data/studio-ent/.env` is not exactly `https://studioent.cftools.live` |
