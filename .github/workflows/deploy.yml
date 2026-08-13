@@ -1,8 +1,14 @@
 name: Deploy
 
+# `business` is here alongside `main` because it is where the work actually lands:
+# main has never received this workflow, so with a main-only trigger the deploy could
+# not fire at all — and `workflow_dispatch` does not help, because GitHub only offers
+# Run workflow for a file that exists on the DEFAULT branch. Until business is merged
+# into main, a push to business is the only path that reaches the host. Drop `business`
+# from this list once main is the trunk again.
 on:
   push:
-    branches: [main]
+    branches: [main, business]
   workflow_dispatch:
 
 # Never let two deploys race onto the same host.
@@ -148,8 +154,14 @@ jobs:
 
       # The compose file is the only thing copied to the host. Application code
       # arrives as images.
+      #
+      # mkdir first: scp into a missing directory fails with a bare
+      # "No such file or directory" that names the file, not the directory, and
+      # reads like the repo is missing the compose file.
       - name: Ship compose file
-        run: scp deploy/docker-compose.yml deploy-target:${DEPLOY_DIR}/docker-compose.yml
+        run: |
+          ssh deploy-target "mkdir -p ${DEPLOY_DIR}"
+          scp deploy/docker-compose.yml deploy-target:${DEPLOY_DIR}/docker-compose.yml
 
       # Preflight, before anything is torn down. Each of these has already bitten
       # this deploy once, and each fails in a way that looks like something else.

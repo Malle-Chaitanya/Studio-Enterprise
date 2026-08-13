@@ -7,8 +7,11 @@ Everything here was measured against the real target host on 2026-08-13. Where a
 or a name appears, it came from a command whose output is shown.
 
 - [DEPLOY-MANUAL.md](DEPLOY-MANUAL.md) — the short runbook for a by-hand deploy
-- [DEPLOY-GITHUB-ACTIONS.md](DEPLOY-GITHUB-ACTIONS.md) — the workflow reference
-- This file — the whole thing, including the reasoning
+- This file — the whole thing, including the reasoning. §8 is the workflow reference.
+
+A third file, `DEPLOY-GITHUB-ACTIONS.md`, was deleted on 2026-08-13: it still described
+the abandoned rsync + systemd design and told the reader to install a
+`deploy/csge-server.service` that no longer exists. Two docs, one deploy.
 
 ---
 
@@ -285,7 +288,7 @@ carrying `read:packages`. Public is simpler and matches the repo.
 
 ## 8. The release pipeline
 
-`.github/workflows/deploy.yml`, on push to `main` or manual **Run workflow**:
+`.github/workflows/deploy.yml`, on push to `main` **or `business`**:
 
 ```
 verify   npm ci · typecheck · vitest · (web) typecheck
@@ -304,6 +307,16 @@ time and calls `process.exit(1)` on a missing value, which kills every suite tha
 transitively imports `logger` or `db/core` before its first assertion. Do not "fix" this
 with a test-mode bypass — the fail-fast is what stops a misconfigured server booting in
 production.
+
+### Which branch deploys
+
+`business` is a trigger branch, not just `main`. The workflow files have only ever lived
+on `business`; `main` does not have them. With a main-only trigger the deploy could never
+fire, and **`workflow_dispatch` would not rescue it** — GitHub only offers *Run workflow*
+for a workflow that exists on the **default branch**, which is why `gh workflow list`
+shows CI and nothing else. A push to `business` is currently the only path to the host.
+Once `business` merges to `main`, drop it from the trigger list and the manual button
+appears.
 
 ### Secrets
 

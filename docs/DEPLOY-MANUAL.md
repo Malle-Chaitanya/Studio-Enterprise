@@ -1,6 +1,6 @@
 # Manual deploy — do this once by hand, then let the workflow do it
 
-The GitHub Actions workflow in [DEPLOY-GITHUB-ACTIONS.md](DEPLOY-GITHUB-ACTIONS.md)
+The GitHub Actions workflow ([DEPLOYMENT.md §8](DEPLOYMENT.md#8-the-release-pipeline))
 performs exactly these steps. Running them by hand first means the automated run is
 repeating a path known to work rather than discovering the host for the first time.
 
