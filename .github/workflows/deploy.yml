@@ -61,7 +61,12 @@ jobs:
           Host deploy-target
             HostName ${{ secrets.DEPLOY_HOST }}
             User ${{ secrets.DEPLOY_USER }}
-            Port ${{ vars.DEPLOY_PORT || 22 }}
+            # Secret OR variable. A port is not sensitive, so a variable is the natural
+            # home for it — but reading ONLY `vars` meant a port added as a secret (the
+            # obvious place, next to the other four DEPLOY_* values) silently resolved to
+            # empty and fell back to 22. The deploy then failed at connect with a timeout
+            # that says nothing about the real cause. Accept either.
+            Port ${{ secrets.DEPLOY_PORT || vars.DEPLOY_PORT || 22 }}
             IdentityFile ~/.ssh/id_deploy
             IdentitiesOnly yes
             StrictHostKeyChecking yes
