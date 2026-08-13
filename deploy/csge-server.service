@@ -1,0 +1,32 @@
+# Install on the host as /etc/systemd/system/csge-server.service
+# Secrets live in /opt/csge/server/.env (root-owned, chmod 600) — never in git, never
+# in the unit file, never in the deploy workflow.
+
+[Unit]
+Description=CloudFuze Studio Migrate API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=csge
+Group=csge
+WorkingDirectory=/opt/csge/server
+EnvironmentFile=/opt/csge/server/.env
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+RestartSec=5
+
+# Hardening — the API only ever needs to read its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/csge/server
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=csge-server
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,112 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never let two deploys race onto the same host.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  # Where the built API lives on the host (systemd WorkingDirectory).
+  SERVER_DIR: /opt/csge/server
+  # nginx document root for the built SPA.
+  WEB_DIR: /var/www/csge
+  SERVICE_NAME: csge-server
+
+jobs:
+  deploy:
+    name: build + rsync over SSH
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ---- build both apps in CI so the host needs no toolchain / devDeps ----
+      - name: Build server
+        working-directory: server
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Build web
+        working-directory: web
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      # ---- SSH key setup ----
+      # The private key never touches the repo; it comes from the DEPLOY_SSH_KEY secret.
+      # KNOWN_HOSTS is pinned rather than ssh-keyscan'd so a hijacked DNS/IP cannot
+      # silently receive the deploy.
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<EOF
+          Host deploy-target
+            HostName ${{ secrets.DEPLOY_HOST }}
+            User ${{ secrets.DEPLOY_USER }}
+            Port ${{ vars.DEPLOY_PORT || 22 }}
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Verify SSH connectivity
+        run: ssh deploy-target 'echo connected as $(whoami) on $(hostname)'
+
+      # ---- ship the API ----
+      # --delete keeps dist/ clean of files removed in this release, but node_modules
+      # and .env live on the host and must survive, hence the excludes.
+      - name: Sync server build
+        run: |
+          rsync -az --delete \
+            --exclude node_modules --exclude .env \
+            server/dist/ deploy-target:${SERVER_DIR}/dist/
+          rsync -az \
+            server/package.json server/package-lock.json \
+            deploy-target:${SERVER_DIR}/
+
+      - name: Install production deps + restart API
+        run: |
+          ssh deploy-target "set -e
+            cd ${SERVER_DIR}
+            npm ci --omit=dev
+            sudo systemctl restart ${SERVICE_NAME}
+            sleep 3
+            systemctl is-active --quiet ${SERVICE_NAME} || { sudo journalctl -u ${SERVICE_NAME} -n 50 --no-pager; exit 1; }
+          "
+
+      # ---- ship the SPA ----
+      - name: Sync web build
+        run: rsync -az --delete web/dist/ deploy-target:${WEB_DIR}/
+
+      - name: Reload nginx
+        run: ssh deploy-target 'sudo nginx -t && sudo systemctl reload nginx'
+
+      # Health endpoint is served through nginx, so this proves proxy + API + static
+      # are all live, not just that systemd started something.
+      - name: Smoke test /api/health
+        run: |
+          ssh deploy-target 'curl -fsS --max-time 15 http://127.0.0.1/api/health' | tee health.json
+          grep -q '"status"' health.json
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_deploy

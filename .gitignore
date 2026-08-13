@@ -10,6 +10,12 @@ build/
 *service-account*.json
 service_account.json
 secrets/
+# SSH deploy keys — the private half lives only in the GitHub secret DEPLOY_SSH_KEY
+*_deploy
+*_deploy.pub
+id_ed25519*
+id_rsa*
+*.pem
 migration_data/
 
 # Editor/build junk
