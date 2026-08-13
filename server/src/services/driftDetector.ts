@@ -14,6 +14,22 @@ import type { AgentIR } from '../types.js';
  * a topic-only change has no live Gemini-side artifact to redeploy for).
  */
 export interface DriftSnapshot {
+  /**
+   * The source agent's display name. Optional so snapshots written before this
+   * existed still load — an absent name compares equal to anything, so adding this
+   * field cannot make every previously-migrated agent redeploy on its next run.
+   *
+   * Renaming the source used to be invisible: the snapshot carried no name, so
+   * `detectDrift` reported "unchanged", the run skipped with `already exists`, and
+   * the Gemini agent kept its original display name permanently. Confirmed live
+   * 2026-08-13 — a Copilot agent renamed to "knowledge Nexus" was reported missing
+   * by the customer while sitting in Gemini, ENABLED and healthy, still called "A".
+   *
+   * Idempotency keys on `sourceId` rather than display name precisely so a rename
+   * can be pushed in place (`PATCH ?updateMask=displayName,...`). That path existed
+   * and worked; nothing ever noticed the rename to trigger it.
+   */
+  name?: string;
   instructions: string;
   description: string;
   starterPrompts: string[];
@@ -37,6 +53,7 @@ function knowledgeFingerprint(ir: AgentIR): string[] {
 
 export function snapshotFrom(ir: AgentIR, connectorIds: string[] = []): DriftSnapshot {
   return {
+    name: ir.name,
     instructions: ir.instructions,
     description: ir.description,
     starterPrompts: [...ir.starterPrompts].sort(),
@@ -65,6 +82,13 @@ export function detectDrift(prev: DriftSnapshot, ir: AgentIR, connectorIds: stri
   // Copilot agent to force a change (live 2026-08-07).
   if (JSON.stringify(prev.connectorIds ?? []) !== JSON.stringify(next.connectorIds ?? [])) {
     reasons.push('configured connectors changed');
+  }
+
+  // Only when the OLD snapshot actually recorded a name. Treating an absent name as
+  // "" would make every pre-existing snapshot report a rename on its first re-run
+  // after this shipped — a redeploy storm across every already-migrated agent.
+  if (prev.name !== undefined && prev.name !== next.name) {
+    reasons.push(`renamed ("${prev.name}" -> "${next.name}")`);
   }
 
   if (prev.instructions !== next.instructions) reasons.push('instructions changed');
