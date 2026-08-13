@@ -2032,6 +2032,91 @@ redeploy wires 13 tools and Jira answers.
   the acknowledged re-run went straight to insert without re-extracting.
 
 ---
+### 1.39 The merge broke Google Drive, not Jira — a DWD scope that is matched exactly (2026-08-13)
+
+Reported as "Jira worked before, after merging it is not working". Measured the opposite.
+Probed the deployed engine directly, because Reasoning Engine logs are useless here: payload
+content comes back `"<elided>"` and a 72h `severity>="WARNING"` query returns 0 entries even
+when a tool hands back `{"error": ...}` — the tool error never reaches the log, only the
+user's screen.
+
+```
+cd server && npx tsx src/spikes/_diag_probe_connectors.ts
+
+================ JIRA ================
+I called `jira_list_projects` ... successful and returned a total of 92 projects.
+Next, I called `jira_search` ... This call was also successful and returned 20 recent issues.
+
+================ HUBSPOT ================
+I called the `get_companies` tool. It successfully retrieved 5 companies.
+
+================ DRIVE ================
+An error occurred while listing files in the root folder using the `ListRootFolder`
+operation: `auth failed (google-service-account): ('unauthorized_client: Client is
+unauthorized to retrieve access tokens using this method, or client not authorized for
+any of the scopes requested.'...)`
+```
+
+**P** — Jira works, HubSpot works, Google Drive fails.
+
+The cause is the only Drive-relevant thing the merge changed, `connectors/registry.ts`:
+
+```diff
+-    scope: 'https://www.googleapis.com/auth/drive.readonly',
++    scope: 'https://www.googleapis.com/auth/drive',
+```
+
+The Workspace admin authorized the DWD client for `drive.readonly`. Domain-wide delegation
+matches scope strings **exactly, not hierarchically** — the comment added in that same commit
+records this in the other direction ("authorizing DWD for 'drive' does NOT also authorize
+'drive.readonly'"). It holds both ways, so the broader grant is not implied by the narrower
+one and the token request is refused.
+
+Fix is in the Workspace admin console, not the code: add
+`https://www.googleapis.com/auth/drive` to that Client ID, keeping `drive.readonly` so
+anything still requesting it keeps working.
+
+What made this look like Jira: the same run logged a real, unrelated failure —
+`Confluence crawl failed: None of the requested spaces found: Migration Knowledge Source` —
+and Confluence and Jira share the Atlassian credential, so one Atlassian-shaped error in the
+log reads as "Atlassian is broken". The Confluence credential is fine; that space name simply
+does not exist on the site (§1.31's pattern: the source description echoes the component name
+instead of naming a space).
+
+### 1.40 A renamed Copilot agent never gets renamed in Gemini (2026-08-13)
+
+"There is no knowledge Nexus but it showed already existed." Both true. The agent recorded for
+that `sourceId` is live and healthy — under its old name:
+
+```
+project=studio-enterprise-migration -> HTTP 200
+  displayName = A
+  state       = ENABLED
+  kind        = ADK
+  reasoningEngine = .../reasoningEngines/229588473240092672
+```
+
+**P** — the skip was correct; the name was not.
+
+`driftDetector.ts:38` decides whether a re-run does anything:
+
+```ts
+export function snapshotFrom(ir: AgentIR, connectorIds: string[] = []): DriftSnapshot {
+  return {
+    instructions, description, starterPrompts, webBrowsing, codeInterpreter,
+    knowledgeFingerprint, connectorIds,
+  };
+}
+```
+
+No `name`. So renaming the source agent produces no drift, `detectDrift` reports unchanged, the
+run skips with `already exists`, and the Gemini agent keeps its original display name forever.
+Idempotency deliberately keys on `sourceId` rather than display name so a rename updates in
+place — but nothing ever notices the rename to trigger that update.
+
+Workaround today: `forceRedeploy`. Fix: add `name` to `DriftSnapshot`, which makes a rename
+drift and lets the existing `PATCH ?updateMask=displayName,...` path do what it was built for.
+
 
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
