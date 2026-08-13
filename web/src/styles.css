@@ -1325,6 +1325,47 @@ table.assess td.note {
 .mu-dest-input:focus {
   color: var(--ink);
 }
+.mu-combobox-menu {
+  z-index: 50;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.mu-combobox-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.mu-combobox-opt:hover {
+  background: var(--bg);
+}
+.mu-combobox-opt-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mu-combobox-opt-email {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mu-combobox-opt-name {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .mu-empty {
   text-align: center;
   padding: 24px;
@@ -1506,7 +1547,6 @@ table.assess td.note {
   padding: 6px 10px;
   color: var(--brand);
   font-size: 12px;
-  font-style: italic;
 }
 .cmsg.agent .cmsg-bubble {
   background: var(--bg);
@@ -2324,6 +2364,9 @@ table.assess td.note {
   padding: 24px;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
   animation: modalScaleIn 0.2s ease;
+}
+.modal-card.wide {
+  max-width: 560px;
 }
 .modal-head {
   display: flex;

@@ -508,11 +508,11 @@ def _make_search_tool(data_store_id, tool_name, source_name):
     # The docstring IS the tool description Gemini uses to choose between tools, so it
     # must name THIS source. A shared, generic description makes every knowledge tool
     # look identical and the choice arbitrary.
-    if label:
+    if source_name:
         _search.__doc__ = (
-            f'Search the "{label}" knowledge source for information relevant to the query.\n'
+            f'Search the "{source_name}" knowledge source for information relevant to the query.\n'
             f"\n"
-            f'Use this when the question could be answered by "{label}". Prefer the source whose\n'
+            f'Use this when the question could be answered by "{source_name}". Prefer the source whose\n'
             f"subject matches the question; if unsure which applies, search more than one.\n"
             f"\n"
             f"Args:\n"

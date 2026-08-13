@@ -261,6 +261,226 @@ export async function grantAgentAccess(
   return { granted: members, failed: [] };
 }
 
+/** Engine (app) resource base — one level up from assistantBase. Used for
+ *  engine-scoped IAM (roles/discoveryengine.agentspaceUser), which Google's
+ *  own docs (agentspaceRestrictedUser's role description) name as the
+ *  intended grant scope for that role, rather than whole-project. */
+function engineBase(d: GeminiDestination): string {
+  return (
+    `https://discoveryengine.googleapis.com/v1alpha/projects/${d.project}` +
+    `/locations/${LOCATION}/collections/default_collection/engines/${d.engine}`
+  );
+}
+
+/**
+ * UserStore resource base for license lookups (projects/{project}/locations/
+ * {location}/userStores/{userStore} — CONFIRMED path shape, via Google's
+ * Python client reference for UserLicenseServiceClient). `default_user_store`
+ * is this codebase's own "default_X" convention for Discovery Engine
+ * singletons (default_collection, default_assistant are both used elsewhere
+ * in this file) — NOT independently confirmed against a live tenant. Every
+ * caller of checkUserLicense/assignUserLicense degrades to 'unknown' rather
+ * than blocking the migration if this specific id turns out to be wrong; see
+ * .claude/memory/decisions.md, 2026-08-12, and run
+ * server/src/spikes/_diag_verify_user_license_api.ts against a real tenant
+ * before treating the id as settled.
+ */
+function userStoreBase(d: GeminiDestination): string {
+  return `https://discoveryengine.googleapis.com/v1alpha/projects/${d.project}/locations/${LOCATION}/userStores/default_user_store`;
+}
+
+export type LicenseState = 'licensed' | 'unlicensed' | 'unknown';
+
+/**
+ * Check whether a principal already holds a Gemini Enterprise license.
+ * discoveryengine.userStores.listUserLicenses is a real, documented,
+ * admin-tier permission (confirmed via Google's IAM roles/permissions
+ * reference and the UserLicenseServiceClient Python client) — but see the
+ * userStoreBase() doc comment on the one unverified piece (the store id
+ * itself). Never throws: any failure (wrong store id, network, auth) is
+ * reported as 'unknown', not 'unlicensed' — the caller must attempt the
+ * downstream grant regardless and let IT produce the real error, rather than
+ * skip a real license on the strength of a guessed endpoint.
+ */
+export async function checkUserLicense(dest: GeminiDestination, saToken: string, email: string): Promise<LicenseState> {
+  try {
+    const filter = encodeURIComponent(`user_principal="${email.toLowerCase()}"`);
+    const res = await fetch(`${userStoreBase(dest)}/userLicenses?filter=${filter}`, {
+      headers: { Authorization: `Bearer ${saToken}` },
+    });
+    if (!res.ok) {
+      logger.warn(`checkUserLicense ${res.status} for ${email} — userStore id unverified, treating as unknown`);
+      return 'unknown';
+    }
+    const body = (await res.json()) as {
+      userLicenses?: { userPrincipal?: string; licenseAssignmentState?: string }[];
+    };
+    const entry = body.userLicenses?.find((u) => u.userPrincipal?.toLowerCase() === email.toLowerCase());
+    if (!entry) return 'unlicensed';
+    return entry.licenseAssignmentState === 'ASSIGNED' ? 'licensed' : 'unlicensed';
+  } catch (e) {
+    logger.warn(`checkUserLicense failed for ${email}: ${(e as Error).message}`);
+    return 'unknown';
+  }
+}
+
+/**
+ * Assign a Gemini Enterprise license to a principal, best-effort. Same
+ * unverified-userStore-id caveat as checkUserLicense — see that function's
+ * doc comment. batchUpdateUserLicenses is a long-running operation in
+ * Google's own client library; this function only kicks it off and does NOT
+ * poll to completion (matches this pipeline's existing tolerance for
+ * eventual consistency elsewhere, e.g. groundingRecheck.ts) — if the
+ * assignment hasn't actually landed by the time grantEngineUserRole runs
+ * next, that call simply fails with its own error and falls through to the
+ * manual PermissionHandoff, rather than this function lying about success.
+ */
+export async function assignUserLicense(
+  dest: GeminiDestination,
+  saToken: string,
+  email: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${userStoreBase(dest)}:batchUpdateUserLicenses`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        inlineSource: {
+          userLicenses: [{ userPrincipal: email.toLowerCase(), licenseAssignmentState: 'ASSIGNED' }],
+        },
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false, error: `batchUpdateUserLicenses ${res.status}: ${(await res.text()).slice(0, 200)}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/**
+ * Grant the engine-scoped roles/discoveryengine.agentspaceUser role — the
+ * project/engine-wide precondition confirmed LIVE (2026-08-12): without it,
+ * even the direct agent+session URL 403s (WidgetService.LookupWidgetConfig),
+ * not just the app home page, regardless of any per-agent grant. Same
+ * read-modify-write + etag pattern as grantAgentAccess below (confirmed real
+ * via engines.setIamPolicy's own REST reference page — unlike the userStore
+ * calls above, this one has no unverified piece).
+ */
+export async function grantEngineUserRole(
+  dest: GeminiDestination,
+  saToken: string,
+  grants: { users: string[]; groups: string[] },
+): Promise<{ granted: string[]; failed: { principal: string; error: string }[] }> {
+  const members = [
+    ...grants.users.filter(Boolean).map((e) => `user:${e.toLowerCase()}`),
+    ...grants.groups.filter(Boolean).map((e) => `group:${e.toLowerCase()}`),
+  ];
+  if (!members.length) return { granted: [], failed: [] };
+
+  const enginePath = engineBase(dest);
+  const getRes = await withBackoff(() =>
+    fetch(`${enginePath}:getIamPolicy`, { method: 'GET', headers: { Authorization: `Bearer ${saToken}` } }),
+  );
+  if (!getRes.ok && getRes.status !== 404) {
+    const error = `getIamPolicy ${getRes.status}: ${(await getRes.text()).slice(0, 200)}`;
+    return { granted: [], failed: members.map((m) => ({ principal: m, error })) };
+  }
+  const existing = getRes.ok
+    ? ((await getRes.json()) as { bindings?: { role: string; members: string[] }[]; etag?: string })
+    : {};
+  const bindings = existing.bindings ?? [];
+  const role = 'roles/discoveryengine.agentspaceUser';
+  const binding = bindings.find((b) => b.role === role);
+  const already = new Set(binding?.members ?? []);
+  const toAdd = members.filter((m) => !already.has(m));
+  if (!toAdd.length) return { granted: members, failed: [] };
+
+  if (binding) binding.members = [...already, ...toAdd];
+  else bindings.push({ role, members: toAdd });
+
+  const setRes = await withBackoff(() =>
+    fetch(`${enginePath}:setIamPolicy`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ policy: { bindings, etag: existing.etag } }),
+    }),
+  );
+  if (!setRes.ok) {
+    const error = `setIamPolicy ${setRes.status}: ${(await setRes.text()).slice(0, 200)}`;
+    return { granted: [], failed: members.map((m) => ({ principal: m, error })) };
+  }
+  return { granted: members, failed: [] };
+}
+
+export interface EnsureAccessResult {
+  granted: string[];
+  failed: { principal: string; error: string; failedAt: 'license' | 'engine-role' | 'agent-role' }[];
+}
+
+/**
+ * The full sequence to make a principal actually able to OPEN a restricted
+ * agent — grantAgentAccess() alone is not sufficient. Live-testing
+ * (2026-08-12, decisions.md) found a licensed-but-engine-role-less principal
+ * still 403s on the agent URL despite a successful per-agent grant. This
+ * closes that gap: license check/assign → engine-role check/grant →
+ * per-agent grant, each step best-effort and independently attributed on
+ * failure so the report can say WHY, not just THAT it failed. Results are
+ * cached per (tenant, engine, googleEmail) via resolvedPrincipalCache so a
+ * person shared across many agents in the same run is only checked once.
+ */
+export async function ensureAgentAccess(
+  dest: GeminiDestination,
+  saToken: string,
+  agentId: string,
+  grants: { users: string[]; groups: string[] },
+  cacheCtx: { appUserId: string; tenantId: string },
+): Promise<EnsureAccessResult> {
+  const { getCachedPrincipalState, putCachedPrincipalState } = await import('../db/repos/resolvedPrincipalCache.js');
+  const failed: EnsureAccessResult['failed'] = [];
+  const readyUsers: string[] = [];
+
+  for (const emailRaw of grants.users.filter(Boolean)) {
+    const email = emailRaw.toLowerCase();
+    const cached = await getCachedPrincipalState(cacheCtx.appUserId, cacheCtx.tenantId, dest.engine, email);
+    if (cached?.hasLicense === undefined) {
+      const state = await checkUserLicense(dest, saToken, email);
+      if (state === 'unlicensed') {
+        const assign = await assignUserLicense(dest, saToken, email);
+        if (!assign.ok) {
+          failed.push({ principal: `user:${email}`, failedAt: 'license', error: assign.error ?? 'no license available' });
+          continue;
+        }
+        await putCachedPrincipalState(cacheCtx.appUserId, cacheCtx.tenantId, dest.engine, email, { hasLicense: true });
+      } else if (state === 'licensed') {
+        await putCachedPrincipalState(cacheCtx.appUserId, cacheCtx.tenantId, dest.engine, email, { hasLicense: true });
+      }
+      // 'unknown' is deliberately NOT cached — caching an unverified guess as
+      // a confirmed license would poison the cache for every future run. Proceed
+      // anyway and let the downstream engine-role/agent-role calls fail with
+      // their own real error instead of this function guessing.
+    }
+    readyUsers.push(email);
+  }
+
+  const engineGrant = await grantEngineUserRole(dest, saToken, { users: readyUsers, groups: grants.groups.filter(Boolean) });
+  for (const f of engineGrant.failed) failed.push({ ...f, failedAt: 'engine-role' });
+  for (const email of readyUsers) {
+    const ok = !engineGrant.failed.some((f) => f.principal === `user:${email}`);
+    await putCachedPrincipalState(cacheCtx.appUserId, cacheCtx.tenantId, dest.engine, email, { hasEngineRole: ok });
+  }
+
+  const stillOk = {
+    users: readyUsers.filter((e) => !engineGrant.failed.some((f) => f.principal === `user:${e}`)),
+    groups: grants.groups.filter((g) => Boolean(g) && !engineGrant.failed.some((f) => f.principal === `group:${g.toLowerCase()}`)),
+  };
+  const agentGrant = await grantAgentAccess(dest, saToken, agentId, stillOk);
+  for (const f of agentGrant.failed) failed.push({ ...f, failedAt: 'agent-role' });
+
+  return { granted: agentGrant.granted, failed };
+}
+
 /** Confirm an engine is reachable (used during connect + before routing to it). */
 export async function engineReachable(dest: GeminiDestination, saToken: string): Promise<boolean> {
   try {

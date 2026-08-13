@@ -495,6 +495,41 @@ export async function fetchThirdPartyConnectors(session: string, envUrl: string)
   return ((await res.json()) as { connectors: DetectedConnector[] }).connectors;
 }
 
+// ── Per-agent Google Drive identity ───────────────────────────────────────────
+
+export interface DriveIdentityStatus {
+  sourceId: string;
+  current: { email: string; status: 'confirmed' | 'suggested' | 'needs-review'; reason?: string } | null;
+  suggestion: { email: string; reason: string } | null;
+}
+
+/** WHICH Google account each of these agents' Drive connector should impersonate. */
+export async function fetchDriveIdentities(
+  session: string,
+  envUrl: string,
+  sourceIds: string[],
+): Promise<DriveIdentityStatus[]> {
+  if (sourceIds.length === 0) return [];
+  const res = await fetch(
+    `/api/migrate/drive-identities?session=${session}&envUrl=${encodeURIComponent(envUrl)}&sourceIds=${encodeURIComponent(sourceIds.join(','))}`,
+  );
+  if (!res.ok) throw new Error('drive_identity_lookup_failed');
+  return ((await res.json()) as { identities: DriveIdentityStatus[] }).identities;
+}
+
+/** Admin confirms (or corrects) which Google account ONE agent's Drive connector uses. */
+export async function saveDriveIdentity(session: string, sourceId: string, email: string): Promise<void> {
+  const res = await fetch('/api/migrate/drive-identities', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, sourceId, email }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+    throw new Error(body.detail || body.error || 'drive_identity_save_failed');
+  }
+}
+
 /** Scan knowledge-source botcomponents for specific agents — detects Confluence, etc. */
 export async function fetchKnowledgeSourceConnectors(
   session: string,

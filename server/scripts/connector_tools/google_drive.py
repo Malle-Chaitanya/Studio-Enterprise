@@ -5,6 +5,21 @@ model to already know Drive's API conventions by heart (confirmed live
 module docstring for the shared build_tools contract.
 """
 
+# create_file/update_file only ever write a RAW TEXT string as the file's bytes —
+# there is no code here that generates a real .docx/.xlsx/.pdf binary structure.
+# Letting mime_type be set to one of those anyway creates a file that LIES about
+# its own format: Drive shows it as a Word document, but the bytes are just text,
+# so google_drive_read_file correctly refuses it later as "not a valid docx" —
+# permanently broken, self-contradictory, and confusing days after the fact.
+# Confirmed live 2026-08-13: a file created this way ("CXXXXXXXXXXXXXXXXXXX.docx")
+# had `mimeType: application/vnd...wordprocessingml.document` but its actual 21
+# bytes were literally the plain string "hey bob! how are you?". Restrict to types
+# a plain string genuinely IS, rather than let the mismatch happen at all.
+TEXT_SAFE_MIME_TYPES = {
+    "text/plain", "text/markdown", "text/csv", "application/json",
+    "text/xml", "application/xml",
+}
+
 
 def build_tools(conn, secret, mint_token, auth_header, fill):
     # Maps a native Google type to (export mimeType, fake filename to dispatch
@@ -167,14 +182,26 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
                     blob = resp.read()
                 dispatch_name = meta.get("name") or ""
 
+            # Dispatch by extension FIRST, but fall back to the real MIME type Drive
+            # reported — a file with no extension (e.g. created via
+            # google_drive_create_file with a bare name like "A") always fell through
+            # to "unsupported format" here even when its actual content was plain
+            # text, because every check below only ever looked at the name. Confirmed
+            # live 2026-08-13: a file this same tool had just created as text/plain
+            # became unreadable by itself one call later, purely because it had no
+            # ".txt" suffix.
             name = dispatch_name.lower()
-            if name.endswith((".txt", ".md", ".csv", ".json", ".log", ".xml", ".yaml", ".yml")):
+            is_text_mime = mime in ("text/plain", "text/markdown", "text/csv", "application/json", "text/xml", "application/xml")
+            is_pdf_mime = mime == "application/pdf"
+            is_docx_mime = mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            is_xlsx_mime = mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            if name.endswith((".txt", ".md", ".csv", ".json", ".log", ".xml", ".yaml", ".yml")) or is_text_mime:
                 text = blob.decode("utf-8", errors="replace")
-            elif name.endswith(".pdf"):
+            elif name.endswith(".pdf") or is_pdf_mime:
                 from pypdf import PdfReader
                 reader = PdfReader(io.BytesIO(blob))
                 text = "\n".join((pg.extract_text() or "") for pg in reader.pages)
-            elif name.endswith(".docx"):
+            elif name.endswith(".docx") or is_docx_mime:
                 import docx
                 doc = docx.Document(io.BytesIO(blob))
                 # .paragraphs alone misses tables entirely — python-docx does not
@@ -192,7 +219,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
                         cells = [c.text.replace("\n", " ").strip() for c in row.cells]
                         parts.append(" | ".join(cells))
                 text = "\n".join(parts)
-            elif name.endswith(".xlsx"):
+            elif name.endswith(".xlsx") or is_xlsx_mime:
                 import openpyxl
                 wb = openpyxl.load_workbook(io.BytesIO(blob), read_only=True, data_only=True)
                 rows = []
@@ -442,6 +469,12 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
         import json as _json
         import urllib.request
 
+        if mime_type not in TEXT_SAFE_MIME_TYPES:
+            return {"error": f"cannot create a real '{mime_type}' file — this tool only writes plain "
+                              f"text content, it does not generate a genuine Word/Excel/PDF binary "
+                              f"structure. Use a text type instead (e.g. text/plain), or leave "
+                              f"mime_type at its default."}
+
         try:
             token = mint_token(fill)
         except Exception as e:  # noqa: BLE001
@@ -449,7 +482,11 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
 
         # Two steps (create metadata, then upload content) rather than a
         # hand-built multipart/related body — simpler and no extra library.
-        meta_body = _json.dumps({"name": name, "parents": [folder_id]}).encode("utf-8")
+        # mimeType set HERE too, not just as the upload's Content-Type header below —
+        # a name with no recognizable extension (e.g. "A") gives Drive nothing to
+        # infer a type from, so the file's stored mimeType could end up generic
+        # regardless of what the later upload declares.
+        meta_body = _json.dumps({"name": name, "parents": [folder_id], "mimeType": mime_type}).encode("utf-8")
         create_req = urllib.request.Request(
             "https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink&supportsAllDrives=true",
             data=meta_body,
@@ -618,6 +655,10 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
 
         if not content and not new_name:
             return {"error": "nothing to update — provide content and/or new_name"}
+        if content and mime_type not in TEXT_SAFE_MIME_TYPES:
+            return {"error": f"cannot write '{mime_type}' content — this tool only writes plain text, "
+                              f"it does not generate a genuine Word/Excel/PDF binary structure. Use a "
+                              f"text type instead (e.g. text/plain), or leave mime_type at its default."}
 
         try:
             token = mint_token(fill)

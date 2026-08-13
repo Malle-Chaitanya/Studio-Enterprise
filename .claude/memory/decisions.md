@@ -6,6 +6,121 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
+## 2026-08-12 — Implement `ensureAgentAccess`: license check/assign + engine-role grant in front of `grantAgentAccess`
+
+- **Decision:** Added `checkUserLicense`, `assignUserLicense`, `grantEngineUserRole`, and
+  `ensureAgentAccess` to `services/gemini.ts`. `ensureAgentAccess` is the full sequence — license
+  check/assign → engine-scoped `roles/discoveryengine.agentspaceUser` grant → the existing per-agent
+  `grantAgentAccess` — and is now what `orchestrator.ts`'s two restricted-sharing call sites invoke
+  instead of calling `grantAgentAccess` directly. Failures are attributed to the specific step
+  (`failedAt: 'license' | 'engine-role' | 'agent-role'`) so the fidelity report says *why* a grant
+  didn't take, not just that it didn't. Added a new collection, `resolvedPrincipalCache` (#16 — no
+  index/shape change to any existing collection), keyed by `{appUserId, tenantId, engine,
+  googleEmail}`, so a principal shared across many agents in one run (or across runs) is checked
+  once, not once per agent.
+- **What's confirmed vs. what's still a live-testing gap:** `engineBase`/`grantEngineUserRole` uses
+  the exact same read-modify-write + etag pattern as `grantAgentAccess`, against `engines.setIamPolicy`
+  — a REST method with its own confirmed reference page. `checkUserLicense`/`assignUserLicense`'s
+  resource path (`projects/{project}/locations/{location}/userStores/{userStore}`) is confirmed via
+  Google's `UserLicenseServiceClient` Python client reference, but the specific userStore id
+  (`default_user_store`) is inferred from this codebase's own "default_X" convention
+  (`default_collection`, `default_assistant`), **not independently confirmed against a live tenant**.
+  Both license functions degrade to a non-blocking `'unknown'` state on any failure rather than
+  throwing or guessing "unlicensed" — matching this codebase's existing precedent for genuinely
+  unverified endpoints (`services/geminiConnector.ts`'s OneDrive-connector comment) in spirit, but
+  choosing graceful degradation over a hard throw since this sits on an active migration path, not an
+  unbuilt feature. Added `server/src/spikes/_diag_verify_user_license_api.ts` to confirm the userStore
+  id against a real tenant — **run this before treating the license step as more than best-effort.**
+  `'unknown'` states are deliberately never written to `resolvedPrincipalCache`, so a wrong guess here
+  can't poison the cache for future runs.
+- **Why:** closes the exact gap recorded in the 2026-08-12 "live-verified the full per-agent access
+  chain" entry above and the architect's design-only pass right below this entry — `grantAgentAccess`
+  succeeding was being treated as proof a principal could use the agent, when live testing showed two
+  earlier, independent preconditions (license, engine-scoped role) could silently be missing.
+- **Impact:** Additive DB change only (`resolvedPrincipalCache`, no changes to `identityMappings` or
+  any other existing collection). No `AgentIR` shape change — this is entirely within the INSERT
+  phase's apply step. Not yet built in this pass: `EnvironmentIR` / environment-role extraction (§4 of
+  `docs/design/environment-and-agent-permission-mapping-plan.md`) — deliberately deferred, since it
+  requires its own Dataverse systemuserroles research pass that wasn't live-verified this session,
+  unlike the license/engine-role chain above.
+
+## 2026-08-12 — Design: close the `grantAgentAccess` license/engine-grant gap (Architect sign-off, design-only)
+
+- **Decision**: Approved design (implementation not yet started) to extend the destination-side
+  permission apply path beyond the already-shipped per-agent `grantAgentAccess()`
+  (`roles/discoveryengine.agentUser`, `gemini.ts:215-262`). The confirmed destination model has
+  **three independent layers** — (1) Gemini Enterprise license assignment
+  (`discoveryengine.userStores.{listUserLicenses,batchUpdateUserLicenses}`), (2) an engine-level
+  (preferred) or project-level `roles/discoveryengine.agentspaceUser` grant, required independently
+  of any per-agent grant, (3) the existing per-agent `agentUser` grant — and `grantAgentAccess()`
+  today only performs layer 3. New design: a per-**principal** (not per-agent), cached precheck
+  sequence (`services/gemini.ts`: `checkUserLicense` → `assignUserLicense` →
+  `ensureEngineAgentspaceUser`) runs once per migration run per resolved Google principal, backed by
+  a new durable `resolvedPrincipalCache` collection (`{appUserId, tenantId, googleEmail}` →
+  `{licenseState, engineGrantState, checkedAt}`, 24h staleness). `orchestrator.ts`'s two
+  `grantAgentAccess` call sites now require **all three layers** to succeed before emitting
+  `FidelityNote(status: 'mapped')` on the sharing note; any partial failure is `needs-review` and
+  must name which layer failed. See `docs/design/permission-mapping.md` Part 2 §3 for the exact
+  call sequence, and §3.4 for why engine-level IAM (not project-level) is the default.
+- **Why**: Live-verified (per the requesting session, using a real agent in a real Gemini Enterprise
+  project, plus official Google IAM docs) that a principal can receive the per-agent `agentUser`
+  grant successfully and still 403 opening the agent, because neither a license nor the engine/
+  project `agentspaceUser` role was ever checked. `grantAgentAccess()`'s current callers treat
+  `grant.granted.length > 0` as proof of working access — a real "silent failure dressed as
+  success" gap, in direct tension with this project's fidelity-honesty rule. This decision fixes
+  the false-positive, not just documents it.
+- **Impact**: **Design only — not yet implemented.** New additive collection
+  (`resolvedPrincipalCache`) once built; no existing `AgentIR`/DB field changes shape. Two
+  confirmations are **blocking** before implementation: (a) the literal REST paths for
+  `userLicenses:listUserLicenses`/`:batchUpdateUserLicenses` and `engines:setIamPolicy` for
+  `agentspaceUser` were not independently re-confirmed by this session (a `WebFetch` re-check of
+  Google's own docs page truncated before reaching those sections — carried forward from the
+  requesting session's stated verification, not re-derived here); (b) a new
+  `permissionMigrationMode: 'full' | 'report-only' | 'org-wide-always'` run-level switch is
+  proposed with `'report-only'` as the recommended default for first-run customers (never make
+  live IAM/license-mutating calls until a customer has seen the audit trail) — this is a
+  **behavior-narrowing default change** relative to today's implicit always-attempt behavior and
+  needs a product/CEO-review pass before it ships, not just an engineering nod.
+
+## 2026-08-12 — Design: `EnvironmentIR`, `PrincipalRef.isExternal`, expanded `studioShareRole` (Architect sign-off, design-only)
+
+- **Decision**: Approved design (implementation not yet started) for three additive `AgentIR`/type
+  extensions, plus a correction to this project's own record: (1) a new `EnvironmentIR` (owner,
+  environment id/name, `roleAssignments: {principal, roles, customRoleNames?}[]`) capturing
+  environment-level Dataverse security roles (System Administrator, Environment Maker, Basic User,
+  System Customizer, Bot Transcript Viewer, custom) — **extract + report only, never an apply
+  target**, since Gemini has no equivalent concept at this scope. (2) `PrincipalRef.isExternal` +
+  `isExternalConfidence: 'confirmed' | 'heuristic'`, computed in `identityMap.ts`'s
+  `resolvePrincipal()` from the same owned-domain/directory-readable logic that already backs its
+  `'email-match'` vs `'email-match-unverified'` distinction — report-only metadata, no apply-side
+  effect. (3) A **conditional, not-yet-approved** plan to expand the already-shipped
+  `SharedPrincipal.studioShareRole` (`'editor' | 'agent-viewer' | 'end-user' | 'unknown'`,
+  `types.ts:187`) to separate Analytics-Viewer from Agent-Viewer/Evaluations shares — **blocked on
+  a live-tenant confirmation** (see `docs/design/permission-mapping.md` Part 2 §2.1) of whether
+  those two Studio "Share" actions produce a row-share on the bot record at all, since today's
+  `readAgentPermissions` only reads `RetrieveSharedPrincipalsAndAccess()`, not `systemuserroles`.
+- **Why**: A design-review brief asked this Architect to extend an "already-written Part 2" of
+  `docs/design/permission-mapping.md` covering exactly these three items plus a
+  `permissionMigrationMode` switch (see the sibling entry above). **That Part 2 did not exist** —
+  grepped the doc and all of `server/src` for `EnvironmentIR`, `resolvedPrincipalCache`,
+  `permissionMigrationMode`, `isExternal` before writing anything; zero matches. Recording this
+  correction here (not just in the design doc) so this log doesn't imply prior work that never
+  shipped. Separately, reading the real shipped `server/src/types.ts` surfaced that
+  `SharedPrincipal.studioShareRole` (added after the original 2026-08-04 permission-handoff entry
+  below, never given its own `decisions.md` entry) already distinguishes Studio's Editor/
+  Agent-viewer/End-user share types better than this log previously recorded — that gap in the log
+  is also corrected by this entry.
+- **Impact**: `EnvironmentIR` and `PrincipalRef.isExternal`/`isExternalConfidence` are additive/
+  optional — safe to implement without touching existing `AgentIR` consumers. The
+  `studioShareRole` expansion is explicitly **not approved for implementation yet** — it requires
+  the live-tenant confirmation named above first; implementing a guessed split would risk exactly
+  the kind of assumed-encoding fidelity lie this project's `accesscontrolpolicy`/`AccessMask`
+  precedent (2026-07-29 entry, "Researcher should confirm... before P1 extraction ships") already
+  warns against. No DB-schema change from this entry alone (both new fields ride on `AgentIR`,
+  which is already staged as a whole document).
+
+---
+
 ## 2026-08-08 — Close the `/api/auth/resume` orphan gap; two Connect Platforms UX fixes
 
 - **Decision**: Three follow-ups to the same day's earlier disconnect-flow fix. (1)

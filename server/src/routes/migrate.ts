@@ -29,8 +29,16 @@ import {
   connectorCredentialScope,
   connectorsSharingCredentials,
 } from '../services/connectorCredentials.js';
+import { impersonationAllowed, getWorkspaceDomainsAsAdmin } from '../auth/google.js';
 import { REGISTRY_BY_ID, CREDENTIAL_GROUPS } from '../connectors/registry.js';
 import { MS_APP_REG_FIELDS } from '../services/connectorToolBuilder.js';
+import {
+  getAgentConnectorIdentity,
+  upsertAgentConnectorIdentity,
+} from '../db/repos/agentConnectorIdentity.js';
+import { suggestEnvironmentDriveIdentity } from '../services/driveIdentityResolution.js';
+import { buildOrganizationProfile } from '../services/organizationProfile.js';
+import { getIdentityMap } from '../db/repos/identityMap.js';
 import type { DestinationOptions, GeminiDestination, MigrationResult, MigrationScope } from '../types.js';
 
 export const migrateRouter = Router();
@@ -323,6 +331,102 @@ migrateRouter.get('/third-party-connectors', async (req, res) => {
 });
 
 /**
+ * GET /api/migrate/drive-identities?session=&envUrl=&sourceIds=id1,id2
+ *
+ * For each Drive-connected agent, which Google account it should impersonate — a
+ * confirmed one already saved, and/or a best-effort suggestion. Never returns a
+ * "confirmed" status on its own initiative; only routes/migrate.ts's POST below,
+ * driven by an admin action, does that. See db/repos/agentConnectorIdentity.ts.
+ */
+migrateRouter.get('/drive-identities', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!session.tenantId) return void res.status(400).json({ error: 'ms_not_connected' });
+  const envUrl = req.query.envUrl as string | undefined;
+  if (!envUrl) return void res.status(400).json({ error: 'env_url_required' });
+  const sourceIds = String(req.query.sourceIds ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (sourceIds.length === 0) return void res.json({ identities: [] });
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  try {
+    const currentByAgent = new Map(
+      await Promise.all(
+        sourceIds.map(async (sourceId) => [sourceId, await getAgentConnectorIdentity(appUserId, sourceId, 'shared_googledrive')] as const),
+      ),
+    );
+
+    // Best-effort suggestion, computed once for the whole environment — only worth
+    // the Dataverse round-trips if at least one agent here still needs one.
+    let suggestion: { email: string; reason: string } | null = null;
+    if ([...currentByAgent.values()].some((c) => !c || c.status !== 'confirmed')) {
+      try {
+        const dvToken = await clientCredsToken(session.tenantId, envUrl);
+        const [profile, overrides] = await Promise.all([
+          buildOrganizationProfile(session, new Date().toISOString()),
+          getIdentityMap(appUserId, session.tenantId),
+        ]);
+        suggestion = await suggestEnvironmentDriveIdentity(envUrl, dvToken, profile.ownedDomains, overrides);
+      } catch (err) {
+        logger.warn({ err }, 'drive-identities: suggestion lookup failed — continuing without one');
+      }
+    }
+
+    const identities = sourceIds.map((sourceId) => {
+      const current = currentByAgent.get(sourceId) ?? null;
+      return {
+        sourceId,
+        current: current ? { email: current.impersonateEmail, status: current.status, reason: current.suggestionReason } : null,
+        suggestion: current?.status === 'confirmed' ? null : suggestion,
+      };
+    });
+    res.json({ identities });
+  } catch (err) {
+    res.status(502).json({ error: 'drive_identity_lookup_failed', detail: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/migrate/drive-identities
+ * body: { session, sourceId, email }
+ *
+ * Admin confirms (or corrects) which Google account ONE agent's Drive connector
+ * should impersonate. Same domain-ownership check as the shared connector
+ * credential save — an admin can only assign identities within their own,
+ * OAuth-proven Google Workspace, never another CloudFuze customer's.
+ */
+migrateRouter.post('/drive-identities', async (req, res) => {
+  const { session: sessionId, sourceId, email } = req.body as { session?: string; sourceId?: string; email?: string };
+  const session = await getSession(sessionId ?? '');
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!sourceId || !email?.trim()) {
+    return void res.status(400).json({ error: 'source_id_and_email_required' });
+  }
+  const target = email.trim();
+  const ownDomain = session.gEmail?.split('@')[1]?.toLowerCase();
+  if (!ownDomain) {
+    return void res.status(400).json({
+      error: 'impersonation_domain_mismatch',
+      detail: 'Could not verify your Google Workspace domain — reconnect Google and try again.',
+    });
+  }
+  const verifiedDomains = await getWorkspaceDomainsAsAdmin(session.gEmail!);
+  const allowedDomains = verifiedDomains.length ? verifiedDomains : [ownDomain];
+  if (!impersonationAllowed(target, allowedDomains)) {
+    return void res.status(400).json({
+      error: 'impersonation_domain_mismatch',
+      detail: `"${target}" is not in your Google Workspace (verified domains: ${allowedDomains.join(', ')}). An agent can only be set up to access Drive for users in your own organization.`,
+    });
+  }
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  await upsertAgentConnectorIdentity(appUserId, sourceId, 'shared_googledrive', {
+    impersonateEmail: target,
+    status: 'confirmed',
+  });
+  res.json({ ok: true });
+});
+
+/**
  * POST /api/migrate/knowledge-connectors
  * body: { session, envUrl, botIds: string[] }
  *
@@ -393,6 +497,47 @@ migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
     return void res.status(400).json({ error: 'connector_id_and_creds_required' });
   }
   if (!session.geminiProject) return void res.status(400).json({ error: 'google_not_connected' });
+
+  // The Drive connector's `impersonate_email` becomes a DWD impersonation target
+  // INSIDE the deployed container (adk_deploy.py's `_mint_token` → `.with_subject()`),
+  // using CloudFuze's own shared SA. That SA holds domain-wide delegation across every
+  // customer who has granted it — so an unchecked target here would let this
+  // customer's admin type a user from a DIFFERENT CloudFuze customer's domain and have
+  // the deployed agent read that other customer's Drive. Same invariant auth/google.ts
+  // already enforces for getSaToken(): only ever impersonate within the caller's own,
+  // OAuth-proven domain. Checked here, at save time, rather than left to the container
+  // (which has no allowlist of its own and cannot re-derive whose domain is whose).
+  if (connectorId === 'shared_googledrive') {
+    const target = creds.find((c) => c.field === 'impersonate_email')?.value?.trim();
+    if (target) {
+      const ownDomain = session.gEmail?.split('@')[1]?.toLowerCase();
+      if (!ownDomain) {
+        return void res.status(400).json({
+          error: 'impersonation_domain_mismatch',
+          detail: 'Could not verify your Google Workspace domain — reconnect Google and try again.',
+        });
+      }
+      // One Workspace can have several verified domains under the SAME account (a
+      // company that owns both a .com and a .co, say) — comparing only the login
+      // email's own domain wrongly blocked a legitimate same-company user on a
+      // sibling domain (live case: storefuze.com admin, erik@filefuze.co — both
+      // verified under one Workspace, DWD already granted there). Ask Google
+      // directly which domains THIS session's own Workspace verified, via a
+      // Directory-scoped DWD token for the session's OWN admin (session.gEmail) —
+      // never anyone else's. Best-effort: if the customer hasn't also granted the
+      // admin.directory.domain.readonly scope, this returns [] and we fall back to
+      // the single login-domain check — narrower, but still safe (never widens to
+      // "allow everything" on failure).
+      const verifiedDomains = await getWorkspaceDomainsAsAdmin(session.gEmail!);
+      const allowedDomains = verifiedDomains.length ? verifiedDomains : [ownDomain];
+      if (!impersonationAllowed(target, allowedDomains)) {
+        return void res.status(400).json({
+          error: 'impersonation_domain_mismatch',
+          detail: `"${target}" is not in your Google Workspace (verified domains: ${allowedDomains.join(', ')}). The migrated agent can only be set up to access Drive for users in your own organization.`,
+        });
+      }
+    }
+  }
 
   try {
     const saToken = await getSaToken(session.gEmail);
@@ -556,18 +701,19 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
       category: def.category,
       docsUrl: def.docsUrl,
       authKind: def.authKind ?? 'bearer',
-      fields: connectorCredentialFields(id).map((f) => ({
-        key: f.key,
-        label: f.label,
-        type: f.type,
-        placeholder: f.placeholder,
-        hint: f.hint,
-        shared: f.shared,
-        // A value already exists for this field. The UI renders it as satisfied with a
-        // Replace affordance instead of an empty required input, and omits it from the
-        // save so an unchanged credential does not get a new version.
-        supplied: suppliedFieldsByScope.get(connectorCredentialScope(id))?.has(f.key) ?? false,
-      })),
+      fields: connectorCredentialFields(id)
+        .map((f) => ({
+          key: f.key,
+          label: f.label,
+          type: f.type,
+          placeholder: f.placeholder,
+          hint: f.hint,
+          shared: f.shared,
+          // A value already exists for this field. The UI renders it as satisfied with a
+          // Replace affordance instead of an empty required input, and omits it from the
+          // save so an unchanged credential does not get a new version.
+          supplied: suppliedFieldsByScope.get(connectorCredentialScope(id))?.has(f.key) ?? false,
+        })),
       requiredPermissions: def.requiredPermissions ?? [],
       adminConsentRequired: !!def.adminConsentRequired,
       permissionsHint: def.permissionsHint,

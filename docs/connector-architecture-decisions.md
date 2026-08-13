@@ -249,12 +249,132 @@ Also required, per project:
 
 ## 11. Open items
 
-1. Per-agent attribution for Power Automate connectors (agent → flow → connector).
+1. ~~Per-agent attribution for Power Automate connectors~~ — see §12 for Google Drive
+   specifically; the connection-reference-level owner is fetchable (§12.2), though the
+   underlying OAuth identity is not.
 2. Tenant-scope the Secret Manager ids — `connectorSecretId()` has no `appUserId`, so two
-   customers sharing a project, or one customer with two Jira sites, collide.
+   customers sharing a project, or one customer with two Jira sites, collide. **Design
+   proposed in §12.4** — scope per identity profile, not just per connector type.
 3. Validate-on-save probe for every connector, so "✓ Saved" means "works", not "stored".
 4. Connector health state (`ok / needs_reconsent / invalid / untested`) surfaced in the UI.
 5. Generic OAuth consent layer (provider table, callback, refresh-token rotation,
    Atlassian `cloudId` base-URL switch) — lets customers click **Connect** instead of
    pasting credentials, once CloudFuze registers an app per provider.
 6. Decide the fate of `/connectors` (recommendation: demote to advanced, §4).
+7. ~~Build the identity-profile UI + orchestrator wiring described in §12~~ — superseded,
+   see §12: shipped as a single impersonate_email per migration instead, via the
+   existing generic connector-credential mechanism (no new UI, no orchestrator.ts change).
+
+---
+
+## 12. Google Drive — identity model
+
+**Date added**: 2026-08-12. **Status**: implemented 2026-08-13. Two separate decisions
+below were each revised — one twice — the same day. Read the "final decision" in each,
+not just the first description; the numbering here is what every code comment referring
+to "§12.x" means, kept stable rather than renumbered again.
+
+### 12.1 The core problem
+
+A customer's Copilot Studio estate has many agents, and each agent's Google Drive
+connector may have been authorized against a DIFFERENT Google account — a shared team
+Drive, or an individual employee's own personal Drive. Two real patterns exist, and a
+real customer estate has a mix of both:
+
+- **Pattern 1 (shared/team Drive)**: one designated identity is correct for every agent
+  that uses it — same shape as Confluence/Jira's single shared credential.
+- **Pattern 2 (personal Drive)**: each agent needs to match the SPECIFIC person, or the
+  migrated agent is reading the wrong person's files. A single migration-wide identity
+  is actively wrong here.
+
+### 12.2 What's fetchable, verified against official docs and live tenants — not assumed
+
+| # | Question | Answer | Evidence |
+|---|---|---|---|
+| 1 | Which Google account authorized the connector? | **Not fetchable.** Lives on the live Connection object in Power Automate's "API hub," reachable only via delegated (interactive) auth — CS_GE's extraction is app-only `client_credentials` and cannot reach it. | [Programmability and Extensibility — Authentication, Power Platform](https://learn.microsoft.com/en-us/power-platform/admin/programmability-authentication-v2): *"Power Platform API uses delegated permissions only at this time."* |
+| 2 | Who created/owns the specific connector reference? | **Fetchable**, app-only. `connectionreference` has its OWN `CreatedBy`/`ModifiedBy`/`OwnerId`, independent of the parent `bot`'s owner. Verified live 2026-08-13 against `orga243378d.crm.dynamics.com`: resolved correctly to `erik@filefuze.co` for real SharePoint/Office365 connection references. | [Connection Reference table reference](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/reference/entities/connectionreference); `services/thirdPartyConnectorScan.ts`'s `getConnectionReferenceOwner` |
+| 3 | Can one connection reference be attributed to one specific agent? | **Not reliably**, via app-only auth — no direct, cheap relationship was found between a `connectionreference` and the one bot/topic that uses it. Suggestions are therefore scoped to the whole ENVIRONMENT, never claimed as agent-precise. | `services/thirdPartyConnectorScan.ts`'s `findConnectionReferenceLogicalNames` |
+
+**Net: no fact, but a testable hint** — the connection reference's owner is a Microsoft
+identity, not the Google account it authenticated to. It must be confirmed by a human,
+never trusted outright.
+
+### 12.3 Why not native Gemini Enterprise Actions instead
+
+Investigated and rejected — kept here so it isn't re-litigated. Native Actions
+(Copy/Create Folder/Download/Upload) live inside Agent Designer / the built-in assistant;
+unreachable from the ADK/Reasoning-Engine agents this pipeline creates. Native
+Federated search is confirmed blocked for headless callers: `403 "Search using service
+account credentials is not supported for workspace datastores."` Even ignoring both,
+native Actions cover only 4 of the source's 12 actions — the custom Track B tool
+(`connector_tools/google_drive.py`, all 12 actions, live-verified 2026-08-11) is strictly
+better and already proven; native Actions would only add a second, more complex auth
+model on top for zero net gain.
+
+### 12.4 The shared-key decision: customer's OWN service account, not CloudFuze's
+
+`shared_googledrive.credentials` in `registry.ts` declares `service_account_json` —
+shared across the WHOLE migration, since one key can DWD-impersonate anyone in the
+domain, one time at a time. This went through two revisions the same day:
+
+- **First cut (superseded within hours)**: one migration-wide `impersonate_email` field,
+  with `service_account_json` marked `internal: true` and auto-filled server-side from
+  CloudFuze's OWN shared SA key (`internalFieldValue()`, `ownServiceAccountKeyJson()`).
+  Simple, matched Jira/SharePoint's one-field shape exactly. Wrong on two counts, both
+  raised directly by the team rather than found in testing: (1) the deployed agent's
+  live Drive tool depends on CloudFuze's shared key FOREVER after migration — a customer
+  revoking DWD for CloudFuze's client ID once "the migration tool" looks done (a
+  reasonable thing to do) breaks Drive on an agent they already rely on daily; (2) one
+  migration-wide identity cannot represent Pattern 2 at all (§12.1) — every agent got the
+  exact same identity regardless of whose Drive it actually needed.
+- **Final decision**: `service_account_json` is customer-visible, with copy asking them
+  to create the SA in THEIR OWN Google Cloud project (not CloudFuze's) and authorize
+  DWD for ITS Client ID. Zero Python changes required —
+  `connector_tools/google_drive.py`'s `_mint_token` does
+  `service_account.Credentials.from_service_account_info(key).with_subject(email)`,
+  which never cared whose key it was handed; this was proven true empirically (the very
+  first live Drive test in this project used CloudFuze's key with the identical code
+  path). The `internal` field concept, `internalFieldValue()`, and
+  `ownServiceAccountKeyJson()` were removed outright as unused rather than left dormant,
+  since Drive was their only caller.
+
+### 12.5 The per-agent identity decision: Erik's agent → Erik's Drive, Alex's → Alex's
+
+Built, then deleted in favor of "treat Drive exactly like Jira" (one shared
+`impersonate_email`, zero new UI), then rebuilt the same day once the team pointed out
+the one-shared-identity shape cannot serve Pattern 2 (§12.1) at all. What shipped:
+
+- **`db/repos/agentConnectorIdentity.ts`**: one record per (customer, source agent,
+  connector) — `{impersonateEmail, status: 'confirmed' | 'suggested' | 'needs-review'}`.
+  `status` only ever becomes `'confirmed'` via an explicit admin action
+  (`POST /api/migrate/drive-identities`), never set by the system on its own initiative.
+- **Suggestion, honestly scoped**: `services/driveIdentityResolution.ts`'s
+  `suggestEnvironmentDriveIdentity` reads every Drive connection reference in the WHOLE
+  environment (§12.2 row 3), resolves each owner to a Google identity via the EXISTING
+  `identityMap.ts` (not a new system), and suggests something ONLY when every one
+  resolves to the SAME Google identity. Multiple distinct identities in one environment
+  → no suggestion at all, rather than guessing among them.
+- **UI**: `ConnectorConfig.tsx`'s `DriveIdentitySection`, rendered directly under the
+  shared credential card — one row per selected Drive-using agent, pre-filled with a
+  suggestion when one exists, always requiring an explicit Confirm click before it counts.
+- **Deploy-time wiring** (`orchestrator.ts`, immediately after `scopedConnectors` is
+  built, before every later place that reads it — the secret-sync loop, the deploy call,
+  and the per-tool fidelity check): an agent with NO confirmed identity gets Drive
+  dropped from its tool list entirely, never silently pointed at a guess, with a
+  `needs-review` fidelity note explaining exactly why. A confirmed identity's email is
+  written to a secret scoped by AGENT (`shared_googledrive:agent-<sourceId>` — the same
+  synthetic-connectorId trick as the removed `connectorProfileScope`), so two agents
+  never collide on one secret slot.
+- **What is genuinely NOT solved**: WHICH agents use Drive at all is still detected at
+  the whole-environment level pre-migration (§12.2 row 3 — no cheap, reliable per-agent
+  attribution exists before full IR extraction). `DriveIdentitySection` shows the picker
+  for every selected agent in a Drive-detected environment, not only the ones precisely
+  confirmed to use it. Harmless in practice (an unused identity assignment on an agent
+  that turns out not to need one costs nothing), but not fully precise — a genuinely
+  agent-precise version would need to wait until after Phase 1 extraction, when
+  `agentConnectorIds(ir)` knows for certain.
+- The `impersonate_email` domain-ownership check (`routes/migrate.ts`,
+  `impersonation_domain_mismatch`) applies on BOTH this per-agent save route and the
+  shared-key path (§12.4) — kept even though a customer-owned SA already makes
+  cross-customer impersonation structurally impossible, as a cheap, harmless sanity
+  check against typos (e.g. a former employee's personal Gmail).

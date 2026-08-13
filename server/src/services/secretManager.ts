@@ -180,6 +180,50 @@ export async function upsertSecret(
 }
 
 /**
+ * Make sure a connector secret actually exists in the project an agent is ABOUT TO
+ * deploy into, not just the project it was originally saved to.
+ *
+ * WHY THIS EXISTS: connector credentials are always written to the session's own
+ * connected project (routes/migrate.ts's credentials-save route), but a customer can
+ * map one specific Dataverse environment to a DIFFERENT destination project on
+ * SelectMap. When that happens, the deployed Reasoning Engine reads its secrets from
+ * ITS OWN project — which never received them — and every connector tool call fails
+ * with a Secret Manager 404 at inference. Confirmed live 2026-08-13 (Google Drive):
+ * the deploy and the per-secret IAM grant both "succeeded" while the secret quietly
+ * did not exist where the running agent would ever look for it.
+ *
+ * Best-effort, mirrors this file's other persistence: a failure here degrades the
+ * deployed tool (same as it does today, unchanged) — it must never fail the
+ * deployment itself. No-ops when the two projects are the same.
+ *
+ * Keeps the target in sync on every deploy, not just the first time: an earlier
+ * version of this checked "does the target already have SOMETHING" and skipped if
+ * so, which fills the gap once but then never notices the canonical value has since
+ * CHANGED (e.g. a customer replacing a service-account key) — the deployed agent
+ * would keep silently using the stale copy forever. `upsertSecretIfChanged` already
+ * compares content, so re-checking that on every deploy costs one extra read and
+ * writes a new version only when the value actually moved.
+ */
+export async function ensureSecretInProject(
+  saToken: string,
+  sourceProject: string,
+  targetProject: string,
+  secretId: string,
+): Promise<void> {
+  if (!sourceProject || sourceProject === targetProject) return;
+  try {
+    const source = await getEntraSecret(saToken, `projects/${sourceProject}/secrets/${secretId}/versions/latest`);
+    if (!source.ok || !source.plaintext) return; // nothing to copy — the existing per-secret-grant failure still reports this
+    const { written } = await upsertSecretIfChanged(saToken, targetProject, secretId, source.plaintext);
+    if (written) {
+      logger.info({ secretId, sourceProject, targetProject }, 'ensureSecretInProject: synced a connector secret to the deploy project');
+    }
+  } catch (e) {
+    logger.warn({ secretId, sourceProject, targetProject, err: (e as Error).message }, 'ensureSecretInProject: sync failed');
+  }
+}
+
+/**
  * Store a connector credential, but only if it actually differs from what is already
  * there. Returns whether a new version was written.
  *

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   fetchGoogleUsers,
@@ -22,6 +23,125 @@ function initials(name: string): string {
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return name.slice(0, 2).toUpperCase();
 }
+
+/**
+ * Searchable destination-user combobox — replaces a native <input list=…> +
+ * <datalist>, which renders as the browser's own unstyled autofill-suggestion
+ * list (that's the "looks like saved users" complaint: it's not our UI at all,
+ * it's the browser's). Still free-text (an admin can type an email that isn't
+ * in the directory yet), but now filters as you type and shows avatar + name.
+ *
+ * The menu is a fixed-position react-dom portal into <body>, not an in-flow
+ * absolutely-positioned child — .mu-list scrolls (overflow-y: auto), and an
+ * absolute child gets clipped by that ancestor's overflow the moment a row
+ * near the bottom opens its dropdown. A portal sidesteps that entirely.
+ */
+function GoogleUserCombobox({
+  value,
+  users,
+  onChange,
+}: {
+  value: string;
+  users: { email: string; displayName?: string }[];
+  onChange: (email: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(value);
+  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => setText(value), [value]);
+
+  const placeMenu = () => {
+    const r = inputRef.current?.getBoundingClientRect();
+    if (r) setRect({ top: r.bottom + 4, left: r.left, width: r.width });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    placeMenu();
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (inputRef.current?.contains(e.target as Node)) return;
+      if (menuRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    window.addEventListener('scroll', placeMenu, true);
+    window.addEventListener('resize', placeMenu);
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown);
+      window.removeEventListener('scroll', placeMenu, true);
+      window.removeEventListener('resize', placeMenu);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // No cap here — the menu itself scrolls (max-height + overflow-y: auto in CSS).
+  // An earlier .slice(0, 8) truncated the UNFILTERED list before the scroll ever
+  // came into play, so a user near the end alphabetically (e.g. "zara") was simply
+  // never rendered, no matter how far you scrolled the dropdown. googleUsers is
+  // already bounded by the fetch (max: 300), so rendering all matches is cheap.
+  const q = text.toLowerCase().trim();
+  const matches = q
+    ? users.filter((u) => u.email.toLowerCase().includes(q) || (u.displayName || '').toLowerCase().includes(q))
+    : users;
+
+  const pick = (email: string) => {
+    setText(email);
+    onChange(email);
+    setOpen(false);
+  };
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="text"
+        placeholder="— assign —"
+        className="mu-dest-input"
+        value={text}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') setOpen(false);
+          if (e.key === 'Enter') setOpen(false);
+        }}
+      />
+      {open &&
+        matches.length > 0 &&
+        rect &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="mu-combobox-menu"
+            style={{ position: 'fixed', top: rect.top, left: rect.left, width: Math.max(rect.width, 240) }}
+          >
+            {matches.map((u) => (
+              <div key={u.email} className="mu-combobox-opt" onMouseDown={(e) => { e.preventDefault(); pick(u.email); }}>
+                <span
+                  className="uavatar"
+                  style={{ width: 20, height: 20, fontSize: 8, background: avatarColor(u.displayName || u.email), flexShrink: 0 }}
+                >
+                  {initials(u.displayName || u.email)}
+                </span>
+                <div className="mu-combobox-opt-text">
+                  <div className="mu-combobox-opt-email">{u.email}</div>
+                  {u.displayName && <div className="mu-combobox-opt-name">{u.displayName}</div>}
+                </div>
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}
+
 export function MapUsers() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -126,20 +246,6 @@ export function MapUsers() {
         (userMap[u.email] || '').toLowerCase().includes(q),
     );
   }, [msUsers, query, userMap]);
-
-  // Paging. A tenant directory is hundreds of rows — rendering them all in one scroll
-  // box made the list unusable and slow to render, and made "285 of 285 selected" read
-  // as a demand to review every account.
-  const PAGE_SIZE = 25;
-  const [page, setPage] = useState(0);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  // Snap back to page 1 whenever the filter changes the result set under us.
-  useEffect(() => { setPage(0); }, [query]);
-  const safePage = Math.min(page, pageCount - 1);
-  const pageRows = useMemo(
-    () => filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
-    [filtered, safePage],
-  );
 
   const rowStatus = (email: string): { label: string; cls: string } => {
     const dest = userMap[email]?.trim();
@@ -355,7 +461,7 @@ export function MapUsers() {
               </div>
             </div>
           ))}
-        {!loading && pageRows.map((u) => {
+        {!loading && filtered.map((u) => {
           const on = selected.has(u.email);
           const dest = userMap[u.email] || '';
           return (
@@ -387,47 +493,13 @@ export function MapUsers() {
                     </button>
                   </>
                 ) : (
-                  <input
-                    type="email"
-                    list="gusers"
-                    placeholder="— assign —"
-                    value={dest}
-                    onChange={(e) => setDest(u.email, e.target.value)}
-                    className="mu-dest-input"
-                  />
+                  <GoogleUserCombobox value={dest} users={googleUsers} onChange={(email) => setDest(u.email, email)} />
                 )}
               </div>
             </div>
           );
         })}
-        {!loading && filtered.length > PAGE_SIZE && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-              {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
-            </span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button type="button" className="wbtn" style={{ fontSize: 12, padding: '4px 12px' }}
-                disabled={safePage === 0} onClick={() => setPage(0)}>« First</button>
-              <button type="button" className="wbtn" style={{ fontSize: 12, padding: '4px 12px' }}
-                disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹ Prev</button>
-              <span style={{ fontSize: 12, alignSelf: 'center', minWidth: 70, textAlign: 'center' }}>
-                Page {safePage + 1} / {pageCount}
-              </span>
-              <button type="button" className="wbtn" style={{ fontSize: 12, padding: '4px 12px' }}
-                disabled={safePage >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}>Next ›</button>
-              <button type="button" className="wbtn" style={{ fontSize: 12, padding: '4px 12px' }}
-                disabled={safePage >= pageCount - 1} onClick={() => setPage(pageCount - 1)}>Last »</button>
-            </div>
-          </div>
-        )}
         {!loading && filtered.length === 0 && <div className="mu-empty">No users to show. Connect Microsoft with directory read consent, or continue and map principals after agent selection.</div>}
-        <datalist id="gusers">
-          {googleUsers.map((g) => (
-            <option key={g.email} value={g.email}>
-              {g.displayName || g.email}
-            </option>
-          ))}
-        </datalist>
       </div>
 
       <div className="mu-footer">

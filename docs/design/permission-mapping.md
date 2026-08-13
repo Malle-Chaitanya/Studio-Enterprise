@@ -541,4 +541,430 @@ collection are additive. Safe to ship P1 with no data migration.
 > - **Impact:** Additive/backward-compatible IR + DB change. P1 = extract+report (zero destination
 >   risk); P2 = identity-map + apply/handoff; P3 = swap the handoff for a real API if Google ships
 >   one, no redesign. Granular right-levels and per-agent owner assignment are documented out-of-scope.
+
+---
+---
+
+# Part 2 — Corrected source model, closing the `grantAgentAccess` gap, and Java-derived operational patterns (2026-08-12)
+
+**Status:** Proposed (needs Architect sign-off — expands the `AgentIR`/permission-plan shape again)
+**Author:** Architect agent
+**Supersedes:** nothing in Part 1 above (Part 1 is shipped and stays correct); this section
+extends it with what's changed since — most of it in **shipped code that Part 1's prose never
+caught up to** — plus new design for the destination-side gap.
+
+## 0. Premise correction — read this first
+
+The brief that requested this section describes it as extending an **already-written "Part 2"**
+of this document (covering `EnvironmentIR`, a `resolvedPrincipalCache`, `PrincipalRef.isExternal`/
+`isExternalConfidence`, and `permissionMigrationMode`). **That Part 2 does not exist.** I grepped
+this file and all of `server/src` for `EnvironmentIR`, `resolvedPrincipalCache`,
+`permissionMigrationMode`, and `isExternal` before writing anything below — zero matches anywhere.
+What actually exists is exactly Part 1 above (shipped, per `decisions.md`'s 2026-08-04 entry) plus
+real code that has quietly gone **beyond** Part 1's prose without a doc update (see §1). I'm
+treating everything below as **newly authored today**, not as a continuation of prior work, and
+flagging this discrepancy explicitly rather than pretending to "extend" a document that isn't there
+— per this project's own fidelity-honesty discipline, silently reconciling a false premise would be
+the wrong move.
+
+A second, smaller premise error in the same brief: the two entity files it names as
+`com.cloudfuze.entities.GroupDetails` and `com.cloudfuze.entities.AgentCollabarationDetails` are
+not in the `entities` package. The real files are `com.cloudfuze.agent.GroupDetails` and
+`com.cloudfuze.agent.AgentCollabarationDetails` (`modules/CloudFuzeCommon/src/main/java/com/
+cloudfuze/agent/`). Read and cited correctly below (§4).
+
+## 1. What's actually shipped today vs. what Part 1 documents
+
+Part 1's `SharedPrincipal.roleHint` (§1 above) is `'coauthor' | 'viewer' | 'custom'`. **The real,
+shipped `server/src/types.ts` has already gone further**, without a matching doc update:
+
+```ts
+export interface SharedPrincipal extends PrincipalRef {
+  rights: string[];
+  roleHint?: 'coauthor' | 'viewer' | 'custom';
+  /**
+   * Best-effort Copilot Studio Share-dialog semantics (live-validated 2026-08):
+   * - editor — Studio "Editor access" (view/edit/configure/share/publish; not delete)
+   * - agent-viewer — Studio "Agent viewer" (Analytics/Evaluation). Often blocked when
+   *   the user already has Environment Maker (typical licensed maker).
+   * - end-user — Studio "End user access" (chat/connections only; does NOT appear in
+   *   the maker Agents list). Usually surfaces via chatAccess, not this record share.
+   */
+  studioShareRole?: 'editor' | 'agent-viewer' | 'end-user' | 'unknown';
+}
 ```
+
+(`server/src/types.ts:171-188`, decoded in `server/src/services/dataverse.ts`'s
+`decodeAccessMask()`, `dataverse.ts:142-184`.) `services/identityMap.ts` and `orchestrator.ts`
+already branch on `studioShareRole` (`identityMap.ts:126,246,297,310,317,396`), and
+`PermissionHandoff` already carries `chatUsers`/`editorUsers`/`viewerUsers` buckets, not just a
+flat `grantUsers`/`grantGroups` pair (`types.ts:246-263`). None of this is in the Part 1 prose
+above — it shipped after Part 1 was written and the doc was never updated. **This section is that
+update**, plus the actual gap analysis the brief asked for.
+
+## 2. The corrected four-mechanism source model vs. what's extractable today
+
+The three-checkbox "End user access / Agent viewer / Editor access" dialog cited in some earlier
+material is **CloudFuze Agent Migration Hub's own UI**, not native Copilot Studio, and must not be
+treated as Microsoft's model (confirmed against
+`learn.microsoft.com/en-us/microsoft-copilot-studio/admin-share-bots`). The real, native model has
+four independently-grantable mechanisms:
+
+| # | Mechanism | Grantable to | Governing Dataverse/Entra surface | Read by `readAgentPermissions` today? |
+|---|-----------|--------------|-----------------------------------|----------------------------------------|
+| 1 | **Share for chat** | user, security group, "everyone in org" | `ChatBotReaders` privilege (bundled in Environment Maker); env-level, not necessarily a row-share on the bot | **Partially.** The *org-wide/group* form is read via `bot.accesscontrolpolicy` + `authorizedsecuritygroupids` → `ChatAccess`. An **individual** chat share is NOT confirmed to appear anywhere `readAgentPermissions` looks — see §2.1. |
+| 2 | **Share for collaborative authoring** | individual only | Row-share via `RetrieveSharedPrincipalsAndAccess` (Write/Append/AppendTo/Share) **+** Environment Maker role (role assignment, not read) | **Row-share rights: yes** (`decodeAccessMask`'s `hasWrite` branch → `studioShareRole: 'editor'`). The Environment-Maker-role co-requirement itself is not read (informational nuance, not needed to detect the grant). |
+| 3 | **Share Analytics** | individual only, never groups | Row-share (Read-only) **+** `Analytics Viewer` security role (role assignment) | **Ambiguous — see §2.1.** Bucketed today as `studioShareRole: 'agent-viewer'`, indistinguishable from #4. |
+| 4 | **Share Evaluations** | individual only | `Agent Viewer` security role — **may have no row-share on the bot at all** | **Unconfirmed — see §2.1.** Same `'agent-viewer'` bucket as #3, or possibly invisible to extraction entirely. |
+
+### 2.1 The real open question (bigger than "should roleHint have 4 values")
+
+The brief frames deliverable #4 as "does `roleHint` need to expand to stop conflating Analytics
+Viewer and Agent Viewer." That framing **understates the risk**. `readAgentPermissions` derives
+`studioShareRole` purely from the **row-share `AccessMask`** on the bot record
+(`RetrieveSharedPrincipalsAndAccess()`). Mechanisms 3 and 4 are, per Microsoft's docs, granted via
+**Dataverse security roles** (`Analytics Viewer`, `Agent Viewer`) — a completely different Dataverse
+concept from a record-level share. It is **not yet confirmed**:
+
+- whether granting "Share Analytics" or "Share Evaluations" from the Studio UI *also* creates a
+  Read-only row-share on the bot (in which case today's code sees *something*, just mislabels it),
+  or
+- whether it grants **only** the security-role assignment with **zero** row-share on the bot record
+  (in which case today's extraction sees **nothing at all** for these two mechanisms — a silent
+  extraction gap, not a labeling gap).
+
+The second case would mean the fidelity issue isn't "Analytics Viewer and Agent Viewer look the
+same in the report," it's "Analytics Viewer and Agent Viewer never show up in the report at all,
+while other same-shaped Read-only shares silently absorb their bucket." This is exactly the kind of
+assumption this codebase's own discipline says must not ship un-verified (see Part 1's existing
+open question about `accesscontrolpolicy` encoding, and the `docs/domain/copilot-studio-sharing.md`
+reference already cited in `dataverse.ts:177`). **Recommendation: before touching `roleHint`'s
+shape, a Researcher/diagnostic-spike pass must confirm on a real tenant** whether "Share Analytics"
+/"Share Evaluations" produce a row-share at all, and if so what `AccessMask` they carry, by (a)
+granting each from the Studio UI to a throwaway test user, (b) reading `systemuserroles` for that
+user to confirm which security role landed, and (c) diffing `RetrieveSharedPrincipalsAndAccess()`
+before/after. This is additive to `readAgentPermissions` (a per-shared-principal `systemuserroles`
+read) and does **not** cross the phase boundary — still app-only Dataverse reads in EXTRACT.
+
+### 2.2 Recommended target shape (pending §2.1 confirmation)
+
+If §2.1 confirms row-shares exist and are distinguishable (e.g. different `AccessMask` widths, or a
+follow-up `systemuserroles` read is needed regardless to disambiguate), expand `studioShareRole` to:
+
+```ts
+studioShareRole?: 'editor' | 'chat-share' | 'analytics-viewer' | 'evaluation-viewer' | 'unknown';
+```
+
+dropping the merged `'agent-viewer'` token. If §2.1 instead confirms mechanisms 3/4 carry **no**
+row-share signal at all, the fix is not a `roleHint` rename — it's a **new read**
+(`systemusers({id})/systemuserroles_association?$select=name` for each principal already discovered
+via chat/coauthor shares, plus a fresh discovery pass over the environment's role assignments
+scoped to this bot — likely infeasible without enumerating all environment users, which is a much
+bigger, EnvironmentIR-level concern; see §5). **This is genuinely open — do not implement either
+branch without the live confirmation above.**
+
+## 3. Destination side: closing the `grantAgentAccess` gap
+
+### 3.1 Confirmed three-layer model (as given; my own re-verification note below)
+
+1. **License** — `discoveryengine.userStores.{listUserLicenses,batchUpdateUserLicenses}` (Admin-tier
+   permissions on a Discovery Engine `userStore`).
+2. **Engine/project-level `roles/discoveryengine.agentspaceUser`** — required independently of any
+   per-agent grant; without it the agent+session URL itself 403s
+   (`WidgetService.LookupWidgetConfig`). Prefer **Engine-level** via `engines.setIamPolicy` (least
+   privilege, matches the documented intent of `agentspaceRestrictedUser`'s own description);
+   project-level Cloud Resource Manager IAM is the fallback only.
+3. **Per-agent `roles/discoveryengine.agentUser`** — already shipped (`gemini.ts:215-262`,
+   `grantAgentAccess()`), the only per-agent role that exists; chat-only, no editor/owner tier at
+   this grain anywhere.
+
+**Re-verification note:** I attempted to independently re-confirm the exact permission strings via
+`WebFetch` against `docs.cloud.google.com/iam/docs/roles-permissions/discoveryengine` (the same
+page the brief cites). The page is large enough that my fetch truncated before reaching the
+`agentspaceUser`/`userLicenses` sections (it stopped inside the `discoveryengine.admin` role's
+permission list). I could not independently re-confirm the literal strings this session; I'm
+carrying them forward **as stated in the brief**, which claims live-console + docs verification
+already happened, but flagging that my own attempt to double-check them hit a tooling limit rather
+than a confirmation. **Before implementing, run a scoped diagnostic spike** (per
+`.claude/rules/code-style.md`'s `_diag_*.ts` convention) that calls the literal endpoints below
+against a real Gemini Enterprise test project and confirms the response shapes — the same
+discipline this codebase already applied to `grantAgentAccess`'s own `getIamPolicy`/`setIamPolicy`
+verb discovery (`gemini.ts:228-230`'s comment about an earlier probe wrongly concluding no IAM
+existed because it used POST instead of GET).
+
+### 3.2 Confirmed real gap (verified by reading the shipped code, not asserted)
+
+`grantAgentAccess()` (`gemini.ts:215-262`) does exactly layer 3: `GET {agent}:getIamPolicy` →
+merge bindings → `POST {agent}:setIamPolicy`. It never checks license state or the engine/project
+`agentspaceUser` grant. Its only two callers (`orchestrator.ts:2342`, `orchestrator.ts:2412`) treat
+`grant.granted.length > 0` as `status: 'mapped'` — **a false success**: a principal can be in
+`grant.granted` (layer 3 succeeded) while still 403ing on open because layers 1–2 were never
+checked. I also confirmed there is currently **zero** code anywhere in `server/src` (outside
+one-off `spikes/` diagnostics about Reasoning Engine IAM, which is a different resource) that reads
+`userLicenses` or calls `engines:setIamPolicy`/`agentspaceUser` — this is not a partial
+implementation, it's fully unbuilt. One existing signal already anticipates this: `routes/
+identity.ts:107`'s `/principals` response hardcodes `geminiSeat: 'unknown' as const` on every
+discovered principal — a placeholder field with nowhere yet to source a real value. That's exactly
+where layer-1's result belongs.
+
+### 3.3 Exact call sequence to close the gap
+
+Per-**principal** (not per-agent — cached, see §5.2), run once per migration run:
+
+```
+1. CHECK LICENSE
+   GET  {userStore}/userLicenses:listUserLicenses?filter=email="{email}"
+        permission: discoveryengine.userStores.listUserLicenses
+   → licenseState: 'licensed' | 'unlicensed' | 'unknown_error'
+
+2. ASSIGN LICENSE (only if step 1 = 'unlicensed')
+   POST {userStore}/userLicenses:batchUpdateUserLicenses
+        body: { licenseConfigs: [{ userPrincipal: email, licenseAssignmentState: 'ASSIGNED', ... }] }
+        permission: discoveryengine.userStores.batchUpdateUserLicenses
+   → on success: licenseState = 'assigned'
+   → on capacity/quota error: licenseState = 'capacity_exhausted' (NAMED failure — never silently
+     fall through to step 3/4 and report success)
+   → on any other error: licenseState = 'unknown_error', carry the raw message
+
+3. CHECK / GRANT ENGINE-LEVEL agentspaceUser (only if steps 1-2 didn't already fail)
+   GET  {engine}:getIamPolicy         (reuse the SAME etag read-modify-write pattern
+                                        grantAgentAccess already uses for the per-agent case)
+   → if member already bound to roles/discoveryengine.agentspaceUser: engineGrantState = 'already_granted'
+   → else:
+     POST {engine}:setIamPolicy       body: { policy: { bindings: [...existing, +agentspaceUser], etag } }
+     → engineGrantState = 'granted' | 'failed'
+   FALLBACK (only on explicit customer opt-in — see §3.4): same read-modify-write against
+     cloudresourcemanager.projects.{getIamPolicy,setIamPolicy} on the project instead of the engine.
+
+4. PER-AGENT agentUser GRANT (existing, unchanged)
+   grantAgentAccess(dest, saToken, agentId, { users, groups })   // gemini.ts:215, as shipped
+```
+
+Only step 4 is per-agent; steps 1–3 are per-**principal** and must be cached (a principal shared
+across 10 migrated agents should trigger this sequence once, not 10 times — see §5.2).
+
+### 3.4 Engine-level vs project-level: default and opt-in
+
+Per the brief's own instruction to prefer least privilege: **default to Engine-level**
+(`engines:setIamPolicy`) for the `agentspaceUser` grant. Project-level Cloud Resource Manager IAM
+is materially bigger blast radius — the same category of ask this codebase already treats as
+requiring an explicit customer decision, not an automatic default (see `decisions.md`'s 2026-08-03
+entry on `ensureReasoningEngineDiscoveryAccess()`: "a materially bigger ask than this product's
+normal access model... not recommended as a default"). Wire project-level IAM only behind the same
+kind of explicit, cost/scope-disclosed opt-in that entry recommends for the Reasoning Engine case —
+never silently escalate scope because the engine-level call failed.
+
+### 3.5 Honest result reporting (the actual fix for "silent failure dressed as success")
+
+```ts
+type LicenseState = 'licensed' | 'assigned' | 'capacity_exhausted' | 'unknown_error' | 'not_checked';
+type EngineGrantState = 'already_granted' | 'granted' | 'failed' | 'not_checked';
+
+interface PrincipalAccessPrecheck {
+  email: string;
+  licenseState: LicenseState;
+  engineGrantState: EngineGrantState;
+  error?: string;
+}
+```
+
+`orchestrator.ts`'s two `grantAgentAccess` call sites (`~2342`, `~2412`) must be extended: a
+principal only earns `FidelityNote(status: 'mapped')` on the sharing note when **all three layers**
+succeeded (`licenseState` in `{licensed, assigned}` AND `engineGrantState` in `{already_granted,
+granted}` AND the per-agent grant is in `grant.granted`). Any other combination is
+`needs-review`, and the note must **name which layer failed** ("license capacity exhausted for
+alice@customer.com — chat access will 403 until the admin frees a seat" is a materially different,
+more actionable message than today's generic "grant failed"). This is the concrete fix for the gap
+named in the brief: today `grant.granted.length > 0` is treated as proof of working access; it
+isn't.
+
+## 4. Java-derived operational patterns (file + method cited per pattern)
+
+Read `content-trunk` (staging branch) directly, not from memory of the DB-design doc alone.
+
+| Pattern | Source (file:lines) | How it maps to this design |
+|---|---|---|
+| **Cache-first principal resolution, reused across a whole run** | `SendingPermissionLoadTask.java:94-119` — `permissionsCounts()` gate before `savePermissionList()`; `findPermissionCache()` populates `mappedPairs` once, reused for every file/folder in the workspace | Direct precedent for the proposed `resolvedPrincipalCache` (§5.2): resolve/license-check/engine-grant a principal **once per run**, not once per agent it appears on. |
+| **Per-item unresolved tracking, not just one global list** | `SendingAsyncPermissionsLoadTask.java`'s `filterCollabs()` (~432-580): every source collaborator not found in `mappedPairs` (and not covered by an explicit exception carve-out) is pushed to a **per-file** `notInDestEmails` list, persisted on that file's own `CollabarationDetails` row | Matches this design's `PermissionHandoff.unresolved`, but argues for keeping unresolved tracking **per-agent** (already the shape here) rather than collapsing to one migration-wide list — a customer needs to know *which agent* a principal couldn't be resolved for. |
+| **Diff-before-write to avoid duplicate/redundant grants** | `SendingAsyncPermissionsLoadTask.java`'s `commonEmails()`/`fileterInviteEmails()` (~583-731): destination collaborators are fetched first, diffed against the source list, and only the delta is invited | This is exactly the shape `grantAgentAccess()` **already** implements (`getIamPolicy` → diff against existing `members` → only `setIamPolicy` the delta, `gemini.ts:239-248`) — good independent confirmation this is the right pattern, not a gap. Extend the same diff-before-write discipline to the new license/engine-grant checks in §3.3 (don't re-assign a license or re-grant `agentspaceUser` that's already present — the pseudocode in §3.3 already does this). |
+| **Bounded fan-out with backpressure, not unbounded parallelism** | `SendingAsyncPermissionsLoadTask.java:379-392` — a `ThreadPoolExecutor`-bounded submission loop that polls `getActiveCount() == getCorePoolSize()` and sleeps 5s before submitting more | Confirms the *direction* (bounded concurrency, never unbounded fan-out at an external API — already this codebase's own rule per `code-style.md`'s `mapPool`). **Do not copy the literal mechanism** — a busy-wait poll-and-sleep loop is real technical debt in the Java code, not a pattern worth reproducing; CS_GE's existing `mapPool` (semaphore/queue-based) is strictly better and should be reused unchanged for the new §3.3 per-principal checks. |
+| **Per-branch try/catch, three distinct outcome buckets** | `SendingPermissionLoadTask.java` — repeated `try { fetchFolderCollaborators(...) } catch (CFCloudException e) { exceptionPermission.add(...) }` around every cloud-specific branch (e.g. lines 438-644), with `noPermission`/`exceptionPermission`/`sucessPermission` kept as three separate lists | Precedent for keeping `grant.failed` from becoming one undifferentiated bucket. §3.5's `PrincipalAccessPrecheck` already splits failure by *layer* (license vs engine vs per-agent) — this Java pattern is the reason to keep that split rather than flattening to a single error string, once implemented. |
+| **Explicit group-to-group mapping with its own unresolved tracking** | `com.cloudfuze.agent.GroupDetails.java:15-127` (note: **not** `com.cloudfuze.entities.GroupDetails` as the brief stated — corrected path) — `srcGroupId`/`destGroupId` fields plus a group-scoped `notInDestEmails`/`errorCollabarators`, separate from the per-file `CollabarationDetails` tracking | Validates this design's existing `identityMappings.groups: Record<sourceGroupObjectId, googleGroupEmail>` shape (Part 1, §3) and argues for tracking unresolved-group reasons at the **group** grain too, not only flattened into `PermissionResolution.unmatched`. |
+| **Rate-limit backoff / retry-on-429** | **Not found.** I grepped `SendingPermissionLoadTask.java`, `SendingAsyncPermissionsLoadTask.java` for `retry|429|backoff|sleep\(`, and grepped `BoxConnector.java` plus the whole `OneDriveConnector`/`SPOMigration` module trees for `429|TooManyRequests|RetryTemplate|exponential|Retry-After` — zero matches anywhere I could reach. | **Flagging honestly rather than inventing a pattern that isn't there.** Either this concern lives in a shared HTTP-client base class I didn't trace into, or this production system genuinely doesn't have explicit backoff at this layer. I am **not** citing a Java precedent for backoff. CS_GE's own `withBackoff`/`services/rateLimiter.ts` (already used by `shareAgent`/`grantAgentAccess`) remains the model — reuse it unchanged for the new license/engine-grant calls in §3.3; nothing in the Java code argues against that. |
+
+## 5. New types (all additive; none of these exist today — see §0)
+
+### 5.1 `EnvironmentIR` (extract + report only, per the brief's stated scope)
+
+Environment-level Dataverse security roles (System Administrator, Environment Maker, Basic User,
+System Customizer, Bot Transcript Viewer, custom roles) are org/environment-scoped, not per-agent —
+they have **no** Gemini destination equivalent (Gemini has no "environment maker" concept) and are
+never an apply target, only a report/audit artifact:
+
+```ts
+/** Environment-level Dataverse security-role assignments. Extract + report only —
+ *  never an apply target; no Gemini equivalent exists at this scope. */
+export interface EnvironmentIR {
+  environmentId: string;
+  environmentName?: string;
+  /** One entry per user/team holding at least one environment-level role relevant
+   *  to this migration's agents (owners/coauthors already surfaced elsewhere). */
+  roleAssignments: {
+    principal: PrincipalRef;
+    roles: ('SystemAdministrator' | 'EnvironmentMaker' | 'BasicUser' | 'SystemCustomizer' |
+            'BotTranscriptViewer' | 'Custom')[];
+    customRoleNames?: string[];
+  }[];
+  readError?: string;
+}
+```
+
+Populated by a **new**, best-effort, run-level (not per-agent) read in Phase 1 — a single
+`systemuserroles`/`role` query per selected environment, not per bot — staged alongside
+`environmentsCache` (the existing per-environment cache collection already in `db/mongo.ts:66-72`).
+Rendered in the report as a standalone "Environment access (source, not migrated)" section.
+**Never** feeds the apply-or-handoff logic in §3 — it's audit context, e.g. "this agent's owner also
+holds System Administrator on the source environment," useful for the customer's own review, never
+something this tool acts on.
+
+### 5.2 `resolvedPrincipalCache` (durable, per-`appUserId`+`tenantId`, keyed by principal)
+
+Closes the "check license/engine-grant once per run instead of once per agent" requirement from
+§3.3 and §4's Java precedent (cache-first resolution):
+
+```ts
+interface ResolvedPrincipalCacheDoc {
+  appUserId: string;
+  tenantId: string;
+  googleEmail: string;           // the resolved destination identity — the cache key's second half
+  licenseState: LicenseState;
+  engineGrantState: EngineGrantState;
+  checkedAt: Date;
+  error?: string;
+}
+```
+
+New collection, indexed `{ appUserId: 1, tenantId: 1, googleEmail: 1 }` unique, added idempotently
+in `db/mongo.ts` alongside `identityMappings`. Best-effort like every repo (`isDbConnected()` guard
+→ treat as `not_checked` → re-run the live check rather than block). A cache entry older than a
+short TTL (propose 24h — license/engine grants don't change mid-run but can change between runs)
+should be treated as stale and re-checked, not trusted indefinitely.
+
+### 5.3 `PrincipalRef.isExternal` / `isExternalConfidence`
+
+```ts
+export interface PrincipalRef {
+  type: 'user' | 'team' | 'group';
+  id: string;
+  email?: string;
+  displayName?: string;
+  /** True when the principal's email domain is NOT one of the org's owned domains
+   *  (guest/external account). Additive, optional — absent means "not yet classified". */
+  isExternal?: boolean;
+  /** How confident that classification is — an owned-domain check is a heuristic,
+   *  not a directory-verified fact (mirrors identityMap.ts's existing 'email-match'
+   *  vs 'email-match-unverified' honesty distinction). */
+  isExternalConfidence?: 'confirmed' | 'heuristic';
+}
+```
+
+Computed in `services/identityMap.ts`'s `resolvePrincipal()` (which already has `ownedDomains` in
+scope) — `isExternal = !owned.has(domain)`, `isExternalConfidence = known ? 'confirmed' :
+'heuristic'` (reusing the exact same `known`-directory-readable branch that already exists for
+`'email-match'` vs `'email-match-unverified'`, `identityMap.ts:78-97`). This is report-only
+metadata (flags external collaborators the customer should be aware of before granting Gemini
+access) — it does not change the apply-or-handoff branch in §3.
+
+### 5.4 `permissionMigrationMode: 'full' | 'report-only' | 'org-wide-always'`
+
+A per-run, customer-selected mode (lives on the migration run/session, not on `AgentIR` — it's a
+policy switch, not extracted data):
+
+- `'full'` (default once P2 ships): the §3 apply-or-handoff logic as designed — org-wide chat →
+  `ALL_USERS`; narrower → resolve + attempt the §3.3 sequence + handoff for anything unresolved.
+- `'report-only'`: run identity resolution and produce the full report/handoff, but make **zero**
+  Gemini sharing/license/IAM calls — useful for a customer who wants the audit trail before
+  granting CloudFuze's SA the `agentspaceUser`/license-admin scopes §3 needs. This is the safe
+  default for a first-run trust-building pass.
+- `'org-wide-always'`: today's existing (pre-this-design) behavior, kept as an explicit, named
+  opt-out for a customer who has already decided org-wide sharing is acceptable for all agents —
+  **never** the default; must be an explicit choice, consistent with security-rules' "never
+  over-share by default."
+
+Threaded through the same place `GeminiDestination.edition` already lives (`types.ts:447-462`) —
+an explicit, un-auto-detected field the caller sets, not inferred.
+
+## 6. Full corrected mapping table (four source mechanisms × three destination layers)
+
+| Source mechanism | Maps to destination... | Fidelity |
+|---|---|---|
+| Share for chat (org-wide / `accesscontrolpolicy` = any\|any-multitenant) | Layer-2+3 combined: `shareAgent(ALL_USERS)` (existing, unchanged) | **Mapped** — clean equivalence. |
+| Share for chat (group-restricted / individual) | Layers 1+2+3 via §3.3's new sequence, per resolved principal | **Mapped when all 3 layers succeed; needs-review naming the failed layer otherwise** (§3.5) — this is the corrected, honest version of today's over-claimed "mapped." |
+| Share for collaborative authoring (coauthor/editor) | **No destination equivalent.** Gemini has no per-agent co-admin/editor tier at any IAM layer (confirmed: even `agentspaceEditor` at the project/engine level caps at chat-only per-agent). | **Lost — always `needs-review`.** Must never be "solved" by granting a broader Gemini role to compensate (explicit rule already encoded in `identityMap.ts:243`'s handoff text: "NEVER auto-grant roles/discoveryengine.editor... least-privilege"). |
+| Share Analytics | **No destination equivalent** (Gemini has no per-agent analytics-sharing surface). | **Lost — needs-review.** Whether extraction even sees this grant today is the open §2.1 question. |
+| Share Evaluations | **No destination equivalent.** | **Lost — needs-review.** Same §2.1 caveat. |
+| Owner | No settable-owner API; creator identity (SA/DWD) owns. | **needs-review**, unchanged from Part 1. |
+| Environment-level Dataverse roles (System Admin, Environment Maker, Basic User, System Customizer, Bot Transcript Viewer, custom) | **No destination equivalent at any layer** — Gemini has no environment/maker-role concept. | **Extract + report only** (`EnvironmentIR`, §5.1) — never an apply target, never attempted. |
+
+## Implementation Sequence (hand-off-ready)
+
+1. **Researcher/diagnostic-spike task (blocking, do first):** confirm §2.1 — does Studio's "Share
+   Analytics"/"Share Evaluations" produce a row-share on the bot at all, and if so what `AccessMask`.
+   Without this, any `studioShareRole` expansion is guessing.
+2. **Diagnostic-spike task (blocking for §3, can run in parallel with #1):** confirm the literal
+   REST paths for `userLicenses:listUserLicenses`/`:batchUpdateUserLicenses` and
+   `engines:setIamPolicy` for `agentspaceUser` against a real test project — my own doc re-fetch
+   truncated before confirming these (§3.1).
+3. Add `EnvironmentIR` (§5.1) to `types.ts`; wire a new, run-level (not per-bot) best-effort read
+   into Phase 1 near the existing `environmentsCache` build; render as a new, clearly-separate
+   "Environment access (source, not migrated)" report section. No apply-side change.
+4. Add `PrincipalRef.isExternal`/`isExternalConfidence` (§5.3) to `types.ts`; compute in
+   `identityMap.ts`'s `resolvePrincipal()`; surface in the report next to each principal — no
+   apply-side change.
+5. Add `resolvedPrincipalCache` (§5.2): new repo module `db/repos/resolvedPrincipalCache.ts`,
+   collection + unique index added idempotently in `db/mongo.ts`.
+6. Implement the §3.3 sequence as new `services/gemini.ts` functions (`checkUserLicense`,
+   `assignUserLicense`, `ensureEngineAgentspaceUser`), gated by the outcome of steps 1–2 above —
+   do not hardcode paths guessed in this doc without that confirmation.
+7. Wire `PrincipalAccessPrecheck` (§3.5) into `orchestrator.ts`'s two `grantAgentAccess` call sites
+   (`~2342`, `~2412`); change the `mapped`/`needs-review` decision to require all three layers.
+8. Add `permissionMigrationMode` (§5.4) to the destination/session config; default to
+   `'report-only'` for first-run customers per this document's security-leaning stance (mirrors
+   Part 1's own unresolved question about whether "over-share acceptable" should even be an
+   opt-in — resolve both in the same product conversation).
+9. Only once §2.1 is confirmed: implement the corresponding `studioShareRole` expansion (§2.2) and
+   update `identityMap.ts`'s branching + `PermissionHandoff`'s bucket fields accordingly.
+10. Update this document's Part 1 prose to match what §1 found already shipped (the `studioShareRole`
+    field, the `chatUsers`/`editorUsers`/`viewerUsers` handoff buckets) — small doc-hygiene pass so
+    the next reader doesn't hit the same premise-mismatch this section opened with.
+
+## Notes
+
+**Fidelity impact:** Net positive, same direction as Part 1 — this section turns an over-claimed
+"mapped" (grant succeeded at layer 3 while layers 1-2 were never checked) into an honest,
+layer-specific `needs-review`, and gives Analytics/Evaluation viewer shares a named "no destination
+equivalent" outcome instead of a merged, ambiguous bucket. `EnvironmentIR` adds visibility with zero
+apply-side risk (it's never an apply target).
+
+**Migration/backward-compat:** every new type here is additive/optional on `AgentIR` or lives on
+new collections; nothing existing changes shape. `permissionMigrationMode` defaulting to
+`'report-only'` is a **behavior-narrowing** default for new runs relative to today's implicit
+`'full'`-equivalent behavior — call this out explicitly to product/CEO review before shipping,
+since it changes what a customer gets without configuration, even though it's the more honest and
+less risky default.
+
+**Risks / open questions (in addition to §2.1 and §3.1's confirmed-blocking items):**
+- Whether `resolvedPrincipalCache`'s 24h TTL is right — an admin could revoke a license mid-run;
+  the cache would report stale `'licensed'` until the next check. Propose product confirms the
+  acceptable staleness window.
+- `EnvironmentIR`'s "one query per environment, not per bot" design assumes a full
+  `systemuserroles` scan is feasible at the environment scope the app-only token already has
+  access to for other reads (`environmentsCache`) — not yet confirmed against a large real tenant;
+  flag as a scale risk if an environment has thousands of role assignments.
+- The premise correction in §0 means this section's "Part 2" framing is really "Part 2, written for
+  the first time today" — if the brief's original Part 2 was written by a *different* session and
+  simply never got saved/committed, that lost work should be recovered/reconciled rather than this
+  section being treated as the sole source of truth going forward. Flagging so nobody assumes this
+  is a straightforward continuation.
+
+**Decisions to record (`decisions.md`) — see the two new entries added for 2026-08-12.**
