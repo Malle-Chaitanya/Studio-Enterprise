@@ -563,15 +563,18 @@ p.lead {
   margin-top: 16px;
 }
 
-/* Floating export/download icon, anchored to the card's top-right corner but
-   sitting half outside its border — a lightweight secondary action that
-   shouldn't compete with the primary flow buttons inside the card. Same
-   visual treatment as .mu-iconbtn (Map Users export), just repositioned. */
-.export-icon-btn {
-  position: absolute;
-  top: -16px;
-  right: -16px;
-  box-shadow: 0 4px 12px rgba(1, 41, 172, 0.18);
+/* Migration report header row — keeps the download button inline with the
+   heading instead of floating it outside the card, which read as
+   disconnected/misaligned rather than as part of the card's action row. */
+.report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.report-header h2 {
+  margin-bottom: 0;
 }
 
 /* form controls */

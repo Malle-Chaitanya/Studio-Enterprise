@@ -447,7 +447,10 @@ export async function getEntraSecret(saToken: string, versionName: string): Prom
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    logger.warn({ status: res.status }, 'Secret Manager: access version failed');
+    // versionName is `projects/{project}/secrets/{id}/versions/{v}` — logging it (not just
+    // the status) is what makes this line useful: without it, every 404 anywhere in the app
+    // reads identically and nobody can tell which secret, in which project, was missing.
+    logger.warn({ status: res.status, versionName, detail: text.slice(0, 200) }, 'Secret Manager: access version failed');
     return { ok: false, error: `${res.status}: ${text.slice(0, 200)}` };
   }
   const json = (await res.json()) as { payload?: { data?: string } };

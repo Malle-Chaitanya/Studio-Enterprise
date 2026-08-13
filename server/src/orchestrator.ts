@@ -2030,6 +2030,14 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // reads `scopedConnectors` (the secret-sync loop, the deploy call, and the
             // per-tool fidelity check), which is why `scopedConnectors` is reassigned in
             // place rather than left as a separate "final" variable those could miss.
+            // Secret ids written straight to `dest.project` further down (currently just the
+            // per-agent Drive identity, below) must never be handed to the sync loop a few
+            // lines later — that loop copies FROM `session.geminiProject`, and this id never
+            // lived there. Without this exclusion, every Drive-connected agent logged a
+            // "Secret Manager: access version failed" 404 on its own just-written secret —
+            // harmless (ensureSecretInProject no-ops on a source miss) but indistinguishable
+            // from a real failure in the logs.
+            const destScopedSecretIds = new Set<string>();
             const driveIndex = scopedConnectors.findIndex((c) => c.id === 'shared_googledrive');
             if (driveIndex !== -1) {
               const identity = await getAgentConnectorIdentity(appUserId, row.sourceId, 'shared_googledrive');
@@ -2043,6 +2051,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                   credentialScope(session),
                 );
                 await upsertSecretIfChanged(saToken, dest.project, agentSecretId, identity.impersonateEmail);
+                destScopedSecretIds.add(agentSecretId);
                 const driveEntry = scopedConnectors[driveIndex];
                 scopedConnectors = scopedConnectors.map((c, i) =>
                   i === driveIndex ? { ...c, secretIds: { ...driveEntry.secretIds, impersonate_email: agentSecretId } } : c,
@@ -2099,7 +2108,9 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
             // until someone actually queried the deployed agent). Best-effort and cheap
             // when already synced: no-ops once the target project already has it.
             if (session.geminiProject) {
-              const connectorSecretIdsForThisAgent = scopedConnectors.flatMap((c) => Object.values(c.secretIds ?? {}));
+              const connectorSecretIdsForThisAgent = scopedConnectors
+                .flatMap((c) => Object.values(c.secretIds ?? {}))
+                .filter((secretId) => !destScopedSecretIds.has(secretId));
               await Promise.all(
                 connectorSecretIdsForThisAgent.map((secretId) =>
                   ensureSecretInProject(saToken, session.geminiProject!, dest.project, secretId),

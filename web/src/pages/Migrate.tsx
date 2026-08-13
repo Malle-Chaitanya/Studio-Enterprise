@@ -142,12 +142,7 @@ export function Migrate() {
   const behLabel: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, fontSize: 14 };
 
   return (
-    <div className="card wide" style={{ position: 'relative' }}>
-      {done && (
-        <button type="button" className="mu-iconbtn primary export-icon-btn" title="Download report" onClick={downloadReport}>
-          <IcoDownload s={13} />
-        </button>
-      )}
+    <div className="card wide">
       {!started && (
         <>
           <h2>Review &amp; run</h2>
@@ -213,15 +208,22 @@ export function Migrate() {
 
       {started && (
         <>
-          <h2>
-            {done
-              ? ranDry
-                ? 'Dry run complete'
-                : 'Migration complete'
-              : ranDry
-                ? 'Dry run running…'
-                : 'Migration running…'}
-          </h2>
+          <div className="report-header">
+            <h2>
+              {done
+                ? ranDry
+                  ? 'Dry run complete'
+                  : 'Migration complete'
+                : ranDry
+                  ? 'Dry run running…'
+                  : 'Migration running…'}
+            </h2>
+            {done && (
+              <button type="button" className="mu-iconbtn primary" title="Download report" onClick={downloadReport}>
+                <IcoDownload s={13} />
+              </button>
+            )}
+          </div>
           {!done && <div className="lead" style={{ marginBottom: 12 }}>{status}</div>}
           <div className="progbar" style={{ marginBottom: 20 }}>
             <div className="progfill" style={{ width: `${pct}%` }} />
