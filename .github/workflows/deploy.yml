@@ -1,14 +1,16 @@
 name: Deploy
 
-# `business` is here alongside `main` because it is where the work actually lands:
-# main has never received this workflow, so with a main-only trigger the deploy could
-# not fire at all — and `workflow_dispatch` does not help, because GitHub only offers
-# Run workflow for a file that exists on the DEFAULT branch. Until business is merged
-# into main, a push to business is the only path that reaches the host. Drop `business`
-# from this list once main is the trunk again.
+# Deliberately main-only, and main does not have this file — so this workflow cannot
+# fire today. That is the intent: deploys are done by hand on the host
+# (`docker compose up -d --build`, see docs/DEPLOY-MANUAL.md) and a push to `business`
+# must not reach production behind the deployer's back.
+#
+# To turn CI deploys back on: merge to main, or add `business` here. Note that adding
+# `workflow_dispatch` alone is not enough — GitHub only offers Run workflow for a
+# workflow present on the DEFAULT branch, which is why `gh workflow list` shows only CI.
 on:
   push:
-    branches: [main, business]
+    branches: [main]
   workflow_dispatch:
 
 # Never let two deploys race onto the same host.
