@@ -1885,6 +1885,59 @@ added two more billable orphans.
 
 ---
 
+### 1.36 `GetCompanies` 401 — a missing word, not a wrong token (2026-08-13)
+
+The migrated `Hubspot agentt` answered: *"The 'GetCompanies' tool failed due to an
+authentication error."* The customer's first suspicion was the older token still sitting in
+Secret Manager. It was not that.
+
+`GetCompanies` belongs to the **custom** connector
+`shared_get-20crm-20objects-20from-20hubspot-…`, and custom connectors are emitted with
+`authHeaderTemplate: '{api_key}'` (`connectorToolBuilder.ts:247`) — deliberately verbatim,
+because Power Platform sends whatever the author typed into an apiKey-in-Authorization
+security definition. `adk_deploy.py:243` returned that template filled and unmodified, so the
+deployed tool called `api.hubapi.com` with:
+
+```
+Authorization: pat-na2-…
+```
+
+No scheme. HubSpot requires `Bearer `. Registry connectors were never affected —
+`shared_hubspotcrm` / `shared_hubspotsettingsv2` declare `'Bearer {api_key}'`. A brand-new
+token would have failed identically, which is why "retype the token" was never going to fix
+it. Grade: **P** — read from the deployed code path, and the registry/custom split is visible
+in both files.
+
+**The old secret was ruled out, on metadata alone.** `spikes/_diag_hubspot_secret_versions.ts`
+lists versions only — never `:access`, so no value is read or printed:
+
+```
+shared_get-20crm-20objects-20from-20hubspot-5fdd816392-2363868395b0ae9b  (appUserId=default, project=studio-enterprise-migration)
+  validation=(none)  savedAt=2026-08-13T05:01:51.718Z
+  api_key -> studio-enterprise-hubspot-api-key: v2 ENABLED 2026-08-13T04:20:07.771656Z | v1 ENABLED 2026-08-07T12:45:55.773866Z
+```
+
+Tools resolve `versions/latest`, which is v2 (today). v1 is the 2026-08-07 token and backs
+nothing. Note also that all four HubSpot connectors share one secret
+(`studio-enterprise-hubspot-api-key`), and that the 05:01 saves added **no** new version —
+`upsertSecretIfChanged` only writes when the bytes differ, so the value saved at 05:01 was
+already v2. Grade: **P**.
+
+**Fix** (`adk_deploy.py`, `_auth_header`): for `bearer` auth, if the resolved header contains
+no space it cannot be `<scheme> <credential>`, so `Bearer ` is prefixed. A value the author
+did prefix (`Bearer x`, `SSWS x`) has a space and is left untouched — the normalisation can
+never override an explicit choice. Grade: **T** — `ast.parse` clean, server typecheck clean;
+untested against live HubSpot until the agent is redeployed.
+
+**This needs a redeploy.** `adk_deploy.py` is packaged into the Reasoning Engine at deploy
+time, so unlike a rotated token (read at call time) the already-deployed `Hubspot agentt`
+keeps the broken header until it is migrated again.
+
+Unrelated but visible above: `validation=(none)` on all four records — the validator verdict
+from §1.34 is not being persisted onto `connectorCredentials`. Not yet investigated.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run

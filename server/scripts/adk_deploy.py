@@ -240,7 +240,22 @@ def _build_live_connector_tool(conn: dict, project: str):
             return f"Bearer {_mint_token(fill)}"
 
         # 'bearer' / 'basic-raw': the stored value IS the credential.
-        return fill(auth_header_tpl)
+        header = fill(auth_header_tpl)
+
+        # A custom connector's template is `{api_key}` — sent verbatim, because Power
+        # Platform sends whatever the author typed into an apiKey-in-Authorization
+        # security definition. But nobody types a scheme into a field labelled "Private
+        # App Token", so the header went out as a naked `pat-na2-...` and HubSpot
+        # answered 401 — which reads as a bad token and was a missing word (live
+        # 2026-08-13, GetCompanies on the custom HubSpot connector).
+        #
+        # Only add the scheme when there is demonstrably none: a single token with no
+        # space cannot be `<scheme> <credential>`. A value the author DID prefix
+        # ("Bearer x", "Basic x", "SSWS x") contains a space and is left untouched, so
+        # this never overrides an explicit choice.
+        if auth_kind == "bearer" and header and " " not in header.strip():
+            header = f"Bearer {header.strip()}"
+        return header
 
     def _fill(tpl: str) -> str:
         """Resolve {placeholders} in a template from the stored credentials."""
