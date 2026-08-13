@@ -32,7 +32,18 @@ jobs:
       # tsc --noEmit is this repo's only lint gate — it must be zero-error.
       - run: npm run typecheck
 
+      # config.ts is deliberately fail-fast: a missing var calls process.exit(1) at
+      # IMPORT time. Any suite that transitively imports logger or db/core therefore
+      # dies before its first assertion on a runner with no .env — which is every
+      # runner. These are placeholders, not credentials: the unit tests are pure
+      # transforms and stub fetch, so nothing here is ever sent anywhere. Real values
+      # come from Secret Manager in production and never from CI.
       - run: npm test
+        env:
+          MS_CLIENT_ID: ci-placeholder
+          MS_CLIENT_SECRET: ci-placeholder
+          GOOGLE_CLIENT_ID: ci-placeholder
+          GOOGLE_CLIENT_SECRET: ci-placeholder
 
       - run: npm run build
 
