@@ -105,12 +105,22 @@ jobs:
       - name: Reload nginx
         run: ssh deploy-target 'sudo nginx -t && sudo systemctl reload nginx'
 
-      # Health endpoint is served through nginx, so this proves proxy + API + static
-      # are all live, not just that systemd started something.
-      - name: Smoke test /api/health
+      # Two checks, because they fail for different reasons and a combined one hides which.
+      #
+      # 1. The API directly on its port. PORT is 8083, not the config.ts default of 8080 —
+      #    8080 is already bound on this host by an unrelated service.
+      # 2. The same endpoint through nginx. The Host header is mandatory: this nginx
+      #    serves 41 sites, so a bare-IP request lands on whichever one wins the
+      #    default_server race, and the smoke test would be grading somebody else's app.
+      - name: Smoke test API directly
         run: |
-          ssh deploy-target 'curl -fsS --max-time 15 http://127.0.0.1/api/health' | tee health.json
-          grep -q '"status"' health.json
+          ssh deploy-target 'curl -fsS --max-time 15 http://127.0.0.1:8083/api/health' | tee health-direct.json
+          grep -q '"status"' health-direct.json
+
+      - name: Smoke test through nginx
+        run: |
+          ssh deploy-target 'curl -fsS --max-time 15 -H "Host: studioent.cftools.live" http://127.0.0.1/api/health' | tee health-nginx.json
+          grep -q '"status"' health-nginx.json
 
       - name: Clean up SSH key
         if: always()

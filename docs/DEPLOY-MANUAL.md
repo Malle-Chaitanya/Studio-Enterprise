@@ -5,7 +5,7 @@ exactly these steps. Running them by hand first means the automated run is repea
 path that is known to work, instead of discovering the host for the first time.
 
 Verified against the target host on 2026-08-13: Ubuntu, OpenSSH 9.6p1, **Node v24.16.0**,
-npm 11.13.0, rsync 3.2.7, nginx already serving three other sites.
+npm 11.13.0, rsync 3.2.7, nginx already serving 41 other sites.
 
 ## Settled layout
 
@@ -33,9 +33,15 @@ Addresses:  208.70.248.68
 ```
 
 `deploy/nginx-csge.conf` already carries that `server_name`. Do **not** replace it with
-`server_name _`: this nginx also serves `aicommunication.cftools.live`,
-`aitoolsmigration` and `ats.cftools.live`, and the catch-all would swallow their
-unmatched traffic.
+`server_name _`: `sites-enabled` on this host has **41 entries** (counted 2026-08-13 —
+`aicommunication.cftools.live`, `ats.cftools.live`, `itsmmigration.cftools.live`,
+`gemco`, and ~37 more), and a catch-all would swallow every one of their unmatched
+requests.
+
+The same crowding is why the deploy's smoke test sends an explicit
+`-H "Host: studioent.cftools.live"`. A bare-IP `curl` on a 41-site nginx lands on
+whichever server block wins the `default_server` race, so it can pass while our site is
+completely broken.
 
 ### TLS
 
@@ -55,10 +61,22 @@ real hostname, every browser call is blocked by CORS and both sign-ins dead-end.
 `/data/studio-ent/.env` must set:
 
 ```
+PORT=8083
 WEB_ORIGIN=https://studioent.cftools.live
 MS_REDIRECT_URI=https://studioent.cftools.live/callback/microsoft
 GOOGLE_REDIRECT_URI=https://studioent.cftools.live/callback/google
 ```
+
+- **`PORT=8083` is not optional.** `config.ts:9` defaults to 8080, and 8080 is already
+  bound on this host by an unrelated service (`127.0.0.1:8080`, confirmed 2026-08-13).
+  On the default the API either dies with `EADDRINUSE` or, if nginx is reloaded first,
+  leaves `studioent.cftools.live` quietly proxying somebody else's app. The unit and
+  `nginx-csge.conf` are both on 8083.
+- **Check `MONGO_HOST` before first boot.** Ports 27017, 27018, 27019, 28017, 29019,
+  37017 and 37019 all have listeners on this box. `27019` is CS_GE's convention locally,
+  but on a shared host it may already belong to another project — pointing at it blind
+  would write migration data into someone else's database. Confirm which instance is
+  ours before starting the service.
 
 - `WEB_ORIGIN` is the pinned CORS origin (`server.ts:21`, `origin: config.WEB_ORIGIN,
   credentials: true`) **and** the target of the OAuth popup's `postMessage`
@@ -102,7 +120,7 @@ cp deploy/csge-server.service /etc/systemd/system/csge-server.service
 systemctl daemon-reload
 systemctl enable csge-server
 
-# nginx — validate BEFORE reloading; three other sites share this nginx and a bad
+# nginx — validate BEFORE reloading; 41 other sites share this nginx and a bad
 # config takes them all down.
 cp deploy/nginx-csge.conf /etc/nginx/sites-available/csge
 ln -sf /etc/nginx/sites-available/csge /etc/nginx/sites-enabled/csge
@@ -156,7 +174,7 @@ ssh -p 63152 -i csge_deploy laxman@208.70.248.68 \
 ```bash
 ssh -p 63152 -i csge_deploy laxman@208.70.248.68 '
   systemctl is-active csge-server
-  curl -s localhost:8080/api/health
+  curl -s localhost:8083/api/health
   sudo journalctl -u csge-server -n 30 --no-pager
 '
 ```
@@ -174,7 +192,9 @@ buffering the SSE stream and the `proxy_buffering off` block did not take effect
 | Symptom | Cause |
 |---|---|
 | `csge-server` restart-loops immediately | missing/misnamed var in `/data/studio-ent/.env`; the journal names it |
-| service starts, `/api/health` 404s through nginx but works on `localhost:8080` | `sites-enabled/csge` not linked, or another site's `server_name` is catching the request first |
+| service starts, `/api/health` 404s through nginx but works on `localhost:8083` | `sites-enabled/csge` not linked, or one of the other 41 sites' `server_name` is catching the request first |
+| service dies at boot with `EADDRINUSE` | `PORT` missing from `.env`, so it fell back to the 8080 default, which is already taken |
+| `/api/health` answers but returns another app's JSON | nginx still proxying 8080, or you curled the bare IP without a `Host:` header on a 41-site nginx |
 | progress bar jumps from 0% to done | nginx buffering the SSE stream |
 | stale UI after a deploy | `index.html` cached; check the `no-store` header actually reaches the browser |
 | `sudo: a terminal is required` during the automated deploy | the sudoers rule above is missing |

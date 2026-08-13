@@ -7,6 +7,11 @@
 #                              with --delete can never remove it
 #   /data/studio-ent/server/   dist/ + package.json + node_modules   (SERVER_DIR)
 #   /data/studio-ent/web/      the built SPA, served by nginx        (WEB_DIR)
+#
+# PORT: config.ts defaults to 8080, but 8080 is ALREADY BOUND on this host by another
+# service (127.0.0.1:8080). Starting on the default would either fail with EADDRINUSE or
+# — worse — leave nginx proxying studioent.cftools.live at somebody else's app. The
+# .env must set PORT=8083, and nginx-csge.conf proxies to 8083 to match.
 
 [Unit]
 Description=CloudFuze Studio Migrate API

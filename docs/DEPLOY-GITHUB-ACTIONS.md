@@ -26,7 +26,7 @@ account the deploy SSHes in as. Everything under `/data/studio-ent`. Hostname is
 /data/studio-ent/web/            <- rsync target (SPA build), nginx root = WEB_DIR
 ```
 
-nginx serves the SPA, proxies `/api/` **and `/callback/`** → `127.0.0.1:8080`; systemd
+nginx serves the SPA, proxies `/api/` **and `/callback/`** → `127.0.0.1:8083`; systemd
 runs the API. The `/callback/` block is not optional: `server.ts:56` mounts the OAuth
 callbacks at the root, so without it the SPA catch-all answers them with `index.html`
 and both sign-ins dead-end.
@@ -42,7 +42,7 @@ mkdir -p /data/studio-ent/server /data/studio-ent/web
 chown -R laxman:laxman /data/studio-ent
 
 # 2. secrets — copy server/.env.example, fill it in, lock it down. 600, not 644:
-#    this host also runs three other projects.
+#    this host also runs 40+ other projects.
 chmod 600 /data/studio-ent/.env
 chown laxman:laxman /data/studio-ent/.env
 
@@ -53,7 +53,7 @@ apt-get install -y nginx rsync
 cp deploy/csge-server.service /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now csge-server
 
-# 5. nginx — validate before reloading; three other sites share this nginx
+# 5. nginx — validate before reloading; 41 other sites share this nginx
 cp deploy/nginx-csge.conf /etc/nginx/sites-available/csge
 ln -sf /etc/nginx/sites-available/csge /etc/nginx/sites-enabled/csge
 nginx -t && systemctl reload nginx
@@ -82,7 +82,7 @@ laxman ALL=(root) NOPASSWD: /bin/systemctl restart csge-server, \
 ```
 
 Putting the host's root password in a GitHub secret instead would work, but it hands
-every workflow run full root on a box serving three other production sites. This rule
+every workflow run full root on a box serving 41 other production sites. This rule
 gives CI exactly the four commands the deploy needs.
 
 ## SSH key
@@ -113,10 +113,10 @@ from="140.82.0.0/16",no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AA
 
 Private half → GitHub secret (see below). **Never commit `csge_deploy`.**
 
-Get the host key fingerprint for pinning:
+Get the host key fingerprint for pinning — `-p` is required, the host does not listen on 22:
 
 ```bash
-ssh-keyscan -H YOUR_HOST
+ssh-keyscan -p 63152 -H 208.70.248.68
 ```
 
 ## GitHub configuration
@@ -124,23 +124,31 @@ ssh-keyscan -H YOUR_HOST
 Repo → **Settings → Environments → New environment → `production`** (add required
 reviewers here if you want a manual approval gate before every deploy).
 
-Secrets (Settings → Secrets and variables → Actions → **Secrets**):
+Secrets (Settings → Secrets and variables → Actions → **Secrets**). All five are
+**present and verified** as of 2026-08-13:
 
 | Name | Value |
 |------|-------|
-| `DEPLOY_SSH_KEY` | full contents of the **private** key `~/.ssh/csge_deploy`, including the BEGIN/END lines |
-| `DEPLOY_HOST` | host name or IP |
-| `DEPLOY_USER` | SSH user (e.g. `deploy`) |
-| `DEPLOY_KNOWN_HOSTS` | output of `ssh-keyscan -H YOUR_HOST` |
+| `DEPLOY_SSH_KEY` | full contents of the **private** key `csge_deploy`, including the BEGIN/END lines |
+| `DEPLOY_HOST` | `208.70.248.68` |
+| `DEPLOY_USER` | `laxman` |
+| `DEPLOY_KNOWN_HOSTS` | output of `ssh-keyscan -p 63152 -H 208.70.248.68` — all three lines (ecdsa, ed25519, rsa) |
+| `DEPLOY_PORT` | `63152` |
 
-Variable (Settings → Secrets and variables → Actions → **Variables**), optional:
+Repo-level secrets are visible to a job with `environment: production`, so they do not
+need to be duplicated into the environment. The `production` environment exists with no
+protection rules — add required reviewers there if you want a manual gate before each
+deploy.
 
-| Name | Value |
-|------|-------|
-| `DEPLOY_PORT` | SSH port if not `22` |
+`DEPLOY_PORT` is read as `secrets.DEPLOY_PORT || vars.DEPLOY_PORT || 22`. It is not
+sensitive and a variable is its natural home, but reading only `vars` meant a port added
+as a secret — the obvious place, beside the other four `DEPLOY_*` values — resolved to
+empty and silently fell back to 22, failing at connect with a timeout that says nothing
+about the real cause. Either location works now.
 
 `DEPLOY_KNOWN_HOSTS` is pinned deliberately — `StrictHostKeyChecking yes` means a
-changed or spoofed host key fails the deploy instead of silently trusting it.
+changed or spoofed host key fails the deploy instead of silently trusting it. Note
+`ssh-keyscan` needs `-p 63152`; without it you scan port 22 and get nothing.
 
 ## Verifying
 
