@@ -74,7 +74,29 @@ def emit(obj):
 # fails with 403 at inference time even though deployment succeeded.
 # ---------------------------------------------------------------------------
 def _build_live_connector_tool(conn: dict, project: str):
-    """Return a callable ADK function tool for one live connector."""
+    """Return a callable ADK function tool (or list of tools) for one live
+    connector. Dispatches to connector_tools/<kind>.py — each module owns its own
+    tool functions; this function only builds the shared credential/auth
+    helpers (_secret, _mint_token, _auth_header, _fill) every connector kind
+    needs, and passes them in explicitly.
+
+    Was previously one ~1150-line function with every connector's tool code
+    inline (SharePoint, Google Drive, Confluence, generic REST all in one
+    dispatch-by-kind block) — split 2026-08-11 so a change to one connector
+    can't accidentally break another, and each is easy to find on its own.
+    """
+    # Make the sibling connector_tools/ package importable regardless of CWD —
+    # both locally (server/scripts/) and once bundled into the deployed
+    # container, where extra_packages=["scripts/connector_tools"] ships it as
+    # a sibling of this file (see agent_engines.create call below). Named
+    # "connector_tools", not "connectors", to not collide with the unrelated
+    # server/src/connectors/registry.ts (TS credential/registry definitions,
+    # a different layer entirely) — same name for two different things is
+    # exactly what made this confusing to grep before the split.
+    _connectors_parent = os.path.dirname(os.path.abspath(__file__))
+    if _connectors_parent not in sys.path:
+        sys.path.insert(0, _connectors_parent)
+
     kind = (conn.get("kind") or conn.get("id") or "").lower()
     secret_ids = conn.get("secretIds") or {}
 
@@ -266,833 +288,26 @@ def _build_live_connector_tool(conn: dict, project: str):
         return out
 
     if kind in ("sharepointonline", "sharepoint", "onedrive"):
-        # Purpose-built SharePoint tools, SCOPED to the folder the source agent named.
-        #
-        # Two reasons not to use the generic REST tool here:
-        #   1. Scope. An app credential with Sites.Read.All can reach every site in the
-        #      tenant (99 in the test tenant). The source Copilot agent pointed at ONE
-        #      folder, so the migrated agent must be confined to that folder — a tool
-        #      that cannot express a wider path is a stronger guarantee than an
-        #      instruction asking it not to wander.
-        #   2. Reading files. Graph returns raw bytes; the model needs text. Extraction
-        #      (pdf/docx/xlsx) has to happen in the container.
-        # EVERY folder/site the source agent named, not just the first one.
-        #
-        # A Copilot agent can attach several SharePoint sources ("HR Policies" and
-        # "IT Runbooks"); scoping the tools to sources[0] left the second one
-        # unreachable while the report still claimed SharePoint was migrated. The
-        # union of the named paths is exactly what the source agent could see —
-        # widening to a common parent, or to the whole tenant, is not.
-        scope_uris = [u for u in (conn.get("scopeUris") or []) if u]
-        if not scope_uris and conn.get("scopeUri"):
-            scope_uris = [conn["scopeUri"]]
+        from connector_tools.sharepoint import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
-        def _graph(path: str, token: str, raw: bool = False):
-            import json as _json
-            import urllib.request
-            req = urllib.request.Request(
-                f"https://graph.microsoft.com/v1.0{path}",
-                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = resp.read()
-            return data if raw else _json.loads(data.decode("utf-8"))
-
-        def _resolve_scope(token: str, scope_uri: str = ""):
-            """Turn one SharePoint URL into (siteId, folderPath)."""
-            import urllib.parse
-            if not scope_uri:
-                return None, ""
-            p = urllib.parse.urlparse(scope_uri)
-            host = p.netloc
-            parts = [urllib.parse.unquote(x) for x in p.path.split("/") if x]
-            # Three shapes appear in real tenants, and they are not interchangeable:
-            #   /sites/<name>/<library>/<folders...>          team site
-            #   /<library>/<folders...>                       the root site
-            #   /personal/<user>/Documents/<folders...>       OneDrive, on <tenant>-my
-            # Treating the third like the second resolved to the ROOT of the -my host and
-            # then looked for a folder literally named "personal/<user>/..." — a silent
-            # wrong scope, since Graph answers for the host either way.
-            if parts and parts[0].lower() == "personal" and len(parts) >= 2:
-                site_path = f"/personal/{parts[1]}"
-                rest = parts[2:]
-            elif parts and parts[0].lower() == "sites" and len(parts) >= 2:
-                site_path = f"/sites/{parts[1]}"
-                rest = parts[2:]
-            else:
-                site_path = ""
-                rest = parts
-            site = _graph(f"/sites/{host}:{site_path}" if site_path else f"/sites/{host}", token)
-            # Drop the document-library segment ("Shared Documents"); what remains is the
-            # folder path inside the default drive.
-            if rest and rest[0].lower() in ("shared documents", "documents", "shared%20documents"):
-                rest = rest[1:]
-            return site.get("id"), "/".join(rest)
-
-        def _scoped_path(folder: str, user_path: str) -> str:
-            """Join a model-supplied relative path onto the scoped folder, rejecting
-            any attempt to escape it. The tool signature only documents "a path inside
-            the connected folder" as a convention — nothing stops the calling model
-            from passing "../../other-site" instead, so this is enforced here rather
-            than trusted from the docstring.
-
-            Checked by containment (resolved candidate must equal `folder` or sit
-            under it), not just by pattern-matching for ".." — a bare ".." against a
-            single-segment folder normalizes straight to ".", which slips past a
-            ".."-prefix check while still resolving outside the intended scope.
-            """
-            import posixpath
-            folder = (folder or "").strip("/")
-            candidate = posixpath.normpath(posixpath.join(folder, user_path.strip("/").lstrip("/")))
-            candidate = "" if candidate == "." else candidate.strip("/")
-            escapes = (
-                posixpath.isabs(user_path)
-                or candidate == ".."
-                or candidate.startswith("../")
-                or (folder and candidate != folder and not candidate.startswith(folder + "/"))
-            )
-            if escapes:
-                raise ValueError(f"path '{user_path}' escapes the connected SharePoint folder")
-            return candidate
-
-        def sharepoint_list_files(subfolder: str = "") -> dict:
-            """List files and folders in the company's SharePoint folder this agent is
-            connected to. Only this folder and things inside it are accessible.
-
-            Args:
-                subfolder: optional path INSIDE the connected folder, e.g. "Reports/2026".
-
-            Returns:
-                dict with `items` (name, isFolder, size, lastModified, id) or `error`.
-            """
-            if not scope_uris:
-                return {"error": "no SharePoint scope configured for this agent"}
-            items = []
-            errors = []
-            for scope_uri in scope_uris:
-                try:
-                    token = _mint_token(_fill)
-                    site_id, folder = _resolve_scope(token, scope_uri)
-                    if not site_id:
-                        continue
-                    path = _scoped_path(folder, subfolder)
-                    url = (
-                        f"/sites/{site_id}/drive/root:/{path}:/children"
-                        if path else f"/sites/{site_id}/drive/root/children"
-                    )
-                    data = _graph(url, token)
-                except Exception as e:  # noqa: BLE001
-                    # One unreachable source must not hide the others; report per source.
-                    errors.append(f"{scope_uri}: {e}")
-                    continue
-                for i in data.get("value", []):
-                    items.append({
-                        "name": i.get("name"),
-                        "isFolder": "folder" in i,
-                        "size": i.get("size"),
-                        "lastModified": i.get("lastModifiedDateTime"),
-                        "id": i.get("id"),
-                        "source": scope_uri,
-                    })
-            if not items and errors:
-                return {"error": "SharePoint list failed — " + "; ".join(errors)}
-            out = {"folders": scope_uris, "subfolder": subfolder, "items": items, "count": len(items)}
-            if errors:
-                out["partialErrors"] = errors
-            return out
-
-        def sharepoint_read_file(file_path: str) -> dict:
-            """Read the TEXT CONTENT of a file in the connected SharePoint folder, so you
-            can answer questions about what a document says.
-
-            Supports .txt .md .csv .json .log .xml, PDF, Word (.docx) and Excel (.xlsx).
-            Images and other binary formats cannot be read.
-
-            Args:
-                file_path: file name, or path inside the connected folder,
-                    e.g. "daily_queries.txt" or "Reports/Q1.pdf".
-
-            Returns:
-                dict with `text` (extracted, possibly truncated) or `error`.
-            """
-            import io
-            MAX_BYTES = 20 * 1024 * 1024
-            MAX_CHARS = 60000
-            if not scope_uris:
-                return {"error": "no SharePoint scope configured for this agent"}
-            # The model names a file, not which connected folder it lives in, so try each
-            # scope in turn. Every attempt still goes through _scoped_path, so a path that
-            # escapes a folder is rejected for that folder rather than silently retried
-            # against a wider one.
-            meta = None
-            blob = None
-            last_error = ""
-            for scope_uri in scope_uris:
-                try:
-                    token = _mint_token(_fill)
-                    site_id, folder = _resolve_scope(token, scope_uri)
-                    if not site_id:
-                        continue
-                    full = _scoped_path(folder, file_path)
-                    meta = _graph(f"/sites/{site_id}/drive/root:/{full}", token)
-                    size = meta.get("size") or 0
-                    if size > MAX_BYTES:
-                        return {"error": f"file is {size} bytes, too large to read inline"}
-                    blob = _graph(f"/sites/{site_id}/drive/root:/{full}:/content", token, raw=True)
-                    break
-                except Exception as e:  # noqa: BLE001
-                    last_error = f"{e}"
-                    meta = None
-                    continue
-            if blob is None or meta is None:
-                return {"error": f"SharePoint read failed: {last_error or 'file not found in any connected folder'}"}
-
-            name = (meta.get("name") or file_path).lower()
-            try:
-                if name.endswith((".txt", ".md", ".csv", ".json", ".log", ".xml", ".yaml", ".yml")):
-                    text = blob.decode("utf-8", errors="replace")
-                elif name.endswith(".pdf"):
-                    from pypdf import PdfReader
-                    reader = PdfReader(io.BytesIO(blob))
-                    text = "\n".join((pg.extract_text() or "") for pg in reader.pages)
-                elif name.endswith(".docx"):
-                    import docx
-                    text = "\n".join(p.text for p in docx.Document(io.BytesIO(blob)).paragraphs)
-                elif name.endswith(".xlsx"):
-                    import openpyxl
-                    wb = openpyxl.load_workbook(io.BytesIO(blob), read_only=True, data_only=True)
-                    rows = []
-                    for ws in wb.worksheets:
-                        rows.append(f"# sheet: {ws.title}")
-                        for row in ws.iter_rows(values_only=True):
-                            rows.append(", ".join("" if c is None else str(c) for c in row))
-                    text = "\n".join(rows)
-                else:
-                    return {"error": f"cannot extract text from '{meta.get('name')}' "
-                                     f"— unsupported format. Only text, PDF, Word and Excel are readable."}
-            except Exception as e:  # noqa: BLE001
-                return {"error": f"text extraction failed for {meta.get('name')}: {e}"}
-
-            truncated = len(text) > MAX_CHARS
-            return {
-                "file": meta.get("name"),
-                "webUrl": meta.get("webUrl"),
-                "truncated": truncated,
-                "text": text[:MAX_CHARS],
-            }
-
-        return [sharepoint_list_files, sharepoint_read_file]
+    if kind == "googledrive":
+        from connector_tools.google_drive import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
     if kind == "jira":
-        # Purpose-built, because the generic REST tool cannot know two things that make
-        # the difference between working and not:
-        #
-        #  1. `/rest/api/3/search` was REMOVED by Atlassian. Calling it returns
-        #     410 "The requested API has been removed. Please migrate to
-        #     /rest/api/3/search/jql" — which is exactly what a migrated agent hit
-        #     live on 2026-08-07, reporting "general search functionality is not
-        #     working" to the end user.
-        #  2. `/rest/api/3/search/jql` rejects unbounded queries with
-        #     400 "Unbounded JQL queries are not allowed here", so a bare
-        #     "order by created DESC" fails too. A bounded clause is required.
-        #
-        # Both were verified against the live site. Leaving this to the model means
-        # rediscovering them through failures in front of a customer.
-        def jira_search(jql: str = "", max_results: int = 20) -> dict:
-            """Search Jira issues with JQL and return key, summary, status and assignee.
-
-            Args:
-                jql: A JQL query, e.g. 'project = ENG ORDER BY created DESC' or
-                    'text ~ "login bug" ORDER BY updated DESC'.
-                    Jira rejects queries with no restriction at all, so if the user did
-                    not name a project or a timeframe, DO NOT refuse and DO NOT ask —
-                    pass 'created >= -365d ORDER BY created DESC' and report what comes
-                    back, saying which window you used. Leaving jql empty does this for
-                    you. Use jira_list_projects first when the user names a project by
-                    its display name rather than its key.
-                max_results: how many issues to return (default 20, max 100). The
-                    response also carries `total`, which is the full match count and is
-                    what to quote when asked "how many".
-
-            Returns:
-                dict with `issues` (key, summary, status, assignee, url) and `total`,
-                or `error`.
-            """
-            import json as _json
-            import urllib.parse
-            import urllib.request
-
-            try:
-                base = _fill(base_url_tpl).rstrip("/")
-                auth_header = _auth_header(_fill)
-            except Exception as e:  # noqa: BLE001
-                return {"error": f"auth failed: {e}"}
-
-            # The base template already ends in /rest/api/3 for this connector.
-            #
-            # The default MUST be bounded. Jira rejects "ORDER BY created DESC" on its own
-            # with 400 "Unbounded JQL queries are not allowed here", so a question that
-            # produced no explicit JQL — "how many tickets do we have?" — failed on the
-            # very call it was meant to answer (verified live 2026-08-07). A date window
-            # is the least surprising restriction: it returns recent work rather than
-            # silently narrowing to one project.
-            q = (jql or "").strip() or "created >= -365d ORDER BY created DESC"
-            url = (
-                f"{base}/search/jql?jql={urllib.parse.quote(q)}"
-                f"&maxResults={max(1, min(int(max_results or 20), 100))}"
-                f"&fields=summary,status,assignee"
-            )
-            req = urllib.request.Request(url, headers={"Authorization": auth_header, "Accept": "application/json"})
-            try:
-                with urllib.request.urlopen(req, timeout=25) as resp:
-                    data = _json.loads(resp.read().decode("utf-8"))
-            except Exception as e:  # noqa: BLE001
-                detail = ""
-                try:
-                    detail = e.read().decode("utf-8")[:300]  # type: ignore[attr-defined]
-                except Exception:  # noqa: BLE001
-                    detail = str(e)
-                return {"error": f"Jira search failed: {detail}"}
-
-            site = base.split("/rest/")[0]
-            issues = []
-            for it in (data.get("issues") or []):
-                f = it.get("fields") or {}
-                issues.append({
-                    "key": it.get("key"),
-                    "summary": f.get("summary"),
-                    "status": ((f.get("status") or {}).get("name")),
-                    "assignee": ((f.get("assignee") or {}).get("displayName")),
-                    "url": f"{site}/browse/{it.get('key')}",
-                })
-            return {"issues": issues, "total": data.get("total", len(issues))}
-
-        def jira_get_issue(issue_key: str) -> dict:
-            """Fetch ONE Jira issue by its exact key, e.g. 'HCL-123'.
-
-            Args:
-                issue_key: the issue key.
-
-            Returns:
-                dict with key, summary, status, assignee, description text and url,
-                or `error`.
-            """
-            import json as _json
-            import urllib.parse
-            import urllib.request
-
-            try:
-                base = _fill(base_url_tpl).rstrip("/")
-                auth_header = _auth_header(_fill)
-            except Exception as e:  # noqa: BLE001
-                return {"error": f"auth failed: {e}"}
-            url = f"{base}/issue/{urllib.parse.quote(issue_key)}?fields=summary,status,assignee,description"
-            req = urllib.request.Request(url, headers={"Authorization": auth_header, "Accept": "application/json"})
-            try:
-                with urllib.request.urlopen(req, timeout=25) as resp:
-                    it = _json.loads(resp.read().decode("utf-8"))
-            except Exception as e:  # noqa: BLE001
-                detail = ""
-                try:
-                    detail = e.read().decode("utf-8")[:300]  # type: ignore[attr-defined]
-                except Exception:  # noqa: BLE001
-                    detail = str(e)
-                return {"error": f"Jira issue fetch failed: {detail}"}
-            f = it.get("fields") or {}
-            site = base.split("/rest/")[0]
-            return {
-                "key": it.get("key"),
-                "summary": f.get("summary"),
-                "status": ((f.get("status") or {}).get("name")),
-                "assignee": ((f.get("assignee") or {}).get("displayName")),
-                "url": f"{site}/browse/{it.get('key')}",
-            }
-
-        def jira_list_projects(query: str = "", max_results: int = 50) -> dict:
-            """List the Jira projects available, optionally filtered by name or key.
-
-            Use this to find a project's KEY before searching its issues — jira_search
-            needs a key like 'ENG', not a display name like 'Engineering'.
-
-            Args:
-                query: optional text to filter projects by name or key.
-                max_results: how many to return (default 50).
-
-            Returns:
-                dict with `projects` (key, name) and `total`, or `error`.
-            """
-            import json as _json
-            import urllib.parse
-            import urllib.request
-
-            try:
-                base = _fill(base_url_tpl).rstrip("/")
-                auth_header = _auth_header(_fill)
-            except Exception as e:  # noqa: BLE001
-                return {"error": f"auth failed: {e}"}
-            url = f"{base}/project/search?maxResults={max(1, min(int(max_results or 50), 100))}"
-            if query:
-                url += f"&query={urllib.parse.quote(query)}"
-            req = urllib.request.Request(url, headers={"Authorization": auth_header, "Accept": "application/json"})
-            try:
-                with urllib.request.urlopen(req, timeout=25) as resp:
-                    data = _json.loads(resp.read().decode("utf-8"))
-            except Exception as e:  # noqa: BLE001
-                detail = ""
-                try:
-                    detail = e.read().decode("utf-8")[:300]  # type: ignore[attr-defined]
-                except Exception:  # noqa: BLE001
-                    detail = str(e)
-                return {"error": f"Jira project list failed: {detail}"}
-            projects = [{"key": p.get("key"), "name": p.get("name")} for p in (data.get("values") or [])]
-            return {"projects": projects, "total": data.get("total", len(projects))}
-
-        return [jira_search, jira_get_issue, jira_list_projects]
+        from connector_tools.jira import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
     if kind == "confluence":
+        from connector_tools.confluence import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
-        def confluence_live_search(query: str) -> dict:
-            """Search the company's LIVE Confluence instance and return matching page
-            titles with their current text. Use this for content that may be newer
-            than the indexed knowledge base, or in spaces the knowledge base does not
-            cover.
-
-            Args:
-                query: free-text search terms, e.g. "python coding standards".
-
-            Returns:
-                dict with `results` (list of {title, space, url, excerpt}) or `error`.
-            """
-            import base64
-            import json as _json
-            import re
-            import urllib.parse
-            import urllib.request
-
-            LIMIT = 5
-            EXCERPT_CHARS = 1500
-
-            try:
-                # A customer who pastes the site URL with /wiki already on it would
-                # otherwise get /wiki/wiki/rest/... — a 404 the model reports as
-                # "nothing found", which reads like an empty Confluence.
-                base_url = _secret("base_url").rstrip("/")
-                if base_url.lower().endswith("/wiki"):
-                    base_url = base_url[: -len("/wiki")]
-                email = _secret("email")
-                token = _secret("api_token")
-            except Exception as e:  # noqa: BLE001
-                return {"error": f"credential lookup failed: {e}"}
-
-            auth = base64.b64encode(f"{email}:{token}".encode()).decode()
-            # `query` reaches here from the MODEL, which means from whoever is talking to
-            # the agent. Interpolated raw, a quote closes the CQL literal and the rest of
-            # the sentence becomes operators: `x" or space = "HR` is a valid query for a
-            # space this search was never meant to touch. Escape the two characters CQL
-            # treats as structural, backslash first so the quote escape survives it.
-            safe = query.replace("\\", "\\\\").replace('"', '\\"')[:500]
-            if not safe.strip():
-                return {"error": "confluence search needs a non-empty query"}
-            cql = urllib.parse.quote(f'text ~ "{safe}"')
-            # body.view, not body.storage: storage format keeps macros as unrendered XML,
-            # so a page whose content IS a table or an excerpt macro stripped down to an
-            # empty string and the model reported the page as blank.
-            url = f"{base_url}/wiki/rest/api/content/search?cql={cql}&limit={LIMIT}&expand=body.view,space"
-            req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}", "Accept": "application/json"})
-            try:
-                with urllib.request.urlopen(req, timeout=25) as resp:
-                    payload = _json.loads(resp.read().decode("utf-8"))
-            except Exception as e:  # noqa: BLE001
-                # Quote what Confluence said. `str(e)` for urllib is "HTTP Error 403:
-                # Forbidden" with the body thrown away, and 403 (the account has no
-                # Confluence access) needs a different fix from 401 (bad token) — the
-                # distinction the credential validator already makes for this exact API.
-                try:
-                    detail = e.read().decode("utf-8")[:400]  # type: ignore[attr-defined]
-                except Exception:  # noqa: BLE001
-                    detail = str(e)
-                status = getattr(e, "code", None)
-                if status == 401:
-                    return {"error": f"Confluence rejected the stored email/API token pair ({base_url})."}
-                if status == 403:
-                    return {"error": f"The Confluence account {email} is not allowed to read this content ({base_url})."}
-                return {"error": f"confluence request failed: {detail}"}
-
-            results = []
-            truncated_pages = []
-            for item in payload.get("results", []):
-                html = ((item.get("body") or {}).get("view") or {}).get("value") or ""
-                text = re.sub(r"<[^>]+>", " ", html)
-                text = re.sub(r"\s+", " ", text).strip()
-                title = item.get("title")
-                if len(text) > EXCERPT_CHARS:
-                    truncated_pages.append(title)
-                results.append({
-                    "title": title,
-                    "space": ((item.get("space") or {}).get("name")),
-                    "url": f"{base_url}/wiki{((item.get('_links') or {}).get('webui') or '')}",
-                    "excerpt": text[:EXCERPT_CHARS],
-                })
-            out = {"results": results, "count": len(results)}
-            # Say when the answer is partial. Silent truncation lets the model present half
-            # a policy page as the whole policy, and a top-N cut as "these are all of them"
-            # — the fidelity failure `_capped` refuses everywhere else in this file.
-            if truncated_pages:
-                out["truncated"] = truncated_pages
-                out["note"] = (
-                    f"Excerpts were cut to {EXCERPT_CHARS} characters for: "
-                    + ", ".join(str(t) for t in truncated_pages)
-                    + ". Read the page URL for the full text."
-                )
-            if len(results) >= LIMIT:
-                out["note_more"] = f"Only the top {LIMIT} matches are shown; there may be more."
-            return out
-
-        return confluence_live_search
-
-    # ── Bound operations: the call the SOURCE agent actually made ───────────────
-    #
-    # The generic tool below asks the model to invent a path. That is the weakest
-    # possible reproduction: Copilot pinned `entityName` to one table, and a model free
-    # to choose picks any table, or none. When the server sends `boundOperations` we
-    # instead build ONE typed function per operation the source agent invoked, with the
-    # author's fixed arguments baked in and only the arguments they left open in the
-    # signature (see connectors/boundToolSpec.ts).
-    #
-    # URL, verb and parameters come from the connector's own swagger, captured from the
-    # CUSTOMER's environment. Auth reuses `_auth_header` above, so there is exactly one
-    # implementation of each credential kind.
-    bound_ops = conn.get("boundOperations") or []
-
-    # `{cloudId}` and friends are tenant facts, not model arguments. The server fills
-    # what it already knows; the rest are resolved here, once per container.
-    context_cache: dict = {}
-
-    def _context(name: str, supplied: dict) -> str:
-        if supplied.get(name):
-            return supplied[name]
-        if name in context_cache:
-            return context_cache[name]
-        if name == "cloudId":
-            # Atlassian identifies a site by an opaque cloud id, derivable from the site
-            # URL the customer already gave us — so we never ask an admin for a GUID.
-            import json as _json
-            import urllib.request
-
-            base = _secret("base_url").rstrip("/")
-            req = urllib.request.Request(base + "/_edge/tenant_info")
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                cloud_id = _json.loads(resp.read().decode("utf-8")).get("cloudId", "")
-            context_cache[name] = cloud_id
-            return cloud_id
-        raise RuntimeError("no value for '" + name + "' - the migrated tool cannot build its URL")
-
-    # A tool result goes straight into the model's context. Copilot's own connector calls
-    # were bounded by the maker's page size; ours are bounded by nothing, so a list
-    # operation against a real CRM can return megabytes. Unbounded, that either blows the
-    # context window or silently costs a fortune per turn, and the failure appears as a
-    # confusing model error rather than as "too much data".
-    #
-    # So: cap it, say so, and tell the model how to narrow. Truncating in silence would let
-    # the model present a partial list as the whole answer, which is the fidelity failure
-    # this codebase refuses everywhere else.
-    RESULT_CHAR_BUDGET = 24000
-
-    def _capped(result: dict, narrowing=None) -> dict:
-        import json as _json
-
-        try:
-            text = _json.dumps(result.get("body"))
-        except Exception:  # noqa: BLE001
-            text = str(result.get("body"))
-        if len(text) <= RESULT_CHAR_BUDGET:
-            return result
-        hint = ""
-        if narrowing:
-            hint = " Narrow the request with: " + ", ".join(narrowing) + "."
-        return {
-            "status": result.get("status"),
-            "truncated": True,
-            "note": (
-                "The response was " + str(len(text)) + " characters and has been cut to "
-                + str(RESULT_CHAR_BUDGET) + ". This is a PARTIAL result - do not describe it "
-                "as the complete set." + hint
-            ),
-            "body": text[:RESULT_CHAR_BUDGET],
-        }
-
-    def _make_bound_tool(op: dict):
-        """Build one typed ADK function tool for one bound operation."""
-        import json as _json
-        import re as _re
-        import urllib.parse
-        import urllib.request
-
-        method = (op.get("method") or "GET").upper()
-        url_tpl = op.get("urlTemplate") or ""
-        fixed = op.get("fixedArgs") or {}
-        model_args = op.get("modelArgs") or []
-        ctx_required = op.get("contextRequired") or []
-        ctx_values = op.get("contextValues") or {}
-        op_id = op.get("operationId") or "operation"
-
-        # Only a legal Python identifier can be in a signature. OData names like `$filter`
-        # are not, so they are exposed with the punctuation stripped and mapped back when
-        # the request is built — the alternative is losing the ability to filter at all.
-        def py_name(n):
-            return _re.sub(r"[^0-9a-zA-Z_]", "_", n).strip("_") or "arg"
-
-        seen = set()
-        unique_args = []
-        for a in model_args:
-            pn = py_name(a.get("name") or "")
-            if pn in seen:
-                continue
-            seen.add(pn)
-            unique_args.append((pn, a))
-
-        # Which arguments can shrink the next call. Derived from the operation's own
-        # parameters so the advice is true for THIS endpoint, not generic prose.
-        narrowing = [
-            a.get("name")
-            for a in model_args
-            if a.get("name") in ("limit", "$top", "top", "pageSize", "maxResults", "$filter", "filter", "$select")
-        ]
-
-        def _aad_header() -> str:
-            """Entra token for a named resource, from the customer's app registration.
-
-            Dataverse is app-only: the resource is the customer's own org URL, which the
-            server passes as context rather than asking an admin to paste a URL we already
-            hold. The registry's generic client_credentials path cannot be reused here
-            because it resolves the scope from a stored `org_url` secret that, by design,
-            does not exist for this connector.
-            """
-            import json as _json
-            import time
-            import urllib.parse
-            import urllib.request
-
-            resource = op.get("aadResource") or ""
-            for c in ctx_required:
-                resource = resource.replace("{" + c + "}", _context(c, ctx_values))
-            resource = resource.rstrip("/")
-            cache_key = "aad:" + resource
-            cached = token_cache.get(cache_key)
-            if cached and cached.get("expires_at", 0) > time.time() + 60:
-                return "Bearer " + cached["token"]
-            form = {
-                "grant_type": "client_credentials",
-                "client_id": _secret("client_id"),
-                "client_secret": _secret("client_secret"),
-                "scope": resource + "/.default",
-            }
-            url = "https://login.microsoftonline.com/" + _secret("tenant_id") + "/oauth2/v2.0/token"
-            req = urllib.request.Request(
-                url,
-                data=urllib.parse.urlencode(form).encode(),
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=25) as resp:
-                payload = _json.loads(resp.read().decode("utf-8"))
-            token = payload.get("access_token")
-            if not token:
-                raise RuntimeError("no access_token for " + resource)
-            token_cache[cache_key] = {"token": token, "expires_at": time.time() + int(payload.get("expires_in") or 3600)}
-            return "Bearer " + token
-
-        def _invoke(**kwargs) -> dict:
-            try:
-                auth_header = _aad_header() if op.get("auth") == "aad-token" else _auth_header(_fill)
-            except Exception as e:  # noqa: BLE001
-                return {"error": "auth failed (" + str(op.get("auth") or auth_kind) + "): " + str(e)}
-
-            path_params, query, headers = {}, {}, {}
-            body_val = None
-            for name, meta in fixed.items():
-                where = meta.get("in") or "query"
-                val = meta.get("value")
-                if where == "path":
-                    path_params[name] = val
-                elif where == "header":
-                    headers[name] = str(val)
-                elif where == "body":
-                    body_val = val
-                else:
-                    query[name] = val
-            for pn, a in unique_args:
-                val = kwargs.get(pn)
-                if val is None or val == "" or val == 0 or val is False:
-                    continue
-                where = a.get("in") or "query"
-                if where == "path":
-                    path_params[a["name"]] = val
-                elif where == "header":
-                    headers[a["name"]] = str(val)
-                elif where == "body":
-                    body_val = val
-                else:
-                    query[a["name"]] = val
-
-            url = url_tpl
-            try:
-                for c in ctx_required:
-                    url = url.replace("{" + c + "}", _context(c, ctx_values))
-            except Exception as e:  # noqa: BLE001
-                return {"error": str(e)}
-            for name, val in path_params.items():
-                url = url.replace("{" + name + "}", urllib.parse.quote(str(val), safe=""))
-            missing = _re.findall(r"\{(\w+)\}", url)
-            if missing:
-                return {"error": "missing required value(s) for " + ", ".join(missing)}
-            if query:
-                url = url + "?" + urllib.parse.urlencode(query)
-
-            req_headers = {"Accept": "application/json"}
-            req_headers.update(headers)
-            if auth_header:
-                req_headers["Authorization"] = auth_header
-            data = None
-            if body_val is not None and method in ("POST", "PUT", "PATCH"):
-                payload = body_val if isinstance(body_val, str) else _json.dumps(body_val)
-                data = payload.encode("utf-8")
-                req_headers["Content-Type"] = "application/json"
-            req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
-            try:
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    raw = resp.read().decode("utf-8")
-                    try:
-                        parsed = _json.loads(raw)
-                    except Exception:  # noqa: BLE001
-                        return _capped({"status": resp.status, "body": raw}, narrowing)
-                    return _capped({"status": resp.status, "body": parsed}, narrowing)
-            except Exception as e:  # noqa: BLE001
-                # Quote the failure. A vague error invites the model to narrate a
-                # plausible answer instead of reporting that it could not look.
-                try:
-                    detail = e.read().decode("utf-8")[:500]  # type: ignore[attr-defined]
-                except Exception:  # noqa: BLE001
-                    detail = str(e)
-                return {"error": conn_name + " " + op_id + " failed: " + detail}
-
-        # ADK describes a tool to the model from its SIGNATURE and docstring, so the
-        # signature has to be real. Generated here rather than **kwargs, which ADK
-        # cannot turn into a FunctionDeclaration.
-        parts = []
-        for pn, a in unique_args:
-            t = a.get("type")
-            if t == "integer":
-                parts.append(pn + ": int = 0")
-            elif t == "boolean":
-                parts.append(pn + ": bool = False")
-            else:
-                parts.append(pn + ': str = ""')
-        sig = ", ".join(parts)
-        call_args = ", ".join(pn + "=" + pn for pn, _ in unique_args)
-        fn_name = op.get("toolName") or ("call_" + op_id.lower())
-        src = "def " + fn_name + "(" + sig + ") -> dict:\n    return _invoke(" + call_args + ")\n"
-        ns = {"_invoke": _invoke}
-        exec(src, ns)  # noqa: S102 - generated from our own spec, never from model output
-        fn = ns[fn_name]
-
-        arg_doc = ""
-        for pn, a in unique_args:
-            arg_doc += "    " + pn + ": " + str(a.get("description") or a.get("name") or "")
-            arg_doc += " (required)\n" if a.get("required") else "\n"
-        pinned = ", ".join(k + "=" + str(v.get("value")) for k, v in fixed.items())
-        doc = str(op.get("description") or op_id) + "\n\n"
-        doc += "Calls " + conn_name + " (" + op_id + "). Migrated from Microsoft Copilot Studio.\n"
-        if pinned:
-            doc += "Fixed by the original agent: " + pinned + "\n"
-        if arg_doc:
-            doc += "\nArgs:\n" + arg_doc
-        doc += "\nReturns:\n    dict with `status` and `body`, or `error`.\n"
-        fn.__doc__ = doc
-        return fn
-
-    if bound_ops:
-        built = []
-        for op in bound_ops:
-            try:
-                built.append(_make_bound_tool(op))
-            except Exception as e:  # noqa: BLE001
-                # One malformed operation must not cost the agent every other tool. If
-                # NOTHING can be built we fall through to the generic tool below.
-                print("[warn] bound tool build failed for " + str(op.get("operationId")) + ": " + str(e), flush=True)
-        if built:
-            return built
-
-    # Generic REST connector: base URL + auth header from the registry, resolved
-    # from Secret Manager the same way.
-    def call_external_api(path: str, method: str = "GET", body: str = "") -> dict:
-        """Call the configured external system's REST API on the user's behalf.
-
-        Args:
-            path: path (and query string) appended to the connector's base URL.
-            method: HTTP method, e.g. GET or POST.
-            body: JSON request body as a string, for POST/PUT.
-
-        Returns:
-            dict with `status` and `body`, or `error`.
-        """
-        import json as _json
-        import re
-        import urllib.request
-
-        try:
-            base = _fill(base_url_tpl).rstrip("/")
-            auth_header = _auth_header(_fill)
-        except Exception as e:  # noqa: BLE001
-            return {"error": f"auth failed ({auth_kind}): {e}"}
-
-        headers = {"Accept": "application/json"}
-        if auth_header:
-            headers["Authorization"] = auth_header
-        data = body.encode("utf-8") if body else None
-        if data:
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(f"{base}/{path.lstrip('/')}", data=data, headers=headers, method=method.upper())
-        try:
-            with urllib.request.urlopen(req, timeout=25) as resp:
-                raw = resp.read().decode("utf-8")
-                try:
-                    return {"status": resp.status, "body": _json.loads(raw)}
-                except Exception:  # noqa: BLE001
-                    return {"status": resp.status, "body": raw[:4000]}
-        except Exception as e:  # noqa: BLE001
-            return {"error": f"{conn_name} request failed: {e}"}
-
-    # Name the tool AFTER ITS CONNECTOR. Every generic connector used to return a
-    # function literally called `call_external_api`, so an agent with two of them —
-    # Jira and HubSpot, which is a normal pairing — sent Gemini two identical
-    # FunctionDeclarations and was rejected with "Duplicate function declaration
-    # found: call_external_api". Same class of bug as the DiscoveryEngineSearchTool
-    # collision documented above, and it only appears once a SECOND generic connector
-    # is configured, so adding a connector broke agents that previously worked.
-    #
-    # The docstring is per-connector for a second reason: `call_external_api` on "the
-    # configured external system" tells the model nothing about WHICH system or what
-    # paths are valid, so it had to guess. Naming the product and its base URL is what
-    # makes the tool usable.
-    safe = re.sub(r"[^a-z0-9]+", "_", (kind or conn_name).lower()).strip("_") or "external"
-    call_external_api.__name__ = f"call_{safe}_api"[:56]
-    call_external_api.__doc__ = (
-        f"Call the {conn_name} REST API on the user's behalf.\n"
-        f"\n"
-        f"Requests are sent to {base_url_tpl or 'the connector base URL'} with the caller's\n"
-        f"credentials already applied — never include tokens in the path.\n"
-        f"{operations_hint}"
-        f"\n"
-        f"Args:\n"
-        f"    path: path (and query string) appended to the base URL.\n"
-        f"    method: HTTP method, e.g. GET or POST.\n"
-        f"    body: JSON request body as a string, for POST/PUT.\n"
-        f"\n"
-        f"Returns:\n"
-        f"    dict with `status` and `body`, or `error`.\n"
-    )
-    return call_external_api
+    # Generic REST connector fallback: bound per-operation tools when the server
+    # captured the source agent's actual swagger operations, else a single generic
+    # call_external_api tool. See connector_tools/generic_rest.py.
+    from connector_tools.generic_rest import build_tools as _build
+    return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
 
 # ---------------------------------------------------------------------------
@@ -1577,13 +792,31 @@ def main():
     requirements = ["google-cloud-aiplatform[agent_engines,adk]", "google-adk"]
     if grounding_data_stores:
         requirements.append("google-cloud-discoveryengine")
-    # Document text extraction for SharePoint/OneDrive read tools. Added only when such
-    # a connector is present, to keep the container minimal — and NONE of these are in
-    # the `google.*` namespace, which is the namespace that previously got shadowed and
-    # broke VertexAiSearchTool's imports at inference time.
-    if any((c.get("kind") or "").lower() in ("sharepointonline", "sharepoint", "onedrive")
+    # Document text extraction for SharePoint/OneDrive/Google Drive read tools. Added
+    # only when such a connector is present, to keep the container minimal — and NONE
+    # of these are in the `google.*` namespace, which is the namespace that previously
+    # got shadowed and broke VertexAiSearchTool's imports at inference time.
+    #
+    # 'googledrive' added 2026-08-11 after live confirmation: google_drive_read_file
+    # uses the exact same pypdf/docx/openpyxl imports as the SharePoint tool, but this
+    # condition never learned about the new kind — every .xlsx/.docx read on a
+    # Drive-only agent failed with "No module named 'openpyxl'"/"'docx'" even though
+    # the tool code itself was correct.
+    if any((c.get("kind") or "").lower() in ("sharepointonline", "sharepoint", "onedrive", "googledrive")
            for c in live_connectors):
         requirements += ["pypdf", "python-docx", "openpyxl"]
+
+    # Ship the connector_tools/ package alongside this script whenever a live
+    # connector tool is configured — _build_live_connector_tool (above) imports
+    # from it at container runtime (`from connector_tools.google_drive import
+    # build_tools`, etc.). extra_packages accepts individual files or whole
+    # directories (confirmed via the installed SDK's own docstring, 2026-08-11);
+    # a directory here ships with its structure intact, so the package-relative
+    # import resolves inside the deployed container the same way it does when
+    # this script runs locally.
+    extra_packages = []
+    if live_connectors:
+        extra_packages.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "connector_tools"))
 
     try:
         # Deploy a plain AdkApp, NOT ReasoningEngineAgentWrapper.
@@ -1613,6 +846,7 @@ def main():
             agent_engine=agent_engine,
             display_name=spec.get("displayName", spec.get("name", "Migrated Agent")),
             requirements=requirements,
+            extra_packages=extra_packages or None,
         )
         emit({
             "reasoningEngine": remote.resource_name,

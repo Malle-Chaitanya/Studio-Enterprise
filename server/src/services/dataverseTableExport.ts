@@ -145,7 +145,13 @@ export interface TableSearchTarget {
 }
 
 export interface TableSearchResolution {
-  target: TableSearchTarget | null;
+  /** Every table resolved from the dvtablesearch -> dvtablesearchentity join.
+   *  One dvtablesearch record can name SEVERAL tables ("FAQ Entry, CF ICP
+   *  Profile" is two) — each gets its own entry here so the caller can snapshot
+   *  each into its own structured data store (different schemas cannot share
+   *  one). Empty when the search record itself didn't resolve or none of its
+   *  linked entities resolved to a real table. */
+  targets: TableSearchTarget[];
   /** True when the dvtablesearch record exists but has no target table
    *  selected in Copilot Studio — a fact about the source agent, not an
    *  extraction failure (there is genuinely nothing to migrate). */
@@ -164,13 +170,19 @@ export interface TableSearchResolution {
  * directly, which can never match (it's an arbitrary generated name, not a
  * real Dataverse EntitySetName) — every table-search source failed with a
  * misleading "EntityDefinitions lookup failed" error even when fully configured.
+ *
+ * The join can return MORE THAN ONE `dvtablesearchentity` row — one dvtablesearch
+ * record naming several tables, same shape as Confluence's multi-space sources.
+ * An earlier version of this resolver read only the first row (confirmed live
+ * 2026-08-12: a two-table source "FAQ Entry, CF ICP Profile" silently snapshotted
+ * only one), so every linked entity is resolved here, not just the first.
  */
 export async function resolveTableSearchTarget(
   url: string,
   token: string,
   dvTableSearchName: string,
 ): Promise<TableSearchResolution> {
-  const fail: TableSearchResolution = { target: null, unconfigured: false };
+  const fail: TableSearchResolution = { targets: [], unconfigured: false };
 
   const searchRes = await fetch(
     API(url, `dvtablesearchs?$filter=name eq '${dvTableSearchName}'&$select=dvtablesearchid`),
@@ -196,21 +208,31 @@ export async function resolveTableSearchTarget(
     return fail;
   }
   const entityJson = (await entityRes.json()) as { value?: { entitylogicalname?: string }[] };
-  const logicalName = entityJson.value?.[0]?.entitylogicalname;
-  if (!logicalName) return { target: null, unconfigured: true };
+  // One dvtablesearch can link several entities — dedupe in case Copilot Studio
+  // ever writes the same table twice, and drop rows with no logical name.
+  const logicalNames = [
+    ...new Set((entityJson.value ?? []).map((e) => e.entitylogicalname).filter((n): n is string => Boolean(n))),
+  ];
+  if (!logicalNames.length) return { targets: [], unconfigured: true };
 
-  const defRes = await fetch(
-    API(url, `EntityDefinitions?$filter=LogicalName eq '${logicalName}'&$select=EntitySetName,PrimaryIdAttribute`),
-    { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
-  );
-  if (!defRes.ok) {
-    logger.warn({ status: defRes.status, logicalName }, 'EntityDefinitions lookup by LogicalName failed');
-    return fail;
+  const targets: TableSearchTarget[] = [];
+  for (const logicalName of logicalNames) {
+    const defRes = await fetch(
+      API(url, `EntityDefinitions?$filter=LogicalName eq '${logicalName}'&$select=EntitySetName,PrimaryIdAttribute`),
+      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
+    );
+    if (!defRes.ok) {
+      // One bad table in a multi-table source must not cost the others their
+      // resolution — log and continue rather than aborting the whole source.
+      logger.warn({ status: defRes.status, logicalName }, 'EntityDefinitions lookup by LogicalName failed');
+      continue;
+    }
+    const defJson = (await defRes.json()) as { value?: { EntitySetName?: string; PrimaryIdAttribute?: string }[] };
+    const def = defJson.value?.[0];
+    if (!def?.EntitySetName || !def?.PrimaryIdAttribute) continue;
+    targets.push({ entitySetName: def.EntitySetName, primaryKeyAttr: def.PrimaryIdAttribute });
   }
-  const defJson = (await defRes.json()) as { value?: { EntitySetName?: string; PrimaryIdAttribute?: string }[] };
-  const def = defJson.value?.[0];
-  if (!def?.EntitySetName || !def?.PrimaryIdAttribute) return fail;
-  return { target: { entitySetName: def.EntitySetName, primaryKeyAttr: def.PrimaryIdAttribute }, unconfigured: false };
+  return { targets, unconfigured: false };
 }
 
 /**

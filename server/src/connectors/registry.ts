@@ -543,22 +543,35 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     category: 'storage',
     icon: '📁',
     docsUrl: 'https://developers.google.com/drive/api/reference/rest/v3',
-    requiredPermissions: ['https://www.googleapis.com/auth/drive.readonly'],
-    permissionsHint: 'Either share each Drive folder with the service account\'s email address, or turn on domain-wide delegation in your Google Workspace admin console and approve this permission there.',
+    requiredPermissions: ['https://www.googleapis.com/auth/drive'],
+    // Deliberately the CUSTOMER'S OWN service account, not CloudFuze's shared one — see
+    // docs/connector-architecture-decisions.md §12.4. A shared SA meant the migrated
+    // agent's live Drive tool kept depending on CloudFuze's account forever, past the
+    // migration itself; the customer revoking that trust (reasonably, once "the
+    // migration tool" looks done) would break Drive on an agent they already rely on.
+    // With their own SA there is nothing to revoke without breaking their own agent.
+    permissionsHint: 'Create this service account in your OWN Google Cloud project (not ours), then turn on domain-wide delegation for its Client ID in your Google Workspace admin console with this scope. One key covers every agent — WHICH person\'s Drive each agent uses is set per-agent, one screen further on, since different agents can belong to different people.',
+    // Deliberately just the key — NOT impersonate_email. One service account key is
+    // shared across the whole migration (DWD can impersonate anyone in the domain from
+    // the same key), but WHICH person's Drive a given agent should use is a per-agent
+    // fact, not a per-migration one (Erik's agent needs Erik's Drive, Alex's needs
+    // Alex's) — see docs/connector-architecture-decisions.md §12.5. That's collected on
+    // a separate per-agent screen (db/repos/agentConnectorIdentity.ts), not here.
     credentials: [
-      { key: 'service_account_json', label: 'Service Account JSON key', type: 'password',
+      { key: 'service_account_json', label: 'Service Account JSON key (your own project)', type: 'password',
         placeholder: '{"type":"service_account","project_id":...}',
-        hint: 'Google Cloud Console -> IAM & Admin -> Service Accounts -> Keys -> Add key (JSON). Paste the whole file. Share the Drive folders with the service account client_email, or enable domain-wide delegation for org-wide access.' },
-      { key: 'impersonate_email', label: 'Impersonate user (optional)', type: 'text',
-        placeholder: 'user@yourcompany.com',
-        hint: 'Only with domain-wide delegation: the user whose Drive the agent should read.' },
+        hint: 'Google Cloud Console -> IAM & Admin -> Service Accounts -> Create Service Account (in your own project, not CloudFuze\'s) -> Keys -> Add key (JSON). Paste the whole file. Then authorize its Client ID for domain-wide delegation in your Workspace admin console with the scope below.' },
     ],
     baseUrlTemplate: 'https://www.googleapis.com/drive/v3',
     authHeaderTemplate: 'Bearer {access_token}',
     // A pasted access token lasts ~1h and customers cannot mint one. The JSON key is
     // durable: the runtime signs a JWT with it and gets a fresh token as needed.
     authKind: 'google-service-account',
-    scope: 'https://www.googleapis.com/auth/drive.readonly',
+    // 'drive' (not 'drive.readonly') on purpose — confirmed live 2026-08-10 that a
+    // Workspace admin authorizing DWD for 'drive' does NOT also authorize the
+    // separate 'drive.readonly' scope string (exact-match, not hierarchical), so a
+    // customer who only grants the broad scope still needs this to be the same one.
+    scope: 'https://www.googleapis.com/auth/drive',
   },
 
   // ── Marketing ──────────────────────────────────────────────────────────────

@@ -28,3 +28,9 @@ discovery_v1alpha.json
 server/adk_local_test/
 *.docx
 .gstack/
+
+# Editor workspace settings (personal)
+.vscode/
+
+# Unrelated nested reference repo (has its own .git)
+content-trunk/

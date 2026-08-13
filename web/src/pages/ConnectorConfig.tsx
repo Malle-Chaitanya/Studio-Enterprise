@@ -10,11 +10,15 @@ import {
   fetchConnectorRequirements,
   fetchCustomConnectors,
   type CustomConnectorInfo,
+  fetchAgents,
+  fetchDriveIdentities,
+  saveDriveIdentity,
   type DetectedConnector,
   type ConnectorDef,
   type ConnectorRequirement,
   type ConnectorValidation,
   type ConnectorReadiness,
+  type DriveIdentityStatus,
 } from '../api.ts';
 
 /** Merge per-environment scan results into one list, summing flowCount and
@@ -144,10 +148,10 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
         </div>
         {saved && (
           <span style={{
-            color: !validation || validation.code === 'ok' ? 'var(--ok)' : validation.code === 'unverified' ? 'var(--muted)' : '#dc2626',
+            color: !validation || validation.code === 'ok' || validation.code === 'unverified' ? 'var(--ok)' : '#dc2626',
             fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
           }}>
-            {!validation ? '✓ Saved' : validation.code === 'ok' ? '✓ Verified' : validation.code === 'unverified' ? '• Saved (not tested)' : '⚠ Saved, but not working'}
+            {!validation ? '✓ Saved' : validation.code === 'ok' ? '✓ Verified' : validation.code === 'unverified' ? '✓ Saved' : '⚠ Saved, but not working'}
           </span>
         )}
       </div>
@@ -159,7 +163,7 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
         SharePoint and Teams.
       </p>
 
-      {saved && validation && validation.code !== 'ok' && validation.detail && (
+      {saved && validation && validation.code !== 'ok' && validation.code !== 'unverified' && validation.detail && (
         <div style={{
           fontSize: 12, marginBottom: 10, padding: '8px 10px', borderRadius: 6,
           color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca',
@@ -366,18 +370,26 @@ function OperationList({ operations }: { operations?: string[] }) {
 }
 
 /**
- * Can we actually reproduce what this agent calls?
+ * Warns about connectors with NO working fallback at all.
  *
- * The operation list above says WHAT the agent does; this says whether we can do it. The
- * answer comes from the connector's captured swagger, so it is available before the run
- * rather than in the report after one. Blocked operations show the reason verbatim — a bare
- * "not supported" gives an admin nothing to decide with.
- *
- * Absent readiness renders nothing at all: we have not captured this connector, which is
- * not the same as knowing it will fail.
+ * "Blocked" (readiness.blocked) means one narrow thing: an operation can't be
+ * replayed with the EXACT arguments the source agent had baked in. That is not the
+ * same as the capability being gone — every connector WITH a def gets a real,
+ * general-purpose live tool wired regardless (connectorToolBuilder.ts's
+ * buildLiveConnectorSpecsDetailed runs unconditionally for any registered
+ * connector). Google Drive is the clearest case: 0 of its operations bind to an
+ * exact call, and the live tool still fully works — live-verified against real
+ * Drive data, 2026-08-13. Listing 11 near-identical "can't do an exact replay"
+ * lines on the credential screen read as "broken" for something that works, and
+ * wasn't acting on anything the admin could do differently here — that detail
+ * still reaches the customer in the post-migration fidelity report as a `partial`
+ * note (orchestrator.ts), it just does not belong on THIS screen. So this only
+ * renders for connectors with NO def at all (hasLiveTool=false,
+ * UnsupportedConnectorCard) — the one real case where there is nothing to fall
+ * back on and the admin needs to know before saving anything.
  */
-function ReadinessPanel({ readiness }: { readiness?: ConnectorReadiness }) {
-  if (!readiness) return null;
+function ReadinessPanel({ readiness, hasLiveTool = true }: { readiness?: ConnectorReadiness; hasLiveTool?: boolean }) {
+  if (hasLiveTool || !readiness) return null;
   const total = readiness.bindable.length + readiness.blocked.length;
   if (total === 0) return null;
   const ok = readiness.ready;
@@ -413,9 +425,13 @@ interface ConnectorCardProps {
   alreadySaved?: boolean;
   /** Fields, permissions and credential-group state from the server. */
   req?: ConnectorRequirement;
+  /** Fires once, right after a FRESH save succeeds (never on load from alreadySaved) —
+   *  lets the parent chain a follow-up step (e.g. Google Drive's per-agent identity
+   *  popup) onto the moment credentials actually just got entered. */
+  onSaved?: () => void;
 }
 
-function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
+function ConnectorCard({ c, session, alreadySaved, req, onSaved }: ConnectorCardProps) {
   const { def, flowCount, flowNames } = c;
   // `def.credentials` holds only the fields a connector declares FOR ITSELF. Connectors in
   // a credential group declare none — Confluence and Jira both leave it empty because
@@ -468,6 +484,7 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
       const { validation: v } = await saveConnectorCredentials(session, c.connectorId, changed);
       setValidation(v ?? null);
       setSaved(true);
+      onSaved?.();
     } catch (err) {
       setError((err as Error).message || 'Failed to save. Please try again.');
     } finally { setSaving(false); }
@@ -484,8 +501,8 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
               {def.category}
             </span>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-            {c.connectorId === 'shared_confluence' ? (
+          {c.connectorId === 'shared_confluence' && (
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
               <span>
                 {flowCount} knowledge source{flowCount !== 1 ? 's' : ''}
                 {flowNames.length > 0 && (
@@ -495,17 +512,11 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
                 )}
                 {' '}— Confluence spaces will be crawled and indexed for this agent.
               </span>
-            ) : (
-              <>
-                {flowCount} flow{flowCount !== 1 ? 's' : ''}
-                {flowNames.length > 0 && (
-                  <span title={flowNames.join(', ')}>
-                    {' '}· {flowNames.slice(0, 2).join(', ')}{flowNames.length > 2 ? ` +${flowNames.length - 2} more` : ''}
-                  </span>
-                )}
-              </>
-            )}
-          </div>
+            </div>
+          )}
+          {/* Every other connector: the flow-name preview line ("N flows · op1, op2 +N
+              more") duplicated what OperationList already shows in full right below —
+              redundant, and the truncated "+N more" read as clumsy rather than useful. */}
         </div>
         {c.confidence === 'heuristic' && !saved && (
           <span
@@ -521,21 +532,19 @@ function ConnectorCard({ c, session, alreadySaved, req }: ConnectorCardProps) {
         {saved && validation?.code === 'ok' && (
           <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ Verified</span>
         )}
-        {saved && validation && validation.code !== 'ok' && (
-          <span style={{ color: validation.code === 'unverified' ? 'var(--muted)' : '#dc2626', fontSize: 13, fontWeight: 600 }}>
-            {validation.code === 'unverified' ? '• Saved (not tested)' : '⚠ Saved, but not working'}
-          </span>
+        {saved && validation && validation.code !== 'ok' && validation.code !== 'unverified' && (
+          <span style={{ color: '#dc2626', fontSize: 13, fontWeight: 600 }}>⚠ Saved, but not working</span>
         )}
-        {saved && !validation && <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>}
+        {saved && (!validation || validation.code === 'unverified') && (
+          <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>
+        )}
         {skipped && <span style={{ color: '#f59e0b', fontSize: 13, fontWeight: 600 }}>⚠ Skipped</span>}
       </div>
 
-      {saved && validation && validation.code !== 'ok' && validation.detail && (
+      {saved && validation && validation.code !== 'ok' && validation.code !== 'unverified' && validation.detail && (
         <div style={{
           fontSize: 12, marginBottom: 10, padding: '8px 10px', borderRadius: 6,
-          color: validation.code === 'unverified' ? 'var(--muted)' : '#991b1b',
-          background: validation.code === 'unverified' ? 'var(--bg)' : '#fef2f2',
-          border: `1px solid ${validation.code === 'unverified' ? 'var(--border)' : '#fecaca'}`,
+          color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca',
         }}>
           {validation.detail}
           {validation.code === 'permission_denied' && (
@@ -832,7 +841,7 @@ function UnsupportedConnectorCard({ c }: { c: DetectedConnector }) {
           )}
           <div style={{ marginTop: 6 }}>
             <OperationList operations={c.operations} />
-            <ReadinessPanel readiness={c.readiness} />
+            <ReadinessPanel readiness={c.readiness} hasLiveTool={false} />
           </div>
           <div style={{ fontSize: 12, color: '#b45309', marginTop: 6 }}>
             We don't support this connector yet, so the new agent won't be able to use it.
@@ -842,6 +851,190 @@ function UnsupportedConnectorCard({ c }: { c: DetectedConnector }) {
               this is a gap on our side rather than a limit of your agent.</>
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Per-agent Google Drive identity ───────────────────────────────────────────
+
+interface DriveAgentRow {
+  sourceId: string;
+  name: string;
+}
+
+/**
+ * One agent's row: confirm/change which Google account its Drive tool impersonates.
+ * Never auto-confirms a suggestion — the admin has to actively click Confirm, even
+ * when a suggestion is pre-filled into the input.
+ */
+function DriveIdentityRow({ session, agent, status, onSaved }: {
+  session: string;
+  agent: DriveAgentRow;
+  status: DriveIdentityStatus | undefined;
+  onSaved: (sourceId: string, email: string) => void;
+}) {
+  const current = status?.current;
+  const suggestion = status?.suggestion;
+  const confirmed = current?.status === 'confirmed';
+  const [editing, setEditing] = useState(!confirmed);
+  const [value, setValue] = useState(current?.email ?? suggestion?.email ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async () => {
+    const email = value.trim();
+    if (!email) return;
+    setSaving(true);
+    setError('');
+    try {
+      await saveDriveIdentity(session, agent.sourceId, email);
+      onSaved(agent.sourceId, email);
+      setEditing(false);
+    } catch (e) {
+      setError((e as Error).message || 'Failed to save.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ flex: '0 0 150px', fontSize: 13, fontWeight: 600 }}>{agent.name}</div>
+        {!editing ? (
+          <>
+            <span style={{ fontSize: 12, color: 'var(--ok)' }}>✓ {current!.email}</span>
+            <button className="dlink" style={{ marginLeft: 'auto' }} onClick={() => setEditing(true)}>Change</button>
+          </>
+        ) : (
+          <>
+            <input
+              className="usearch"
+              style={{ flex: 1, fontSize: 12, padding: '5px 8px' }}
+              placeholder="user@yourcompany.com"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+            <button className="wbtn primary" style={{ fontSize: 12, padding: '4px 12px' }} disabled={saving || !value.trim()} onClick={save}>
+              {saving ? 'Saving…' : 'Confirm'}
+            </button>
+            {confirmed && (
+              <button className="wbtn" style={{ fontSize: 12, padding: '4px 10px' }} onClick={() => setEditing(false)}>Cancel</button>
+            )}
+          </>
+        )}
+      </div>
+      {editing && suggestion && !confirmed && (
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }} title={suggestion.reason}>
+          Suggested from a connection reference — confirm it's right before saving.
+        </div>
+      )}
+      {error && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4 }}>{error}</div>}
+    </div>
+  );
+}
+
+/**
+ * Lists every selected agent that uses the shared_googledrive connector and lets the
+ * admin confirm/correct WHICH Google account each one should impersonate. Rendered
+ * as the body of DriveIdentityModal — one service-account key covers everyone, but
+ * WHICH person's Drive an agent uses is a per-agent fact, never assumed.
+ */
+function DriveIdentitySection({ session, envsWithAgents }: {
+  session: string;
+  envsWithAgents: Array<{ env: string; botIds: string[] }>;
+}) {
+  const [rows, setRows] = useState<DriveAgentRow[] | null>(null);
+  const [statuses, setStatuses] = useState<Map<string, DriveIdentityStatus>>(new Map());
+  const [loading, setLoading] = useState(true);
+  const fetchedRef = useRef(false);
+
+  useEffect(() => {
+    if (fetchedRef.current || envsWithAgents.length === 0) return;
+    fetchedRef.current = true;
+    (async () => {
+      const allRows: DriveAgentRow[] = [];
+      const allStatuses = new Map<string, DriveIdentityStatus>();
+      for (const sel of envsWithAgents) {
+        try {
+          const agents = await fetchAgents(session, sel.env);
+          const selected = agents.filter((a) => sel.botIds.includes(a.botid));
+          for (const a of selected) allRows.push({ sourceId: a.botid, name: a.name });
+          const found = await fetchDriveIdentities(session, sel.env, selected.map((a) => a.botid));
+          for (const s of found) allStatuses.set(s.sourceId, s);
+        } catch {
+          // best-effort per environment — one environment's lookup failing must not
+          // blank the whole section; that agent just falls back to an empty input
+        }
+      }
+      setRows(allRows);
+      setStatuses(allStatuses);
+      setLoading(false);
+    })();
+  }, [session, envsWithAgents]);
+
+  if (loading) return <p className="ksdetail" style={{ marginTop: 6 }}>Checking which agents need a Google account assigned…</p>;
+  if (!rows || rows.length === 0) {
+    return <p className="ksdetail" style={{ marginTop: 6 }}>None of the selected agents need a Drive account assigned.</p>;
+  }
+
+  const handleSaved = (sourceId: string, email: string) => {
+    setStatuses((prev) => {
+      const next = new Map(prev);
+      next.set(sourceId, { sourceId, current: { email, status: 'confirmed' }, suggestion: null });
+      return next;
+    });
+  };
+
+  return (
+    <div>
+      {rows.map((r) => (
+        <DriveIdentityRow key={r.sourceId} session={session} agent={r} status={statuses.get(r.sourceId)} onSaved={handleSaved} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Popup shown right after the Google Drive service-account key is saved — asks the
+ * per-agent "whose Drive" question as a guided follow-up step instead of a permanent
+ * card sitting under the credential form. Also reachable any time afterward via the
+ * small link ConnectorConfig renders next to the Drive card, since returning admins
+ * (or a newly-selected agent) still need a way back in without re-entering the key.
+ */
+function DriveIdentityModal({ session, envsWithAgents, onClose }: {
+  session: string;
+  envsWithAgents: Array<{ env: string; botIds: string[] }>;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div className="modal-title" style={{ flex: 1 }}>Whose Drive does each agent use?</div>
+          <button
+            type="button"
+            className="mdelete"
+            onClick={onClose}
+            aria-label="Close"
+            style={{ fontSize: 15, flexShrink: 0 }}
+          >
+            ✕
+          </button>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: -8, marginBottom: 14, lineHeight: 1.5 }}>
+          One shared key covers every agent below — but each one needs its OWN Google account
+          confirmed here, since different agents can belong to different people.
+        </p>
+        <div style={{ maxHeight: '55vh', overflowY: 'auto' }}>
+          <DriveIdentitySection session={session} envsWithAgents={envsWithAgents} />
+        </div>
+        <div className="modal-actions" style={{ marginTop: 16 }}>
+          <button type="button" className="wbtn primary" onClick={onClose}>
+            Done
+          </button>
         </div>
       </div>
     </div>
@@ -868,6 +1061,8 @@ export function ConnectorConfig() {
   const [customConnectors, setCustomConnectors] = useState<{ listed: boolean; connectors: CustomConnectorInfo[] } | null>(null);
   const [requirements, setRequirements] = useState<Map<string, ConnectorRequirement>>(new Map());
   const [error, setError] = useState('');
+  const [envsWithAgents, setEnvsWithAgents] = useState<Array<{ env: string; botIds: string[] }>>([]);
+  const [showDriveModal, setShowDriveModal] = useState(false);
   const fetchedRef = useRef(false);
 
   useEffect(() => {
@@ -884,6 +1079,7 @@ export function ConnectorConfig() {
         const agentSelection: Array<{ env: string; botIds: string[] }> =
           JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
         const envsWithAgents = agentSelection.filter((sel) => sel.botIds.length > 0);
+        setEnvsWithAgents(envsWithAgents);
 
         // 1. Scan PA flows for third-party connector dependencies, once per
         //    selected environment.
@@ -1151,13 +1347,26 @@ export function ConnectorConfig() {
 
           {/* Third-party: one card per connector we can actually call, not sharing credentials */}
           {standaloneConnectors.map((c) => (
-            <ConnectorCard
-              key={c.connectorId}
-              c={c}
-              session={session}
-              alreadySaved={savedIds.has(c.connectorId)}
-              req={requirements.get(c.connectorId)}
-            />
+            <div key={c.connectorId}>
+              <ConnectorCard
+                c={c}
+                session={session}
+                alreadySaved={savedIds.has(c.connectorId)}
+                req={requirements.get(c.connectorId)}
+                onSaved={c.connectorId === 'shared_googledrive' ? () => setShowDriveModal(true) : undefined}
+              />
+              {/* A single small link, not a permanent card — the popup covers the guided
+                  "just saved the key" moment; this is the way back in afterward, e.g. a
+                  returning admin or a newly-selected agent that still needs its Drive
+                  account confirmed. */}
+              {c.connectorId === 'shared_googledrive' && (
+                <div style={{ marginTop: -4, marginBottom: 12 }}>
+                  <button type="button" className="dlink" onClick={() => setShowDriveModal(true)}>
+                    Whose Drive does each agent use? →
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
 
           {/* Detected but not callable — shown, never hidden */}
@@ -1180,6 +1389,10 @@ export function ConnectorConfig() {
          *  this linear flow anymore. */}
         <button className="wbtn primary" onClick={() => navigate(`/migrate?session=${session}`)}>Continue →</button>
       </div>
+
+      {showDriveModal && (
+        <DriveIdentityModal session={session} envsWithAgents={envsWithAgents} onClose={() => setShowDriveModal(false)} />
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import type { GeminiDestination, KnowledgeSourceIR } from '../types.js';
 import { config } from '../config.js';
-import { resolvePrimaryKey, resolveTableSearchTarget, exportTableRows, type DataverseRow } from './dataverseTableExport.js';
+import { resolvePrimaryKey, resolveTableSearchTarget, exportTableRows, type DataverseRow, type TableSearchTarget } from './dataverseTableExport.js';
 import { resolveTableAttributes, buildBqSchema, exportTableRowsForBigQuery } from './dataverseTableSchema.js';
 import { ensureBigQueryApiEnabled, ensureBqDataset, ensureBqTable, loadRowsToBqTable, awaitBqJob } from './bigqueryUpload.js';
 import {
@@ -107,44 +107,50 @@ export async function migrateDataverseSnapshot(
   agentSourceId: string,
   source: KnowledgeSourceIR,
   /** Explicit table to snapshot. Set by the caller when one source names several
-   *  tables; omitted, the table is resolved from the source itself. */
+   *  tables (each gets its own call); omitted, the first resolved table is used. */
+  targetOverride?: TableSearchTarget,
 ): Promise<DataverseSnapshotResult> {
   const capturedRef = (source.references?.[0] ?? source.reference ?? '').trim();
   if (!capturedRef) {
     return { attempted: 0, succeeded: 0, failed: 0, error: 'no table reference captured for this source' };
   }
 
-  // The captured reference is a "Dataverse table search" config record's NAME,
-  // not the target table's EntitySetName — resolve the real linkage first
-  // (dvtablesearch -> dvtablesearchentity -> EntityDefinitions). See
-  // resolveTableSearchTarget's doc comment for why this indirection exists.
-  const { target, unconfigured } = await resolveTableSearchTarget(envUrl, dvToken, capturedRef);
   let entitySetName: string;
   let pk: string;
-  if (target) {
-    entitySetName = target.entitySetName;
-    pk = target.primaryKeyAttr;
-  } else if (unconfigured) {
-    return {
-      attempted: 0,
-      succeeded: 0,
-      failed: 0,
-      error: `Dataverse table-search source has no table selected in Copilot Studio — nothing to migrate (this is a gap in the source agent's configuration, not an extraction failure)`,
-    };
+  if (targetOverride) {
+    entitySetName = targetOverride.entitySetName;
+    pk = targetOverride.primaryKeyAttr;
   } else {
-    // Fall back to treating the captured reference as a literal EntitySetName,
-    // in case some other source shape ever reaches this path directly.
-    entitySetName = capturedRef;
-    const fallbackPk = await resolvePrimaryKey(envUrl, dvToken, entitySetName);
-    if (!fallbackPk) {
+    // The captured reference is a "Dataverse table search" config record's NAME,
+    // not the target table's EntitySetName — resolve the real linkage first
+    // (dvtablesearch -> dvtablesearchentity -> EntityDefinitions). See
+    // resolveTableSearchTarget's doc comment for why this indirection exists.
+    const { targets, unconfigured } = await resolveTableSearchTarget(envUrl, dvToken, capturedRef);
+    if (targets.length) {
+      entitySetName = targets[0].entitySetName;
+      pk = targets[0].primaryKeyAttr;
+    } else if (unconfigured) {
       return {
         attempted: 0,
         succeeded: 0,
         failed: 0,
-        error: `could not resolve "${entitySetName}" as a Dataverse table or table-search config (EntityDefinitions lookup failed)`,
+        error: `Dataverse table-search source has no table selected in Copilot Studio — nothing to migrate (this is a gap in the source agent's configuration, not an extraction failure)`,
       };
+    } else {
+      // Fall back to treating the captured reference as a literal EntitySetName,
+      // in case some other source shape ever reaches this path directly.
+      entitySetName = capturedRef;
+      const fallbackPk = await resolvePrimaryKey(envUrl, dvToken, entitySetName);
+      if (!fallbackPk) {
+        return {
+          attempted: 0,
+          succeeded: 0,
+          failed: 0,
+          error: `could not resolve "${entitySetName}" as a Dataverse table or table-search config (EntityDefinitions lookup failed)`,
+        };
+      }
+      pk = fallbackPk;
     }
-    pk = fallbackPk;
   }
 
   const threshold = config.BQ_SNAPSHOT_ROW_THRESHOLD;

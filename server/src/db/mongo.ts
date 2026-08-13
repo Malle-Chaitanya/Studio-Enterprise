@@ -202,6 +202,30 @@ async function ensureCollections(): Promise<void> {
   );
   await db.collection('pendingGroundingRechecks').createIndex({ nextCheckAt: 1 });
 
+  // 16. resolvedPrincipalCache — per (customer, Microsoft tenant, engine, Google
+  //     identity) cache of whether a principal already holds a Gemini Enterprise
+  //     license and the engine-scoped agentspaceUser role. Protects the two
+  //     rate-limited Discovery Engine checks ensureAgentAccess makes before its
+  //     existing per-agent grant — see services/gemini.ts and
+  //     .claude/memory/decisions.md, 2026-08-12. Distinct from `identityMappings`
+  //     (that's the customer's manual override map; this is checked API state).
+  await ensure('resolvedPrincipalCache');
+  await db.collection('resolvedPrincipalCache').createIndex(
+    { appUserId: 1, tenantId: 1, engine: 1, googleEmail: 1 },
+    { unique: true },
+  );
+
+  // 17. agentConnectorIdentity — which Google account ONE SPECIFIC source agent's
+  //     connector should impersonate (Erik's agent -> Erik's Drive, Alex's -> Alex's),
+  //     distinct from the shared service-account key used across a whole migration.
+  //     See db/repos/agentConnectorIdentity.ts and
+  //     docs/connector-architecture-decisions.md §12.5.
+  await ensure('agentConnectorIdentity');
+  await db.collection('agentConnectorIdentity').createIndex(
+    { appUserId: 1, sourceId: 1, connectorId: 1 },
+    { unique: true },
+  );
+
   // ── Seed the first accounts ───────────────────────────────────────────────
   //
   // The credentials come from the environment, never from this file. They used to be

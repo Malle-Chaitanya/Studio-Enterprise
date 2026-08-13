@@ -224,34 +224,38 @@ export async function runAgentTurn(input: AgentChatInput, emit: SseEmit): Promis
   }
 
   const clientMap = (input.clientState?.userMap as Record<string, string>) || {};
-  const agents = input.clientState?.agents ?? [];
-  const agentCount = Array.isArray(agents)
-    ? agents.reduce((n, u) => n + (u.botIds?.length ?? 0), 0)
-    : 0;
+  const environments = Array.isArray(input.clientState?.envs) ? input.clientState!.envs! : [];
+  const agentSelections = Array.isArray(input.clientState?.agents) ? input.clientState!.agents! : [];
 
   const system = buildSystemPrompt({
     step: input.step,
     pathname: input.pathname,
     msConnected: !!input.session.tenantId,
     googleConnected: !!input.session.gEmail,
-    mappedUsers: Object.keys(clientMap).filter((k) => clientMap[k]).length,
-    selectedAgents: agentCount,
+    environments,
+    agentSelections,
+    mappedUsersCount: Object.keys(clientMap).filter((k) => clientMap[k]).length,
+    hasPlan: !!input.session.plan,
     llmEnabled: true,
   });
 
-  // On an auto-fired trigger there's no typed question — ask the model to
-  // either react to the click that happened, or orient on the new step,
-  // instead of echoing a blank/sentinel message.
+  // On an auto-fired trigger there's no typed question. The system prompt already
+  // carries full current-state + panel context, so the model has everything it needs
+  // to react specifically instead of falling back on a generic "Welcome to X" line —
+  // that fallback was the actual, confirmed cause of every navigation producing the
+  // same canned message (2026-08-13). Told explicitly NOT to default to that here.
   const effectiveMessage = input.systemTrigger
     ? input.actionNote
       ? `The user just did this in the UI (they didn't type anything): "${input.actionNote}". In ONE short ` +
         `sentence, acknowledge it and add the next useful thing only if it's genuinely non-obvious. Do NOT ` +
         `call any tools, don't ask a question back, and don't just repeat the action verbatim.`
-      : `The user just navigated here — they didn't type anything. In ONE short sentence (max ~20 words), ` +
-        `welcome them to the "${(input.step && STEP_TITLES[input.step]) || input.step || input.pathname || 'this step'}" ` +
-        `step and say what it's for. This is a short orientation only — do NOT call any tools (no listing ` +
-        `environments/agents, no live data) and don't ask a question back; the user can ask for specifics ` +
-        `or tap a chip afterward.`
+      : `The user just navigated to the "${(input.step && STEP_TITLES[input.step]) || input.step || input.pathname || 'current'}" ` +
+        `step — they didn't type anything. Look at the Current State block in the system prompt: if there's a ` +
+        `blocker, name it and the one fastest fix in ONE short sentence. If there is NOT a blocker (e.g. they ` +
+        `already have agents selected, or mappings already exist), acknowledge that specific state instead of ` +
+        `describing the step generically — e.g. "3 agents ready to go — head to Connectors or straight to a dry run." ` +
+        `Do NOT open with "Welcome to..." — vary this every time based on what's actually true right now. Max ` +
+        `~20 words. Do NOT call any tools and don't ask a question back; the user can ask for specifics or tap a chip.`
     : input.message;
 
   const messages: ChatMessage[] = [

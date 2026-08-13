@@ -103,14 +103,17 @@ export function Migrate() {
   };
 
   // Build the plan from the Select-Data selection + Select-&-Map projects, then run.
-  const run = async (dry: boolean) => {
+  // `ack` defaults to the checkbox state (used by the cold-start live path below), but a
+  // caller that already has its own basis for proceeding — e.g. "Start Live Migration"
+  // right after a dry run — can pass it explicitly instead of requiring the checkbox too.
+  const run = async (dry: boolean, ack: boolean = ackAclLoss) => {
     if (totalAgents === 0) return;
     const scope: MigrationScope = {
       kind: 'selection',
       units: units.map((u) => ({ env: u.env, botIds: u.botIds })),
     };
     setBusy(true);
-    const p = await planMigration(session, scope, { environmentMap: dest }, dry, ackAclLoss).catch(() => null);
+    const p = await planMigration(session, scope, { environmentMap: dest }, dry, ack).catch(() => null);
     setBusy(false);
     if (!p) {
       setStatus('Could not build the migration plan.');
@@ -316,7 +319,12 @@ export function Migrate() {
                     className="wbtn primary"
                     onClick={() => {
                       wizard?.notifyAction('Started the live migration after a dry run');
-                      void run(false);
+                      // The dry run already surfaced every fidelity/ACL note for this exact
+                      // selection, so going live from here doesn't re-ask for the same
+                      // acknowledgement — pass it explicitly instead of routing through the
+                      // checkbox gate below (that gate stays for a cold-start live run that
+                      // skipped the dry run entirely).
+                      void run(false, true);
                     }}
                     disabled={!summary?.saOk || busy}
                   >

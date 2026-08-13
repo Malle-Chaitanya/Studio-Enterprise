@@ -6,12 +6,13 @@ import { extractAgent, fetchFileAttachmentBytes, resolveSystemUserEmail } from '
 import { findCandidates } from './services/graphSearch.js';
 import { resolveShareUrlSmart, downloadDriveItemBytes } from './services/graphFiles.js';
 import { buildOrganizationProfile } from './services/organizationProfile.js';
-import { createAgent, defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, grantAgentAccess, effectiveGeminiProject, type CreateOutcome } from './services/gemini.js';
+import { createAgent, defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, ensureAgentAccess, effectiveGeminiProject, type CreateOutcome } from './services/gemini.js';
 import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
-import { connectorsSharingCredentials } from './services/connectorCredentials.js';
+import { connectorsSharingCredentials, connectorSecretId } from './services/connectorCredentials.js';
+import { getAgentConnectorIdentity } from './db/repos/agentConnectorIdentity.js';
 import { readinessFor } from './connectors/readiness.js';
 import { buildBoundToolSpecs } from './connectors/boundToolSpec.js';
 import { resolveOpIndex, type CaptureContext } from './connectors/captureOpIndex.js';
@@ -26,10 +27,12 @@ import {
   migrateFileToDocumentStore,
   type DataverseSnapshotResult,
 } from './services/knowledgeDataStoreExecutor.js';
+import { resolveTableSearchTarget, type TableSearchTarget } from './services/dataverseTableExport.js';
 import { attachDataStoreToEngine, dataStoreExists, dataStoreResourcePath } from './services/geminiDataStore.js';
 import { getConnectorOperation, getConnectorDataStores } from './services/geminiConnector.js';
 import { getKnowledgeConnector, markKnowledgeConnectorStatus } from './db/repos/knowledgeConnectors.js';
 import { firstWebsiteSource, publishAgentToGallery } from './services/adkDeployer.js';
+import { ensureSecretInProject, upsertSecretIfChanged } from './services/secretManager.js';
 import { getAdkDeployment, recordAdkDeployment } from './db/repos/adkDeployments.js';
 import { getMigratedSnapshot, saveMigratedSnapshot } from './db/repos/migratedSnapshot.js';
 import { snapshotFrom, detectDrift } from './services/driftDetector.js';
@@ -114,21 +117,35 @@ async function resolveDataverseSnapshotSources(
 ): Promise<DataverseSnapshotResolution[]> {
   const out: DataverseSnapshotResolution[] = [];
   for (const src of sources) {
-    // Table resolution lives in the executor now: resolveTableSearchTarget follows the
-    // real Dataverse join (`dvtablesearch` → `dvtablesearchentity` → `entitylogicalname`)
-    // rather than matching the captured key against table DISPLAY names, which could
-    // never match — that key is an arbitrary generated name, and treating it as an
-    // EntitySetName is why every table-search source failed with a misleading
-    // "EntityDefinitions lookup failed" (confirmed live 2026-08-07).
+    // Table resolution lives in the executor: resolveTableSearchTarget follows the real
+    // Dataverse join (`dvtablesearch` → `dvtablesearchentity` → `entitylogicalname`) rather
+    // than matching the captured key against table DISPLAY names, which could never match —
+    // that key is an arbitrary generated name, and treating it as an EntitySetName is why
+    // every table-search source failed with a misleading "EntityDefinitions lookup failed"
+    // (confirmed live 2026-08-07).
     //
-    // KNOWN REGRESSION, deliberately taken: an earlier display-name resolver expanded ONE
-    // Copilot source naming SEVERAL tables ("FAQ Entry, CF ICP Profile") into one data
-    // store each, because different schemas cannot share a structured store. The correct
-    // resolver reads only the FIRST `dvtablesearchentity` row, so a multi-table source now
-    // snapshots one table. Correct-but-narrow beats broad-but-broken; fixing it properly
-    // means returning every entity from that join, not going back to display names.
-    const snap = await migrateDataverseSnapshot(dest, saToken, dvToken, envUrl, sourceId, src);
-    out.push({ src, snap });
+    // ONE Copilot source can name SEVERAL tables ("FAQ Entry, CF ICP Profile" is two) — the
+    // join can return more than one dvtablesearchentity row. Each needs its own structured
+    // data store (different schemas cannot share one), so resolve here first and expand
+    // into one migrateDataverseSnapshot call per table rather than letting the executor
+    // silently pick just the first (confirmed live 2026-08-12 that it otherwise does).
+    const capturedRef = (src.references?.[0] ?? src.reference ?? '').trim();
+    const { targets } = capturedRef
+      ? await resolveTableSearchTarget(envUrl, dvToken, capturedRef)
+      : { targets: [] as TableSearchTarget[] };
+
+    if (targets.length <= 1) {
+      const snap = await migrateDataverseSnapshot(dest, saToken, dvToken, envUrl, sourceId, src);
+      out.push({ src, snap });
+      continue;
+    }
+
+    for (const target of targets) {
+      const snap = await migrateDataverseSnapshot(dest, saToken, dvToken, envUrl, sourceId, src, target);
+      // Name the resolution after the TABLE so the fidelity report says which one
+      // succeeded or failed, instead of one combined entry for a multi-table source.
+      out.push({ src: { ...src, name: `${src.name} → ${target.entitySetName}` }, snap });
+    }
   }
   return out;
 }
@@ -1932,17 +1949,35 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               if (!usedConnectorIds.has(connectorId)) continue;
               const readiness = readinessFor(connectorId, ops.map((o) => o.id));
               if (!readiness) continue; // no captured API for this connector — already covered above
+              // "Blocked" means this exact call (with the source agent's own fixed
+              // arguments) cannot be reproduced — NOT that the capability is gone. Every
+              // registered connector still gets a live tool wired below regardless of
+              // readiness (buildLiveConnectorSpecsDetailed builds one unconditionally), and
+              // for connectors like Google Drive that tool is a full hand-written
+              // replacement (connector_tools/google_drive.py's 12 actions), not a
+              // degraded stand-in. Reporting these as flatly `lost` claimed the migrated
+              // agent could no longer do the thing at all, when in fact it can — just by
+              // letting the model choose the arguments each time instead of replaying the
+              // ones baked into the original flow. That is a real, worth-reporting
+              // difference, but it is `partial`, not `lost`.
+              const hasLiveTool = liveConnectorSpecs.some((c) => c.id === connectorId);
               for (const blockedOp of readiness.blocked) {
                 result.fidelity.push({
                   component: `connector:${connectorId}:${blockedOp.operationId}`,
-                  status: 'lost',
-                  detail:
-                    `This agent calls "${blockedOp.operationId}" on ${readiness.displayName}, which the ` +
-                    `migrated agent cannot reproduce. ${blockedOp.reason}`,
+                  status: hasLiveTool ? 'partial' : 'lost',
+                  detail: hasLiveTool
+                    ? `This agent called "${blockedOp.operationId}" on ${readiness.displayName} with fixed, ` +
+                      `pre-set arguments. The migrated agent has a live ${readiness.displayName} tool and can ` +
+                      `still do this, but decides its own arguments at conversation time instead of replaying ` +
+                      `the original ones. ${blockedOp.reason}`
+                    : `This agent calls "${blockedOp.operationId}" on ${readiness.displayName}, which the ` +
+                      `migrated agent cannot reproduce. ${blockedOp.reason}`,
                 });
                 emitLog(
-                  'warn',
-                  `  ${row.name}: ${connectorId}.${blockedOp.operationId} cannot be reproduced — reported as lost.`,
+                  hasLiveTool ? 'info' : 'warn',
+                  hasLiveTool
+                    ? `  ${row.name}: ${connectorId}.${blockedOp.operationId} covered by the live tool, not an exact-argument reproduction — reported as partial.`
+                    : `  ${row.name}: ${connectorId}.${blockedOp.operationId} cannot be reproduced — reported as lost.`,
                 );
               }
             }
@@ -1969,7 +2004,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               if (note.status === 'lost') emitLog('warn', `  ${row.name}: ${note.detail}`);
             }
 
-            const scopedConnectors = applicable.map((c) => {
+            let scopedConnectors = applicable.map((c) => {
               const withOps = opsByConnector.has(c.id) ? { ...c, operations: opsByConnector.get(c.id) } : c;
               const bound = boundBuild.byConnector.get(c.id);
               const withBound = bound?.length ? { ...withOps, boundOperations: bound } : withOps;
@@ -1983,6 +2018,48 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                 'info',
                 `    ${row.name}: ${boundCount} connector operation(s) rebuilt as exact API calls with the source agent's own arguments.`,
               );
+            }
+
+            // Google Drive needs a PER-AGENT identity — the shared service-account key
+            // (registry.ts) covers everyone, but WHICH person's Drive THIS agent should
+            // use is never assumed (Erik's agent needs Erik's Drive, Alex's needs Alex's;
+            // see db/repos/agentConnectorIdentity.ts and
+            // docs/connector-architecture-decisions.md §12.5). An agent whose identity was
+            // never confirmed gets NO Drive tool at all — reported as `needs-review`, never
+            // silently pointed at a guess. This must run before every place below that
+            // reads `scopedConnectors` (the secret-sync loop, the deploy call, and the
+            // per-tool fidelity check), which is why `scopedConnectors` is reassigned in
+            // place rather than left as a separate "final" variable those could miss.
+            const driveIndex = scopedConnectors.findIndex((c) => c.id === 'shared_googledrive');
+            if (driveIndex !== -1) {
+              const identity = await getAgentConnectorIdentity(appUserId, row.sourceId, 'shared_googledrive');
+              if (identity?.status === 'confirmed' && identity.impersonateEmail) {
+                // Scoped by agent (sourceId), not by the whole migration — a synthetic
+                // connectorId string that connectorSecretId falls through on (it is not a
+                // real registry id), same trick as the deleted connectorProfileScope.
+                const agentSecretId = connectorSecretId(
+                  `shared_googledrive:agent-${row.sourceId}`,
+                  'impersonate_email',
+                  credentialScope(session),
+                );
+                await upsertSecretIfChanged(saToken, dest.project, agentSecretId, identity.impersonateEmail);
+                const driveEntry = scopedConnectors[driveIndex];
+                scopedConnectors = scopedConnectors.map((c, i) =>
+                  i === driveIndex ? { ...c, secretIds: { ...driveEntry.secretIds, impersonate_email: agentSecretId } } : c,
+                );
+                emitLog('info', `    ${row.name}: Google Drive will act as ${identity.impersonateEmail}.`);
+              } else {
+                scopedConnectors = scopedConnectors.filter((_, i) => i !== driveIndex);
+                result.fidelity.push({
+                  component: 'connector:shared_googledrive:identity',
+                  status: 'needs-review',
+                  detail:
+                    'This agent uses Google Drive, but no Google account has been confirmed for it to act as. ' +
+                    'The migrated agent was deployed WITHOUT the Drive tool until an admin assigns one on the ' +
+                    'Connectors screen.',
+                });
+                emitLog('warn', `  ${row.name}: Google Drive identity not confirmed — Drive tool NOT wired for this agent.`);
+              }
             }
 
             // Copilot topics become ADK sub-agents INSIDE this deployment. Not one
@@ -2011,6 +2088,23 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               });
             if (topicSubAgents.length) {
               emitLog('info', `    ${row.name}: ${topicSubAgents.length} topic(s) → sub-agents in one engine.`);
+            }
+
+            // A per-environment destination (SelectMap) can point THIS agent at a
+            // different Google project than the one connector credentials were saved
+            // to (always session.geminiProject — see routes/migrate.ts). Without this,
+            // the deploy and its per-secret IAM grant both "succeed" while the secret
+            // quietly does not exist where the running agent will ever look for it —
+            // confirmed live 2026-08-13 (Google Drive, 404 at inference, invisible
+            // until someone actually queried the deployed agent). Best-effort and cheap
+            // when already synced: no-ops once the target project already has it.
+            if (session.geminiProject) {
+              const connectorSecretIdsForThisAgent = scopedConnectors.flatMap((c) => Object.values(c.secretIds ?? {}));
+              await Promise.all(
+                connectorSecretIdsForThisAgent.map((secretId) =>
+                  ensureSecretInProject(saToken, session.geminiProject!, dest.project, secretId),
+                ),
+              );
             }
 
             const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, {
@@ -2627,20 +2721,26 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               'ADK registration shares ALL_USERS automatically; source was narrower — restrict via console Share / User permissions. Gemini API cannot apply per-user/group sharing.',
             );
             result.permissionHandoff = handoff;
-            const grant = await grantAgentAccess(dest, saToken, create.agentId!, { users: handoff.grantUsers, groups: handoff.grantGroups });
+            const grant = await ensureAgentAccess(
+              dest,
+              saToken,
+              create.agentId!,
+              { users: handoff.grantUsers, groups: handoff.grantGroups },
+              { appUserId, tenantId: session.tenantId ?? '' },
+            );
             result.fidelity.push(...permissionFidelityNotes(perms, false, handoff));
             if (grant.granted.length) {
               result.fidelity.push({
                 component: 'sharing',
                 status: 'mapped',
-                detail: `Auto-granted chat/use access (roles/discoveryengine.agentUser) to: ${grant.granted.join(', ')}.`,
+                detail: `Auto-granted chat/use access (license + engine role + roles/discoveryengine.agentUser) to: ${grant.granted.join(', ')}.`,
               });
             }
             if (grant.failed.length) {
               result.fidelity.push({
                 component: 'sharing',
                 status: 'needs-review',
-                detail: `Could not auto-grant access to ${grant.failed.map((f) => f.principal).join(', ')} — grant manually via console User permissions. (${grant.failed[0]?.error})`,
+                detail: `Could not grant access to ${grant.failed.map((f) => `${f.principal} (${f.failedAt})`).join(', ')} — grant manually via console User permissions. (${grant.failed[0]?.error})`,
               });
             }
             emitLog(
@@ -2697,20 +2797,26 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               'Gemini API has no per-user/group agent sharing (only ALL_USERS). Manual console steps required.',
             );
             result.permissionHandoff = handoff;
-            const grant = await grantAgentAccess(dest, saToken, create.agentId!, { users: handoff.grantUsers, groups: handoff.grantGroups });
+            const grant = await ensureAgentAccess(
+              dest,
+              saToken,
+              create.agentId!,
+              { users: handoff.grantUsers, groups: handoff.grantGroups },
+              { appUserId, tenantId: session.tenantId ?? '' },
+            );
             result.fidelity.push(...permissionFidelityNotes(perms, false, handoff));
             if (grant.granted.length) {
               result.fidelity.push({
                 component: 'sharing',
                 status: 'mapped',
-                detail: `Auto-granted chat/use access (roles/discoveryengine.agentUser) to: ${grant.granted.join(', ')}.`,
+                detail: `Auto-granted chat/use access (license + engine role + roles/discoveryengine.agentUser) to: ${grant.granted.join(', ')}.`,
               });
             }
             if (grant.failed.length) {
               result.fidelity.push({
                 component: 'sharing',
                 status: 'needs-review',
-                detail: `Could not auto-grant access to ${grant.failed.map((f) => f.principal).join(', ')} — grant manually via console User permissions. (${grant.failed[0]?.error})`,
+                detail: `Could not grant access to ${grant.failed.map((f) => `${f.principal} (${f.failedAt})`).join(', ')} — grant manually via console User permissions. (${grant.failed[0]?.error})`,
               });
             }
             emitLog(
