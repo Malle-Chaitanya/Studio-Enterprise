@@ -277,7 +277,15 @@ redirect. Never hand-write TLS into that file and then re-run certbot over it.
 No systemd unit and no sudoers rule. `restart: unless-stopped` survives a host reboot via
 the Docker daemon.
 
-### GHCR access
+### Building on the host instead
+
+The deploy in use today builds on the host from a checkout — `docker compose up -d
+--build` against `/data/studio-ent/src` — so **none of the GHCR section below applies**:
+no registry, no `docker login`, no package visibility to flip. See
+[DEPLOY-MANUAL.md](DEPLOY-MANUAL.md) → "The deploy — build on the host". Rollback there
+is `git -C src checkout <sha> && docker compose up -d --build`, not a `TAG=` pull.
+
+### GHCR access (registry path only)
 
 The first workflow run publishes both packages **private**. Either make them public (the
 repo already is) at `github.com/users/Malle-Chaitanya/packages` → package → Package

@@ -148,7 +148,36 @@ The first workflow run publishes both packages **private**. Either make them pub
 Change visibility, or `docker login ghcr.io` once on the host with a PAT carrying
 `read:packages`. Public is simpler and matches the repo.
 
-## The deploy
+## The deploy — build on the host
+
+No registry, no CI, no GHCR login. The host builds both images from a checkout and
+compose tags them with the same names the registry path uses, so switching to
+`docker compose pull` later needs no edit.
+
+```bash
+# once — source lives beside the compose file, NOT inside it
+cd /data/studio-ent
+git clone --branch business https://github.com/Malle-Chaitanya/Studio-Enterprise.git src
+cp src/deploy/docker-compose.yml .
+
+# every release
+cd /data/studio-ent
+git -C src pull
+docker compose up -d --build --remove-orphans
+docker image prune -f
+```
+
+`src/` is deliberately a sibling of `.env` and `service_account.json`, not a parent:
+a `git clean`/re-clone can then never take the secrets with it. `SRC` overrides the
+build context if the checkout lives elsewhere (`SRC=/home/laxman/csge docker compose …`).
+
+The first build is slow — the API image installs the Vertex/ADK Python stack twice
+over (see `server/Dockerfile` for why it cannot be one pass). Later builds hit the
+layer cache unless `server/requirements.txt` or a lockfile changed.
+
+Only `web` changed? `docker compose up -d --build web` rebuilds just that one.
+
+### Registry path (if CI is ever turned back on)
 
 ```bash
 cd /data/studio-ent

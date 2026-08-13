@@ -42,6 +42,19 @@ services:
   # ---------------------------------------------------------------------------
   api:
     image: ghcr.io/malle-chaitanya/studio-enterprise-api:${TAG:-latest}
+
+    # Build from the checkout at ./src, so `docker compose up -d --build` on the
+    # host is a complete deploy with no registry involved. The `image:` line above
+    # stays: with both present, compose builds and TAGS the result with that name,
+    # so a later `docker compose pull` path still lines up. SRC defaults to ./src
+    # and can point anywhere the repo is checked out.
+    #
+    # The context is the REPO ROOT, not server/ — every COPY in the Dockerfile is
+    # repo-relative (it needs server/package.json AND server/scripts).
+    build:
+      context: ${SRC:-./src}
+      dockerfile: server/Dockerfile
+
     restart: unless-stopped
     depends_on:
       mongo:
@@ -95,6 +108,9 @@ services:
   # ---------------------------------------------------------------------------
   web:
     image: ghcr.io/malle-chaitanya/studio-enterprise-web:${TAG:-latest}
+    build:
+      context: ${SRC:-./src}
+      dockerfile: web/Dockerfile
     restart: unless-stopped
     ports:
       - "127.0.0.1:8084:80"
