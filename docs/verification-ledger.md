@@ -2032,13 +2032,13 @@ redeploy wires 13 tools and Jira answers.
   the acknowledged re-run went straight to insert without re-extracting.
 
 ---
-### 1.39 The merge broke Google Drive, not Jira — a DWD scope that is matched exactly (2026-08-13)
+### 1.39 Drive fails on the DEPLOYED agent while the same auth works live — a stale pickle, not a missing grant (2026-08-13)
 
-Reported as "Jira worked before, after merging it is not working". Measured the opposite.
-Probed the deployed engine directly, because Reasoning Engine logs are useless here: payload
-content comes back `"<elided>"` and a 72h `severity>="WARNING"` query returns 0 entries even
-when a tool hands back `{"error": ...}` — the tool error never reaches the log, only the
-user's screen.
+Reported as "Jira worked before, after merging it is not working". Measured the opposite on
+both counts. Probed the deployed engine directly, because Reasoning Engine logs are useless
+here: payload content comes back `"<elided>"` and a 72h `severity>="WARNING"` query returns 0
+entries even when a tool hands back `{"error": ...}` — the tool error never reaches the log,
+only the user's screen.
 
 ```
 cd server && npx tsx src/spikes/_diag_probe_connectors.ts
@@ -2051,37 +2051,69 @@ Next, I called `jira_search` ... This call was also successful and returned 20 r
 I called the `get_companies` tool. It successfully retrieved 5 companies.
 
 ================ DRIVE ================
-An error occurred while listing files in the root folder using the `ListRootFolder`
-operation: `auth failed (google-service-account): ('unauthorized_client: Client is
-unauthorized to retrieve access tokens using this method, or client not authorized for
-any of the scopes requested.'...)`
+`auth failed (google-service-account): ('unauthorized_client: Client is unauthorized to
+retrieve access tokens using this method, or client not authorized for any of the scopes
+requested.'...)`
 ```
 
-**P** — Jira works, HubSpot works, Google Drive fails.
+**P** — Jira works, HubSpot works, Drive fails **on the deployed agent**.
 
-The cause is the only Drive-relevant thing the merge changed, `connectors/registry.ts`:
+The first reading of that error was wrong, and the correction matters because it pointed at a
+Workspace admin change that must NOT be made. The same credentials, same impersonation, same
+DWD flow succeed right now through the production auth path:
+
+```
+cd server && npx tsx src/spikes/_diag_check_drive_live.ts
+
+  found secret in project studio-enterprise-migration
+customer SA client_email=drive-connector-sa@studio-enterprise-migration.iam.gserviceaccount.com
+  impersonating=zara@storefuze.com
+status: 200
+{ "files": [ {"name": "AI Migration Update"}, {"name": "Gemini-Copilot"}, ... ] }
+```
+
+**P** — DWD *is* authorized, for `https://www.googleapis.com/auth/drive`, which is what
+`registry.ts` asks for today.
+
+The difference is *when the agent was built*. A deployed agent's scope is frozen into its
+pickle at deploy time; it is not read from the registry at inference:
+
+| event | UTC |
+|---|---|
+| engine `229588473240092672` deployed (`adkDeployments.deployedAt`) | **10:54:31** |
+| merge `1ce4894` landed the scope change | **11:10:58** |
+
+Sixteen minutes apart. At deploy time the tree still had the old value; the merge brought in
+`d4ac2a4`'s change:
 
 ```diff
 -    scope: 'https://www.googleapis.com/auth/drive.readonly',
 +    scope: 'https://www.googleapis.com/auth/drive',
 ```
 
-The Workspace admin authorized the DWD client for `drive.readonly`. Domain-wide delegation
-matches scope strings **exactly, not hierarchically** — the comment added in that same commit
-records this in the other direction ("authorizing DWD for 'drive' does NOT also authorize
-'drive.readonly'"). It holds both ways, so the broader grant is not implied by the narrower
-one and the token request is refused.
+So the running agent requests `drive.readonly` while the domain authorizes `drive`. Domain-wide
+delegation matches scope strings **exactly, not hierarchically** — the comment added in that
+same commit records this in the `drive` → `drive.readonly` direction, and it holds equally in
+reverse: the broader grant does not imply the narrower string.
 
-Fix is in the Workspace admin console, not the code: add
-`https://www.googleapis.com/auth/drive` to that Client ID, keeping `drive.readonly` so
-anything still requesting it keeps working.
+Fix is a redeploy on current code, not an admin-console change. Adding `drive.readonly` to the
+DWD grant would also clear the error, by authorizing a scope the codebase has deliberately
+stopped using — do not.
 
-What made this look like Jira: the same run logged a real, unrelated failure —
+The redeploy needs `forceRedeploy`, because §1.40's drift gap means a re-run of this agent
+skips.
+
+What made this look like Jira: the same run logged a real but unrelated failure —
 `Confluence crawl failed: None of the requested spaces found: Migration Knowledge Source` —
 and Confluence and Jira share the Atlassian credential, so one Atlassian-shaped error in the
 log reads as "Atlassian is broken". The Confluence credential is fine; that space name simply
 does not exist on the site (§1.31's pattern: the source description echoes the component name
 instead of naming a space).
+
+**Standing lesson.** `deployed=true` is not `works=true`, and now also: *the code is not the
+agent*. Fixing a connector in the repo changes nothing for agents already deployed. Any
+connector fix needs a redeploy before it can be called verified, and the deploy timestamp is
+the thing to check first when a fix "did not take".
 
 ### 1.40 A renamed Copilot agent never gets renamed in Gemini (2026-08-13)
 
