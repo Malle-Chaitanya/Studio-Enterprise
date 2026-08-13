@@ -1,21 +1,13 @@
 import 'dotenv/config';
-import { MongoClient } from 'mongodb';
-import { config } from '../config.js';
-const c = await MongoClient.connect(config.MONGO_HOST);
-const db = c.db(config.CSGE_DB);
-const s = await db.collection('migrationSessions').find({}).sort({ _id: -1 }).limit(1).next() as any;
-if (!s) console.log('NO SESSION — you need to sign in / connect');
-else {
-  console.log(`session   : ${s._id}`);
-  console.log(`step      : ${s.step}`);
-  console.log(`msTenant  : ${s.tenantId ? 'connected' : 'NOT connected'}`);
-  console.log(`dvToken   : ${s.dvToken ? 'present' : 'MISSING (Microsoft not connected)'}`);
-  console.log(`gEmail    : ${s.gEmail ?? '(none — Google not connected)'}`);
-  console.log(`geminiProj: ${s.geminiProject ?? '(none)'}`);
-  console.log(`saOk      : ${s.saOk}`);
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+await connectMongo();
+const rows = await getDb().collection('migrationSessions').find({}).sort({ $natural: -1 }).limit(3).toArray();
+for (const s of rows as any[]) {
+  console.log(`\nsession ${s.id ?? s._id}  appUserId=${s.appUserId}`);
+  console.log(`  gEmail=${s.gEmail}  gToken=${s.gToken ? 'present' : 'MISSING'}  gRefresh=${s.gRefreshToken ? 'present' : 'MISSING'}`);
+  console.log(`  geminiProject=${s.geminiProject}  tenantId=${s.tenantId ? 'present' : 'MISSING'}`);
+  console.log(`  environments=${(s.environments ?? []).map((e: any) => e.name).join(', ')}`);
+  console.log(`  plan.destination=${JSON.stringify(s.plan?.destination ?? null).slice(0, 300)}`);
 }
-console.log('\n--- credentials by project ---');
-for (const d of await db.collection('connectorCredentials').find({}).toArray() as any[]) {
-  console.log(`  ${d.connectorId.padEnd(26)} ${d.project}`);
-}
-await c.close(); process.exit(0);
+process.exit(0);

@@ -1656,6 +1656,53 @@ has answered from.
 
 ---
 
+### 1.31 Re-migrating an already-migrated agent: no duplicate, but a billable orphan (2026-08-13)
+
+Run 1 — `Hubspot agentt`, migrated 2026-08-12, re-run through `resolveScope` + `runMigration`:
+
+```
+  Hubspot agentt
+    created  : true  deployed=true  agentId=16165865784107067164
+    shared   : true   verified: -
+    ERROR    : terminated
+```
+
+`agentId` is **identical** to the pre-existing record, so no second gallery agent was
+created. Idempotency keys on `(appUserId, envUrl, sourceId, project, engine)` from
+`adkDeployments` — NOT on the display name — with a documented fallback for the same project
+spelled as its ID or its NUMBER (that mismatch duplicated `Confluence_agent` on 2026-08-07).
+
+**What it did NOT do is free.** The record's `reasoningEngine` changed
+`4031470983670923264` → `6098904687610691584`: redeploy repoints the same agent at a fresh
+engine, because ADK has no in-place update. Both engines are alive (**P**):
+
+```
+  4031470983670923264  HTTP 200  ALIVE — "Hubspot agentt" created 2026-08-12T14:38:40Z
+  6098904687610691584  HTTP 200  ALIVE — "Hubspot agentt" created 2026-08-13T03:26:43Z
+```
+
+`deleteReasoningEngine()` is only called when REGISTRATION FAILS, so a successful redeploy
+leaves the previous engine running and billed with nothing pointing at it. This is the
+mechanism behind the already-recorded observation that 81 of 86 engines in the project have
+no owning record. **Not fixed** — a re-migration is safe for duplicates and expensive for
+engines.
+
+Run 2 — `HubSpot Agent`, never migrated: created cleanly, `agentId=17963944182553943980`,
+engine `894432368230662144`, 2 HubSpot connectors wired as live tools.
+
+**Both runs ended `verified: -` with `TypeError: terminated: read ECONNRESET`.** The verify
+step is a network call that reset twice identically; `created/deployed/shared` are all true.
+A direct `:streamQuery` probe returned `404` — but it returned 404 against YESTERDAY's
+working engine too, so the probe is unsound and proves nothing about either agent. Agent
+health after this run is **U**: not shown working, and not shown broken.
+
+**Operational note that nearly invalidated the test:** Docker was not running, so Mongo was
+down and the server booted "without persistence". With no `adkDeployments` collection there
+is no record to match, and a re-migration WOULD have created a duplicate. Mongo being up is
+part of the idempotency guarantee, not incidental to it.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
