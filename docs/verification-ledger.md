@@ -1739,6 +1739,56 @@ against a genuinely deleted agent; the next UI run is that test.
 
 ---
 
+### 1.33 Two defects the first UI run exposed (2026-08-13)
+
+**Defect A — a deleted agent still reported "already exists".** §1.32's existence check was
+in the wrong place. Live run at 04:21, both agents deleted in the console beforehand:
+
+```
+[04:21:14] adkDeployments: matched an existing deployment by engine - the project was
+           recorded under a different spelling   sourceId=c58e5385-...
+[04:21:15] Hubspot agentt: already exists  skipped
+[04:21:15] HubSpot Agent: already exists  skipped
+```
+
+The API disagreed at that very moment (**P**):
+
+```
+  agent 16165865784107067164: HTTP 404
+  agent 17963944182553943980: HTTP 404
+  33 agent(s) listed under this assistant  (neither id among them)
+```
+
+Two causes, one on top of the other:
+
+1. `getMigratedSnapshot()` matched on `project`, with none of the ID-vs-NUMBER fallback that
+   `getAdkDeployment()` carries. The log line above is that fallback firing for the
+   deployment — while the snapshot lookup, one line later, missed for exactly the reason the
+   fallback exists. Snapshots exist for both agents (9 rows in `migratedAgentSnapshots`), so
+   this was purely a spelling mismatch.
+2. A missed snapshot took the "migrated before drift-tracking existed" early return, which
+   sits ABOVE the existence check and returns `alreadyExists` unconditionally. **A check a
+   return statement can jump over is not a check.**
+
+Fixed by giving the snapshot repo the same engine-based fallback, and by hoisting the
+existence check to the first thing inside `if (existing)` so no skip path can bypass it.
+
+**Defect B — the connectors screen contradicted itself.** The custom HubSpot connector card
+read *"We don't support this connector yet, so the new agent won't be able to use it"*
+directly above *"All 4 operations map to Get CRM objects from Hubspot's own API"*, titled
+with the raw id `shared_get-20crm-20objects-20from-20hubspot-...`. Both sentences came from
+one filter: `callableConnectors` required a registry `def`, and a CUSTOM connector can never
+have one — it was built in the customer's tenant. So it fell into the unsupported bucket
+despite binding 4 operations, and there was nowhere to enter its token.
+
+Callability is now decided by server-side readiness (`readiness.bindable.length`), not
+registry membership, and the card shows the customer's own name for it.
+
+Grade **T**: server + web typecheck clean, 109 unit tests, web build succeeds. Neither fix
+has been through a UI run yet — the next one is the test.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run

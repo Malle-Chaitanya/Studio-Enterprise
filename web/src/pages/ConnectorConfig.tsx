@@ -820,7 +820,7 @@ function UnsupportedConnectorCard({ c }: { c: DetectedConnector }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ fontSize: 20 }}>⚠️</span>
         <div style={{ flex: 1 }}>
-          <strong style={{ fontSize: 14 }}>{c.connectorId}</strong>
+          <strong style={{ fontSize: 14 }}>{c.readiness?.displayName ?? c.connectorId}</strong>
           <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
             Used by {c.flowCount} flow{c.flowCount !== 1 ? 's' : ''}
             {c.flowNames.length ? `: ${c.flowNames.slice(0, 3).join(', ')}` : ''}
@@ -998,9 +998,30 @@ export function ConnectorConfig() {
   // only lands in a group bucket once `requirements` has resolved its `group`, so on
   // the (rare) requirements-fetch failure it falls back to its own ConnectorCard
   // instead of vanishing.
-  const callableConnectors = connectors.filter(
-    (c): c is DetectedConnector & { def: ConnectorDef } => !!c.def && !c.unsupported,
-  );
+  // "Callable" means we can build a real call for it — NOT that it is in our registry.
+  //
+  // A CUSTOM connector never has a registry `def`: it was built in the customer's own
+  // tenant and named whatever they typed. Requiring `def` here dropped it into the
+  // unsupported bucket, so the screen showed "we don't support this connector yet" on the
+  // same card that said "all 4 operations map to Get CRM objects from Hubspot's own API" —
+  // two contradictory sentences about a connector that binds and has a credential field
+  // waiting to be filled (reported from this screen live 2026-08-13). Worse, being in that
+  // bucket meant there was nowhere to enter its token.
+  //
+  // Server-side readiness is the authority: if it lists bindable operations, the connector
+  // is callable and belongs in the configurable list with everything else.
+  const displayDefFor = (c: DetectedConnector): ConnectorDef => ({
+    id: c.connectorId,
+    // The customer's own name for it, never the percent-encoded id.
+    name: c.readiness?.displayName ?? c.connectorId,
+    category: 'custom',
+    icon: '🔧',
+    // Fields come from the server (`req.fields`) for custom connectors; the registry has none.
+    credentials: [],
+  });
+  const callableConnectors = connectors
+    .filter((c) => !c.unsupported && (!!c.def || !!c.readiness?.bindable.length))
+    .map((c) => ({ ...c, def: c.def ?? displayDefFor(c) })) as (DetectedConnector & { def: ConnectorDef })[];
   const groupedConnectors = new Map<string, (DetectedConnector & { def: ConnectorDef })[]>();
   const standaloneConnectors: (DetectedConnector & { def: ConnectorDef })[] = [];
   for (const c of callableConnectors) {
@@ -1141,7 +1162,7 @@ export function ConnectorConfig() {
 
           {/* Detected but not callable — shown, never hidden */}
           {connectors
-            .filter((c) => c.unsupported || !c.def)
+            .filter((c) => (c.unsupported || !c.def) && !c.readiness?.bindable.length)
             .map((c) => (
               <UnsupportedConnectorCard key={c.connectorId} c={c} />
             ))}

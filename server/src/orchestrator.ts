@@ -1583,6 +1583,30 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // minting a second, billable Reasoning Engine.
             const existing = await getAdkDeployment(appUserId, row.envUrl, row.sourceId, dest);
             if (existing) {
+              // FIRST question, before any skip can fire: is the agent we would reuse still
+              // there? Deleting an agent in the Gemini console leaves the source unchanged
+              // and every data store healthy, so every other check below passes and the run
+              // reports `already exists` about something that is gone.
+              //
+              // This check sat lower down and was jumped over by the no-snapshot early
+              // return, which is exactly what happened live on 2026-08-13: two agents were
+              // deleted in the console, both were reported "already exists - skipped", and
+              // the API answered 404 for both ids at that very moment. A check that a
+              // return statement can skip is not a check.
+              const stillThere = await getAgent(dest, saToken, existing.agentId).catch(() => null);
+              if (!stillThere) {
+                emitLog(
+                  'warn',
+                  `  ${row.name}: the previously migrated agent (${existing.agentId}) no longer exists in Gemini - deleted outside this tool. Recreating it.`,
+                );
+                result.fidelity.push({
+                  component: 'resync',
+                  status: 'needs-review',
+                  detail:
+                    `The agent migrated earlier (id ${existing.agentId}) was not found in Gemini - it was deleted outside this tool. ` +
+                    'It has been recreated, so its id has changed; update any link or bookmark that pointed at the old one.',
+                });
+              }
               const priorSnapshot = await getMigratedSnapshot(appUserId, row.envUrl, row.sourceId, dest);
               // An explicit force wins over every skip below. Drift only knows about the
               // SOURCE agent, so without this there is no way to push a change that
@@ -1590,7 +1614,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               // onto an agent that is already migrated.
               if (plan.forceRedeploy) {
                 emitLog('warn', `  ${row.name}: forced redeploy — deploying again even though the source is unchanged.`);
-              } else if (!priorSnapshot) {
+              } else if (!priorSnapshot && stillThere) {
                 // Migrated before drift-tracking existed — record a baseline now
                 // rather than guess whether it changed; drift detection starts
                 // for real from the NEXT re-run.
@@ -1639,32 +1663,6 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               const unhealthySharePoint = spConnectorSources
                 .filter((src) => !spCopyModeCoveredSrcs.has(src) && !spCoveredNames.has(src.name))
                 .map((src) => src.name);
-
-              // Does the agent we would "reuse" still EXIST?
-              //
-              // Deleting an agent in the Gemini console is a normal thing for a customer to
-              // do — start over, clean up a test. Nothing about that deletion touches the
-              // source agent, so drift stays clean, the knowledge stores stay healthy, and
-              // the skip below fired: the run reported `created: true` with the id of an
-              // agent that is no longer there. A report that says migrated about a
-              // non-existent agent is the worst failure this pipeline has, and it is the
-              // one shape of destination damage the health checks above did not cover.
-              //
-              // One GET, only on the skip path, so it costs nothing on a real deploy.
-              const stillThere = await getAgent(dest, saToken, existing.agentId).catch(() => null);
-              if (!stillThere) {
-                emitLog(
-                  'warn',
-                  `  ${row.name}: the previously migrated agent no longer exists in Gemini (deleted out-of-band) — recreating it.`,
-                );
-                result.fidelity.push({
-                  component: 'resync',
-                  status: 'needs-review',
-                  detail:
-                    `The agent migrated earlier (id ${existing.agentId}) was not found in Gemini — it was deleted outside this tool. ` +
-                    'It has been recreated, so its id has changed; update any link or bookmark that pointed at the old one.',
-                });
-              }
 
               // Four independent reasons to redeploy: the source changed, its knowledge
               // broke, the agent itself is gone, or a human asked. forceRedeploy is last
