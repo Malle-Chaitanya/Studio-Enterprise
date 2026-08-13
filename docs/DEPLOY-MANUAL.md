@@ -7,22 +7,31 @@ path that is known to work, instead of discovering the host for the first time.
 Verified against the target host on 2026-08-13: Ubuntu, OpenSSH 9.6p1, **Node v24.16.0**,
 npm 11.13.0, rsync 3.2.7, nginx already serving three other sites.
 
-## Two decisions to make first
+## Settled layout
 
-**1. Which user runs the API.** `deploy/csge-server.service` ships with `User=csge`, and
-that user does not exist on the host. Either:
+No dedicated service user: the API runs as `laxman`. Everything lives under
+`/data/studio-ent`:
 
-- **Create it** (recommended — the API then cannot read your home directory, which is what
-  `ProtectHome=true` in the unit is for):
-  ```bash
-  sudo useradd --system --no-create-home --shell /usr/sbin/nologin csge
-  ```
-- **Or** change `User=`/`Group=` in the unit to `laxman` and accept that the API process
-  runs as you.
+```
+/data/studio-ent/.env       the environment — OUTSIDE the rsync targets, so a deploy
+                            with --delete can never remove it
+/data/studio-ent/server/    dist/ + package.json + node_modules   (SERVER_DIR)
+/data/studio-ent/web/       the built SPA served by nginx          (WEB_DIR)
+```
 
-**2. The hostname.** `deploy/nginx-csge.conf` says `csge.example.com`. Point a DNS A record
-at the server first, then put the real name in `server_name`. Until DNS exists the site is
-reachable only by IP, and certbot cannot issue a certificate.
+The unit, the nginx config and `deploy.yml` are already pointed here. `ProtectHome=true`
+was removed from the unit — it hides `/home`, which is wrong for a service running as a
+real login user.
+
+## The hostname
+
+`deploy/nginx-csge.conf` says `csge.example.com`. Point a DNS A record at the server
+first, then put the real name in `server_name`. Until DNS exists the site is reachable
+only by IP, and certbot cannot issue a certificate.
+
+Do **not** use `server_name _` as a shortcut: this nginx already serves
+`aicommunication.cftools.live`, `aitoolsmigration` and `ats.cftools.live`, and the
+catch-all would swallow their unmatched traffic.
 
 ## Node version
 
@@ -33,29 +42,29 @@ manual deploy on 24 tells you whether 24 works at all.
 
 ## One-time host setup
 
-```bash
-# Directories. Owned by the SSH user so rsync needs no sudo; readable by the service user.
-sudo mkdir -p /opt/csge/server /var/www/csge
-sudo chown -R laxman:laxman /opt/csge /var/www/csge
+As root, since /data/studio-ent was created as root:
 
-# Environment. Real secrets, never from CI, never in git.
-sudo -u laxman cp /dev/null /opt/csge/server/.env
-# ...fill it in from server/.env.example, then lock it down:
-chmod 600 /opt/csge/server/.env
-# If the service runs as `csge`, it must be able to read the file systemd hands it:
-sudo chown csge:csge /opt/csge/server/.env   # skip if running as laxman
+```bash
+# rsync runs as laxman and cannot write a root-owned directory.
+mkdir -p /data/studio-ent/server /data/studio-ent/web
+chown -R laxman:laxman /data/studio-ent
+
+# .env arrived as mode 644 — world-readable, on a host that also runs three other
+# projects. Every other user on that box could read the Microsoft and Google client
+# secrets and the Mongo credentials.
+chmod 600 /data/studio-ent/.env
 
 # systemd unit
-sudo cp deploy/csge-server.service /etc/systemd/system/csge-server.service
-sudo systemctl daemon-reload
-sudo systemctl enable csge-server
+cp deploy/csge-server.service /etc/systemd/system/csge-server.service
+systemctl daemon-reload
+systemctl enable csge-server
 
 # nginx — validate BEFORE reloading; three other sites share this nginx and a bad
 # config takes them all down.
-sudo cp deploy/nginx-csge.conf /etc/nginx/sites-available/csge
-sudo ln -sf /etc/nginx/sites-available/csge /etc/nginx/sites-enabled/csge
-sudo nginx -t
-sudo systemctl reload nginx
+cp deploy/nginx-csge.conf /etc/nginx/sites-available/csge
+ln -sf /etc/nginx/sites-available/csge /etc/nginx/sites-enabled/csge
+nginx -t
+systemctl reload nginx
 ```
 
 ## Sudoers for the automated deploy (add now, needed later)
@@ -83,17 +92,17 @@ laxman ALL=(root) NOPASSWD: /bin/systemctl restart csge-server, \
 
 # 2. Ship the API. package*.json travel so the host can install prod deps.
 rsync -az --delete -e 'ssh -p 63152 -i csge_deploy' \
-  server/dist/ laxman@208.70.248.68:/opt/csge/server/dist/
+  server/dist/ laxman@208.70.248.68:/data/studio-ent/server/dist/
 rsync -az -e 'ssh -p 63152 -i csge_deploy' \
-  server/package.json server/package-lock.json laxman@208.70.248.68:/opt/csge/server/
+  server/package.json server/package-lock.json laxman@208.70.248.68:/data/studio-ent/server/
 
 # 3. Ship the SPA.
 rsync -az --delete -e 'ssh -p 63152 -i csge_deploy' \
-  web/dist/ laxman@208.70.248.68:/var/www/csge/
+  web/dist/ laxman@208.70.248.68:/data/studio-ent/web/
 
 # 4. Install prod deps and restart.
 ssh -p 63152 -i csge_deploy laxman@208.70.248.68 \
-  'cd /opt/csge/server && npm ci --omit=dev && sudo systemctl restart csge-server'
+  'cd /data/studio-ent/server && npm ci --omit=dev && sudo systemctl restart csge-server'
 ```
 
 ## Verify — do not skip
@@ -118,7 +127,7 @@ buffering the SSE stream and the `proxy_buffering off` block did not take effect
 
 | Symptom | Cause |
 |---|---|
-| `csge-server` restart-loops immediately | missing/misnamed var in `/opt/csge/server/.env`; the journal names it |
+| `csge-server` restart-loops immediately | missing/misnamed var in `/data/studio-ent/.env`; the journal names it |
 | service starts, `/api/health` 404s through nginx but works on `localhost:8080` | `sites-enabled/csge` not linked, or another site's `server_name` is catching the request first |
 | progress bar jumps from 0% to done | nginx buffering the SSE stream |
 | stale UI after a deploy | `index.html` cached; check the `no-store` header actually reaches the browser |

@@ -1,6 +1,12 @@
 # Install on the host as /etc/systemd/system/csge-server.service
-# Secrets live in /opt/csge/server/.env (root-owned, chmod 600) — never in git, never
-# in the unit file, never in the deploy workflow.
+# Secrets live in /data/studio-ent/.env (chmod 600) — never in git, never in the unit
+# file, never in the deploy workflow.
+#
+# Layout on the host:
+#   /data/studio-ent/.env      the environment, OUTSIDE the rsync target so a deploy
+#                              with --delete can never remove it
+#   /data/studio-ent/server/   dist/ + package.json + node_modules   (SERVER_DIR)
+#   /data/studio-ent/web/      the built SPA, served by nginx        (WEB_DIR)
 
 [Unit]
 Description=CloudFuze Studio Migrate API
@@ -9,20 +15,22 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=csge
-Group=csge
-WorkingDirectory=/opt/csge/server
-EnvironmentFile=/opt/csge/server/.env
+User=laxman
+Group=laxman
+WorkingDirectory=/data/studio-ent/server
+EnvironmentFile=/data/studio-ent/.env
 ExecStart=/usr/bin/node dist/server.js
 Restart=always
 RestartSec=5
 
 # Hardening — the API only ever needs to read its own directory.
+# ProtectHome is deliberately NOT set: it would hide /home, and this service runs as a
+# real login user rather than a dedicated system account. Revisit if a `csge` user is
+# ever created.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/csge/server
+ReadWritePaths=/data/studio-ent
 
 StandardOutput=journal
 StandardError=journal

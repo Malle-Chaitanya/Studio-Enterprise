@@ -12,9 +12,9 @@ concurrency:
 
 env:
   # Where the built API lives on the host (systemd WorkingDirectory).
-  SERVER_DIR: /opt/csge/server
+  SERVER_DIR: /data/studio-ent/server
   # nginx document root for the built SPA.
-  WEB_DIR: /var/www/csge
+  WEB_DIR: /data/studio-ent/web
   SERVICE_NAME: csge-server
 
 jobs:
