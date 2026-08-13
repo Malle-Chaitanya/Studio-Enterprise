@@ -1,0 +1,31 @@
+# Build context is the repo root for both images, so this file guards both.
+
+# Never let a secret into a build context. These images are published to GHCR and
+# the repo is public — a key COPYed in by accident is a key published.
+.env
+**/.env
+**/.env.*
+!**/.env.example
+service_account.json
+**/service_account.json
+*sa-key*.json
+*service-account*.json
+secrets/
+migration_data/
+csge_deploy
+csge_deploy.pub
+*.pem
+
+# Rebuilt inside the image.
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+
+.git
+.github
+.claude
+docs
+deploy
+**/*.test.ts
+**/coverage

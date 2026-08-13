@@ -11,44 +11,115 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Where the built API lives on the host (systemd WorkingDirectory).
-  SERVER_DIR: /data/studio-ent/server
-  # nginx document root for the built SPA.
-  WEB_DIR: /data/studio-ent/web
-  SERVICE_NAME: csge-server
+  REGISTRY: ghcr.io
+  # GHCR paths must be lowercase; the repo owner is mixed-case, so these are
+  # written out rather than derived from github.repository.
+  API_IMAGE: ghcr.io/malle-chaitanya/studio-enterprise-api
+  WEB_IMAGE: ghcr.io/malle-chaitanya/studio-enterprise-web
+  # Everything on the host lives here, matching the /data/<project>/ convention
+  # the other projects on that box use.
+  DEPLOY_DIR: /data/studio-ent
 
 jobs:
-  deploy:
-    name: build + rsync over SSH
+  # ---------------------------------------------------------------------------
+  # Gate first. Building and publishing an image that fails typecheck or tests
+  # just puts a broken artifact in the registry with a real tag.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: typecheck + test
     runs-on: ubuntu-latest
-    environment: production
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # ---- build both apps in CI so the host needs no toolchain / devDeps ----
-      - name: Build server
+      - name: Server
         working-directory: server
         run: |
           npm ci
           npm run typecheck
           npm test
-          npm run build
+        env:
+          # config.ts Zod-parses process.env at import time and process.exit(1)s on a
+          # missing value, which kills every suite that transitively imports logger or
+          # db/core before its first assertion. These are placeholders, never used to
+          # reach a real service.
+          MS_CLIENT_ID: ci-placeholder
+          MS_CLIENT_SECRET: ci-placeholder
+          GOOGLE_CLIENT_ID: ci-placeholder
+          GOOGLE_CLIENT_SECRET: ci-placeholder
 
-      - name: Build web
+      - name: Web
         working-directory: web
         run: |
           npm ci
           npm run typecheck
-          npm run build
 
-      # ---- SSH key setup ----
-      # The private key never touches the repo; it comes from the DEPLOY_SSH_KEY secret.
-      # KNOWN_HOSTS is pinned rather than ssh-keyscan'd so a hijacked DNS/IP cannot
-      # silently receive the deploy.
+  # ---------------------------------------------------------------------------
+  # Build both images and push them tagged with the commit SHA.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build + push images
+    runs-on: ubuntu-latest
+    needs: verify
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tagged with the SHA as well as `latest` so a rollback is
+      # `TAG=<old-sha> docker compose up -d` — no rebuild, no guessing which
+      # `latest` was live at the time.
+      - name: Build + push API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/Dockerfile
+          push: true
+          tags: |
+            ${{ env.API_IMAGE }}:${{ github.sha }}
+            ${{ env.API_IMAGE }}:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Build + push web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: web/Dockerfile
+          push: true
+          tags: |
+            ${{ env.WEB_IMAGE }}:${{ github.sha }}
+            ${{ env.WEB_IMAGE }}:latest
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+  # ---------------------------------------------------------------------------
+  # Pull the new images on the host and restart. No build, no npm, no rsync of
+  # application code, and no sudo — `laxman` is in the docker group.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: pull + up on host
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      # The private key never touches the repo; it comes from DEPLOY_SSH_KEY.
+      # known_hosts is pinned rather than ssh-keyscan'd at run time so a hijacked
+      # DNS/IP cannot silently receive the deploy.
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
@@ -61,11 +132,10 @@ jobs:
           Host deploy-target
             HostName ${{ secrets.DEPLOY_HOST }}
             User ${{ secrets.DEPLOY_USER }}
-            # Secret OR variable. A port is not sensitive, so a variable is the natural
-            # home for it — but reading ONLY `vars` meant a port added as a secret (the
-            # obvious place, next to the other four DEPLOY_* values) silently resolved to
-            # empty and fell back to 22. The deploy then failed at connect with a timeout
-            # that says nothing about the real cause. Accept either.
+            # Secret OR variable. A port is not sensitive, so a variable is its natural
+            # home — but reading ONLY vars meant a port added as a secret (beside the
+            # other four DEPLOY_* values) resolved to empty and fell back to 22, failing
+            # at connect with a timeout that says nothing about the real cause.
             Port ${{ secrets.DEPLOY_PORT || vars.DEPLOY_PORT || 22 }}
             IdentityFile ~/.ssh/id_deploy
             IdentitiesOnly yes
@@ -76,51 +146,59 @@ jobs:
       - name: Verify SSH connectivity
         run: ssh deploy-target 'echo connected as $(whoami) on $(hostname)'
 
-      # ---- ship the API ----
-      # --delete keeps dist/ clean of files removed in this release, but node_modules
-      # and .env live on the host and must survive, hence the excludes.
-      - name: Sync server build
-        run: |
-          rsync -az --delete \
-            --exclude node_modules --exclude .env \
-            server/dist/ deploy-target:${SERVER_DIR}/dist/
-          rsync -az \
-            server/package.json server/package-lock.json \
-            deploy-target:${SERVER_DIR}/
+      # The compose file is the only thing copied to the host. Application code
+      # arrives as images.
+      - name: Ship compose file
+        run: scp deploy/docker-compose.yml deploy-target:${DEPLOY_DIR}/docker-compose.yml
 
-      - name: Install production deps + restart API
+      # Preflight, before anything is torn down. Each of these has already bitten
+      # this deploy once, and each fails in a way that looks like something else.
+      - name: Preflight host prerequisites
         run: |
           ssh deploy-target "set -e
-            cd ${SERVER_DIR}
-            npm ci --omit=dev
-            sudo systemctl restart ${SERVICE_NAME}
-            sleep 3
-            systemctl is-active --quiet ${SERVICE_NAME} || { sudo journalctl -u ${SERVICE_NAME} -n 50 --no-pager; exit 1; }
+            cd ${DEPLOY_DIR}
+            test -f .env                  || { echo '::error::${DEPLOY_DIR}/.env is missing'; exit 1; }
+            test -f service_account.json  || { echo '::error::${DEPLOY_DIR}/service_account.json is missing. adk_deploy.py needs the key as a FILE (it never reads GOOGLE_SA_KEY_JSON), so without it Node authenticates fine and every Agent Engine deploy fails.'; exit 1; }
+            docker compose version >/dev/null || { echo '::error::docker compose unavailable to this user'; exit 1; }
           "
 
-      # ---- ship the SPA ----
-      - name: Sync web build
-        run: rsync -az --delete web/dist/ deploy-target:${WEB_DIR}/
+      - name: Pull + restart
+        run: |
+          ssh deploy-target "set -e
+            cd ${DEPLOY_DIR}
+            export TAG=${{ github.sha }}
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker image prune -f
+          "
 
-      - name: Reload nginx
-        run: ssh deploy-target 'sudo nginx -t && sudo systemctl reload nginx'
-
-      # Two checks, because they fail for different reasons and a combined one hides which.
+      # Two smoke tests, because they fail for different reasons and one combined
+      # check hides which broke.
       #
-      # 1. The API directly on its port. PORT is 8083, not the config.ts default of 8080 —
-      #    8080 is already bound on this host by an unrelated service.
-      # 2. The same endpoint through nginx. The Host header is mandatory: this nginx
-      #    serves 41 sites, so a bare-IP request lands on whichever one wins the
-      #    default_server race, and the smoke test would be grading somebody else's app.
+      # 1. The API on its own port — proves the container is up and configured.
+      # 2. The same endpoint through the host nginx, with an explicit Host header.
+      #    That header is mandatory: a bare-IP request on a 41-site nginx lands on
+      #    whichever block wins the default_server race, so the test could pass
+      #    while our site is entirely broken.
       - name: Smoke test API directly
         run: |
-          ssh deploy-target 'curl -fsS --max-time 15 http://127.0.0.1:8083/api/health' | tee health-direct.json
+          ssh deploy-target 'for i in $(seq 1 20); do
+            curl -fsS --max-time 5 http://127.0.0.1:8083/api/health && exit 0
+            sleep 3
+          done
+          echo "API never became healthy"; cd '"${DEPLOY_DIR}"'; docker compose logs --tail 80 api; exit 1' | tee health-direct.json
           grep -q '"status"' health-direct.json
 
-      - name: Smoke test through nginx
+      - name: Smoke test SPA + API through nginx
         run: |
           ssh deploy-target 'curl -fsS --max-time 15 -H "Host: studioent.cftools.live" http://127.0.0.1/api/health' | tee health-nginx.json
           grep -q '"status"' health-nginx.json
+          ssh deploy-target 'curl -fsS --max-time 15 -o /dev/null -w "%{http_code}" -H "Host: studioent.cftools.live" http://127.0.0.1/' | tee spa-code.txt
+          grep -q '200' spa-code.txt
+
+      - name: Report running state
+        if: always()
+        run: ssh deploy-target "cd ${DEPLOY_DIR} && docker compose ps"
 
       - name: Clean up SSH key
         if: always()

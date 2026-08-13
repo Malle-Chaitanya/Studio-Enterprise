@@ -1,0 +1,103 @@
+# CloudFuze Studio Migrate — production stack.
+#
+# Lives on the host at /data/studio-ent/docker-compose.yml, matching the
+# /data/<project>/ convention the other ~17 projects on that box already use.
+# Deploy is `docker compose pull && docker compose up -d` — no systemd unit, and
+# no sudo, because `laxman` is in the docker group.
+#
+#   docker compose ps          what is running
+#   docker compose logs -f api tail the API
+#   docker compose pull && docker compose up -d   deploy
+#
+# TAG is set by the deploy workflow to the commit SHA so a rollback is
+# `TAG=<old-sha> docker compose up -d`, not a rebuild.
+
+name: studio-ent
+
+services:
+  # ---------------------------------------------------------------------------
+  # MongoDB — ours, and only ours.
+  #
+  # No `ports:` on purpose. CS_GE's local convention is 27019, but on this host
+  # 27019 already belongs to `agents-mongo`, an unrelated project. Pointing at it
+  # would put the csge database inside another team's instance: shared backups,
+  # shared restarts, shared blast radius. Reachable from the api container over
+  # the compose network as mongodb://mongo:27017 and from nowhere else.
+  # To inspect it: docker compose exec mongo mongosh
+  # ---------------------------------------------------------------------------
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    volumes:
+      - csge-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # API
+  # ---------------------------------------------------------------------------
+  api:
+    image: ghcr.io/malle-chaitanya/studio-enterprise-api:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+    # Secrets only. Everything about *where this is deployed* is set in
+    # `environment:` below instead, which compose applies with higher precedence
+    # than env_file.
+    #
+    # That precedence is load-bearing, not incidental: the host .env currently
+    # declares MS_REDIRECT_URI and GOOGLE_REDIRECT_URI TWICE, and the later
+    # localhost:8080 pair silently wins under last-wins parsing. Setting them here
+    # makes the correct values authoritative no matter what the file says. The
+    # duplicates should still be deleted — this stops them mattering, it does not
+    # make the file correct.
+    env_file:
+      - .env
+
+    environment:
+      # 8080 is already bound on this host by the ats-app container.
+      PORT: 8083
+
+      # The compose-network name, NOT localhost:27019 (see the mongo service).
+      MONGO_HOST: mongodb://mongo:27017
+      CSGE_DB: csge
+
+      WEB_ORIGIN: https://studioent.cftools.live
+      PUBLIC_BASE_URL: https://studioent.cftools.live
+      MS_REDIRECT_URI: https://studioent.cftools.live/callback/microsoft
+      GOOGLE_REDIRECT_URI: https://studioent.cftools.live/callback/google
+
+      # adk_deploy.py:565 reads GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_SA_KEY_FILE
+      # and expects a PATH. It never reads GOOGLE_SA_KEY_JSON — that form only works
+      # for the Node half (auth/google.ts:16). Without a real file on disk, Node
+      # authenticates fine and every Agent Engine deployment fails, which is the
+      # worst shape of failure: the app looks healthy.
+      GOOGLE_SA_KEY_FILE: /run/secrets/service_account.json
+      PYTHON_BIN: python3
+
+    volumes:
+      # Mount the key read-only. It is NOT baked into the image — the image is
+      # published to GHCR and the repo is public.
+      - /data/studio-ent/service_account.json:/run/secrets/service_account.json:ro
+
+    # Bound to loopback: the host nginx is the only thing that may reach it.
+    ports:
+      - "127.0.0.1:8083:8083"
+
+  # ---------------------------------------------------------------------------
+  # SPA
+  # ---------------------------------------------------------------------------
+  web:
+    image: ghcr.io/malle-chaitanya/studio-enterprise-web:${TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8084:80"
+
+volumes:
+  csge-mongo-data:

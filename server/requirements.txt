@@ -1,0 +1,73 @@
+# Python runtime for scripts/adk_deploy.py.
+#
+# The server shells out to that script for every Agent Engine deployment
+# (adkDeployer.ts:478) because Agent Engine is a Python-SDK-only flow: it packages
+# code + requirements, stages to GCS, and builds a container. Python is a runtime
+# dependency of the API, not developer tooling.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS FILE CANNOT BE INSTALLED IN ONE `pip install -r` PASS. That is deliberate.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The two libraries the pipeline needs disagree about google-genai:
+#
+#     google-adk 2.6.2              requires google-genai >=2.9,<3
+#     google-cloud-aiplatform 1.93.0 requires google-genai <2.0.0
+#
+# There is no version of google-genai that satisfies both, so pip's resolver
+# refuses the set outright with ResolutionImpossible. The development machine this
+# pipeline is proven on resolves it the way pip allows in practice — install
+# aiplatform first, then let google-adk upgrade google-genai past aiplatform's
+# declared ceiling. `pip check` there reports the same conflict, and every ADK
+# deployment works anyway: aiplatform's genai pin is stricter than its actual use.
+#
+# The Dockerfile reproduces that end state with two sequential installs, in this
+# order. Verified in a clean python:3.13-slim container on 2026-08-13 — resolved to
+# adk 2.6.2 / aiplatform 1.93.0 / genai 2.16.0, matching the dev machine, with every
+# import adk_deploy.py performs succeeding:
+#
+#     google.oauth2.service_account, vertexai.agent_engines,
+#     vertexai.preview.reasoning_engines.AdkApp, google.adk.tools
+#     (Agent, FunctionTool, google_search, VertexAiSearchTool),
+#     google.cloud.storage, google.api_core.exceptions
+#
+# google-genai is pinned explicitly. Left unpinned it floated to 2.18.0 in the
+# container while the dev machine has 2.16.0, which would mean deploying against a
+# version nothing has been tested on.
+#
+# Do not "fix" the conflict by bumping aiplatform to a release whose genai range
+# overlaps adk's. That changes the ADK/Vertex versions the agent-build path is
+# proven against, and an ADK minor bump has repeatedly changed agent-build
+# behaviour — a deploy that "succeeds" with silently dropped tools is the failure
+# mode this project treats as worse than a crash.
+
+# ── step 1 ───────────────────────────────────────────────────────────────────
+google-cloud-aiplatform==1.93.0
+google-cloud-storage==2.19.0
+google-auth==2.56.2
+
+# ── step 2 (installed after step 1; upgrades google-genai past aiplatform's pin)
+google-adk==2.6.2
+google-genai==2.16.0
+
+# ── DELIBERATELY ABSENT — read before adding either ──────────────────────────
+#
+# google-cloud-discoveryengine
+#   adk_deploy.py:498 imports discoveryengine_v1beta, but inside the FunctionTool
+#   closure, which executes in the *Reasoning Engine* container Vertex builds
+#   remotely — not here. It is not installed on the dev machine either, and
+#   deployments work. Adding it would change a code path nothing has tested.
+#
+# google-cloud-secret-manager
+#   Installing it shadows the `google.cloud` namespace package and breaks
+#   `from google.cloud import discoveryengine_v1beta` in the RE container, which
+#   silently turns every VertexAiSearchTool into a no-op. That is why _secret()
+#   (adk_deploy.py:103) calls the Secret Manager REST API with google-auth by hand
+#   instead of using the client library. Keep it out.
+#
+# vertexai (the standalone PyPI package)
+#   The dev machine has vertexai 1.71.1 installed alongside aiplatform 1.93.0, and
+#   `pip check` flags it: it requires google-cloud-aiplatform[all]==1.71.1. It is a
+#   legacy shim — the `vertexai` module adk_deploy.py imports is provided by
+#   google-cloud-aiplatform. Verified in the container: every vertexai import the
+#   script makes works without it.
