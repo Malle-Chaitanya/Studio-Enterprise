@@ -1828,6 +1828,63 @@ the UI is the live check.
 
 ---
 
+### 1.35 First fully green UI run — deleted agents recreated, both verified (2026-08-13)
+
+The run that tested §1.33 and §1.34 together, driven from the browser. Both agents had been
+deleted in the Gemini console beforehand.
+
+**The existence check fired, on both, before any skip could:**
+
+```
+[05:02:29] getAgent 17963944182553943980 failed (404)
+[05:02:29] HubSpot Agent: the previously migrated agent (17963944182553943980) no longer
+           exists in Gemini - deleted outside this tool. Recreating it.
+[05:02:29] getAgent 16165865784107067164 failed (404)
+[05:02:29] Hubspot agentt: the previously migrated agent (16165865784107067164) no longer
+           exists in Gemini - deleted outside this tool. Recreating it.
+```
+
+Compare the same two agents one run earlier: `already exists  skipped`, twice, while the API
+answered 404 for both ids. Same DB state, same destination — the difference is that the
+check now sits where no return statement can jump over it.
+
+**Both recreated, and both VERIFIED (P):**
+
+```
+[05:06:23] HubSpot Agent  -> …_1784788734248/5539949030633558392 - deployed=true shared=true verified=true
+[05:06:48] Hubspot agentt -> …_1784788734248/9037777677775865129 - deployed=true shared=true verified=true
+```
+
+`verified=true` is new. Every prior run in this ledger ended `verified: -` with
+`read ECONNRESET`; this one smoke-tested both agents through the deployed engine and got
+answers. **`deployed=true` finally coincides with something that answered.**
+
+Along the way, two mechanisms proved themselves rather than being argued about:
+
+- `adk: agent update failed, falling back to create — agentId 17963944182553943980, status 404`.
+  The PATCH-then-create fallback is what turns a deleted agent into a recreated one instead
+  of a failed run.
+- 4 operations rebuilt for `Hubspot agentt` and 2 for `HubSpot Agent`, each wired only to the
+  connectors that agent actually references — 13 configured connectors were deliberately not
+  wired onto agents that never used them.
+
+**The credential validator fix held (§1.34).** No `invalid_credentials` this run. The only
+validation warnings were `code: unverified` on the CUSTOM connector, which is the honest
+answer — we have no automated test for a connector we have never seen, and saying so is not
+the same as calling the customer's token wrong.
+
+New ids, for anything that pointed at the old ones:
+
+| Agent | old id (deleted) | new id | reasoning engine |
+|---|---|---|---|
+| HubSpot Agent | 17963944182553943980 | **5539949030633558392** | 2664909971740688384 |
+| Hubspot agentt | 16165865784107067164 | **9037777677775865129** | 4572184413932093440 |
+
+Still open and unchanged: the engines these replaced are not deleted (§1.31), so this run
+added two more billable orphans.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
