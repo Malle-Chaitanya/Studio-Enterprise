@@ -1259,11 +1259,16 @@ def _make_search_tool(data_store_id, tool_name, source_name):
     # The docstring IS the tool description Gemini uses to choose between tools, so it
     # must name THIS source. A shared, generic description makes every knowledge tool
     # look identical and the choice arbitrary.
-    if label:
+    # `source_name`, not `label` — the parameter was renamed and this reference was left
+    # behind, so every knowledge tool raised `NameError: name 'label' is not defined`. The
+    # wiring builds ALL tools in one pass, so one bad knowledge tool took the connector and
+    # MCP tools down with it: the deploy fell back to low-code create and produced an agent
+    # with NO tools that still reported deployed=true verified=true (live 2026-08-13, "AA").
+    if source_name:
         _search.__doc__ = (
-            f'Search the "{label}" knowledge source for information relevant to the query.\n'
+            f'Search the "{source_name}" knowledge source for information relevant to the query.\n'
             f"\n"
-            f'Use this when the question could be answered by "{label}". Prefer the source whose\n'
+            f'Use this when the question could be answered by "{source_name}". Prefer the source whose\n'
             f"subject matches the question; if unsure which applies, search more than one.\n"
             f"\n"
             f"Args:\n"

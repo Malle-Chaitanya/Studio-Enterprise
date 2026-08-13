@@ -1979,6 +1979,60 @@ Also logged in the same run, and worth keeping visible:
 
 ---
 
+### 1.38 One stale variable name cost an agent every tool it had (2026-08-13)
+
+Migrating "AA" — the Jira MCP agent — the MCP expansion worked exactly as designed. The fresh
+extraction shows the allow-list branch, not the refuse branch:
+
+```
+MCP tools: 1
+  Jira - Jira MCP Server  connector=shared_jira  sel=specific
+  tools=["GetCurrentUser","ListIssues","ListIssues_Datacenter","ListProjects","ListResources","ListIssueTypes_V2"]
+AA: 13 connector operation(s) rebuilt as exact API calls with the source agent's own arguments.
+AA: 4 topic(s) -> sub-agents in one engine.
+```
+
+13 = 6 MCP + 3 direct Jira + 3 HubSpot + 1 Teams. Then the deploy threw:
+
+```
+AA: ADK failed (deploy: tool wiring failed: name 'label' is not defined) - falling back to low-code create.
+AA -> gemini-enterprise-17847887_1784788734248/8564506214898453052 - deployed=true shared=false verified=true
+```
+
+`_make_search_tool(data_store_id, tool_name, source_name)` still referenced `label` in its
+body — a parameter rename that left one reference behind. Every knowledge tool raised
+`NameError`. Because wiring builds ALL tools in one pass, one bad knowledge tool took the
+connector and MCP tools with it, and the low-code fallback produced an agent with **no tools
+at all** that still logged `deployed=true verified=true`. This is the invariant restated:
+`verified=true` proves the agent answers, never that it kept its capabilities.
+
+The fidelity report was honest — the fallback records `adk-fallback` / `needs-review`: "carries
+no live connector tools or topic sub-agents". Only the log line read green.
+
+Fixed to `source_name`. An AST sweep for the same class of defect across the whole file
+returned `unbound names: none`. Grade: **T** — parse clean, sweep clean; **P** only once a
+redeploy wires 13 tools and Jira answers.
+
+**Other findings from the same run**
+
+- **Google Drive: 11 operations lost**, each named (`ListRootFolder`, `UpdateFile`,
+  `ExtractFolderV2`, `GetFileMetadataByPath`, `ListFolder`, `DeleteFile`, `CopyFile`,
+  `CreateFileV2`, `GetFileContent`, `GetFileContentByPath`, `GetFileMetadata`). Storing Google
+  Drive credentials does not help — the gap is the op emitter, not the token.
+- **The Confluence knowledge source cannot be resolved, and no name-matching fix exists.**
+  `Confluence crawl failed: None of the requested spaces found: Migration Knowledge Source. The
+  space list was read successfully`. The IR shows why:
+  `kind: FederatedStructuredSearchSource`, `confluenceSpaceNames: ["Migration Knowledge
+  Source"]`, `confluenceSkillConfig: "MigrationKnowledgeSource_O1TAfpFAnMDYe8I4tLvGu"`. Copilot
+  stores the COMPONENT name, never the real space name, and the skillConfig id resolves to
+  nothing (§ earlier probe). The honest fix is to ask the customer which space it is and store
+  that mapping. Reported correctly: `1 knowledge source(s) NOT migrated (needs a connector or
+  manual step): Migration Knowledge Source->confluence-crawler`.
+- The ACL-loss gate behaved: the first attempt created nothing, listed all three sources, and
+  the acknowledged re-run went straight to insert without re-extracting.
+
+---
+
 ## 2b. Work landed overnight 2026-08-11/12 — graded
 
 Six commits on `business`, all pushed. Graded on the same rule: **P** only if it was run
