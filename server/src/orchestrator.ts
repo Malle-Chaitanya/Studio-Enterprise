@@ -2919,6 +2919,23 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
     }
   });
 
+  // Phase 1 announces its completion; Phase 2 did not, and the asymmetry is
+  // actively misleading. When a run dies mid-insert — the server restarting is the
+  // common way, and it happened repeatedly on 2026-08-13 — the log simply stops
+  // after whichever agent finished last. Reading that tail, "Phase 2: insert 2
+  // staged agent(s)" followed by one agent's result and nothing else looks exactly
+  // like an agent being silently dropped by a bug. It cost a full investigation
+  // before `migrationRuns.status` turned out to already say `interrupted`.
+  //
+  // The count is the point: `n/m` disagreeing is the signal. Stating it in the log
+  // stream, where the reader already is, means an incomplete run announces itself
+  // instead of having to be inferred from an absence.
+  emitLog(
+    results.length === staged.length ? 'info' : 'warn',
+    `Phase 2 complete: ${results.length}/${staged.length} staged agent(s) processed` +
+      (results.length === staged.length ? '' : ' — run ended early; re-run to continue from the insert'),
+  );
+
   const created = results.filter((r) => r.created).length;
   const deployed = results.filter((r) => r.deployed).length;
   const shared = results.filter((r) => r.shared).length;
