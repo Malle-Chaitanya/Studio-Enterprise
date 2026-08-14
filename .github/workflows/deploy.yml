@@ -1,16 +1,13 @@
 name: Deploy
 
-# Deliberately main-only, and main does not have this file — so this workflow cannot
-# fire today. That is the intent: deploys are done by hand on the host
-# (`docker compose up -d --build`, see docs/DEPLOY-MANUAL.md) and a push to `business`
-# must not reach production behind the deployer's back.
-#
-# To turn CI deploys back on: merge to main, or add `business` here. Note that adding
-# `workflow_dispatch` alone is not enough — GitHub only offers Run workflow for a
-# workflow present on the DEFAULT branch, which is why `gh workflow list` shows only CI.
+# `business` is the trigger branch because it is the only one that has this file:
+# main has never received it. A main-only trigger therefore fires never, and
+# `workflow_dispatch` does not rescue that — GitHub offers Run workflow only for a
+# workflow present on the DEFAULT branch, which is why `gh workflow list` returns CI
+# alone. Drop `business` here once it merges to main.
 on:
   push:
-    branches: [main]
+    branches: [main, business]
   workflow_dispatch:
 
 # Never let two deploys race onto the same host.
@@ -122,8 +119,20 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     environment: production
+    permissions:
+      contents: read
+      # Needed for the streaming fallback below: the runner pulls the images itself
+      # and pipes them to the host.
+      packages: read
     steps:
       - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # The private key never touches the repo; it comes from DEPLOY_SSH_KEY.
       # known_hosts is pinned rather than ssh-keyscan'd at run time so a hijacked
@@ -176,13 +185,53 @@ jobs:
             docker compose version >/dev/null || { echo '::error::docker compose unavailable to this user'; exit 1; }
           "
 
-      - name: Pull + restart
+      # Preferred path: the host pulls from GHCR itself. Allowed to fail rather than
+      # aborting the deploy, because this host sits behind a proxy that its git cannot
+      # get through at all (`Proxy CONNECT aborted` on a plain github.com clone), so
+      # registry egress is not something to assume. The fallback below covers it.
+      - name: Pull images on host
+        id: hostpull
+        continue-on-error: true
+        run: |
+          ssh deploy-target "set -e
+            cd ${DEPLOY_DIR}
+            TAG=${{ github.sha }} docker compose pull
+          "
+
+      # Fallback: the runner has GHCR access by definition, so it pulls both images and
+      # streams them straight into the host's docker daemon. No registry credential on
+      # the host, no package visibility to flip, nothing written to ~/.docker/config.json
+      # on a box serving 41 other sites.
+      #
+      # gzip -1, not -9: these layers are already-compressed wheels and npm tarballs, so
+      # the extra CPU buys almost nothing and the transfer is the bottleneck either way.
+      - name: Stream images over SSH (fallback)
+        if: steps.hostpull.outcome == 'failure'
+        run: |
+          echo "Host could not pull from GHCR — streaming images over SSH instead."
+          docker pull ${API_IMAGE}:${{ github.sha }}
+          docker pull ${WEB_IMAGE}:${{ github.sha }}
+          # mongo:7.0 too. `docker compose pull` fetches all three services, so a failure
+          # says nothing about which registry was unreachable — and if Docker Hub is the
+          # blocked one, `up -d` would fail on a host that has never run this stack.
+          # Sending it costs ~250MB once; the layers are then cached on the host.
+          docker pull mongo:7.0
+          docker save \
+              ${API_IMAGE}:${{ github.sha }} \
+              ${WEB_IMAGE}:${{ github.sha }} \
+              mongo:7.0 \
+            | gzip -1 \
+            | ssh deploy-target 'gunzip | docker load'
+
+      # --no-build matters: the compose file also carries `build:` blocks for the
+      # host-build path, and their context (./src) does not exist here. Without it a
+      # missing image turns into a confusing "path not found" instead of a clear failure.
+      - name: Restart stack
         run: |
           ssh deploy-target "set -e
             cd ${DEPLOY_DIR}
             export TAG=${{ github.sha }}
-            docker compose pull
-            docker compose up -d --remove-orphans
+            docker compose up -d --no-build --remove-orphans
             docker image prune -f
           "
 
