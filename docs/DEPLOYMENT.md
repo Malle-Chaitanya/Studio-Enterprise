@@ -274,8 +274,11 @@ certbot --nginx -d studioent.cftools.live
 certbot rewrites `sites-available/csge` in place, adding the 443 block and the 80→443
 redirect. Never hand-write TLS into that file and then re-run certbot over it.
 
-No systemd unit and no sudoers rule. `restart: unless-stopped` survives a host reboot via
-the Docker daemon.
+No systemd unit — `restart: unless-stopped` survives a host reboot via the Docker daemon.
+The nginx steps above are the only ones needing root, and the deploy now does them itself
+with a `SUDO_PASSWORD` secret; §12 states what that costs. Once certbot has run, the
+workflow detects `ssl_certificate` in the installed file and stops overwriting it, so TLS
+survives every later deploy.
 
 ### Building on the host instead
 
@@ -306,9 +309,18 @@ verify   npm ci · typecheck · vitest · (web) typecheck
 build    docker build server/ + web/  →  push to GHCR
    │     tagged :<commit-sha> AND :latest
    ▼
-deploy   ssh → scp docker-compose.yml → preflight → compose pull → up -d
-         → smoke test API directly → smoke test through nginx → compose ps
+deploy   ssh → scp docker-compose.yml + nginx-csge.conf → preflight
+         → compose pull (falls back to streaming the images over SSH)
+         → pick a free /24 → up -d (retry once via down)
+         → install the nginx site as root → smoke test API directly
+         → smoke test through nginx → compose ps
 ```
+
+The pull is allowed to fail. This host's egress is proxied (§13), so registry access is
+not something to assume — on failure the runner, which has GHCR access by definition,
+pulls both images plus `mongo:7.0` and streams them into the host daemon over the SSH
+connection already open. That also removes the `docker login` problem entirely: no PAT on
+the host, no credential in `~/.docker/config.json`, no package visibility to flip.
 
 `verify` sets four placeholder secrets. `config.ts` Zod-parses `process.env` at **import**
 time and calls `process.exit(1)` on a missing value, which kills every suite that
@@ -337,6 +349,7 @@ All five are present and verified as of 2026-08-13:
 | `DEPLOY_USER` | `laxman` |
 | `DEPLOY_KNOWN_HOSTS` | `ssh-keyscan -p 63152 -H 208.70.248.68` — all three lines |
 | `DEPLOY_PORT` | `63152` |
+| `SUDO_PASSWORD` | `laxman`'s password, for the nginx install step only — see §12 |
 
 Repo-level secrets are visible to a job with `environment: production`, so they need no
 duplication. `DEPLOY_PORT` is read as `secrets.DEPLOY_PORT || vars.DEPLOY_PORT || 22`:
@@ -430,7 +443,10 @@ cd server && npx tsx src/spikes/_diag_probe_connectors.ts
 | both redirect URIs look right but sign-in still goes to localhost | duplicate keys later in `.env`; last-wins (§5) |
 | progress bar jumps 0% → done | nginx buffering the SSE stream |
 | migration data in another project's database | `MONGO_HOST` reaching host `27019` (`agents-mongo`) |
-| `docker compose pull` denied | GHCR packages still private (§7) |
+| `docker compose pull` denied | GHCR packages still private (§7) — the deploy survives this by streaming the images over SSH instead |
+| `all predefined address pools have been fully subnetted` | Docker is out of subnets; the stack pins its own (§13) |
+| `failed to set up container networking: network <id> not found` | the network was recreated mid-`up`; a full `down` clears it, which the deploy retries automatically (§13) |
+| certbot / git / curl die with `Proxy CONNECT aborted` or `RemoteDisconnected` | the host-wide AI-governance proxy in `/etc/environment` (§13), not the remote service |
 | a connector fix "did not take" | the agent predates the fix — check `adkDeployments.deployedAt` vs the commit (§9) |
 | a re-run skips with `already exists` | no drift detected. A rename now counts as drift; otherwise use `forceRedeploy` |
 | Agent Engine deploys fail with "deploy produced no JSON result" | `scripts/adk_deploy.py` not reachable from the process CWD |
@@ -446,6 +462,86 @@ cd server && npx tsx src/spikes/_diag_probe_connectors.ts
 - **No build on the host.** CI builds the images; devDependencies never reach production.
 - **No systemd unit.** `deploy/csge-server.service` was removed — under compose it is dead
   config, and installing both would put two processes on 8083.
-- **No sudoers rule and no root password in CI.** `laxman` is in the `docker` group, which
-  is the entire reason this design works. Do not add a blanket root grant to a box serving
-  41 production sites.
+
+## 12. The root grant, stated plainly
+
+An earlier version of this document claimed "no sudoers rule and no root password in CI".
+That is **no longer true** and the change was deliberate, so it belongs here rather than in
+a commit message nobody re-reads.
+
+Docker itself still needs no sudo — `laxman` is in the `docker` group. But installing the
+nginx site does, and leaving it manual meant every deploy ended red at the through-nginx
+smoke test until a human ran two commands as root. So the deploy now holds a
+`SUDO_PASSWORD` secret and pipes it to `sudo -S`, matching the GEM_CO deploy already
+running on this same host.
+
+What that costs, precisely: every workflow run can become root on a box serving 41
+production sites, and anyone with write access to this repo can print the password by
+editing a workflow file. Two mitigations are in place — the password is fed on stdin to a
+single `sudo bash -c` (never in argv, where `ps` would show it), and the step refuses to
+overwrite a certbot-managed config.
+
+The narrower alternative, if this is ever revisited, is a NOPASSWD sudoers line for exactly
+three commands:
+
+```
+laxman ALL=(root) NOPASSWD: /bin/cp /data/studio-ent/nginx-csge.conf /etc/nginx/sites-available/csge, \
+                            /bin/ln -sf /etc/nginx/sites-available/csge /etc/nginx/sites-enabled/csge, \
+                            /bin/systemctl reload nginx
+```
+
+That is a five-line change to one workflow step, and it drops the blast radius from "root"
+to "those three commands".
+
+## 13. Two host facts that will bite the next person
+
+### The box proxies all outbound traffic
+
+`/etc/environment` sets, host-wide:
+
+```
+HTTPS_PROXY=http://0.0.0.0:9568     # cloudfuze-monitor — AI API governance proxy
+```
+
+It CONNECT-aborts anything that is not an AI API. `git clone` of this repo on the host
+fails with `Proxy CONNECT aborted`; so does certbot, with
+`RemoteDisconnected('Remote end closed connection without response')` — which reads like
+Let's Encrypt is down rather than like a local proxy. Docker is unaffected, because the
+daemon reads its own systemd environment and not `/etc/environment`, which is why image
+pulls work while everything else outbound dies.
+
+Anything network-bound run by hand on this host needs the vars cleared:
+
+```bash
+sudo env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY certbot ...
+```
+
+The deploy is immune: images move over the SSH connection or come from GHCR via Docker.
+
+TLS was issued 2026-08-14 that way (expires 2026-11-12). Renewal needs the same, via a
+systemd drop-in on whichever unit renews (`certbot.service`, or
+`snap.certbot.renew.service` under the snap):
+
+```
+[Service]
+Environment="https_proxy="
+Environment="HTTPS_PROXY="
+```
+
+Verify with `certbot renew --cert-name studioent.cftools.live --dry-run` — and always pass
+`--cert-name`, because a bare `certbot renew` walks all 43 certs on the box.
+
+**Not our bug, but worth knowing:** that proxy breaks renewal for every one of those 43
+certificates. Any of them lapsing after the proxy was introduced will simply expire.
+
+### Docker has no address pools left
+
+`docker compose up` fails with `all predefined address pools have been fully subnetted` —
+75 containers across ~17 projects have consumed 172.16/12 and 192.168/16. The stack
+therefore pins its own subnet, chosen per-run from 10.201.40–95 against what is allocated
+at that moment and remembered in `/data/studio-ent/.subnet`.
+
+Changing that pin changes the network's config, which makes compose remove and recreate
+the network — and containers recreated in the same pass keep the OLD network id and fail
+with `network <id> not found`. The deploy retries once after a full `down`, which clears
+it. Expect that retry on any future network edit.
