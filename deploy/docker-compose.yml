@@ -117,3 +117,28 @@ services:
 
 volumes:
   csge-mongo-data:
+
+# -----------------------------------------------------------------------------
+# The default network, with its subnet pinned.
+#
+# Letting Docker allocate one failed outright on this host:
+#
+#   failed to create network studio-ent_default: all predefined address pools
+#   have been fully subnetted
+#
+# 75 containers across ~17 projects have consumed Docker's default pools
+# (172.17.0.0/12 carved into /16s, plus 192.168.0.0/16). The alternative fix is
+# extending `default-address-pools` in /etc/docker/daemon.json, which needs root
+# AND `systemctl restart docker` — bouncing all 75 containers and 41 sites on a
+# shared box, to give one project a network. Pinning our own subnet touches
+# nothing outside this project.
+#
+# The deploy workflow picks a free /24 at run time and passes it as CSGE_SUBNET,
+# so this default only applies to a by-hand `docker compose up`. If that collides,
+# run: CSGE_SUBNET=10.201.44.0/24 docker compose up -d
+# -----------------------------------------------------------------------------
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${CSGE_SUBNET:-10.201.42.0/24}

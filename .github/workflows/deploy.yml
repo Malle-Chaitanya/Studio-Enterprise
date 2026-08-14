@@ -223,6 +223,60 @@ jobs:
             | gzip -1 \
             | ssh deploy-target 'gunzip | docker load'
 
+      # Docker cannot allocate a network on this host any more:
+      #
+      #   failed to create network studio-ent_default: all predefined address pools
+      #   have been fully subnetted
+      #
+      # 75 containers across ~17 projects have eaten the default pools. Rather than
+      # restarting the daemon (root, and it bounces all 75 containers plus 41 nginx
+      # sites), the stack brings its own subnet — and picks it here, against what is
+      # actually allocated at this moment, instead of hardcoding a guess that goes
+      # stale the next time another project adds a network.
+      #
+      # Reuses the subnet already recorded on the host when it is still free, so a
+      # redeploy does not renumber a running stack for no reason.
+      - name: Choose a free subnet
+        id: subnet
+        run: |
+          SUBNET=$(ssh deploy-target "python3 - <<'PY'
+          import ipaddress, json, subprocess
+
+          ids = subprocess.run(['docker','network','ls','-q'],
+                               capture_output=True, text=True).stdout.split()
+          used = []
+          if ids:
+              raw = subprocess.run(['docker','network','inspect',*ids],
+                                   capture_output=True, text=True).stdout
+              for net in json.loads(raw or '[]'):
+                  for cfg in (net.get('IPAM') or {}).get('Config') or []:
+                      if cfg.get('Subnet'):
+                          used.append(ipaddress.ip_network(cfg['Subnet'], strict=False))
+
+          # Read back what this stack used last time; keeping it avoids renumbering.
+          try:
+              previous = open('/data/studio-ent/.subnet').read().strip()
+          except OSError:
+              previous = ''
+
+          def free(candidate):
+              net = ipaddress.ip_network(candidate)
+              return not any(net.overlaps(u) for u in used)
+
+          # 10.201.x is deliberate: Docker's own defaults live in 172.16/12 and
+          # 192.168/16, so staying out of both avoids racing whatever the daemon
+          # hands the other 16 projects next.
+          choice = previous if previous and free(previous) else next(
+              (c for c in (f'10.201.{i}.0/24' for i in range(40, 96)) if free(c)), '')
+          if not choice:
+              raise SystemExit('no free /24 in 10.201.40-95')
+          open('/data/studio-ent/.subnet','w').write(choice + chr(10))
+          print(choice)
+          PY
+          ")
+          echo "Using subnet: $SUBNET"
+          echo "subnet=$SUBNET" >> "$GITHUB_OUTPUT"
+
       # --no-build matters: the compose file also carries `build:` blocks for the
       # host-build path, and their context (./src) does not exist here. Without it a
       # missing image turns into a confusing "path not found" instead of a clear failure.
@@ -231,6 +285,7 @@ jobs:
           ssh deploy-target "set -e
             cd ${DEPLOY_DIR}
             export TAG=${{ github.sha }}
+            export CSGE_SUBNET=${{ steps.subnet.outputs.subnet }}
             docker compose up -d --no-build --remove-orphans
             docker image prune -f
           "
