@@ -306,6 +306,47 @@ jobs:
             docker image prune -f
           "
 
+      # Install the host nginx site, the way the GEM_CO deploy on this same box does
+      # it: the login password piped to `sudo -S`. It is what makes the deploy
+      # self-contained instead of ending with "now go run two commands as root".
+      #
+      # Two deliberate departures from that original:
+      #
+      # 1. ONE sudo call, fed on stdin, instead of one per command with the password
+      #    inline in each. `echo "$PW" | sudo -S cmd` repeated puts the password in
+      #    the remote command line every time, where `ps` can see it. Here it is read
+      #    from stdin and handed to a single `sudo bash -c`.
+      #
+      # 2. It refuses to overwrite a certbot-managed file. `certbot --nginx` rewrites
+      #    sites-available/csge IN PLACE to add the 443 server block and the 80->443
+      #    redirect. Copying this pre-TLS file over that would delete HTTPS on every
+      #    deploy — the site would keep answering on 80 and look fine. If the routing
+      #    itself changes after certbot has run, copy it by hand and re-run certbot.
+      #
+      # No `|| true`: `nginx -t` failing means the config is broken, and this nginx
+      # fronts 41 other sites. That must fail the deploy, loudly, before the reload.
+      - name: Install host nginx site
+        env:
+          SUDO_PASSWORD: ${{ secrets.SUDO_PASSWORD }}
+        run: |
+          printf '%s\n' "$SUDO_PASSWORD" | ssh deploy-target 'read -r PW; printf "%s\n" "$PW" | sudo -S -p "" bash -c "
+            set -e
+            SRC=/data/studio-ent/nginx-csge.conf
+            DST=/etc/nginx/sites-available/csge
+
+            if [ -f \"\$DST\" ] && grep -q ssl_certificate \"\$DST\"; then
+              echo \"csge site is certbot-managed (has ssl_certificate) — leaving it alone.\"
+            else
+              cp \"\$SRC\" \"\$DST\"
+              echo \"installed \$DST\"
+            fi
+
+            ln -sf \"\$DST\" /etc/nginx/sites-enabled/csge
+            nginx -t
+            systemctl reload nginx
+            echo \"nginx reloaded\"
+          "'
+
       # Two smoke tests, because they fail for different reasons and one combined
       # check hides which broke.
       #
