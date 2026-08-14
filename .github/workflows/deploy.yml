@@ -373,7 +373,7 @@ jobs:
       - name: Smoke test API directly
         run: |
           ssh deploy-target 'for i in $(seq 1 20); do
-            curl -fsS --max-time 5 http://127.0.0.1:8083/api/health && exit 0
+            curl -fsS --noproxy "*" --max-time 5 http://127.0.0.1:8083/api/health && exit 0
             sleep 3
           done
           echo "API never became healthy"; cd '"${DEPLOY_DIR}"'; docker compose logs --tail 80 api; exit 1' | tee health-direct.json
@@ -391,16 +391,16 @@ jobs:
       # nobody notices until a customer does.
       - name: Smoke test SPA + API through nginx (HTTPS)
         run: |
-          ssh deploy-target 'curl -fsS --max-time 15 --resolve studioent.cftools.live:443:127.0.0.1 https://studioent.cftools.live/api/health' | tee health-nginx.json
+          ssh deploy-target 'curl -fsS --noproxy "*" --max-time 15 --resolve studioent.cftools.live:443:127.0.0.1 https://studioent.cftools.live/api/health' | tee health-nginx.json
           grep -q '"status"' health-nginx.json
-          ssh deploy-target 'curl -fsS --max-time 15 -o /dev/null -w "%{http_code}" --resolve studioent.cftools.live:443:127.0.0.1 https://studioent.cftools.live/' | tee spa-code.txt
+          ssh deploy-target 'curl -fsS --noproxy "*" --max-time 15 -o /dev/null -w "%{http_code}" --resolve studioent.cftools.live:443:127.0.0.1 https://studioent.cftools.live/' | tee spa-code.txt
           grep -q '200' spa-code.txt
 
       # The redirect is part of the contract now — a deploy that quietly leaves the site
       # answering on plain HTTP is a regression this catches.
       - name: Verify HTTP redirects to HTTPS
         run: |
-          CODE=$(ssh deploy-target 'curl -s -o /dev/null -w "%{http_code}" --max-time 10 -H "Host: studioent.cftools.live" http://127.0.0.1/api/health')
+          CODE=$(ssh deploy-target 'curl -s --noproxy "*" -o /dev/null -w "%{http_code}" --max-time 10 -H "Host: studioent.cftools.live" http://127.0.0.1/api/health')
           echo "port 80 returned $CODE"
           case "$CODE" in 301|302|308) ;; *) echo "::error::expected a redirect to HTTPS, got $CODE"; exit 1 ;; esac
 
