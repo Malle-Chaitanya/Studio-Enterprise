@@ -174,6 +174,22 @@ jobs:
           ssh deploy-target "mkdir -p ${DEPLOY_DIR}"
           scp deploy/docker-compose.yml deploy-target:${DEPLOY_DIR}/docker-compose.yml
 
+      # The host nginx config rides along but is NOT installed: /etc/nginx is root's,
+      # and the deploy holds no sudo on a box fronting 41 other sites. Putting the
+      # current version on the host means installing it is two root commands with no
+      # git checkout and no copy-paste, and that whoever does it is looking at the
+      # version that matches the running containers.
+      #
+      #   sudo cp /data/studio-ent/nginx-csge.conf /etc/nginx/sites-available/csge
+      #   sudo ln -sf /etc/nginx/sites-available/csge /etc/nginx/sites-enabled/csge
+      #   sudo nginx -t && sudo systemctl reload nginx
+      #
+      # certbot rewrites sites-available/csge in place to add TLS, so re-copying this
+      # file after certbot has run would DELETE the 443 block. Only copy it again if
+      # the routing itself changed, and re-run certbot afterwards.
+      - name: Ship host nginx config (not installed — root does that once)
+        run: scp deploy/nginx-csge.conf deploy-target:${DEPLOY_DIR}/nginx-csge.conf
+
       # Preflight, before anything is torn down. Each of these has already bitten
       # this deploy once, and each fails in a way that looks like something else.
       - name: Preflight host prerequisites
