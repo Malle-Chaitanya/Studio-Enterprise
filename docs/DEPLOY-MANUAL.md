@@ -80,8 +80,35 @@ checked before anything is torn down.
 Compose mounts it read-only at `/run/secrets/service_account.json`. It is never baked
 into an image — the images are published to GHCR and the repo is public.
 
+### 640, not 600 — the container is not the owner
+
 ```bash
-chmod 600 /data/studio-ent/service_account.json
+chmod 640 /data/studio-ent/service_account.json     # NOT 600, NOT 644
+```
+
+A bind mount carries the host's uid/gid and mode through unchanged. The key is owned by
+`laxman` (1005); the container drops to `csge` (uid 10001). At mode 600 — owner only —
+the container is not the owner, so every read failed:
+
+```
+EACCES: permission denied, open '/run/secrets/service_account.json'
+```
+
+which the UI surfaced as *"Google Workspace directory couldn't be read"* with a hint
+about Domain-Wide Delegation scopes — sending the reader to the Workspace admin console
+to fix a file permission.
+
+`640` gives the group read access, and `docker-compose.yml` adds that group to the
+container via `group_add: ["${SECRET_GID:-1005}"]`. Owner keeps `rw` (a human edits
+it), group gets `r`, others get nothing.
+
+**Do not use 644.** This box runs 41 other sites, and the key unlocks domain-wide
+delegation over the customer's Workspace.
+
+If `laxman`'s gid differs on another host, override it — `id -g` gives the number:
+
+```bash
+SECRET_GID=$(id -g) docker compose up -d
 ```
 
 ## The .env
@@ -128,7 +155,8 @@ Only the nginx front door needs root; everything else runs as `laxman`.
 ```bash
 # as laxman
 cd /data/studio-ent
-chmod 600 .env service_account.json
+chmod 600 .env                  # read by compose ON THE HOST, as laxman
+chmod 640 service_account.json  # bind-mounted INTO the container — see "640, not 600"
 
 # as root — nginx is shared with 41 other sites, so validate before reloading
 cp deploy/nginx-csge.conf /etc/nginx/sites-available/csge
@@ -291,6 +319,7 @@ known artifact — no rebuild, no guessing which `latest` was live.
 | Symptom | Cause |
 |---|---|
 | deploy fails at preflight naming `service_account.json` | the file is missing; see above — without it Node still authenticates and only ADK deploys fail |
+| "Google Workspace directory couldn't be read", or any `EACCES` on `/run/secrets/service_account.json` | the key is mode 600 and the container runs as a different uid. `chmod 640` + `group_add` — NOT 644. The DWD hint in that message is a red herring |
 | `api` restart-loops immediately | missing/misnamed secret in `.env`; `docker compose logs api` names it |
 | `api` exits with `EADDRINUSE` | something bypassed compose's `PORT: 8083`; 8080 is taken by `ats-app` |
 | `/api/health` answers with another app's JSON | curled the bare IP with no `Host:` header on a 41-site nginx |
