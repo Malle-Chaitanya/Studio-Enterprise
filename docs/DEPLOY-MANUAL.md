@@ -186,6 +186,79 @@ docker compose pull
 docker compose up -d --remove-orphans
 ```
 
+## Running compose by hand: export TAG and CSGE_SUBNET first
+
+The deploy workflow exports both. A by-hand `docker compose up` does not, and each
+default is wrong in a way that does damage before it errors:
+
+- **`TAG` unset** resolves to `:latest`, which the host cannot pull (it holds no GHCR
+  credential — the deploy always names an explicit SHA). Compose then falls through to the
+  `build:` blocks, whose `./src` context does not exist on a registry-deployed host, and
+  reports `lstat /data/studio-ent/src/server: no such file or directory` — a message about
+  a missing checkout when the real cause is a missing tag.
+- **`CSGE_SUBNET` unset** falls back to the literal default in the compose file, which is
+  almost certainly *not* the subnet the last deploy chose. A changed network config makes
+  compose recreate the network, so it **stops `api` and `mongo`** to do it, then fails to
+  remove the network because `web` still holds an endpoint. The site is down at that point
+  and the command has already returned an error.
+
+Both values are recorded on the host — the tag on the running container, the subnet in
+`/data/studio-ent/.subnet`. Put them in `.env`, which compose reads for variable
+substitution as well as feeding to the API container, and a bare `docker compose up -d`
+becomes safe:
+
+```bash
+cd /data/studio-ent
+grep -q '^TAG=' .env || echo "TAG=$(docker inspect -f '{{.Config.Image}}' studio-ent-api-1 | sed 's/.*://')" >> .env
+grep -q '^CSGE_SUBNET=' .env || echo "CSGE_SUBNET=$(cat .subnet)" >> .env
+```
+
+The workflow exports both explicitly, so it overrides these and deploys are unaffected.
+
+Recovery, if a manual run has already half-torn-down the stack:
+
+```bash
+cd /data/studio-ent
+export TAG=<sha> CSGE_SUBNET=$(cat .subnet)
+docker compose up -d --no-build --pull never \
+  || { docker compose down --remove-orphans; docker compose up -d --no-build --pull never; }
+```
+
+`--no-build --pull never` is worth keeping on any by-hand run: it forces compose to use
+the local image and takes both failure modes above off the table.
+
+## The login account
+
+There is no default login in production. `db/mongo.ts` seeds `appUsers` only while that
+collection is **empty**, and the built-in `admin@cloudfuze.com` pair is a development
+fallback that is explicitly skipped when `NODE_ENV=production` — which the API image sets.
+Deploy without seed values and the boot log says so:
+
+```
+No app users exist and none were seeded — set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD,
+then restart, or nobody can sign in.
+```
+
+Add to `/data/studio-ent/.env`, then recreate (`restart` reuses the old container's
+environment and will not pick up an `.env` change):
+
+```
+SEED_ADMIN_EMAIL=...
+SEED_ADMIN_PASSWORD=...
+SEED_ADMIN_NAME=...
+```
+
+```bash
+docker compose up -d --force-recreate --no-build --pull never api
+docker compose logs --tail 30 api | grep -i seed
+```
+
+Seeding runs only against an empty collection, so once the account exists these variables
+do nothing on later boots — and `SEED_ADMIN_PASSWORD` is then just a plaintext credential
+sitting in `.env`. Delete that line once sign-in is confirmed; the bcrypt hash in Mongo is
+what authenticates. To change a password afterwards, use
+[server/src/scripts/rekeyAppUser.ts](../server/src/scripts/rekeyAppUser.ts).
+
 ## Verify — do not skip
 
 ```bash
