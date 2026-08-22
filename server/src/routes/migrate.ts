@@ -37,6 +37,13 @@ import {
   getAgentConnectorIdentity,
   upsertAgentConnectorIdentity,
 } from '../db/repos/agentConnectorIdentity.js';
+import {
+  listAgentSurfaceChoices,
+  saveAgentSurfaceChoice,
+  SURFACE_EQUIVALENTS,
+} from '../db/repos/agentSurfaceChoice.js';
+import { getCachedIR } from '../db/repos/agentIR.js';
+import { agentConnectorIds } from '../services/connectorToolBuilder.js';
 import { suggestEnvironmentDriveIdentity } from '../services/driveIdentityResolution.js';
 import { buildOrganizationProfile } from '../services/organizationProfile.js';
 import { getIdentityMap } from '../db/repos/identityMap.js';
@@ -428,6 +435,178 @@ migrateRouter.post('/drive-identities', async (req, res) => {
 });
 
 /**
+ * GET /api/migrate/surface-equivalence?session=&sourceIds=id1,id2
+ *
+ * For each agent that uses a Microsoft surface with a Google equivalent (today: Outlook ->
+ * Gmail), what the customer is being asked to accept and what they have decided so far.
+ *
+ * Every other connector is same-vendor and needs no decision. This one is a CHOICE: the
+ * source agent read a Microsoft mailbox, and whether it should now read a Google one is the
+ * customer's call. An absent decision is UNDECIDED and wires nothing — silence must never
+ * read as consent for a mailbox. See db/repos/agentSurfaceChoice.ts.
+ */
+/**
+ * GET /api/migrate/selection?session=<id>
+ *
+ * Which agents the customer selected, per environment — read from the SERVER-side plan.
+ *
+ * The Connectors screen previously read this from `sessionStorage` only. sessionStorage is
+ * per browser TAB and empty after a restart, a new tab, or resuming a session from a URL, so
+ * the screen silently believed no agents were selected and rendered none of the per-agent
+ * sections — including the Outlook/Teams choice. Nothing errored; the choice simply was not
+ * there, which is the worst way for a decision screen to fail.
+ *
+ * The plan is authoritative and survives all of that, so it is the fallback.
+ */
+migrateRouter.get('/selection', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const units = session.plan?.units ?? [];
+  res.json({
+    selection: units.map((u) => ({
+      env: u.envUrl,
+      envName: u.envName,
+      botIds: (u.bots ?? []).map((b) => b.botid),
+    })),
+  });
+});
+
+migrateRouter.get('/surface-equivalence', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const sourceIds = String(req.query.sourceIds ?? '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  if (sourceIds.length === 0) return void res.json({ surfaces: [] });
+
+  const envUrl = req.query.envUrl as string | undefined;
+  if (!envUrl) return void res.status(400).json({ error: 'env_url_required' });
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  try {
+    const choices = await listAgentSurfaceChoices(appUserId, sourceIds);
+    const byAgent = new Map(choices.map((c) => [`${c.sourceId}:${c.sourceConnectorId}`, c]));
+
+    // Read the cached IR rather than the staged row: `agentConnectorIds` is the one place
+    // that knows which connectors an agent really uses, including the ones inferred from
+    // knowledge sources rather than declared as tools.
+    const cached = await Promise.all(
+      sourceIds.map(async (sourceId) => [sourceId, await getCachedIR(appUserId, envUrl, sourceId)] as const),
+    );
+
+    // Only agents that ACTUALLY use the Microsoft surface are asked. Offering the choice on
+    // an agent with no mail connector is noise the customer has to read and dismiss.
+    const surfaces = [];
+    for (const [sourceId, entry] of cached) {
+      if (!entry) continue;
+      const connectorIds = agentConnectorIds(entry.ir);
+      for (const [sourceConnectorId, eq] of Object.entries(SURFACE_EQUIVALENTS)) {
+        if (!connectorIds.has(sourceConnectorId)) continue;
+        const decided = byAgent.get(`${sourceId}:${sourceConnectorId}`);
+        surfaces.push({
+          sourceId,
+          agentName: entry.ir.name,
+          sourceConnectorId,
+          sourceName: eq.sourceName,
+          noun: eq.noun,
+          targets: eq.targets,
+          decision: decided?.decision ?? null,
+          impersonateEmail: decided?.impersonateEmail ?? null,
+        });
+      }
+    }
+    // Logged because this screen fails SILENTLY when it fails: a missing row looks exactly
+    // like "no agent uses that service", and the agent then deploys with no tools for it.
+    // The ids the client asked about are the one thing not visible from the server otherwise.
+    logger.info(
+      `surface-equivalence: asked about ${sourceIds.length} agent(s) [${sourceIds.join(', ')}], ` +
+        `offering ${surfaces.length} choice(s) [${surfaces.map((s) => `${s.agentName}:${s.sourceConnectorId}`).join(', ') || 'none'}]`,
+    );
+    res.json({ surfaces });
+  } catch (err) {
+    res.status(502).json({ error: 'surface_equivalence_failed', detail: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/migrate/surface-equivalence
+ * body: { session, sourceId, sourceConnectorId, decision: 'migrate'|'skip', email? }
+ *
+ * Record one agent's decision. `email` names the mailbox that agent reads.
+ *
+ * Same domain-ownership check as the Drive identity save, and for a stronger reason: this
+ * grants an agent read/write access to a person's MAIL. An admin may only target a mailbox
+ * inside their own OAuth-proven Workspace.
+ */
+migrateRouter.post('/surface-equivalence', async (req, res) => {
+  const { session: sessionId, sourceId, sourceConnectorId, decision, email } = req.body as {
+    session?: string; sourceId?: string; sourceConnectorId?: string;
+    decision?: string; email?: string;
+  };
+  const session = await getSession(sessionId ?? '');
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!sourceId || !sourceConnectorId) {
+    return void res.status(400).json({ error: 'source_id_and_connector_required' });
+  }
+  const equivalent = SURFACE_EQUIVALENTS[sourceConnectorId];
+  if (!equivalent) return void res.status(400).json({ error: 'unknown_surface' });
+
+  // `decision` is either 'skip' or the connector id of a target THIS surface offers.
+  // Anything else is rejected rather than stored: an unrecognised value would later resolve
+  // to "undecided" and silently give the agent no mail tools at all.
+  const chosen = equivalent.targets.find((t) => t.connectorId === decision);
+  if (decision !== 'skip' && !chosen) {
+    return void res.status(400).json({
+      error: 'unknown_target',
+      detail: `Choose one of: ${equivalent.targets.map((t) => t.connectorId).join(', ')}, or "skip".`,
+    });
+  }
+
+  const target = email?.trim();
+  if (chosen) {
+    if (!target) {
+      return void res.status(400).json({
+        error: 'email_required',
+        detail: `Naming the mailbox this agent should use is required — an agent cannot read mail without one.`,
+      });
+    }
+    // Domain ownership is checked for the GOOGLE target only. The Microsoft target reaches
+    // mail through the customer's OWN Entra app registration, whose application permissions
+    // are already scoped to their tenant by Microsoft — there is no cross-tenant reach to
+    // guard against, and their Google domain says nothing about which Microsoft mailboxes
+    // they own.
+    if (chosen.connectorId === 'shared_gmail') {
+      const ownDomain = session.gEmail?.split('@')[1]?.toLowerCase();
+      if (!ownDomain) {
+        return void res.status(400).json({
+          error: 'impersonation_domain_mismatch',
+          detail: 'Could not verify your Google Workspace domain — reconnect Google and try again.',
+        });
+      }
+      const verifiedDomains = await getWorkspaceDomainsAsAdmin(session.gEmail!);
+      const allowedDomains = verifiedDomains.length ? verifiedDomains : [ownDomain];
+      if (!impersonationAllowed(target, allowedDomains)) {
+        return void res.status(400).json({
+          error: 'impersonation_domain_mismatch',
+          detail: `"${target}" is not in your Google Workspace (verified domains: ${allowedDomains.join(', ')}). An agent can only be given access to a mailbox in your own organization.`,
+        });
+      }
+    }
+  }
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  await saveAgentSurfaceChoice({
+    appUserId,
+    sourceId,
+    sourceConnectorId,
+    decision: decision!,
+    targetConnectorId: chosen?.connectorId,
+    impersonateEmail: chosen ? target : undefined,
+    decidedBy: session.gEmail,
+  });
+  res.json({ ok: true, decision });
+});
+
+/**
  * POST /api/migrate/knowledge-connectors
  * body: { session, envUrl, botIds: string[] }
  *
@@ -792,6 +971,69 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
  * Secret Manager. Returns field names and secret ids only — never a value, so this
  * response is safe to hold in the browser.
  */
+/**
+ * GET /api/migrate/connector-credential-value?session=…&connectorId=…&field=…
+ *
+ * Read back ONE stored credential value, so an admin can see what is currently configured
+ * before changing it.
+ *
+ * This deliberately breaks the rule the sibling route above states ("never a value") and the
+ * product owner asked for it explicitly: an admin editing a connector could not tell WHICH
+ * credential was stored, only that one was, which made a wrong-tenant or stale-secret
+ * situation impossible to diagnose from the UI.
+ *
+ * The exposure is real, so it is fenced as tightly as the feature allows:
+ *   - ONE field per request, named explicitly. No bulk dump of every secret.
+ *   - Fetched only when the admin clicks to reveal, never on page load, so a credential is
+ *     not sitting in the response of a screen someone merely walked past.
+ *   - Scoped by the session's own `appUserId` and by the destination project, exactly like
+ *     every other credential read — a session can only ever see its own tenant's secrets.
+ *   - The value is returned and never logged. `logger` must not touch `plaintext` here.
+ *
+ * What it does NOT do is make the value safe once it reaches the browser: it is then in page
+ * memory, devtools and any screenshot. That is the accepted trade, not an oversight.
+ */
+migrateRouter.get('/connector-credential-value', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const connectorId = String(req.query.connectorId ?? '').trim();
+  const field = String(req.query.field ?? '').trim();
+  if (!connectorId || !field) {
+    return void res.status(400).json({ error: 'connector_id_and_field_required' });
+  }
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const destProject = effectiveGeminiProject(session.geminiProject);
+  if (!destProject) return void res.status(400).json({ error: 'no_destination_project' });
+
+  // The record is looked up under THIS session's appUserId, so a client-supplied connectorId
+  // can never reach another tenant's secret. Scope-matching also means a Microsoft field is
+  // found on whichever ms_graph record holds it, the same way the save path merges them.
+  const scope = connectorCredentialScope(connectorId);
+  const saved = await listConnectorCredentials(appUserId);
+  const rec = saved.find(
+    (r) =>
+      r.project === destProject &&
+      (r.connectorId === connectorId || connectorCredentialScope(r.connectorId) === scope) &&
+      !!r.secretIds?.[field],
+  );
+  if (!rec) return void res.status(404).json({ error: 'not_configured' });
+
+  const secretId = rec.secretIds![field];
+  try {
+    const saToken = await getSaToken();
+    const got = await getEntraSecret(saToken, `projects/${destProject}/secrets/${secretId}/versions/latest`);
+    if (!got.ok || !got.plaintext) {
+      return void res.status(502).json({ error: 'secret_unreadable', detail: got.error });
+    }
+    // No logging on this path, deliberately — not the value, and not a "revealed X" line that
+    // would grow into an audit trail nobody asked for.
+    res.json({ connectorId, field, value: got.plaintext });
+  } catch (err) {
+    res.status(502).json({ error: 'secret_read_failed', detail: (err as Error).message });
+  }
+});
+
 migrateRouter.get('/connector-credentials', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });

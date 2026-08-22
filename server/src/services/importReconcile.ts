@@ -22,8 +22,23 @@ export interface ImportOperation {
     totalCount?: number | string;
   };
   response?: {
-    /** GCS URIs of per-document error samples, when configured. */
-    errorSamples?: { errorMessage?: string; document?: string }[];
+    /**
+     * Per-document failures. Discovery Engine returns these as `google.rpc.Status`
+     * (`code` / `message` / `details`), NOT as `{errorMessage}` — which is what this type
+     * used to declare. TypeScript could not catch the mismatch because the payload is
+     * untyped JSON at the boundary, so every sample rendered as "unknown error" and a
+     * 0/178 import reported a count with no cause (live 2026-08-19).
+     *
+     * Both spellings are accepted, and `toSampleText` keeps a raw fallback so an
+     * unrecognised shape still prints something a human can act on.
+     */
+    errorSamples?: Array<{
+      message?: string;
+      errorMessage?: string;
+      code?: number;
+      document?: string;
+      details?: unknown[];
+    }>;
   };
 }
 
@@ -84,9 +99,7 @@ export function reconcileImport(
   const unaccounted = Math.max(0, attemptedUploads - (succeeded + reportedFailed));
   const failed = reportedFailed + unaccounted;
 
-  const failureSamples = (op.response?.errorSamples ?? [])
-    .slice(0, 5)
-    .map((s) => `${s.document ? s.document.split('/').pop() + ': ' : ''}${s.errorMessage ?? 'unknown error'}`);
+  const failureSamples = (op.response?.errorSamples ?? []).slice(0, 5).map(toSampleText);
   if (unaccounted > 0) {
     failureSamples.push(`${unaccounted} document(s) uploaded but not accounted for by the import — treat as failed until verified.`);
   }
@@ -102,4 +115,33 @@ export function reconcileImport(
     failureSamples,
     operationError,
   };
+}
+
+
+/**
+ * Render one import error sample as something a human can act on.
+ *
+ * Falls back to the RAW sample rather than to the words "unknown error". A literal
+ * "unknown error" is indistinguishable from a bug in this function, and that ambiguity
+ * cost two full migration runs: the API had reported the cause every time, and we printed
+ * a placeholder over it.
+ */
+export function toSampleText(s: {
+  message?: string;
+  errorMessage?: string;
+  code?: number;
+  document?: string;
+  details?: unknown[];
+}): string {
+  const doc = s.document ? `${s.document.split('/').pop()}: ` : '';
+  const text =
+    s.message?.trim() ||
+    s.errorMessage?.trim() ||
+    (s.details?.length ? JSON.stringify(s.details).slice(0, 300) : '');
+  if (text) return `${doc}${s.code ? `[${s.code}] ` : ''}${text}`;
+
+  // Nothing recognised. Print the sample itself so the next run tells us the real shape
+  // instead of hiding it behind a placeholder again.
+  const raw = JSON.stringify(s);
+  return `${doc}unparsed import error sample: ${raw.slice(0, 300)}`;
 }

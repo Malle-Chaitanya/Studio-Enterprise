@@ -91,11 +91,13 @@ async function confluenceFetch(url: string, auth: string): Promise<Response> {
 async function resolveSpaceKeys(
   creds: ConfluenceCreds,
   targetNames: string[],
-): Promise<{ spaces: ConfluenceSpace[]; listError?: string }> {
+): Promise<{ spaces: ConfluenceSpace[]; listError?: string; available?: ConfluenceSpace[] }> {
   const auth = basicAuth(creds.email, creds.api_token);
   const normalizedTargets = new Map(targetNames.map((n) => [n.toLowerCase().trim(), n]));
   const matched: ConfluenceSpace[] = [];
   let listError: string | undefined;
+  /** Every space the account can see, kept so a failure can say what DOES exist. */
+  const seen: ConfluenceSpace[] = [];
 
   let start = 0;
   const limit = 50;
@@ -132,7 +134,15 @@ async function resolveSpaceKeys(
     };
     const results = json.results ?? [];
     for (const s of results) {
-      if (normalizedTargets.has(s.name.toLowerCase().trim())) {
+      seen.push({ key: s.key, name: s.name });
+      // Match on the KEY as well as the display name. A Copilot knowledge source stores
+      // whatever the author typed, and for Confluence that is as often the key ("ENG") as
+      // the name ("Engineering"). Name-only matching reported a space that was sitting right
+      // there as "not found" — the same class of bug the live tool's _resolve_space fixes.
+      if (
+        normalizedTargets.has(s.name.toLowerCase().trim()) ||
+        normalizedTargets.has(s.key.toLowerCase().trim())
+      ) {
         matched.push({ key: s.key, name: s.name });
       }
     }
@@ -141,7 +151,7 @@ async function resolveSpaceKeys(
     start += results.length;
   }
 
-  return { spaces: matched, listError };
+  return { spaces: matched, listError, available: seen };
 }
 
 /**
@@ -277,8 +287,15 @@ async function migrateConfluenceToDataStoreImpl(
   logger.info({ targetNames }, 'confluenceMigrator: resolving space names to keys');
 
   // ── 1. Resolve space names → keys ────────────────────────────────────────
-  const { spaces: resolvedSpaces, listError } = await resolveSpaceKeys(creds, targetNames);
+  const { spaces: resolvedSpaces, listError, available } = await resolveSpaceKeys(creds, targetNames);
   if (resolvedSpaces.length === 0) {
+    // Name what the site DOES have. Measured 2026-08-20: two agents referenced "Migration
+    // Knowledge Source" and "CloudFuze Migration Docs", neither of which exists on
+    // cf2020.atlassian.net by name, key or partial match — the old message was correct but
+    // left the customer with nothing to do about it. Team spaces only, and capped: a
+    // personal space per user turns 32 useful names into 76 lines of noise.
+    const team = (available ?? []).filter((s) => !s.key.startsWith('~'));
+    const suggestions = team.slice(0, 12).map((s) => `${s.name} (${s.key})`).join(', ');
     return {
       pageCount: 0,
       spaceCount: 0,
@@ -286,7 +303,11 @@ async function migrateConfluenceToDataStoreImpl(
       // when the listing actually succeeded and the name was absent from it.
       error:
         listError ??
-        `None of the requested spaces found: ${targetNames.join(', ')}. The space list was read successfully, so these names do not match any space on ${creds.base_url}.`,
+        `None of the requested spaces found: ${targetNames.join(', ')}. The space list was read ` +
+          `successfully, so these do not match any space on ${creds.base_url} by name or by key.` +
+          (suggestions
+            ? ` Spaces that DO exist: ${suggestions}${team.length > 12 ? `, and ${team.length - 12} more` : ''}.`
+            : ' The account can see no team spaces at all.'),
     };
   }
 
