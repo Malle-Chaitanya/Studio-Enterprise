@@ -212,7 +212,9 @@ export async function ensureSecretInProject(
 ): Promise<void> {
   if (!sourceProject || sourceProject === targetProject) return;
   try {
-    const source = await getEntraSecret(saToken, `projects/${sourceProject}/secrets/${secretId}/versions/latest`);
+    const source = await getEntraSecret(saToken, `projects/${sourceProject}/secrets/${secretId}/versions/latest`, {
+      optional: true, // a source project that never held this secret is the documented no-op below
+    });
     if (!source.ok || !source.plaintext) return; // nothing to copy — the existing per-secret-grant failure still reports this
     const { written } = await upsertSecretIfChanged(saToken, targetProject, secretId, source.plaintext);
     if (written) {
@@ -244,7 +246,15 @@ export async function upsertSecretIfChanged(
   plaintext: string,
   labels?: Record<string, string>,
 ): Promise<{ written: boolean }> {
-  const current = await getEntraSecret(saToken, `projects/${project}/secrets/${secretId}/versions/latest`);
+  // `optional`: this read is a COMPARISON, and a secret being written for the first time has
+  // nothing to compare against. A 404 here is the normal first-write path, so it must not log a
+  // warning — every Drive- and Outlook-scoped agent produced
+  //   WARN Secret Manager: access version failed  status: 404 ...-agent-<id>-impersonate-email
+  // on its own just-written secret (see the note in orchestrator.ts around the per-agent
+  // mailbox), which is indistinguishable in the log from a credential we genuinely cannot read.
+  const current = await getEntraSecret(saToken, `projects/${project}/secrets/${secretId}/versions/latest`, {
+    optional: true,
+  });
   if (current.ok && current.plaintext === plaintext) return { written: false };
   const result = await putEntraSecret(project, saToken, secretId, plaintext, labels);
   if (!result.ok) throw new Error(result.error ?? 'upsertSecretIfChanged failed');
@@ -441,7 +451,19 @@ export interface GetSecretResult {
  * Fetch a secret version's plaintext for one-shot, in-stack-frame use in a
  * setUpDataConnector call — the caller must not cache or persist the result.
  */
-export async function getEntraSecret(saToken: string, versionName: string): Promise<GetSecretResult> {
+export async function getEntraSecret(
+  saToken: string,
+  versionName: string,
+  /**
+   * True when the caller is PROBING for a secret that is allowed not to exist — the per-agent
+   * identity override being the case in hand. A 404 there is the normal path, and logging it at
+   * `warn` taught readers to skip warnings: a real run printed
+   *   WARN Secret Manager: access version failed  status: 404 ...-agent-<id>-impersonate-email
+   * immediately before correctly falling back to the connector-level identity. The absence of an
+   * OPTIONAL secret is not a warning; any other status still is, even when optional.
+   */
+  opts?: { optional?: boolean },
+): Promise<GetSecretResult> {
   const res = await fetch(`${HOST}/${versionName}:access`, {
     headers: { Authorization: `Bearer ${saToken}` },
   });
@@ -450,7 +472,10 @@ export async function getEntraSecret(saToken: string, versionName: string): Prom
     // versionName is `projects/{project}/secrets/{id}/versions/{v}` — logging it (not just
     // the status) is what makes this line useful: without it, every 404 anywhere in the app
     // reads identically and nobody can tell which secret, in which project, was missing.
-    logger.warn({ status: res.status, versionName, detail: text.slice(0, 200) }, 'Secret Manager: access version failed');
+    const expectedMiss = opts?.optional && res.status === 404;
+    const line = { status: res.status, versionName, detail: text.slice(0, 200) };
+    if (expectedMiss) logger.debug(line, 'Secret Manager: optional secret not set (expected)');
+    else logger.warn(line, 'Secret Manager: access version failed');
     return { ok: false, error: `${res.status}: ${text.slice(0, 200)}` };
   }
   const json = (await res.json()) as { payload?: { data?: string } };
