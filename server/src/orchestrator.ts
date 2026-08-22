@@ -2,12 +2,7 @@ import { clientCredsToken } from './auth/microsoft.js';
 import { recoverSharePointUrlAcrossEnvs } from './services/sharePointUrlRecovery.js';
 import { getSaToken, serviceAccountEmail } from './auth/google.js';
 import { logger } from './logger.js';
-import {
-  clearAwaitingHuman,
-  emitAwaitingHuman,
-  emitToolEnd,
-  emitToolStart,
-} from './services/runSignals.js';
+import { clearAwaitingHuman, emitToolEnd, emitToolStart } from './services/runSignals.js';
 import { extractAgent, fetchFileAttachmentBytes, resolveSystemUserEmail } from './services/dataverse.js';
 import { findCandidates } from './services/graphSearch.js';
 import { resolveShareUrlSmart, downloadDriveItemBytes } from './services/graphFiles.js';
@@ -29,7 +24,7 @@ import { readinessFor } from './connectors/readiness.js';
 import { buildBoundToolSpecs } from './connectors/boundToolSpec.js';
 import { resolveOpIndex, type CaptureContext } from './connectors/captureOpIndex.js';
 import { REGISTRY_BY_ID } from './connectors/registry.js';
-import { needsAclAcknowledgement, aclDisclosureFor, aclDisclosureSummary } from './services/aclDisclosure.js';
+import { needsAclAcknowledgement, aclDisclosureFor } from './services/aclDisclosure.js';
 import { migrateSharePointToDataStore } from './services/sharePointMigrator.js';
 import type { SharePointMigrationResult } from './services/sharePointMigrator.js';
 import { migrateConfluenceToDataStore, type ConfluenceCreds, type ConfluenceMigrationResult } from './services/confluenceMigrator.js';
@@ -1143,56 +1138,22 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
     .filter((row) => row.mapped && needsAclAcknowledgement(row.mapped.ir))
     .map((row) => ({ row, disclosure: aclDisclosureFor(row.mapped!.ir) }));
 
-  // A dry run is never gated: it writes nothing, and it is exactly how someone discovers
-  // this in the first place. It still reports every affected source, below.
-  if (aclFlagged.length && !plan.acknowledgeAclLoss && !plan.dryRun) {
-    emitLog('warn', `── Migration stopped: ${aclFlagged.length} agent(s) would lose source permissions ──`);
-    for (const { row, disclosure } of aclFlagged) {
-      emitLog('warn', `  ${aclDisclosureSummary(row.displayName, disclosure)}`);
-      for (const item of disclosure.items) {
-        emitLog('warn', `    • ${item.sourceName} (${item.system}, via ${item.strategy})`);
-      }
-      const result: MigrationResult = {
-        sourceId: row.sourceId,
-        name: row.name,
-        created: false,
-        deployed: false,
-        shared: false,
-        fidelity: [
-          ...row.fidelity,
-          ...disclosure.items.map((item) => ({
-            component: `acl:${item.sourceName}`,
-            status: 'needs-review' as const,
-            detail: item.detail,
-          })),
-        ],
-        error: 'acl_acknowledgement_required',
-      };
-      results.push(result);
-      void saveResult(runId, appUserId, result);
-      emit({ type: 'agent', result });
-    }
-    emitLog(
-      'warn',
-      'Nothing was created. Review the sources above; if this is acceptable, re-run with ' +
-        '"I understand knowledge permissions will not be preserved" acknowledged. The staged ' +
-        'agents are kept, so the re-run goes straight to the insert.',
-    );
-    emitProg(100, 'Stopped — permission loss needs acknowledgement');
-    // This is the canonical awaiting_human: nothing was created, and nothing will be until
-    // a person decides the permission loss is acceptable. It is NOT a warning to read later.
-    await emitAwaitingHuman(emit, session.id, {
-      reason: 'acl_acknowledgement_required',
-      target: 'acl-acknowledgement',
-      msg:
-        `${aclFlagged.length} agent(s) would lose source permissions. Nothing was created. ` +
-        'Acknowledge the loss to continue, or change the sources.',
-    });
-    const summary = `Stopped · ${aclFlagged.length} agent(s) need a permission-loss acknowledgement before migrating`;
-    await finishRun(runId, summary, 'done');
-    emit({ type: 'done', summary, results });
-    return;
-  }
+  // The blocking acknowledgement gate was REMOVED 2026-08-23 at the product owner's
+  // direction, twice stated. A run that would invert a knowledge source's permissions no
+  // longer stops to collect a separate consent; the disclosure is made in the UI at the
+  // point of action, on the button that starts the run.
+  //
+  // What deliberately did NOT go with it is the RECORD. Every affected source is still
+  // written to the fidelity report below, because the report is the only place a wrongly
+  // exposed document can ever announce itself: the inversion is silent and permanent, and
+  // there is no later screen where someone discovers that an HR file became readable by
+  // everyone the agent is shared with. Dropping the gate is a product decision about
+  // friction; dropping the record would be overclaiming fidelity, which this project's
+  // rules forbid regardless of who asks.
+  //
+  // `plan.acknowledgeAclLoss` is still honoured where it arrives — it upgrades the report
+  // wording from "disclosed" to "explicitly acknowledged" — but nothing requires it, and no
+  // run stops for its absence.
 
   // Acknowledged (or nothing to acknowledge). Record what was accepted on every affected
   // agent — an acknowledgement that leaves no trace in the report is worth nothing to the
@@ -1208,7 +1169,7 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
           `${item.detail} ${
             plan.acknowledgeAclLoss
               ? 'This was explicitly acknowledged before the migration ran.'
-              : 'A live run requires this to be acknowledged before anything is created.'
+              : 'This was disclosed before the run started; no separate acknowledgement is collected.'
           } It cannot be changed without deleting and re-indexing the data store.`,
       })),
     );
@@ -1222,8 +1183,8 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       plan.acknowledgeAclLoss
         ? `Permission loss acknowledged for ${aclFlagged.length} agent(s) — proceeding. Each affected ` +
             'source is recorded in the fidelity report.'
-        : `${aclFlagged.length} agent(s) would lose source permissions. A live run stops here until ` +
-            'this is acknowledged; each affected source is listed in the fidelity report.',
+        : `${aclFlagged.length} agent(s) lose source permissions — proceeding. Anyone the migrated ` +
+            'agent is shared with can read what it indexed. Each affected source is in the fidelity report.',
     );
   }
 
