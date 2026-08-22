@@ -1,6 +1,7 @@
 import type { TopicGraph } from './services/topicGraph.js';
 import type { KnowledgeClassification } from './services/knowledgeClassifier.js';
 import type { ToolInputIR, ToolOutputFieldIR, McpBindingIR } from './services/toolPayload.js';
+import type { VerificationEvidence } from './services/verify.js';
 
 /**
  * Types shared across the migration pipeline.
@@ -567,6 +568,12 @@ export interface MigrationResult {
    */
   verifyStatus?: 'verified' | 'failed' | 'unknown';
   verifySample?: string;
+  /**
+   * What verification actually observed, so the report can show WHAT RAN rather than only a
+   * verdict. Shape and the four-state rule live in services/verify.ts. Absent on results
+   * from before this field existed, and on any path that never probed.
+   */
+  verifyEvidence?: VerificationEvidence;
   error?: string;
   fidelity: FidelityNote[];
   /** Uploaded knowledge files attached to the agent (agentFiles). */
@@ -600,8 +607,58 @@ export interface MigrationResult {
 }
 
 /** Server-sent progress event to the browser. */
+/**
+ * `target` names the DOM element a UI may point at — it must match a `data-agent-target`
+ * attribute on the page. It is a HINT, never a promise: the server does not know what the
+ * client rendered, so a target that does not resolve must be ignored silently rather than
+ * treated as an error.
+ */
 export type ProgressEvent =
   | { type: 'log'; level: 'info' | 'ok' | 'warn' | 'fail'; msg: string }
   | { type: 'progress'; pct: number; msg: string }
   | { type: 'agent'; result: MigrationResult }
+  /**
+   * A tool call BEGAN. Emitted only for work actually starting — never speculatively, and
+   * never on a schedule. The UI is entitled to move its cursor on this, which is precisely
+   * why it must not fire for anything that has not really happened.
+   */
+  | { type: 'tool_start'; tool: string; target?: string; msg: string }
+  /**
+   * A tool call ENDED.
+   *
+   * `ok` is the tool's own verdict, not the HTTP status — a 200 carrying an error payload is
+   * `ok: false`.
+   *
+   * `outcome` carries the THREE-value truth, because `ok` alone cannot. A step that could not
+   * be established is not a step that failed: rendering "we could not check" in the same red
+   * as "we checked and it is broken" is the exact collapse the verified/unknown split exists
+   * to prevent, merely moved from the result chip into the step line. `ok` stays `false` for
+   * an unknown so nothing green can leak through a consumer that ignores `outcome`, and a
+   * consumer that reads it can colour the middle state properly. Optional so the field is
+   * additive — older consumers keep working unchanged.
+   */
+  | {
+      type: 'tool_end';
+      tool: string;
+      target?: string;
+      ok: boolean;
+      outcome?: 'ok' | 'failed' | 'unknown';
+      msg: string;
+    }
+  /**
+   * The run cannot proceed without a person. Distinct from a `log` at warn level: a warning
+   * is something to read afterwards, this is a stop that owns the screen until it is
+   * cleared. Also persisted on the session (`awaitingHuman`) so a browser refresh does not
+   * lose the fact that it is the operator's turn.
+   */
+  | { type: 'awaiting_human'; reason: string; target?: string; msg: string }
   | { type: 'done'; summary: string; results: MigrationResult[] };
+
+/** The pending handoff stored on a session, so a refresh does not lose it. */
+export interface AwaitingHuman {
+  reason: string;
+  target?: string;
+  msg: string;
+  /** Epoch ms, so the UI can say how long it has been waiting. */
+  since: number;
+}

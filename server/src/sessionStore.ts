@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { ResolvedPlan } from './types.js';
+import type { ResolvedPlan, AwaitingHuman } from './types.js';
 import { getDb, isDbConnected } from './db/core.js';
 import { logger } from './logger.js';
 
@@ -15,6 +15,8 @@ import { logger } from './logger.js';
  * "run without persistence" behavior.
  */
 export interface Session {
+  /** This session's own opaque id, so a holder can write back to it. */
+  id?: string;
   /** Free-form progress marker. 'google_only' means the Microsoft/source side
    *  was disconnected while a Google connection survived on this same doc —
    *  see POST /api/auth/disconnect and msCallback's reconnect-reattach logic. */
@@ -53,6 +55,14 @@ export interface Session {
   saReason?: string;
   // resolved migration plan (set by POST /api/migrate/plan)
   plan?: ResolvedPlan;
+  /**
+   * A stop that needs a person, surviving a browser refresh.
+   *
+   * The SSE event alone is not enough: it exists only in the stream, so reloading the page
+   * loses the fact that it is the operator's turn and the run looks merely idle. Cleared
+   * when the run moves on.
+   */
+  awaitingHuman?: AwaitingHuman;
   // linkage during OAuth handshakes
   msSessionId?: string;
   // NOTE: SharePoint/OneDrive connector setup state moved to the
@@ -110,9 +120,11 @@ interface SessionDoc extends Session {
 function toSession(doc: SessionDoc | null): Session | undefined {
   if (!doc) return undefined;
   const { _id, createdAtDate, ...rest } = doc;
-  void _id;
   void createdAtDate;
-  return rest;
+  // Carry the id onto the object. Without it a Session cannot be written back to, so any
+  // code holding one (the orchestrator, notably) has to have the id passed alongside it and
+  // the two can drift apart. The id is opaque and already server-side only.
+  return { ...rest, id: _id };
 }
 
 /**

@@ -2,6 +2,12 @@ import { clientCredsToken } from './auth/microsoft.js';
 import { recoverSharePointUrlAcrossEnvs } from './services/sharePointUrlRecovery.js';
 import { getSaToken, serviceAccountEmail } from './auth/google.js';
 import { logger } from './logger.js';
+import {
+  clearAwaitingHuman,
+  emitAwaitingHuman,
+  emitToolEnd,
+  emitToolStart,
+} from './services/runSignals.js';
 import { extractAgent, fetchFileAttachmentBytes, resolveSystemUserEmail } from './services/dataverse.js';
 import { findCandidates } from './services/graphSearch.js';
 import { resolveShareUrlSmart, downloadDriveItemBytes } from './services/graphFiles.js';
@@ -629,6 +635,10 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const runId = newId();
   const results: MigrationResult[] = [];
+  // A new run supersedes whatever the last one was waiting for. Leaving a stale handoff
+  // tells the operator to act on something already dealt with, and an indicator that has
+  // cried wolf twice stops being read at all.
+  await clearAwaitingHuman(session.id);
 
   // Resolve each source environment to its Gemini destination. If the customer
   // mapped the environment (environmentMap), route there; otherwise use the
@@ -912,6 +922,10 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   }
   let extracted = 0;
   await mapPool(workItems, CONCURRENCY, async (item) => {
+    // Phase 1 is the longest silence in a run — every agent is read from Dataverse before
+    // anything appears on screen. The id is the Copilot source id, the same key the UI
+    // already uses for its rows, so the step can honestly name which agent it is on.
+    emitToolStart(emit, 'extract', `Reading ${item.bot.name} from Copilot Studio`, `agent:${item.bot.botid}`);
     try {
       const token = await tokenFor(item.envUrl);
       // Land the verbatim payload before parsing, when the operator has opted in. The sink
@@ -1027,6 +1041,18 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
           (ksTotal ? ` · knowledge=${ksAuto}/${ksTotal} auto` : '') +
           (ir.thinContent ? ' · ⚠ THIN (prebuilt/AI-Builder — needs manual authoring)' : ''),
       );
+      // Thin content is a real caveat, not a failure: the agent extracted fine, there was
+      // just little in it to extract. Reporting it as failed would blame the tool for what
+      // the source actually contains, so it stays ok with the caveat in the message.
+      emitToolEnd(
+        emit,
+        'extract',
+        true,
+        ir.thinContent
+          ? `Extracted ${item.bot.name} — thin content, needs manual authoring`
+          : `Extracted ${item.bot.name} · ${ir.topics.length} topic(s), ${ksTotal} knowledge source(s)`,
+        `agent:${item.bot.botid}`,
+      );
     } catch (err) {
       await stageAgent({
         runId,
@@ -1041,6 +1067,13 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         error: (err as Error).message,
       });
       emitLog('fail', `  extract failed: ${item.bot.name} — ${(err as Error).message}`);
+      emitToolEnd(
+        emit,
+        'extract',
+        false,
+        `Extract failed for ${item.bot.name}: ${(err as Error).message}`,
+        `agent:${item.bot.botid}`,
+      );
     } finally {
       extracted++;
       emitProg(5 + Math.round(45 * (extracted / total)), `Extracting ${extracted}/${total}`);
@@ -1146,6 +1179,15 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
         'agents are kept, so the re-run goes straight to the insert.',
     );
     emitProg(100, 'Stopped — permission loss needs acknowledgement');
+    // This is the canonical awaiting_human: nothing was created, and nothing will be until
+    // a person decides the permission loss is acceptable. It is NOT a warning to read later.
+    await emitAwaitingHuman(emit, session.id, {
+      reason: 'acl_acknowledgement_required',
+      target: 'acl-acknowledgement',
+      msg:
+        `${aclFlagged.length} agent(s) would lose source permissions. Nothing was created. ` +
+        'Acknowledge the loss to continue, or change the sources.',
+    });
     const summary = `Stopped · ${aclFlagged.length} agent(s) need a permission-loss acknowledgement before migrating`;
     await finishRun(runId, summary, 'done');
     emit({ type: 'done', summary, results });
@@ -2412,6 +2454,13 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
             }
 
             const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, {
+              // Turn the deployer's transport-agnostic step callback into run events. The
+              // deploy is 3-5 minutes of total silence otherwise, and a run that looks hung
+              // is the one people kill halfway through.
+              onStep: (phase, state, detail, ok) =>
+                state === 'start'
+                  ? emitToolStart(emit, phase, detail, `agent:${row.sourceId}`)
+                  : emitToolEnd(emit, phase, ok !== false, detail, `agent:${row.sourceId}`),
               websiteSource,
               groundingDataStores,
               liveConnectors: scopedConnectors,
@@ -3103,7 +3152,15 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               detail: 'Source agent was never published in Copilot Studio (Draft) — left as Draft in Gemini to mirror source status.',
             });
           } else {
+            emitToolStart(emit, 'publish', `Publishing ${row.name}`, `agent:${row.sourceId}`);
             result.deployed = await publishAgent(dest, saToken, create.agentId);
+            emitToolEnd(
+              emit,
+              'publish',
+              result.deployed,
+              result.deployed ? `Published ${row.name}` : `Publish failed for ${row.name}`,
+              `agent:${row.sourceId}`,
+            );
           }
 
           const perms = row.mapped.ir.permissions;
@@ -3112,7 +3169,15 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
           // today's shareAgent(ALL_USERS) behavior.
           const orgWide = !hasPerms || isOrgWideChat(perms);
           if (orgWide || allowOvershare) {
+            emitToolStart(emit, 'share', `Sharing ${row.name}`, `agent:${row.sourceId}`);
             result.shared = await shareAgent(dest, saToken, create.agentId);
+            emitToolEnd(
+              emit,
+              'share',
+              result.shared,
+              result.shared ? `Shared ${row.name}` : `Share failed for ${row.name}`,
+              `agent:${row.sourceId}`,
+            );
             if (hasPerms && orgWide) {
               result.fidelity.push(...permissionFidelityNotes(perms, true, undefined));
             } else if (hasPerms && allowOvershare && !orgWide) {
@@ -3169,6 +3234,10 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
         // Pass the Reasoning Engine so verification ASKS the agent something instead of
         // only checking the resource exists — an agent that cannot reach its knowledge
         // sources must not report `verified`.
+        // The step that produces the evidence, and until now the longest invisible pause in
+        // the run. Per-agent because the id is stable here — a step that cannot honestly
+        // name its agent would be reported per phase instead.
+        emitToolStart(emit, 'verify', `Verifying ${row.name} — asking it to prove its tools`, `agent:${row.sourceId}`);
         const v = await verifyAgent(dest, saToken, create.agentId, undefined, {
           reasoningEngineId: adkReasoningEngineId,
           // Only demand retrieval from agents we actually gave knowledge to.
@@ -3181,6 +3250,21 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
         result.verified = v.verified;
         result.verifyStatus = v.status;
         result.verifySample = v.sample;
+        result.verifyEvidence = v.evidence;
+        // The verdict, not whether the probe completed — and all THREE values of it. An
+        // unknown is a check still owed: reporting it as failed blames us for a defect
+        // nobody found, and reporting it as ok is the green tick an unproven agent must
+        // never get. emitToolEnd carries the middle state through as outcome:'unknown'.
+        emitToolEnd(
+          emit,
+          'verify',
+          v.status === 'verified' ? true : v.status === 'failed' ? false : 'unknown',
+          v.note ??
+            (v.status === 'unknown'
+              ? `Verification inconclusive for ${row.name} — nothing was proven either way`
+              : `Verification ${v.status} for ${row.name}`),
+          `agent:${row.sourceId}`,
+        );
         if (v.status === 'failed' && v.note) {
           result.fidelity.push({
             component: 'verification',
