@@ -114,6 +114,20 @@ export interface VendorBinding {
   contextParams?: string[];
   /** Why a `proxy-only` connector cannot be reproduced — shown to the customer verbatim. */
   proxyReason?: string;
+  /**
+   * Operations on a `proxy-only` connector that ARE reproduced, by a hand-written tool in
+   * `server/scripts/connector_tools/`, keyed operationId → what the migrated tool does.
+   *
+   * `proxy-only` is a per-CONNECTOR verdict, but the reasons are per-operation: some of a
+   * connector's dataset abstractions have a clean vendor equivalent and some do not.
+   * Without this, an operation we genuinely reproduce is still reported to the customer as
+   * "will not be recreated" — understating what migrated, which fails the honesty rule in
+   * the same way overstating does.
+   *
+   * The value is shown verbatim in the readiness report, so it must name any NARROWING
+   * (SharePoint tools are scoped to the connected site, the source operation was not).
+   */
+  customToolOperations?: Record<string, string>;
 }
 
 /**
@@ -209,6 +223,17 @@ export const VENDOR_BINDINGS: Record<string, VendorBinding> = {
       'operation is a tunnel that carries the real request in its body — the swagger ' +
       'describes the tunnel, not the call. SharePoint content migrates as knowledge ' +
       '(a data store or the native connector) instead.',
+    customToolOperations: {
+      // Measured demand: of 340 operations across the three proxy-only Microsoft
+      // connectors, this is the only one any staged agent calls (_diag_ms_op_usage.ts,
+      // 131 agents, 2026-08-19).
+      GetAllTables:
+        'Recreated as `sharepoint_list_lists`, which lists the lists and document ' +
+        'libraries on the site this agent was connected to. NARROWED: the source ' +
+        'operation could target any site the signed-in user could reach; the migrated ' +
+        'tool is fixed to the connected site, because our app credential carries ' +
+        'Sites.Read.All over the whole tenant.',
+    },
   },
 };
 
@@ -241,7 +266,8 @@ export type BindingResult =
   | { status: 'bindable'; operation: BoundOperation }
   | { status: 'unknown-connector'; connectorId: string; reason: string }
   | { status: 'unknown-operation'; connectorId: string; operationId: string; reason: string }
-  | { status: 'proxy-only'; connectorId: string; operationId: string; reason: string };
+  | { status: 'proxy-only'; connectorId: string; operationId: string; reason: string }
+  | { status: 'custom-tool'; connectorId: string; operationId: string; reason: string };
 
 /** `{connectionId}` is filled by the proxy, never by us — it is not part of a vendor call. */
 function stripConnectionId(path: string): string {
@@ -292,6 +318,18 @@ export function bindOperation(index: ConnectorOpIndex, operationId: string): Bin
         'may call an operation from a newer version than the one captured.',
     };
   }
+  // A hand-written tool outranks the connector-level proxy-only verdict: we reproduce this
+  // specific operation even though the connector as a whole has no generic mapping.
+  const customTool = binding.customToolOperations?.[operationId];
+  if (customTool) {
+    return {
+      status: 'custom-tool',
+      connectorId: index.connectorId,
+      operationId,
+      reason: customTool,
+    };
+  }
+
   if (binding.pathStyle === 'proxy-only') {
     return {
       status: 'proxy-only',
@@ -342,6 +380,13 @@ export interface ConnectorReadiness {
   displayName: string;
   bindable: string[];
   blocked: Array<{ operationId: string; reason: string }>;
+  /**
+   * Operations reproduced by a hand-written tool rather than a generic binding. They count
+   * as ready, but each carries a note describing what the migrated tool does — and, where
+   * relevant, what it narrows. The caller must surface these: they are the difference
+   * between "migrated" and "migrated exactly".
+   */
+  customTool: Array<{ operationId: string; note: string }>;
   /** True when every operation the agent uses can be reproduced. */
   ready: boolean;
 }
@@ -349,16 +394,21 @@ export interface ConnectorReadiness {
 export function connectorReadiness(index: ConnectorOpIndex, usedOperations: string[]): ConnectorReadiness {
   const bindable: string[] = [];
   const blocked: Array<{ operationId: string; reason: string }> = [];
+  const customTool: Array<{ operationId: string; note: string }> = [];
   for (const opId of usedOperations) {
     const r = bindOperation(index, opId);
     if (r.status === 'bindable') bindable.push(opId);
-    else blocked.push({ operationId: opId, reason: r.reason });
+    else if (r.status === 'custom-tool') {
+      bindable.push(opId);
+      customTool.push({ operationId: opId, note: r.reason });
+    } else blocked.push({ operationId: opId, reason: r.reason });
   }
   return {
     connectorId: index.connectorId,
     displayName: index.displayName,
     bindable,
     blocked,
+    customTool,
     // An agent that uses NO operation of a connector is not "ready" by default — an empty
     // used-list means we failed to read what it calls, which is a gap, not a pass.
     ready: usedOperations.length > 0 && blocked.length === 0,
