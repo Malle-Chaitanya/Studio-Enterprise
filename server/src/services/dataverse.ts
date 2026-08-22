@@ -340,6 +340,65 @@ export interface BotSummary {
   /** Decoded chat access policy label for Select Agents UI. */
   accessLabel?: string;
   accessPolicy?: string;
+  /**
+   * Knowledge sources + uploaded files (componenttype 16 + 14).
+   *
+   * NO topic count is exposed here, deliberately. The obvious implementation — counting
+   * componenttype-9 rows — does not agree with the number staging reports: measured
+   * 2026-08-22, WorkMate came to 44 raw / 34 with system topics excluded / 13 staged, and
+   * Knowledge Assistant to 16 / 6 / 15. The staged figure is derived from the parsed agent,
+   * not from a row count, and until that relationship is understood any topic number here
+   * would contradict the very next screen. Two different values for one word discredits
+   * both of them, so this ships with the count it can stand behind and without the one it
+   * cannot.
+   */
+  knowledgeCount?: number;
+}
+
+/**
+ * Knowledge counts for every bot in one environment, in ONE call.
+ *
+ * The Select Agents grid needs a number per agent, and asking per agent would be one
+ * round trip each — for an environment with sixty agents that is sixty calls to render a
+ * list. This reads the id/type pair for the environment's components once and counts
+ * locally; two columns over a few thousand rows is far cheaper than the fan-out.
+ *
+ * Deliberately not `$apply=groupby(...)`, which would push the aggregation server-side:
+ * it is not uniformly supported across the Dataverse versions this tool meets, and a query
+ * that 400s on some tenants to save a few hundred KB on others is the wrong trade for a
+ * count that is only ever decoration.
+ *
+ * Best-effort by contract: a failure returns an empty map, and the caller leaves the counts
+ * undefined. A missing number renders as "—", which is honest; a zero would claim the agent
+ * has no topics, which would be a lie told by an unrelated failure.
+ */
+export async function countBotComponents(
+  url: string,
+  token: string,
+): Promise<Map<string, { knowledge: number }>> {
+  const out = new Map<string, { knowledge: number }>();
+  try {
+    const rows = await dvGetAll<{ _parentbotid_value?: string; componenttype?: number }>(
+      url,
+      token,
+      'botcomponents?$select=_parentbotid_value,componenttype&$filter=statecode eq 0',
+    );
+    for (const r of rows) {
+      const id = r._parentbotid_value;
+      if (!id) continue;
+      const cur = out.get(id) ?? { knowledge: 0 };
+      if (
+        r.componenttype === ComponentType.KnowledgeSource ||
+        r.componenttype === ComponentType.BotFileAttachment
+      ) {
+        cur.knowledge++;
+      }
+      out.set(id, cur);
+    }
+  } catch (e) {
+    logger.warn(`countBotComponents failed (counts will be omitted): ${(e as Error).message}`);
+  }
+  return out;
 }
 
 /**

@@ -47,6 +47,7 @@ import { agentConnectorIds } from '../services/connectorToolBuilder.js';
 import { suggestEnvironmentDriveIdentity } from '../services/driveIdentityResolution.js';
 import { buildOrganizationProfile } from '../services/organizationProfile.js';
 import { getIdentityMap } from '../db/repos/identityMap.js';
+import { listRuns, getRunResults } from '../db/repos/migrations.js';
 import type { DestinationOptions, GeminiDestination, MigrationResult, MigrationScope } from '../types.js';
 
 export const migrateRouter = Router();
@@ -1230,4 +1231,36 @@ migrateRouter.post('/ms-connector-credentials', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: 'ms_creds_save_failed', detail: (err as Error).message });
   }
+});
+
+/**
+ * GET /api/migrate/runs?session=&limit=
+ * Past runs for the signed-in tenant, newest first.
+ *
+ * The Fidelity report previously had no source for history — it could show only the run you
+ * had just watched, and said so rather than inventing one. This is that source.
+ */
+migrateRouter.get('/runs', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  // Scope from the AUTHENTICATED session, never from a client-supplied value.
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const runs = await listRuns(appUserId, { limit: Number(req.query.limit) || 20 });
+  res.json({ runs });
+});
+
+/**
+ * GET /api/migrate/runs/:runId?session=
+ * Every agent result for one past run.
+ */
+migrateRouter.get('/runs/:runId', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const results = await getRunResults(appUserId, req.params.runId);
+  // An unknown run and someone else's run are indistinguishable here on purpose: both are
+  // simply "not found for you", which is the only answer that does not confirm the run
+  // exists in another tenant.
+  if (!results.length) return void res.status(404).json({ error: 'run_not_found' });
+  res.json({ runId: req.params.runId, results });
 });

@@ -137,3 +137,83 @@ export async function appendLog(
     logger.debug(`appendLog persist failed: ${(e as Error).message}`);
   }
 }
+
+/** One past run, with just enough to render a history row. */
+export interface RunSummary {
+  runId: string;
+  startedAt?: Date;
+  finishedAt?: Date;
+  status?: string;
+  summary?: string;
+  agentCount: number;
+  verifiedCount: number;
+  failedCount: number;
+}
+
+/**
+ * Past runs for one tenant, newest first.
+ *
+ * ALWAYS scoped by appUserId — migrationRuns is a migration-scoped collection, and a query
+ * without that filter is a cross-tenant leak, not merely a broad read.
+ *
+ * Counts are computed from the results rather than stored on the run, because a run that
+ * crashed mid-flight never got to write a total and would otherwise report zero agents when
+ * it actually migrated several. `verifiedCount` counts only `verifyStatus === 'verified'`:
+ * an unknown is a check nobody has done, and folding it into the verified total is the
+ * overclaiming this project's rules forbid.
+ */
+export async function listRuns(
+  appUserId: string,
+  { limit = 20 }: { limit?: number } = {},
+): Promise<RunSummary[]> {
+  if (!isDbConnected()) return [];
+  try {
+    const db = getDb(config.CSGE_DB);
+    const runs = await db
+      .collection(RUNS)
+      .find({ appUserId })
+      .sort({ startedAt: -1, _id: -1 })
+      .limit(Math.min(Math.max(limit, 1), 100))
+      .toArray();
+    const out: RunSummary[] = [];
+    for (const r of runs) {
+      const runId = String(r.runId ?? r._id);
+      const results = await db
+        .collection(RESULTS)
+        .find({ appUserId, runId }, { projection: { verifyStatus: 1, created: 1 } })
+        .toArray();
+      out.push({
+        runId,
+        startedAt: r.startedAt,
+        finishedAt: r.finishedAt,
+        status: r.status,
+        summary: r.summary,
+        agentCount: results.length,
+        verifiedCount: results.filter((x) => x.verifyStatus === 'verified').length,
+        failedCount: results.filter((x) => x.created === false || x.verifyStatus === 'failed').length,
+      });
+    }
+    return out;
+  } catch (e) {
+    logger.warn(`listRuns failed: ${(e as Error).message}`);
+    return [];
+  }
+}
+
+/** Every agent result for one run, tenant-scoped. */
+export async function getRunResults(
+  appUserId: string,
+  runId: string,
+): Promise<MigrationResult[]> {
+  if (!isDbConnected()) return [];
+  try {
+    const rows = await getDb(config.CSGE_DB)
+      .collection(RESULTS)
+      .find({ appUserId, runId })
+      .toArray();
+    return rows as unknown as MigrationResult[];
+  } catch (e) {
+    logger.warn(`getRunResults failed: ${(e as Error).message}`);
+    return [];
+  }
+}

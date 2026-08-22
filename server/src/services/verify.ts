@@ -38,6 +38,76 @@ export interface VerifyResult {
   toolsProven?: string[];
   /** Expected tools with no evidence of existing on the deployment. */
   toolsMissing?: string[];
+  /** What was actually established, for a report that shows evidence rather than a verdict. */
+  evidence?: VerificationEvidence;
+}
+
+/**
+ * What verification actually observed — the difference between a report that says "verified"
+ * and one that says WHAT RAN.
+ *
+ * The four states are deliberately distinct because three of them are commonly collapsed
+ * into "verified" and each collapse hides a different real failure:
+ *
+ *  - `tools_confirmed`  frames present, and they belong to this agent.
+ *  - `wrong_agent_tools` frames present, but they are ANOTHER agent's tools. This is the
+ *                       shared-GCS-pickle class found live on 2026-08-21, where two agents
+ *                       deployed from the same package and one answered with the other's
+ *                       toolset. It is a FAILURE, and the most dangerous one here, because
+ *                       every surface-level signal (200, deployed, named correctly) is green.
+ *  - `prose_only`       the model described its tools without invoking any. Not evidence:
+ *                       a model can describe an inbox it never opened.
+ *  - `not_probed`       nothing was asked. Absence of a check, not a passed check.
+ *
+ * `verdict` is computed HERE, never left for a screen to infer. A UI reaching its own
+ * conclusion from `expected` vs `observed` would eventually disagree with the report, and a
+ * UI calling something verified that the report calls failed is worse than either being
+ * wrong on its own.
+ */
+export interface VerificationEvidence {
+  verdict: 'tools_confirmed' | 'wrong_agent_tools' | 'prose_only' | 'not_probed';
+  /** Tool names this agent was wired with — what we had a right to expect. */
+  expected: string[];
+  /** Tool names the runtime actually invoked, from `function_call` frames. */
+  observed: string[];
+  /** Observed but never wired — the signature of another agent's package. */
+  unexpected: string[];
+  /** Wired but never seen firing. Weak evidence alone; strong when `observed` is non-empty. */
+  missing: string[];
+  /** True when at least one tool returned data (not merely was called). */
+  returnedData: boolean;
+}
+
+/**
+ * Decide what the frames prove. Pure, so the rule is testable without a deployment.
+ *
+ * Conservative by construction: matching is normalised and substring-based so a cosmetic
+ * rename does not read as a regression, and `wrong_agent_tools` requires that NOTHING
+ * observed was expected. A partial overlap is a missing-tools problem, not a swapped
+ * package — claiming the swap on partial evidence would turn every ordinary gap into the
+ * scariest possible verdict.
+ */
+export function classifyEvidence(
+  expected: string[],
+  observed: string[],
+  returnedData: boolean,
+  probed: boolean,
+): VerificationEvidence {
+  const norm = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const related = (a: string, b: string): boolean => {
+    const [x, y] = [norm(a), norm(b)];
+    return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+  };
+  const unexpected = observed.filter((o) => !expected.some((e) => related(e, o)));
+  const missing = expected.filter((e) => !observed.some((o) => related(e, o)));
+
+  let verdict: VerificationEvidence['verdict'];
+  if (!probed) verdict = 'not_probed';
+  else if (observed.length === 0) verdict = 'prose_only';
+  else if (expected.length > 0 && unexpected.length === observed.length) verdict = 'wrong_agent_tools';
+  else verdict = 'tools_confirmed';
+
+  return { verdict, expected, observed, unexpected, missing, returnedData };
 }
 
 const ok = (note: string, sample?: string, extra?: Partial<VerifyResult>): VerifyResult => ({
@@ -158,12 +228,35 @@ export async function verifyAgent(
     if (!r.ok) {
       return failed(`agent did not answer: ${(r.error ?? '').slice(0, 200)}`);
     }
+
+    // What this turn actually establishes. Computed once and attached to every outcome
+    // below, so the report can show WHAT RAN rather than only a verdict.
+    const evidence = classifyEvidence(
+      opts.expectsTools ?? [],
+      r.toolNames ?? [],
+      !!r.toolSucceeded,
+      true,
+    );
+
+    // The agent answered using tools that are not its own. Every other signal here is green
+    // — it deployed, it is named correctly, it replied — which is exactly why this has to be
+    // checked explicitly rather than inferred from a passing probe. Found live on
+    // 2026-08-21, when two agents built from the same GCS pickle both answered with the
+    // second one's toolset and only a differing tool list gave it away.
+    if (evidence.verdict === 'wrong_agent_tools') {
+      return failed(
+        `agent answered using ANOTHER agent's tools (${evidence.unexpected.slice(0, 4).join(', ')}) — ` +
+          'none of the tools it was wired with were invoked; this deployment is serving the wrong package',
+        (r.answer ?? '').slice(0, 240),
+        { toolsProven: r.toolNames, toolsMissing: evidence.missing, evidence },
+      );
+    }
     // A failed tool call is definitive, whatever the model said around it.
     if (opts.expectsGrounding && r.toolError) {
       return failed(
         `knowledge retrieval failed: ${r.toolError.slice(0, 180)}`,
         (r.answer ?? '').slice(0, 200),
-        { toolsProven: r.toolNames },
+        { toolsProven: r.toolNames, evidence },
       );
     }
     // NO tool call is not a pass either. This is the hole that let agent 8277338168224151082
@@ -176,7 +269,7 @@ export async function verifyAgent(
           ? 'the knowledge tool ran but returned no usable result — no successful function_response or grounding chunk in the reply'
           : 'the agent answered without retrieving anything — its knowledge tool was never called, so the data stores are unproven',
         (r.answer ?? '').slice(0, 240),
-        { toolsProven: r.toolNames },
+        { toolsProven: r.toolNames, evidence },
       );
     }
 
@@ -191,7 +284,7 @@ export async function verifyAgent(
       return failed(
         'agent responded but could not reach its knowledge sources — check the data stores are in the same project as the agent',
         answer.slice(0, 240),
-        { toolsProven: r.toolNames },
+        { toolsProven: r.toolNames, evidence },
       );
     }
     if (!answer.trim()) {
@@ -207,12 +300,20 @@ export async function verifyAgent(
     if (opts.expectsTools?.length) {
       const inv = await verifyToolInventory(dest, saToken, opts, opts.expectsTools);
       if (inv.status !== 'verified') {
-        return { ...inv, sample: inv.sample ?? answer.slice(0, 240) };
+        return { ...inv, sample: inv.sample ?? answer.slice(0, 240), evidence };
       }
       return ok(
         `deployed, answered a live probe, and reported all ${opts.expectsTools.length} expected tool(s)`,
         answer.slice(0, 240),
-        { toolsProven: [...new Set([...(r.toolNames ?? []), ...(inv.toolsProven ?? [])])] },
+        {
+          toolsProven: [...new Set([...(r.toolNames ?? []), ...(inv.toolsProven ?? [])])],
+          evidence: classifyEvidence(
+            opts.expectsTools ?? [],
+            [...new Set([...(r.toolNames ?? []), ...(inv.toolsProven ?? [])])],
+            !!r.toolSucceeded,
+            true,
+          ),
+        },
       );
     }
 
@@ -221,7 +322,7 @@ export async function verifyAgent(
         ? 'deployed, answered a live probe, and its knowledge tool returned data'
         : 'deployed and answered a live probe',
       answer.slice(0, 240),
-      { toolsProven: r.toolNames },
+      { toolsProven: r.toolNames, evidence },
     );
   }
 

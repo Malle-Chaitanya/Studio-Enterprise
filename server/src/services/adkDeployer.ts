@@ -775,6 +775,15 @@ export async function publishAgentToGallery(
     stagingBucket?: string;
     /** A public-website knowledge source to ground this agent on via VertexAiSearchTool. */
     websiteSource?: KnowledgeSourceIR;
+    /**
+     * Optional progress callback for the long steps inside this call.
+     *
+     * A plain callback rather than an event type, so this service stays ignorant of SSE and
+     * of the ProgressEvent union — the layering rule is that services do not know about
+     * transport. The caller decides what a signal becomes. Deploy alone takes 3-5 minutes,
+     * which is the longest unexplained silence in a run.
+     */
+    onStep?: (phase: 'deploy' | 'register', state: 'start' | 'end', detail: string, ok?: boolean) => void;
     /** Resource paths of data stores already resolved+imported by the caller
      *  BEFORE this call — uploaded files (migrateFileToDocumentStore),
      *  Dataverse-table snapshots, and/or SharePoint-connector stores (see
@@ -923,8 +932,13 @@ export async function publishAgentToGallery(
   }
   if (opts?.subAgents?.length) spec.subAgents = opts.subAgents;
   logger.info({ agent: ir.name, location }, 'adk: deploying reasoning engine');
+  opts?.onStep?.('deploy', 'start', `Building and deploying ${ir.name} (3-5 min)`);
   const dep = await deployReasoningEngine(dest.project, location, spec, { stagingBucket: opts?.stagingBucket });
-  if (!dep.ok || !dep.reasoningEngine) return { ok: false, error: `deploy: ${dep.error}` };
+  if (!dep.ok || !dep.reasoningEngine) {
+    opts?.onStep?.('deploy', 'end', `Deploy failed for ${ir.name}: ${dep.error ?? 'unknown'}`, false);
+    return { ok: false, error: `deploy: ${dep.error}` };
+  }
+  opts?.onStep?.('deploy', 'end', `Deployed ${ir.name}`, true);
   if (dep.droppedGoogleSearch) googleSearchDropped = true;
   logger.info({ agent: ir.name, reasoningEngine: dep.reasoningEngine }, 'adk: registering into engine');
   const reg = await registerAdkAgent(dest, saToken, {

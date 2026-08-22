@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { clientCredsToken } from '../auth/microsoft.js';
 import { logger } from '../logger.js';
-import { extractAgent, inventory, listBots } from '../services/dataverse.js';
+import { countBotComponents, extractAgent, inventory, listBots } from '../services/dataverse.js';
 import { normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
 import { assessAgent } from '../services/assess.js';
 import { getCachedIR } from '../db/repos/agentIR.js';
@@ -108,6 +108,14 @@ exploreRouter.get('/agents', async (req, res) => {
   try {
     const token = await clientCredsToken(session.tenantId ?? '', env);
     const agents = await listBots(env, token);
+    // Counts come from one extra call for the whole environment, not one per agent. They
+    // stay UNDEFINED when that call fails — see countBotComponents: a zero would claim the
+    // agent has no topics, which an unrelated failure has no right to say.
+    const counts = await countBotComponents(env, token);
+    for (const a of agents) {
+      const c = counts.get(a.botid);
+      if (c) a.knowledgeCount = c.knowledge;
+    }
     res.json({ agents });
   } catch (err) {
     res.status(502).json({ error: 'agents_failed', detail: (err as Error).message });
