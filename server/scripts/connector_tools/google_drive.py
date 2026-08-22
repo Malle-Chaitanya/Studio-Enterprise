@@ -252,7 +252,9 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
 
         Returns:
             dict with `id`, `name`, `mimeType`, `size`, `modifiedTime`,
-            `webUrl`, `isFolder`, `owners`, or `error`.
+            `webUrl`, `isFolder`, `owners`, and `trashed` — or `error`. When
+            `trashed` is true the file is in the Trash: say so rather than
+            describing it as a current file.
         """
         import json as _json
         import urllib.parse
@@ -265,7 +267,14 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
 
         url = (
             "https://www.googleapis.com/drive/v3/files/" + urllib.parse.quote(file_id)
-            + "?fields=id,name,mimeType,size,modifiedTime,webViewLink,owners&supportsAllDrives=true"
+            # `trashed` included deliberately. Every listing and search in this module filters
+            # `trashed = false`, but a lookup BY ID still returns a trashed file as though it
+            # were live — so an agent that trashed a file and then asked about it got normal
+            # metadata back and had no way to say "that file is in the Trash". Measured
+            # 2026-08-20: after google_drive_delete_file succeeded, get_metadata returned the
+            # file with no indication at all.
+            + "?fields=id,name,mimeType,size,modifiedTime,webViewLink,owners,trashed"
+            + "&supportsAllDrives=true"
         )
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
         try:
@@ -282,6 +291,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
             "webUrl": meta.get("webViewLink"),
             "isFolder": meta.get("mimeType") == "application/vnd.google-apps.folder",
             "owners": [o.get("emailAddress") for o in (meta.get("owners") or [])],
+            "trashed": bool(meta.get("trashed")),
         }
 
     def google_drive_find_by_path(path: str) -> dict:
