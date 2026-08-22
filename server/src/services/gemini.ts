@@ -1,5 +1,6 @@
 import { logger } from '../logger.js';
 import { geminiWriteLimiter } from './rateLimiter.js';
+import { fetchTextTransient } from './httpTransient.js';
 import type { GeminiDestination, MappedAgent } from '../types.js';
 
 /**
@@ -322,6 +323,63 @@ export async function checkUserLicense(dest: GeminiDestination, saToken: string,
     logger.warn(`checkUserLicense failed for ${email}: ${(e as Error).message}`);
     return 'unknown';
   }
+}
+
+/**
+ * Every principal currently holding an ASSIGNED Gemini Enterprise seat.
+ *
+ * `checkUserLicense` answers for one email, which is the wrong shape for a directory grid —
+ * 500 users would be 500 round trips. This pages the same collection once and returns a set
+ * the caller can intersect against.
+ *
+ * Returns null, NOT an empty set, when the read fails. The distinction is the whole point:
+ * an empty set means "nobody is licensed" and would filter the grid down to nothing, while
+ * null means "we could not tell", and the caller must then show the unfiltered list rather
+ * than blame the customer's licensing for our own failed read. Same rule as
+ * checkUserLicense's 'unknown'.
+ */
+export async function listLicensedPrincipals(
+  dest: GeminiDestination,
+  saToken: string,
+  { max = 5000 }: { max?: number } = {},
+): Promise<Set<string> | null> {
+  const licensed = new Set<string>();
+  let pageToken: string | undefined;
+  try {
+    do {
+      const params = new URLSearchParams({ pageSize: '1000' });
+      if (pageToken) params.set('pageToken', pageToken);
+      const r = await fetchTextTransient(
+        `${userStoreBase(dest)}/userLicenses?${params}`,
+        { headers: { Authorization: `Bearer ${saToken}` } },
+        { label: 'gemini: listUserLicenses' },
+      );
+      if (!r.ok) {
+        logger.warn(`listLicensedPrincipals: ${r.error} — licence filtering will be skipped`);
+        return null;
+      }
+      if (r.status < 200 || r.status >= 300) {
+        logger.warn(
+          `listLicensedPrincipals ${r.status} — userStore id unverified, licence filtering will be skipped`,
+        );
+        return null;
+      }
+      const body = JSON.parse(r.text) as {
+        userLicenses?: { userPrincipal?: string; licenseAssignmentState?: string }[];
+        nextPageToken?: string;
+      };
+      for (const u of body.userLicenses ?? []) {
+        if (u.licenseAssignmentState === 'ASSIGNED' && u.userPrincipal) {
+          licensed.add(u.userPrincipal.toLowerCase());
+        }
+      }
+      pageToken = body.nextPageToken;
+    } while (pageToken && licensed.size < max);
+  } catch (e) {
+    logger.warn(`listLicensedPrincipals failed: ${(e as Error).message} — licence filtering skipped`);
+    return null;
+  }
+  return licensed;
 }
 
 /**

@@ -1,6 +1,12 @@
 import { Router } from 'express';
-import { clientCredsToken, graphTokenFromRefresh, listGraphUsers } from '../auth/microsoft.js';
-import { listWorkspaceUsersAsAdmin } from '../auth/google.js';
+import {
+  clientCredsToken,
+  graphTokenFromRefresh,
+  listGraphUsersFiltered,
+} from '../auth/microsoft.js';
+import { getSaToken, listWorkspaceUsersFilteredAsAdmin } from '../auth/google.js';
+import { listLicensedPrincipals, resolveDestination } from '../services/gemini.js';
+import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { readAgentPermissions, listBots } from '../services/dataverse.js';
 import { buildOrganizationProfile } from '../services/organizationProfile.js';
@@ -172,11 +178,17 @@ identityRouter.get('/ms-users', async (req, res) => {
     const token = await graphTokenFromRefresh(session.tenantId, session.refreshToken);
     if (!token) return void res.status(401).json({ error: 'graph_token_failed' });
     const max = Number(req.query.max) || 200;
-    const users = await listGraphUsers(token, {
+    // `all=1` shows the unfiltered directory. An admin asking "why is this person missing
+    // from the grid" needs to see the disabled/unlicensed account to get their answer;
+    // without the escape hatch, the filter itself becomes unexplainable.
+    const showAll = req.query.all === '1';
+    const { users, stats } = await listGraphUsersFiltered(token, {
       max,
       query: (req.query.q as string) || undefined,
+      activeOnly: showAll ? false : undefined,
+      licensedOnly: showAll ? false : undefined,
     });
-    res.json({ users, truncated: users.length >= max });
+    res.json({ users, truncated: users.length >= max, filter: stats });
   } catch (e) {
     logger.warn(`listGraphUsers failed: ${(e as Error).message}`);
     res.status(502).json({ error: 'ms_users_failed', detail: (e as Error).message });
@@ -193,11 +205,53 @@ identityRouter.get('/google-users', async (req, res) => {
   if (!session.gEmail) return void res.status(400).json({ error: 'google_not_connected' });
 
   try {
-    const users = await listWorkspaceUsersAsAdmin(session.gEmail, {
-      max: Number(req.query.max) || 200,
+    const max = Number(req.query.max) || 200;
+    const showAll = req.query.all === '1';
+    const { users, excludedInactive } = await listWorkspaceUsersFilteredAsAdmin(session.gEmail, {
+      max,
       query: (req.query.q as string) || undefined,
+      activeOnly: showAll ? false : undefined,
     });
-    res.json({ users, truncated: users.length >= (Number(req.query.max) || 200) });
+
+    // The licence that matters at the destination is a Gemini Enterprise SEAT, which lives
+    // in Discovery Engine's user store, not in the Workspace directory. Read it in bulk and
+    // intersect; a null result means the read failed, and then nothing is filtered on it —
+    // an unreadable licence must never present as "nobody is licensed".
+    let excludedUnlicensed = 0;
+    let licenceCheck: 'applied' | 'unavailable' = 'unavailable';
+    let out = users;
+    const wantLicence = !showAll && config.DIRECTORY_LICENSED_ONLY;
+    if (wantLicence && session.geminiProject) {
+      try {
+        const saToken = await getSaToken();
+        const dest = await resolveDestination(session.geminiProject, saToken);
+        const licensed = await listLicensedPrincipals(dest, saToken);
+        if (licensed) {
+          licenceCheck = 'applied';
+          const kept = out.filter((u) => licensed.has(u.email));
+          excludedUnlicensed = out.length - kept.length;
+          out = kept;
+        }
+      } catch (e) {
+        // Destination not resolvable yet (Google connected, engine not discovered). Show
+        // the active directory rather than nothing — licenceCheck stays 'unavailable', so
+        // the UI reports the list as unfiltered instead of implying everyone is licensed.
+        logger.warn(`google-users: licence filter skipped — ${(e as Error).message}`);
+      }
+    }
+
+    res.json({
+      users: out,
+      truncated: out.length >= max,
+      filter: {
+        returned: out.length,
+        excludedInactive,
+        excludedUnlicensed,
+        excludedGuest: 0,
+        excludedNoAddress: 0,
+        licenceCheck,
+      },
+    });
   } catch (e) {
     logger.warn(`listWorkspaceUsers failed: ${(e as Error).message}`);
     res.json({ users: [], error: (e as Error).message });

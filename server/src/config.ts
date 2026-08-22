@@ -71,6 +71,32 @@ const schema = z.object({
    * See db/repos/rawAgents.ts.
    */
   RAW_RETENTION_DAYS: z.coerce.number().min(0).max(30).default(0),
+
+  /**
+   * Directory listings show ACTIVE, LICENSED users only.
+   *
+   * A migration maps people, and offering a disabled account or an unlicensed one as a
+   * mapping target produces a mapping that cannot work — the failure then surfaces much
+   * later, during a grant or a share, where it reads as a migration bug rather than as
+   * "that person has no licence".
+   *
+   * Set to false to see the whole directory (an admin diagnosing why someone is missing
+   * wants exactly that). Filtering NEVER happens silently: the response carries how many
+   * were excluded and why, so a short list is explained rather than merely short.
+   */
+  DIRECTORY_ACTIVE_ONLY: z.coerce.boolean().default(true),
+  DIRECTORY_LICENSED_ONLY: z.coerce.boolean().default(true),
+
+  /**
+   * Comma-separated Microsoft SERVICE PLAN names a source user must hold, e.g.
+   * `POWER_VIRTUAL_AGENTS_365,M365_COPILOT`.
+   *
+   * Empty (the default) means "any active licence at all" rather than a guessed SKU. That
+   * default is deliberate: naming the wrong plan hides real users from the mapping grid and
+   * looks identical to those users not existing, which is the most expensive kind of wrong
+   * this screen can be. Narrow it only once the customer's actual SKU is known.
+   */
+  MS_REQUIRED_SERVICE_PLANS: z.string().default(''),
 });
 
 const parsed = schema.safeParse(process.env);

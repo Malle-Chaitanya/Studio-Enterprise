@@ -155,6 +155,8 @@ export interface WorkspaceUserBrief {
   email: string;
   displayName?: string;
   suspended?: boolean;
+  /** True when the account is suspended, archived, or awaiting deletion. */
+  inactive?: boolean;
 }
 
 /**
@@ -166,8 +168,30 @@ export interface WorkspaceUserBrief {
  */
 export async function listWorkspaceUsers(
   saToken: string,
-  opts?: { max?: number; query?: string },
+  opts?: { max?: number; query?: string; activeOnly?: boolean },
 ): Promise<WorkspaceUserBrief[]> {
+  return (await listWorkspaceUsersFiltered(saToken, opts)).users;
+}
+
+/**
+ * Same listing, plus why it is the length it is.
+ *
+ * Suspended, archived and pending-deletion accounts are dropped: each one still appears in
+ * the Directory API, and offering one as a mapping target produces a mapping that fails
+ * much later during a share or a grant, where it reads as a migration bug rather than as
+ * "that account is switched off".
+ *
+ * Licence filtering is NOT done here. The licence that matters on this side is a Gemini
+ * Enterprise seat, which lives in Discovery Engine's user store rather than in the
+ * directory — see `filterToLicensedPrincipals` in services/gemini.ts. Keeping the two apart
+ * means a directory read still works when the licence read does not.
+ */
+export async function listWorkspaceUsersFiltered(
+  saToken: string,
+  opts?: { max?: number; query?: string; activeOnly?: boolean },
+): Promise<{ users: WorkspaceUserBrief[]; excludedInactive: number }> {
+  const activeOnly = opts?.activeOnly ?? config.DIRECTORY_ACTIVE_ONLY;
+  let excludedInactive = 0;
   const max = Math.min(opts?.max ?? 200, 500);
   const users: WorkspaceUserBrief[] = [];
   let pageToken: string | undefined;
@@ -178,6 +202,8 @@ export async function listWorkspaceUsers(
       orderBy: 'email',
       projection: 'basic',
     });
+    // Directory `query` has no "active only" term, so suspension/archival is filtered
+    // below from the returned fields rather than server-side.
     if (opts?.query) params.set('query', opts.query);
     if (pageToken) params.set('pageToken', pageToken);
     const res = await fetch(
@@ -189,21 +215,35 @@ export async function listWorkspaceUsers(
       throw new Error(`Admin Directory API ${res.status}: ${body.slice(0, 300) || res.statusText}`);
     }
     const json = (await res.json()) as {
-      users?: { primaryEmail?: string; name?: { fullName?: string }; suspended?: boolean }[];
+      users?: {
+        primaryEmail?: string;
+        name?: { fullName?: string };
+        suspended?: boolean;
+        archived?: boolean;
+        // Present while a deletion is pending; such an account still lists but must never
+        // be offered as a mapping target.
+        deletionTime?: string;
+      }[];
       nextPageToken?: string;
     };
     for (const u of json.users ?? []) {
       if (!u.primaryEmail) continue;
+      const inactive = !!(u.suspended || u.archived || u.deletionTime);
+      if (activeOnly && inactive) {
+        excludedInactive++;
+        continue;
+      }
       users.push({
         email: u.primaryEmail.toLowerCase(),
         displayName: u.name?.fullName,
         suspended: u.suspended,
+        inactive,
       });
     }
     pageToken = json.nextPageToken;
     if (!pageToken) break;
   }
-  return users;
+  return { users, excludedInactive };
 }
 
 /** List Workspace users using a Directory-scoped DWD token for `adminEmail`.
@@ -212,10 +252,19 @@ export async function listWorkspaceUsers(
  *  found" apart from "the directory read itself failed." */
 export async function listWorkspaceUsersAsAdmin(
   adminEmail: string,
-  opts?: { max?: number; query?: string },
+  opts?: { max?: number; query?: string; activeOnly?: boolean },
 ): Promise<WorkspaceUserBrief[]> {
   const token = await getDirectorySaToken(adminEmail);
   return listWorkspaceUsers(token, opts);
+}
+
+/** As above, but also reports how many accounts were dropped as inactive. */
+export async function listWorkspaceUsersFilteredAsAdmin(
+  adminEmail: string,
+  opts?: { max?: number; query?: string; activeOnly?: boolean },
+): Promise<{ users: WorkspaceUserBrief[]; excludedInactive: number }> {
+  const token = await getDirectorySaToken(adminEmail);
+  return listWorkspaceUsersFiltered(token, opts);
 }
 
 /** Build the Google OAuth consent URL. */
