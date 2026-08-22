@@ -61,6 +61,16 @@ const schema = z.object({
   BQ_SNAPSHOT_ROW_THRESHOLD: z.coerce.number().default(200),
   /** BigQuery dataset location for Dataverse-snapshot staging tables. */
   BQ_SNAPSHOT_DATASET_LOCATION: z.string().default('US'),
+
+  /**
+   * Days to retain verbatim Copilot payloads in `rawAgents`. **0 disables landing
+   * entirely**, which is the default: these are unredacted customer payloads, so
+   * capturing them is an explicit operator decision, not something that happens because
+   * nobody turned it off. Rows carry `expiresAt` and Mongo deletes them, so retention is
+   * a property of the row rather than a cleanup job someone remembers to run.
+   * See db/repos/rawAgents.ts.
+   */
+  RAW_RETENTION_DAYS: z.coerce.number().min(0).max(30).default(0),
 });
 
 const parsed = schema.safeParse(process.env);
