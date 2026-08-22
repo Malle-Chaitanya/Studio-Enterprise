@@ -968,3 +968,35 @@ scaffold. Format: **date — decision — why — impact**.
   connector tool was wired, `lost` otherwise). Connector detection also stopped dropping
   connectors with no registry entry (`shared_hubspotcrmv2`, `shared_cdataconnectai` were
   invisible), matching what `thirdPartyConnectorScan` already did for flows.
+## 2026-08-23 — a migration run is a server-side job; `GET /stream` only observes it
+- **Decision**: Introduce `services/runRegistry.ts` — an in-process registry keyed
+  `(appUserId, sessionId)` that owns each live run: its event buffer (5000, then oldest
+  dropped with `truncated` set), its subscribers, and a cooperative `stopRequested` flag.
+  `GET /api/migrate/stream` no longer *is* the run. It starts one only when none is live,
+  attaches, replays what the subscriber missed, and on close detaches without touching the
+  work. `runMigration(session, plan, shouldStop?)` takes the stop signal and honours it at
+  the two `mapPool` boundaries (Phase 1 per item, Phase 2 before anything is created for an
+  agent); a halted run finishes as `stopped`, never `done`. Adds `POST /api/migrate/stop`
+  and `GET /api/migrate/run-state`.
+- **Why**: One conflation — opening the SSE stream executed the migration — produced three
+  distinct defects. (1) **Re-run**: EventSource auto-reconnects when the server closes the
+  response at the end of a run, the session still held the plan, and the whole migration
+  executed again. One button press produced three complete extract passes against a live
+  tenant on 2026-08-22, tripling quota consumption while the customer was already hitting
+  agent-quota-exceeded. (2) **Lost output**: `execute()` was always a detached promise, so
+  the work survived a navigate-away (no half-written agents — the one mercy) but every
+  event after the unmount went into a queue nobody drained, and returning to the screen
+  showed an empty log for a run still going. (3) **No stop**: there was no handle to
+  signal. Closing the stream stopped the watching, not the work, so a run could not be
+  halted at all. A stop button was unbuildable on that shape, which is why this is an
+  architectural change rather than three patches.
+- **Impact**: Idempotency stops depending on the browser behaving — the guard is now
+  server-side, so a proxy retry or tab restore cannot re-run a migration. Stop is
+  cooperative by design: an immediate kill would leave a half-created Gemini agent that no
+  later run could reason about, so the agent in flight completes and the rest stay staged
+  for a resume from the insert. Not persisted, deliberately: `reconcileInterruptedRuns()`
+  already gives a restart a truthful answer for runs it no longer owns, and persisting live
+  subscriber state would create a second source of truth for something the DB records. The
+  old wizard keeps working unchanged — it still just opens the stream. New web work should
+  read `run-state` on mount so a screen can tell "nothing is happening" from "something is
+  happening and you missed the start". 13 tests in `runRegistry.test.ts`; suite at 396.

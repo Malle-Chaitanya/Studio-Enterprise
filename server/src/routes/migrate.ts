@@ -22,6 +22,16 @@ import { listBots } from '../services/dataverse.js';
 import { upsertSecretIfChanged, preflightSecretAccess, deleteSecret, getSecretOwnership, getEntraSecret } from '../services/secretManager.js';
 import { validateConnectorCredentials } from '../services/connectorValidator.js';
 import { logger } from '../logger.js';
+import {
+  runKeyFor,
+  startRun,
+  publish,
+  subscribe,
+  stopRun,
+  isStopRequested,
+  describeRun,
+  finishRun as finishLiveRun,
+} from '../services/runRegistry.js';
 import { serviceAccountEmail } from '../auth/google.js';
 import {
   connectorSecretId,
@@ -131,6 +141,11 @@ migrateRouter.get('/stream', async (req, res) => {
     return;
   }
 
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  // session.id is optional on the type; the query id resolved this session, so it is
+  // the same value and is always present here.
+  const runKey = runKeyFor(appUserId, session.id ?? String(req.query.session));
+
   res.set({
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -139,23 +154,97 @@ migrateRouter.get('/stream', async (req, res) => {
   });
   res.flushHeaders();
 
-  const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
-  let closed = false;
-  req.on('close', () => {
-    closed = true;
-  });
+  const send = (data: unknown) => {
+    // A dead socket must not take the run down with it.
+    try {
+      res.write(`data: ${JSON.stringify(data)}
 
-  try {
-    for await (const evt of runMigration(session, session.plan)) {
-      if (closed) break;
-      send(evt);
+`);
+    } catch {
+      /* the subscriber cleanup below handles it */
     }
-  } catch (err) {
-    send({ type: 'log', level: 'fail', msg: `Fatal: ${(err as Error).message}` });
-    send({ type: 'done', summary: 'Migration failed unexpectedly.', results: [] });
-  } finally {
-    res.end();
+  };
+
+  // Start the run only if one is not already going for this session. This is the
+  // re-run guard: EventSource reconnects on its own when the server closes the
+  // response, and previously that reconnect executed the whole migration a second
+  // time — three full extract passes against a live tenant from one button press.
+  const fresh = startRun(runKey, appUserId);
+  if (fresh) {
+    // Detached on purpose. The run belongs to the process, not to this request, so
+    // navigating away stops the watching and never the work.
+    void (async () => {
+      try {
+        for await (const evt of runMigration(session, session.plan!, () => isStopRequested(runKey))) {
+          publish(runKey, evt);
+        }
+      } catch (err) {
+        logger.error({ err }, 'migration crashed outside the generator');
+        publish(runKey, { type: 'log', level: 'fail', msg: `Fatal: ${(err as Error).message}` });
+        publish(runKey, { type: 'done', summary: 'Migration failed unexpectedly.', results: [] });
+      } finally {
+        finishLiveRun(runKey);
+      }
+    })();
   }
+
+  const attached = subscribe(runKey, send);
+  if (!attached) {
+    // The run finished and aged out between the checks above. Say so rather than
+    // holding a stream open that will never produce an event.
+    send({ type: 'done', summary: 'That run has already finished.', results: [] });
+    res.end();
+    return;
+  }
+
+  // History first, in order, so a remounted screen rebuilds what it missed instead of
+  // showing an empty log for a run that is still going.
+  if (attached.truncated) {
+    send({
+      type: 'log',
+      level: 'info',
+      msg: 'Earlier lines from this run are no longer held in memory; the report has the full record.',
+    });
+  }
+  for (const e of attached.replay) send(e);
+
+  req.on('close', () => {
+    // Detach only. Closing a stream is a statement about this viewer, not an
+    // instruction to abandon a live migration.
+    attached.unsubscribe();
+  });
+});
+
+/**
+ * POST /api/migrate/stop  { session }
+ * Ask the live run for this session to wind down at its next safe point.
+ *
+ * Cooperative rather than immediate: the orchestrator finishes the agent in flight and
+ * then stops, because killing mid-agent would leave a half-created Gemini agent that no
+ * later run could reason about.
+ */
+migrateRouter.post('/stop', async (req, res) => {
+  const { session: sessionId } = (req.body ?? {}) as { session?: string };
+  const session = await getSession(sessionId);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const runKey = runKeyFor(appUserId, session.id ?? String(sessionId));
+  const stopping = stopRun(runKey, session.gEmail ?? session.msEmail);
+  if (!stopping) return void res.status(409).json({ error: 'no_active_run' });
+  res.json({ stopping: true });
+});
+
+/**
+ * GET /api/migrate/run-state?session=
+ * Whether a run is live for this session, so a screen that just mounted can tell
+ * "nothing is happening" from "something is happening and you missed the start".
+ */
+migrateRouter.get('/run-state', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const state = describeRun(runKeyFor(appUserId, session.id ?? String(req.query.session)));
+  res.json({ run: state ?? null });
 });
 
 /** Render an Excel (.xlsx) report from client-held results (for download). */

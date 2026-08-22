@@ -609,9 +609,15 @@ class EventQueue {
 export async function* runMigration(
   session: Session,
   plan: ResolvedPlan,
+  /**
+   * Cooperative stop, read at agent boundaries. Cooperative rather than immediate
+   * because killing mid-agent would leave a half-created Gemini agent that no later
+   * run could reason about — the same reason a failed insert is retryable.
+   */
+  shouldStop: () => boolean = () => false,
 ): AsyncGenerator<ProgressEvent> {
   const q = new EventQueue();
-  const run = execute(session, plan, (e) => q.push(e))
+  const run = execute(session, plan, (e) => q.push(e), shouldStop)
     .catch((err) => {
       logger.error({ err }, 'migration crashed');
       q.push({ type: 'log', level: 'fail', msg: `Fatal: ${(err as Error).message}` });
@@ -624,7 +630,14 @@ export async function* runMigration(
 
 type Emit = (e: ProgressEvent) => void;
 
-async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promise<void> {
+async function execute(
+  session: Session,
+  plan: ResolvedPlan,
+  emit: Emit,
+  shouldStop: () => boolean = () => false,
+): Promise<void> {
+  /** Set the first time a stop is honoured, so the summary can say so truthfully. */
+  let stoppedEarly = false;
   const project = session.geminiProject ?? '';
   const gEmail = session.gEmail ?? '';
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
@@ -917,6 +930,12 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   }
   let extracted = 0;
   await mapPool(workItems, CONCURRENCY, async (item) => {
+    // Stop checkpoint. Skipping an agent we have not started is free — nothing exists
+    // in Gemini to reason about later — so Phase 1 honours a stop per item.
+    if (shouldStop()) {
+      stoppedEarly = true;
+      return;
+    }
     // Phase 1 is the longest silence in a run — every agent is read from Dataverse before
     // anything appears on screen. The id is the Copilot source id, the same key the UI
     // already uses for its rows, so the step can honestly name which agent it is on.
@@ -1227,6 +1246,12 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
   // instead of grinding every agent through the same RESOURCE_EXHAUSTED failure.
   let quotaExhausted = false;
   await mapPool(staged, INSERT_CONCURRENCY, async (row) => {
+    // Stop checkpoint, BEFORE anything is created for this agent. The row stays staged,
+    // so a later run resumes it from the insert rather than re-reading Copilot.
+    if (shouldStop()) {
+      stoppedEarly = true;
+      return;
+    }
     const result: MigrationResult = {
       sourceId: row.sourceId,
       name: row.name,
@@ -3395,6 +3420,17 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
     await finishRun(runId, summary, 'paused-quota');
     emitProg(100, 'Paused on quota — resumes after daily reset');
     emit({ type: 'done', summary, results });
+    return;
+  }
+
+  if (stoppedEarly) {
+    // Never report a stopped run as complete. The agents that were skipped are still
+    // staged, and saying "complete" about a run someone halted is the overclaim this
+    // pipeline exists not to make.
+    const stoppedSummary = `Stopped by request · ${summary}`;
+    await finishRun(runId, stoppedSummary, 'stopped');
+    emitProg(100, 'Stopped — staged agents kept, re-run to continue from the insert');
+    emit({ type: 'done', summary: stoppedSummary, results });
     return;
   }
 
