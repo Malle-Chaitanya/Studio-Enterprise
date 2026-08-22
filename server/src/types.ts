@@ -179,8 +179,15 @@ export interface SharedPrincipal extends PrincipalRef {
   /**
    * Best-effort Copilot Studio Share-dialog semantics (live-validated 2026-08):
    * - editor — Studio "Editor access" (view/edit/configure/share/publish; not delete)
-   * - agent-viewer — Studio "Agent viewer" (Analytics/Evaluation). Often **blocked** when
-   *   the user already has Environment Maker (typical licensed maker).
+   * - agent-viewer — a Read-only row-share. NOTE: native Copilot Studio actually has TWO
+   *   separate roles here — "Analytics Viewer" (Analytics page, individual-only) and
+   *   "Agent viewer" (Evaluation page, individual or group) — confirmed distinct, separately
+   *   documented mechanisms (learn.microsoft.com/en-us/microsoft-copilot-studio/admin-share-bots,
+   *   fetched 2026-08-20). This single value currently buckets both together; splitting it into
+   *   'analytics-viewer' | 'evaluation-viewer' is pending a live-tenant diagnostic spike to
+   *   confirm the two are even distinguishable in the row-share signal this decodes from — see
+   *   docs/design/permission-mapping.md §2.1. Do not assume "often blocked when the user already
+   *   has Environment Maker" — that claim is unverified and not in the current official docs.
    * - end-user — Studio "End user access" (chat/connections only; does NOT appear in
    *   the maker Agents list). Usually surfaces via chatAccess, not this record share.
    */

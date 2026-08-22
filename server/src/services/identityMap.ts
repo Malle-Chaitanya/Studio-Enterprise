@@ -314,8 +314,9 @@ export function permissionFidelityNotes(
       component: 'permissions-viewer',
       status: 'needs-review',
       detail:
-        `${viewers.length} Agent-viewer / read share(s). Studio blocks Agent viewer when the user ` +
-        `already has Environment Maker (typical makers). Gemini has no Analytics-viewer role — report only.`,
+        `${viewers.length} read-only share(s) (Studio's Analytics Viewer and/or Agent viewer/Evaluations ` +
+        `roles — two distinct native mechanisms currently bucketed together here). Gemini has no ` +
+        `equivalent for either at any grain — report only.`,
     });
   }
 

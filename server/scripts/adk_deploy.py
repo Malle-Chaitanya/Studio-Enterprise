@@ -33,10 +33,39 @@ without this, the model cites its own generic tool name
 recognizable source name.
 """
 import argparse
+import importlib.metadata
 import json
 import os
 import re
 import sys
+
+
+def _pinned(pkg: str, extras: str = "") -> str:
+    """Pin a requirement to the EXACT version already imported in this process.
+
+    root_agent (below) is a pydantic-based google-adk `Agent` tree that gets pickled
+    here and unpickled inside the freshly-built container. An unpinned "google-adk"
+    requirement lets the container install whatever is newest at deploy time — a
+    different version than the one that just built root_agent. Confirmed live
+    2026-08-16: local build used google-adk 2.5.0 (no `_resolved_model` private attr
+    on LlmAgent); the container installed 2.7.0, which added one. Pydantic's
+    `__setstate__` restores the OLD instance's `__pydantic_private__` verbatim onto
+    the NEW class, so the container's LlmAgent ends up with `__pydantic_private__ is
+    None` even though its class declares `_resolved_model` — and the very first
+    `hasattr(agent, 'canonical_model')` check ADK does on every turn raises
+    `TypeError: 'NoneType' object is not subscriptable` (hasattr only swallows
+    AttributeError, so this escapes and kills the turn, including ones needing no
+    tool at all). Pinning to what this same process already imported guarantees the
+    container installs the identical class shapes that were just pickled.
+    """
+    try:
+        version = importlib.metadata.version(pkg)
+    except importlib.metadata.PackageNotFoundError:
+        # Should not happen — this script already imported the package by this point —
+        # but deploying unpinned is strictly better than crashing the whole migration.
+        return f"{pkg}[{extras}]" if extras else pkg
+    suffix = f"[{extras}]" if extras else ""
+    return f"{pkg}{suffix}=={version}"
 
 
 def _safe_agent_name(raw: str) -> str:
@@ -789,9 +818,15 @@ def main():
     # confirmed live 2026-08-05: a real 2-knowledge-source agent deployed fine,
     # then every single query (including one needing no tool at all) failed
     # with "ImportError: cannot import name 'discoveryengine_v1beta'".
-    requirements = ["google-cloud-aiplatform[agent_engines,adk]", "google-adk"]
+    # Pinned to what THIS process just imported to build root_agent — see _pinned()
+    # for why an unpinned "google-adk" broke every deployed agent on 2026-08-16.
+    requirements = [
+        _pinned("google-cloud-aiplatform", "agent_engines,adk"),
+        _pinned("google-adk"),
+    ]
+    emit({"log": f"pinning deploy container to {requirements}"})
     if grounding_data_stores:
-        requirements.append("google-cloud-discoveryengine")
+        requirements.append(_pinned("google-cloud-discoveryengine"))
     # Document text extraction for SharePoint/OneDrive/Google Drive read tools. Added
     # only when such a connector is present, to keep the container minimal — and NONE
     # of these are in the `google.*` namespace, which is the namespace that previously

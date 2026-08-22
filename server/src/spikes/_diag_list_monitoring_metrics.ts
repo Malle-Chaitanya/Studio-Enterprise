@@ -1,24 +1,20 @@
-/** Lists all Discovery Engine "apps" (engines) that already exist in the project, to see
- *  whether multiple engines can coexist and how they were provisioned, before answering
- *  whether a NEW Gemini Enterprise app/engine can be created via API for a clean-slate
- *  sharing test.
- *   npx tsx src/spikes/_diag_list_engines.ts */
 import 'dotenv/config';
 import { connectMongo } from '../db/mongo.js';
 import { getDb } from '../db/core.js';
 import type { Session } from '../sessionStore.js';
 import { getSaToken } from '../auth/google.js';
 
-const PROJECT = 'studio-enterprise-migration';
-
 async function main() {
   await connectMongo();
   const s = (await getDb().collection('migrationSessions').find({}).sort({ $natural: -1 }).limit(1).next()) as Session | null;
   const token = await getSaToken(process.env.GOOGLE_IMPERSONATE_EMAIL || s?.gEmail || undefined);
-  const url = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT}/locations/global/collections/default_collection/engines`;
+  const projectNum = '231705905417';
+  const url = `https://monitoring.googleapis.com/v3/projects/${projectNum}/metricDescriptors?filter=${encodeURIComponent('metric.type=starts_with("discoveryengine.googleapis.com/")')}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  console.log(res.status);
-  console.log(JSON.stringify(await res.json(), null, 2));
+  const body = await res.json() as { metricDescriptors?: { type: string }[] };
+  for (const m of body.metricDescriptors ?? []) {
+    if (/doc/i.test(m.type)) console.log(m.type);
+  }
   process.exit(0);
 }
 main().catch((e) => { console.error('FAILED:', e.message); process.exit(1); });

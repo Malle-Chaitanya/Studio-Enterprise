@@ -22,8 +22,14 @@ export interface ImportOperation {
     totalCount?: number | string;
   };
   response?: {
-    /** GCS URIs of per-document error samples, when configured. */
-    errorSamples?: { errorMessage?: string; document?: string }[];
+    /** Per-document error samples. Field is `message` (confirmed live 2026-08-21
+     *  against a real ImportDocumentsResponse) — NOT `errorMessage`, which this type
+     *  incorrectly declared before, silently discarding every real error (e.g. a
+     *  documents_regional quota-exceeded message) as the generic "unknown error"
+     *  fallback below. There is no separate `document` field either — the failing
+     *  document's id is embedded in `message` itself ("...ingest document with id: `...`").
+     */
+    errorSamples?: { code?: number; message?: string }[];
   };
 }
 
@@ -86,7 +92,7 @@ export function reconcileImport(
 
   const failureSamples = (op.response?.errorSamples ?? [])
     .slice(0, 5)
-    .map((s) => `${s.document ? s.document.split('/').pop() + ': ' : ''}${s.errorMessage ?? 'unknown error'}`);
+    .map((s) => s.message ?? 'unknown error');
   if (unaccounted > 0) {
     failureSamples.push(`${unaccounted} document(s) uploaded but not accounted for by the import — treat as failed until verified.`);
   }

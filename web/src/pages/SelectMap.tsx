@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchEngines, fetchEnvironments, fetchProjects, type DestEngine, type DestProject, type GeminiDest } from '../api.ts';
 import { useWizardOptional } from '../context/WizardContext.tsx';
-import { GeminiIcon, MsIcon } from '../icons.tsx';
+import { GeminiIcon, IcoInfo, MsIcon } from '../icons.tsx';
 import type { EnvironmentInfo } from '../types.ts';
 
 /**
@@ -115,6 +115,24 @@ export function SelectMap() {
 
   const chosen = envs.filter((e) => included.has(e.url));
   const ready = chosen.length > 0 && chosen.every((e) => sel[e.url]?.project && sel[e.url]?.engine);
+
+  // Blast-radius disclosure: Gemini's project-scoped roles (Admin, Maker/Editor) and
+  // engine-scoped role (User) don't know about source environment boundaries — when two
+  // environments are mapped to the same project+app here, an Admin/Maker grant recommended
+  // for one environment's users is reachable by the other environment's agents too. Nothing
+  // blocks sharing a destination (it's a valid, often cheaper choice); this just makes sure
+  // the customer sees the tradeoff before confirming, instead of discovering it later.
+  // See docs/permission-migration-architecture.md §F.
+  const sharedDestinationGroups = (() => {
+    const byKey = new Map<string, string[]>();
+    for (const e of chosen) {
+      const cur = sel[e.url];
+      if (!cur?.project || !cur?.engine) continue;
+      const key = `${cur.project}::${cur.engine}`;
+      byKey.set(key, [...(byKey.get(key) ?? []), e.name]);
+    }
+    return [...byKey.values()].filter((names) => names.length > 1);
+  })();
 
   // Only projects with a Gemini app are valid destinations. Show just those by
   // default; if none were detected, fall back to showing all so the user is never
@@ -282,6 +300,23 @@ export function SelectMap() {
               </div>
             );
           })}
+
+          {sharedDestinationGroups.length > 0 && (
+            <div className="notice-banner" style={{ marginTop: 16, alignItems: 'flex-start' }}>
+              <IcoInfo s={14} />
+              <span>
+                {sharedDestinationGroups.map((names, i) => (
+                  <span key={i}>
+                    <strong>{names.join(', ')}</strong> share the same project &amp; app.{' '}
+                  </span>
+                ))}
+                Project- and app-level Gemini roles (Admin, Maker/Editor) span every environment mapped
+                to that project/app — a role grant recommended for one environment's users would be
+                reachable by the other's agents too. This is a valid choice, not an error; use separate
+                projects instead if these environments need fully independent permissions.
+              </span>
+            </div>
+          )}
 
           <div className="wizard-actions">
             <button className="wbtn" onClick={() => navigate(`/map-users?session=${session}`)}>← Back</button>
