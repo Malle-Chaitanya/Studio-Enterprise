@@ -25,6 +25,7 @@ import { logger } from '../logger.js';
 import {
   runKeyFor,
   startRun,
+  isRunning,
   publish,
   subscribe,
   stopRun,
@@ -115,7 +116,9 @@ migrateRouter.post('/plan', async (req, res) => {
     if (durablySaved.length) {
       plan.savedConnectors = [...new Set([...(plan.savedConnectors ?? []), ...durablySaved.map((c) => c.connectorId)])];
     }
-    await updateSession(sessionId!, { plan });
+    // A newly written plan is by definition unconsumed. Clearing here is what makes a
+    // deliberate re-run work while a stray reconnect still does not.
+    await updateSession(sessionId!, { plan, planConsumedAt: undefined, planConsumedSummary: undefined });
     res.json({
       totalAgents: plan.totalAgents,
       environments: plan.units.map((u) => ({ name: u.envName, agents: u.bots.map((b) => b.name) })),
@@ -165,6 +168,20 @@ migrateRouter.get('/stream', async (req, res) => {
     }
   };
 
+  // A plan that has already run is not runnable again. The registry guard covers a run
+  // that is still LIVE; this covers the window after it ends, when EventSource's own
+  // retry would otherwise start the whole migration a second time off the plan still on
+  // the session. Deliberately re-running works because POST /plan clears the marker.
+  if (!isRunning(runKey) && session.planConsumedAt) {
+    send({
+      type: 'done',
+      summary: session.planConsumedSummary ?? 'That plan has already been migrated.',
+      results: [],
+    });
+    res.end();
+    return;
+  }
+
   // Start the run only if one is not already going for this session. This is the
   // re-run guard: EventSource reconnects on its own when the server closes the
   // response, and previously that reconnect executed the whole migration a second
@@ -174,8 +191,10 @@ migrateRouter.get('/stream', async (req, res) => {
     // Detached on purpose. The run belongs to the process, not to this request, so
     // navigating away stops the watching and never the work.
     void (async () => {
+      let lastSummary = 'That plan has already been migrated.';
       try {
         for await (const evt of runMigration(session, session.plan!, () => isStopRequested(runKey))) {
+          if (evt.type === 'done') lastSummary = evt.summary;
           publish(runKey, evt);
         }
       } catch (err) {
@@ -184,6 +203,17 @@ migrateRouter.get('/stream', async (req, res) => {
         publish(runKey, { type: 'done', summary: 'Migration failed unexpectedly.', results: [] });
       } finally {
         finishLiveRun(runKey);
+        // Mark the plan consumed so a reconnect after the ending is told the result
+        // instead of starting the migration again. Best-effort like every other write
+        // here — a Mongo outage must not turn a finished run into a crash.
+        try {
+          await updateSession(session.id ?? String(req.query.session), {
+            planConsumedAt: Date.now(),
+            planConsumedSummary: lastSummary,
+          });
+        } catch (err) {
+          logger.warn({ err }, 'could not mark plan consumed; a reconnect may re-run it');
+        }
       }
     })();
   }

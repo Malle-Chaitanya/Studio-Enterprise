@@ -56,6 +56,19 @@ export interface Session {
   // resolved migration plan (set by POST /api/migrate/plan)
   plan?: ResolvedPlan;
   /**
+   * Set when a run for the CURRENT `plan` finished, and cleared whenever POST /plan
+   * writes a new one.
+   *
+   * Without it, a plan stayed executable forever: EventSource reconnects on its own after
+   * the server closes the response at the end of a run, and that reconnect would start the
+   * whole migration again off the plan still sitting here. The runRegistry guard only
+   * covers a run that is still LIVE, so this covers the window after it ends — together
+   * they mean idempotency no longer depends on the browser choosing not to reconnect.
+   */
+  planConsumedAt?: number;
+  /** Summary of the run that consumed the plan, so a reconnect can be told the ending. */
+  planConsumedSummary?: string;
+  /**
    * A stop that needs a person, surviving a browser refresh.
    *
    * The SSE event alone is not enough: it exists only in the stream, so reloading the page
