@@ -2,6 +2,11 @@ import { Router } from 'express';
 import { clientCredsToken } from '../auth/microsoft.js';
 import { logger } from '../logger.js';
 import { countBotComponents, extractAgent, inventory, listBots } from '../services/dataverse.js';
+import {
+  aclDisclosureFor,
+  aclDisclosureSummary,
+  needsAclAcknowledgement,
+} from '../services/aclDisclosure.js';
 import { normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
 import { assessAgent } from '../services/assess.js';
 import { getCachedIR } from '../db/repos/agentIR.js';
@@ -147,7 +152,24 @@ exploreRouter.get('/agent', async (req, res) => {
       return;
     }
 
-    res.json({ assessment: assessAgent(ir) });
+    // The permission-inversion verdict, computed by the SAME predicate the orchestrator's
+    // gate uses. Without this the UI has to guess from "does this agent have knowledge
+    // sources", which is wider than the truth — a public-website source has no permissions
+    // to lose — and it would ask the operator to accept an exposure that is not happening.
+    // Two implementations of one verdict is the failure this codebase keeps hitting; the
+    // answer lives here, next to the gate that enforces it.
+    const disclosure = aclDisclosureFor(ir);
+    res.json({
+      assessment: assessAgent(ir),
+      permissionLoss: {
+        /** True when migrating THIS agent inverts a permission — the gate's own condition. */
+        inverts: needsAclAcknowledgement(ir),
+        /** Which sources, and to whom they become readable. Empty when nothing inverts. */
+        items: disclosure.items,
+        orgWide: disclosure.orgWide,
+        summary: needsAclAcknowledgement(ir) ? aclDisclosureSummary(name, disclosure) : '',
+      },
+    });
   } catch (err) {
     res.status(502).json({ error: 'assessment_failed', detail: (err as Error).message });
   }

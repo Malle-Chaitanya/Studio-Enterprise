@@ -16,6 +16,7 @@ import {
   unsetSessionFields,
   updateSession,
 } from '../sessionStore.js';
+import { upsertAuthSession } from '../db/repos/authSessions.js';
 import { logger } from '../logger.js';
 
 export const authRouter = Router();
@@ -103,9 +104,22 @@ authRouter.get('/service-account', (_req, res) => {
  * The signed token carries the CSRF nonce + optional linked session + timestamp.
  */
 const STATE_TTL_MS = 15 * 60 * 1000;
-function putState(data: { msSessionId?: string; popup?: boolean }): string {
+/**
+ * `u` is the app user who STARTED the flow, carried through the redirect so the callback can
+ * confirm the browser that comes back is the one that left. It is signed, not client-supplied,
+ * so it is trustworthy — but it is still only ever used to CROSS-CHECK the auth cookie, never
+ * as the owner on its own. The cookie remains the authority; this catches the case where a
+ * different user signed in mid-flow, which would otherwise attach one person's cloud
+ * connection to another person's session.
+ */
+function putState(data: { msSessionId?: string; popup?: boolean; appUserId?: string }): string {
   const payload = Buffer.from(
-    JSON.stringify({ s: data.msSessionId ?? '', p: data.popup ? 1 : 0, t: Date.now() }),
+    JSON.stringify({
+      s: data.msSessionId ?? '',
+      p: data.popup ? 1 : 0,
+      u: data.appUserId ?? '',
+      t: Date.now(),
+    }),
   ).toString('base64url');
   const sig = createHmac('sha256', config.MS_CLIENT_SECRET).update(payload).digest('base64url');
   return `${payload}.${sig}`;
@@ -120,20 +134,21 @@ function putState(data: { msSessionId?: string; popup?: boolean }): string {
  */
 function takeState(
   state: string | undefined,
-): { msSessionId?: string; popup?: boolean; expired?: boolean } | null {
+): { msSessionId?: string; popup?: boolean; appUserId?: string; expired?: boolean } | null {
   if (!state || !state.includes('.')) return null;
   const [payload, sig] = state.split('.');
   const expected = createHmac('sha256', config.MS_CLIENT_SECRET).update(payload).digest('base64url');
   if (sig !== expected) return null;
   try {
-    const { s, p, t } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+    const { s, p, u, t } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
       s?: string;
       p?: number;
+      u?: string;
       t: number;
     };
     const popup = p === 1;
     if (Date.now() - t > STATE_TTL_MS) return { popup, expired: true };
-    return { msSessionId: s || undefined, popup };
+    return { msSessionId: s || undefined, popup, appUserId: u || undefined };
   } catch {
     return null;
   }
@@ -206,7 +221,15 @@ authRouter.post('/logout', async (req, res) => {
 // ── Microsoft ────────────────────────────────────────────────────────────────
 authRouter.get('/microsoft/start', (req, res) => {
   const session = req.query.session as string | undefined;
-  res.redirect(ms.buildAuthUrl(putState({ msSessionId: session, popup: req.query.popup === '1' })));
+  res.redirect(
+    ms.buildAuthUrl(
+      putState({
+        msSessionId: session,
+        popup: req.query.popup === '1',
+        appUserId: req.appUser?.appUserId,
+      }),
+    ),
+  );
 });
 
 export async function msCallback(req: Request, res: Response): Promise<void> {
@@ -281,7 +304,35 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
     // session doc (so a surviving Google connection isn't orphaned) instead
     // of minting a new one — mirrors how google/start already links back via
     // msSessionId. Falls back to a fresh session if the linked id is gone.
-    const existing = st.msSessionId ? await getSession(st.msSessionId) : undefined;
+    // The cookie is the authority on who this is; the signed state only cross-checks it.
+    // A mismatch means the signed-in user CHANGED between start and callback (another login
+    // in the same browser), and attaching this cloud connection to whoever is signed in now
+    // would hand one person's tenant credentials to another's session.
+    const caller = req.appUser?.appUserId;
+    if (st.appUserId && caller && st.appUserId !== caller) {
+      logger.warn(
+        { startedBy: st.appUserId, finishedBy: caller },
+        'microsoft callback: signed-in user changed mid-flow — refusing to attach the connection',
+      );
+      const detail = 'Your sign-in changed while connecting. Start the connection again.';
+      if (popup) return void popupResult(res, 'ms-auth-error', { error: detail });
+      return void res.redirect(web(`/?error=${encodeURIComponent(detail)}`));
+    }
+
+    const linked = st.msSessionId ? await getSession(st.msSessionId) : undefined;
+    // Reattaching to a session someone else owns is a cross-tenant write: the linked id
+    // travels through the browser, so a stale id left by a previous login on the same
+    // machine would otherwise silently graft this tenant onto that user's migration.
+    // Falling through to a fresh session is the safe answer, not an error.
+    const existing = linked && (!linked.appUserId || !caller || linked.appUserId === caller)
+      ? linked
+      : undefined;
+    if (linked && !existing) {
+      logger.warn(
+        { session: st.msSessionId, owner: linked.appUserId, caller },
+        'microsoft callback: linked session belongs to another user — minting a fresh one',
+      );
+    }
     let sessionId: string;
     if (existing) {
       sessionId = st.msSessionId!;
@@ -299,6 +350,24 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
         return void res.redirect(web(`/?error=${encodeURIComponent(detail)}`));
       }
       sessionId = await createSession({ step: 'ms_done', appUserId: owner, ...msFields });
+    }
+
+    // Durable record of the CONNECTION, separate from the migration session that happens to
+    // be using it. Keyed by (owner, provider, account email), so consenting again for the
+    // same mailbox updates one row rather than accumulating copies — that key is the dedupe.
+    // Best-effort: the session above already carries the live tokens for this run, so a
+    // failed persist costs durability, not the connection.
+    const connectionOwner = req.appUser?.appUserId ?? (existing?.appUserId as string | undefined);
+    if (connectionOwner && msEmail) {
+      await upsertAuthSession({
+        appUserId: connectionOwner,
+        provider: 'microsoft',
+        email: msEmail,
+        displayName: orgName,
+        tenantId,
+        refreshToken,
+        expiresAt: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : undefined,
+      });
     }
 
     // Land back on the platform screen so the user sees "1 cloud connected".
@@ -324,7 +393,9 @@ authRouter.get('/google/start', async (req, res) => {
   // The client's own admin signs in via OAuth. Their email + discovered Gemini
   // project drive the run; privileged writes use CloudFuze's service account
   // (Direct IAM or Domain-Wide Delegation), never a hardcoded impersonation.
-  res.redirect(google.buildAuthUrl(putState({ msSessionId: session, popup })));
+  res.redirect(
+    google.buildAuthUrl(putState({ msSessionId: session, popup, appUserId: req.appUser?.appUserId })),
+  );
 });
 
 export async function googleCallback(req: Request, res: Response): Promise<void> {
@@ -339,6 +410,20 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
     const errMsg = !st || st.expired ? 'state_expired' : 'session_expired';
     if (popup) return void popupResult(res, 'google-auth-error', { error: errMsg });
     return void res.redirect(web(`/?error=${errMsg}`));
+  }
+  // Same cross-check as the Microsoft callback: a different signed-in user coming back means
+  // the connection would land on the wrong person's session.
+  {
+    const caller = req.appUser?.appUserId;
+    if (st.appUserId && caller && st.appUserId !== caller) {
+      logger.warn(
+        { startedBy: st.appUserId, finishedBy: caller },
+        'google callback: signed-in user changed mid-flow — refusing to attach the connection',
+      );
+      const detail = 'Your sign-in changed while connecting. Start the connection again.';
+      if (popup) return void popupResult(res, 'google-auth-error', { error: detail });
+      return void res.redirect(web(`/?error=${encodeURIComponent(detail)}`));
+    }
   }
 
   try {
@@ -360,6 +445,20 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
       saOk,
       saReason,
     });
+    // Durable record of the connection — see the Microsoft callback for why this is separate
+    // from the migration session. The owner comes from the session that is being written to,
+    // which was already ownership-checked when Microsoft connected.
+    const linkedSession = await getSession(st.msSessionId);
+    const connectionOwner = req.appUser?.appUserId ?? linkedSession?.appUserId;
+    if (connectionOwner && gEmail) {
+      await upsertAuthSession({
+        appUserId: connectionOwner,
+        provider: 'google',
+        email: gEmail,
+        refreshToken: gRefreshToken,
+      });
+    }
+
     // Back to the platform screen — now showing "2 of 2 clouds connected".
     if (popup) return void popupResult(res, 'google-auth-success', { session: st.msSessionId });
     res.redirect(web(`/home?session=${st.msSessionId}`));

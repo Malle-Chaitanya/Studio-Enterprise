@@ -14,6 +14,9 @@ import type { GeminiDestination, MappedAgent } from '../types.js';
 
 const LOCATION = 'global';
 
+/** Consecutive 429/503 retries allowed per page of a licence listing. */
+const RETRYABLE_ATTEMPTS = 3;
+
 /** Assistants collection base for a destination (engine level). */
 export function assistantBase(d: GeminiDestination): string {
   return (
@@ -353,6 +356,7 @@ export async function listLicensedPrincipals(
 ): Promise<Set<string> | null> {
   const licensed = new Set<string>();
   let pageToken: string | undefined;
+  let attempt = 0;
   try {
     do {
       const params = new URLSearchParams({ pageSize: '1000' });
@@ -366,7 +370,25 @@ export async function listLicensedPrincipals(
         logger.warn(`listLicensedPrincipals: ${r.error} — licence filtering will be skipped`);
         return null;
       }
+      // 429/503 are the platform asking us to wait, not an answer about licences. Giving up
+      // on one costs the WHOLE filter and the grid falls back to unfiltered with an honest
+      // but unhelpful "licence unreadable" — seen live on 2026-08-23, where the same tenant
+      // answered 'applied' on either side of a single failed read. The write path has always
+      // backed off on these; the read had no reason not to.
+      if (r.status === 429 || r.status === 503) {
+        if (attempt < RETRYABLE_ATTEMPTS) {
+          const wait = 500 * 2 ** attempt;
+          logger.warn(`listLicensedPrincipals ${r.status} — backing off ${wait}ms and retrying`);
+          await new Promise((res) => setTimeout(res, wait));
+          attempt++;
+          continue;
+        }
+        logger.warn(`listLicensedPrincipals ${r.status} after retries — licence filtering skipped`);
+        return null;
+      }
       if (r.status < 200 || r.status >= 300) {
+        // Any other status IS a definitive answer (404 wrong store, 403 no permission), and
+        // retrying it only adds latency to a failure that will repeat identically.
         logger.warn(
           `listLicensedPrincipals ${r.status} — userStore id unverified, licence filtering will be skipped`,
         );
@@ -381,6 +403,9 @@ export async function listLicensedPrincipals(
           licensed.add(u.userPrincipal.toLowerCase());
         }
       }
+      // Reset per page: the budget is for consecutive failures, not for the whole listing —
+      // a tenant with many pages must not exhaust it on unrelated blips spread across them.
+      attempt = 0;
       pageToken = body.nextPageToken;
     } while (pageToken && licensed.size < max);
   } catch (e) {
