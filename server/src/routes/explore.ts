@@ -167,7 +167,11 @@ exploreRouter.get('/agent', async (req, res) => {
         /** Which sources, and to whom they become readable. Empty when nothing inverts. */
         items: disclosure.items,
         orgWide: disclosure.orgWide,
-        summary: needsAclAcknowledgement(ir) ? aclDisclosureSummary(name, disclosure) : '',
+        // ir.name, NOT the `name` query param: assessment.agent already uses the IR's own
+        // name, and two names for one agent in one response disagree the moment a caller
+        // passes a stale or missing one — the summary would then warn about the wrong agent
+        // while the assessment beside it named the right one.
+        summary: needsAclAcknowledgement(ir) ? aclDisclosureSummary(ir.name, disclosure) : '',
       },
     });
   } catch (err) {
