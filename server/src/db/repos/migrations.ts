@@ -172,7 +172,11 @@ export async function listRuns(
     const runs = await db
       .collection(RUNS)
       .find({ appUserId })
-      .sort({ startedAt: -1, _id: -1 })
+      // startTime, not startedAt: createRun writes `startTime` (line ~47) and
+      // completeRun writes `endTime`. Reading `startedAt` here sorted on a field
+      // that does not exist, so Past runs came back in arbitrary order and every
+      // row rendered "Invalid Date" in the UI.
+      .sort({ startTime: -1, _id: -1 })
       .limit(Math.min(Math.max(limit, 1), 100))
       .toArray();
     const out: RunSummary[] = [];
@@ -184,8 +188,8 @@ export async function listRuns(
         .toArray();
       out.push({
         runId,
-        startedAt: r.startedAt,
-        finishedAt: r.finishedAt,
+        startedAt: r.startTime ?? r.startedAt,
+        finishedAt: r.endTime ?? r.finishedAt,
         status: r.status,
         summary: r.summary,
         agentCount: results.length,
