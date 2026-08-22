@@ -139,6 +139,67 @@ async function resolvePrincipalDisplay(
   }
 }
 
+/**
+ * Resolve a bare principalobjectaccessset row's principalid when its type
+ * (user vs team) isn't known up front — unlike RetrieveSharedPrincipalsAndAccess(),
+ * the POA table gives no LogicalName alongside the id. GET-by-id 403s with a
+ * misleading "user is not a member of the organization" for this app-user in
+ * this environment (confirmed live 2026-08-21); a $filter query on the same
+ * id works, so that's used instead of the GET-by-id path resolvePrincipalDisplay
+ * uses above (kept as-is for the working RetrieveSharedPrincipalsAndAccess call site).
+ */
+async function resolvePoaPrincipal(
+  url: string,
+  token: string,
+  id: string,
+): Promise<{ email?: string; displayName?: string; type: 'user' | 'team' | 'group' }> {
+  try {
+    const users = await dvGet<{ value: { internalemailaddress?: string; fullname?: string }[] }>(
+      url,
+      token,
+      `systemusers?$select=internalemailaddress,fullname&$filter=systemuserid eq ${id}`,
+    );
+    if (users.value[0]) {
+      return { type: 'user', email: users.value[0].internalemailaddress ?? undefined, displayName: users.value[0].fullname ?? undefined };
+    }
+  } catch {
+    /* fall through to team lookup */
+  }
+  try {
+    const teams = await dvGet<{ value: { name?: string }[] }>(url, token, `teams?$select=name&$filter=teamid eq ${id}`);
+    if (teams.value[0]) {
+      return { type: 'team', displayName: teams.value[0].name };
+    }
+  } catch {
+    /* unresolved */
+  }
+  return { type: 'user' };
+}
+
+/**
+ * Fallback for environments where the RetrieveSharedPrincipalsAndAccess()
+ * bound function isn't invokable on the `bot` entity (confirmed live
+ * 2026-08-21 on a real tenant: 404 "Resource not found for the segment",
+ * despite the function existing generally in $metadata — it's simply not
+ * bound to this entity type here). principalobjectaccessset is the
+ * underlying standard Dataverse sharing table any row-share (Editor,
+ * individual chat, Agent-viewer) populates regardless of whether the
+ * higher-level convenience function works, and it DOES return real data in
+ * this environment.
+ */
+async function readSharesFromPoaTable(
+  url: string,
+  token: string,
+  botId: string,
+): Promise<{ principalid: string; accessrightsmask: unknown }[]> {
+  const poa = await dvGet<{ value: { principalid: string; accessrightsmask: unknown }[] }>(
+    url,
+    token,
+    `principalobjectaccessset?$filter=objectid eq ${botId}&$select=principalid,accessrightsmask`,
+  );
+  return poa.value;
+}
+
 function decodeAccessMask(mask: unknown): {
   rights: string[];
   roleHint: 'coauthor' | 'viewer' | 'custom';
@@ -291,12 +352,69 @@ export async function readAgentPermissions(
       }
     } catch (e) {
       const msg = (e as Error).message || String(e);
-      if (/\(403\)|\(401\)/i.test(msg) || /insufficient|privilege|access/i.test(msg)) {
+      // "Resource not found for the segment" means the bound function itself isn't
+      // invokable on this entity in this environment (confirmed live 2026-08-21) — not a
+      // permission problem. Previously this fell into the generic classifier below, whose
+      // /access/i check matched the literal word "Access" inside the function's OWN NAME
+      // (RetrieveSharedPrincipalsAndAccess) and misreported it as "insufficient privilege"
+      // — a false diagnosis that also meant every share on this bot silently vanished
+      // instead of being read via the fallback below.
+      if (/resource not found for the segment/i.test(msg)) {
+        try {
+          const rows = await readSharesFromPoaTable(url, token, botId);
+          for (const row of rows) {
+            const resolved = await resolvePoaPrincipal(url, token, row.principalid);
+            const { rights, roleHint, studioShareRole } = decodeAccessMask(row.accessrightsmask);
+            if (resolved.type === 'team') {
+              // Confirmed live 2026-08-21: an individual Editor/chat share on a bot does
+              // NOT create a direct user POA row — Dataverse auto-generates a single-record
+              // team (name "{botId}_1", no teamtemplateid — it's not an Access Team Template
+              // team, just an ordinary team scoped to this one share) and grants THAT team
+              // the access instead. Expand to real members so the person shows up as
+              // type:'user' with a real email — resolvePermissions() treats type:'team' as
+              // a group and can never match it to anyone, which is how alex@filefuze.co's
+              // Editor share went completely missing from a real migration's fidelity report.
+              // The owner is always a member of these auto-teams too — excluded here since
+              // they're already captured separately via `owner` above; reporting them again
+              // as "shared" with themselves would be a duplicate, not a real finding.
+              const members = await dvGet<{ value: { systemuserid: string; fullname?: string; internalemailaddress?: string }[] }>(
+                url, token, `teams(${row.principalid})/teammembership_association?$select=systemuserid,fullname,internalemailaddress`,
+              ).catch(() => ({ value: [] }));
+              for (const m of members.value) {
+                if (m.systemuserid === ownerId) continue;
+                sharedPrincipals.push({
+                  type: 'user',
+                  id: m.systemuserid,
+                  email: m.internalemailaddress,
+                  displayName: m.fullname,
+                  rights,
+                  roleHint,
+                  studioShareRole,
+                });
+              }
+              continue;
+            }
+            sharedPrincipals.push({
+              type: resolved.type,
+              id: row.principalid,
+              email: resolved.email,
+              displayName: resolved.displayName,
+              rights,
+              roleHint,
+              studioShareRole,
+            });
+          }
+        } catch (poaErr) {
+          readError = `shares not readable via RetrieveSharedPrincipalsAndAccess (unbound on this entity) or principalobjectaccessset fallback: ${(poaErr as Error).message?.slice(0, 200)}`;
+          sharedPrincipals = [];
+        }
+      } else if (/\(403\)|\(401\)/i.test(msg)) {
         readError = 'shares not readable (insufficient app-user privilege)';
+        sharedPrincipals = [];
       } else {
         readError = `shares not readable: ${msg.slice(0, 200)}`;
+        sharedPrincipals = [];
       }
-      sharedPrincipals = [];
     }
 
     return { owner, sharedPrincipals, chatAccess, readError };

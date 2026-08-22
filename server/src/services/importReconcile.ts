@@ -27,7 +27,9 @@ export interface ImportOperation {
      * (`code` / `message` / `details`), NOT as `{errorMessage}` — which is what this type
      * used to declare. TypeScript could not catch the mismatch because the payload is
      * untyped JSON at the boundary, so every sample rendered as "unknown error" and a
-     * 0/178 import reported a count with no cause (live 2026-08-19).
+     * 0/178 import reported a count with no cause (live 2026-08-19, reconfirmed 2026-08-21:
+     * `message` carries the real reason, `document` is rarely populated separately — the
+     * failing document's id is usually embedded in `message` itself).
      *
      * Both spellings are accepted, and `toSampleText` keeps a raw fallback so an
      * unrecognised shape still prints something a human can act on.

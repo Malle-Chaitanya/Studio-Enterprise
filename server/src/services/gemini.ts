@@ -302,11 +302,19 @@ export type LicenseState = 'licensed' | 'unlicensed' | 'unknown';
  * reported as 'unknown', not 'unlicensed' — the caller must attempt the
  * downstream grant regardless and let IT produce the real error, rather than
  * skip a real license on the strength of a guessed endpoint.
+ *
+ * Deliberately does NOT use the `filter` query param — confirmed live
+ * 2026-08-22: `filter=user_principal="{email}"` is accepted as valid syntax
+ * (200, no error) but silently matches nothing, even against a store that
+ * demonstrably contains that exact principal (`ASSIGNED`, unfiltered list
+ * shows it). This produced a real false negative: a genuinely licensed,
+ * actively-logged-in user was reported 'unlicensed'. Filtering is unreliable
+ * on this (BETA) API — fetch and match client-side instead, which the same
+ * live check proved works correctly.
  */
 export async function checkUserLicense(dest: GeminiDestination, saToken: string, email: string): Promise<LicenseState> {
   try {
-    const filter = encodeURIComponent(`user_principal="${email.toLowerCase()}"`);
-    const res = await fetch(`${userStoreBase(dest)}/userLicenses?filter=${filter}`, {
+    const res = await fetch(`${userStoreBase(dest)}/userLicenses?pageSize=1000`, {
       headers: { Authorization: `Bearer ${saToken}` },
     });
     if (!res.ok) {

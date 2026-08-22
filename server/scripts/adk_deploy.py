@@ -33,10 +33,39 @@ without this, the model cites its own generic tool name
 recognizable source name.
 """
 import argparse
+import importlib.metadata
 import json
 import os
 import re
 import sys
+
+
+def _pinned(pkg: str, extras: str = "") -> str:
+    """Pin a requirement to the EXACT version already imported in this process.
+
+    root_agent (below) is a pydantic-based google-adk `Agent` tree that gets pickled
+    here and unpickled inside the freshly-built container. An unpinned "google-adk"
+    requirement lets the container install whatever is newest at deploy time — a
+    different version than the one that just built root_agent. Confirmed live
+    2026-08-16: local build used google-adk 2.5.0 (no `_resolved_model` private attr
+    on LlmAgent); the container installed 2.7.0, which added one. Pydantic's
+    `__setstate__` restores the OLD instance's `__pydantic_private__` verbatim onto
+    the NEW class, so the container's LlmAgent ends up with `__pydantic_private__ is
+    None` even though its class declares `_resolved_model` — and the very first
+    `hasattr(agent, 'canonical_model')` check ADK does on every turn raises
+    `TypeError: 'NoneType' object is not subscriptable` (hasattr only swallows
+    AttributeError, so this escapes and kills the turn, including ones needing no
+    tool at all). Pinning to what this same process already imported guarantees the
+    container installs the identical class shapes that were just pickled.
+    """
+    try:
+        version = importlib.metadata.version(pkg)
+    except importlib.metadata.PackageNotFoundError:
+        # Should not happen — this script already imported the package by this point —
+        # but deploying unpinned is strictly better than crashing the whole migration.
+        return f"{pkg}[{extras}]" if extras else pkg
+    suffix = f"[{extras}]" if extras else ""
+    return f"{pkg}{suffix}=={version}"
 
 
 def _safe_agent_name(raw: str) -> str:
@@ -842,22 +871,23 @@ def main():
     #
     # Agent Engine ships the agent as a PICKLE and rebuilds it inside a container it
     # provisions from this list. Unpinned, that container resolved `google-adk` to whatever
-    # PyPI had that day, so an object pickled by our 2.6.2 was unpickled by a newer ADK.
-    # Pydantic private attributes did not survive the mismatch (live 2026-08-19):
+    # PyPI had that day, so an object pickled by our 2.6.2 (or 2.5.0 — confirmed on both,
+    # 2026-08-16 and 2026-08-19) was unpickled by a newer ADK. Pydantic private attributes
+    # did not survive the mismatch:
     #
     #   File "google/adk/agents/llm_agent.py", line 630, in canonical_model
-    #     resolved = self._resolved_model          # <- absent from 2.6.2 entirely
+    #     resolved = self._resolved_model          # <- absent from the older ADK entirely
     #   File "pydantic/main.py", line 1024, in __getattr__
     #     return self.__pydantic_private__[item]
     #   TypeError: 'NoneType' object is not subscriptable
     #
     # EVERY query failed while deploy reported success, the agent registered ENABLED, and
     # the same agent had verified clean days earlier. The break arrived with no change on
-    # our side and nothing local reproduces it.
+    # our side and nothing local reproduces it. See _pinned() above for the pin mechanism.
     #
-    # ONLY google-adk is pinned, and that limit is load-bearing. Pinning the whole set
-    # made the RE build FAIL outright (live 2026-08-19, same agent), because the versions
-    # our environment runs are mutually unsatisfiable in a single pip resolve:
+    # ONLY google-adk is pinned, and that limit is load-bearing. Pinning google-cloud-aiplatform
+    # alongside it made the RE build FAIL outright (live 2026-08-19, same agent), because the
+    # versions our environment runs are mutually unsatisfiable in a single pip resolve:
     #
     #   google-adk 2.6.2               requires google-genai >=2.9,<3
     #   google-cloud-aiplatform 1.93.0 requires google-genai <2.0.0
@@ -867,16 +897,10 @@ def main():
     # list has no such escape hatch, so pinning aiplatform alongside adk guarantees
     # ResolutionImpossible and a fallback to the low-code path. Pin the library that owns
     # the pickle; let pip resolve a self-consistent set around it.
-    def _pin(pkg: str) -> str:
-        try:
-            import importlib.metadata as _md
-            return f"{pkg}=={_md.version(pkg)}"
-        except Exception:  # noqa: BLE001 - unpinned beats refusing to deploy
-            return pkg
-
-    requirements = ["google-cloud-aiplatform[agent_engines,adk]", _pin("google-adk")]
+    requirements = ["google-cloud-aiplatform[agent_engines,adk]", _pinned("google-adk")]
+    emit({"log": f"pinning deploy container to {requirements}"})
     if grounding_data_stores:
-        requirements.append("google-cloud-discoveryengine")
+        requirements.append(_pinned("google-cloud-discoveryengine"))
     # Document text extraction for SharePoint/OneDrive/Google Drive read tools. Added
     # only when such a connector is present, to keep the container minimal — and NONE
     # of these are in the `google.*` namespace, which is the namespace that previously

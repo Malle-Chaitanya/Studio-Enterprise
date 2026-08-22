@@ -1344,6 +1344,19 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             for (const note of snap.schemaNotes ?? []) {
               result.fidelity.push({ component: `knowledge:${src.name}`, status: 'partial', detail: note });
             }
+            // A data store existing is not the same as its rows actually being searchable —
+            // previously only schemaNotes surfaced here, so a 100%-row-failure table (store
+            // created, every row rejected on import) produced NO fidelity note at all and
+            // looked identical to a fully-successful one in the customer-facing report.
+            if (snap.failed) {
+              result.fidelity.push({
+                component: `knowledge:${src.name}`,
+                status: snap.succeeded ? 'partial' : 'needs-review',
+                detail:
+                  `${snap.succeeded}/${snap.attempted} row(s) indexed, ${snap.failed} failed to import into Discovery Engine.` +
+                  (snap.failureSamples?.length ? ` Sample errors: ${snap.failureSamples.join(' || ')}` : ' No per-row error detail was returned by the import operation.'),
+              });
+            }
           }
         }
       }
@@ -2402,6 +2415,22 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               );
             }
 
+            // Removed 2026-08-22: guardAgainstRestrictedSharingOnAdk() used to route a
+            // restricted-sharing fresh agent to low-code instead of ADK, over concern that
+            // an ENABLED ADK agent's baseline reachability can't be narrowed after the fact.
+            // Descoped, not disproven — live-tested 2026-08-22 that ADK's per-agent grants
+            // DO correctly gate gallery/console discoverability (individual/group/org-wide
+            // all matched exactly who should see the agent), which is what this tool's
+            // sharing requirement actually needs. The narrower, still-unresolved question —
+            // whether someone with baseline access but zero grant can reach an ADK agent via
+            // a direct link bypassing the gallery — is explicitly out of scope for this
+            // decision; see docs/design/PERMISSION-MAPPING-ARCHITECTURE.md §6 (2026-08-22)
+            // before reintroducing a guard based on that concern. Low-code's own grant path
+            // is confirmed BROKEN for the individual/group case in the meantime (Google
+            // rejects setIamPolicy on a private agent — FAILED_PRECONDITION), so routing
+            // restricted-sharing agents there was routing them to the path that doesn't work,
+            // not the safer one.
+
             // GATE: will this agent's connectors actually work once deployed?
             //
             // Placed here, after the secrets have been synced into the destination project
@@ -3075,11 +3104,25 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
         }
 
         if (usedAdk) {
-          // ADK/Agent Engine agents are created ENABLED (deployed) and
-          // ALL_USERS-shared automatically at registration — confirmed live
-          // 2026-07-31. When source chat access was narrower than org-wide,
-          // record an honest over-share handoff (Gemini has no API to restrict
-          // after the fact on this path).
+          // ADK/Agent Engine agents are created ENABLED at registration — confirmed live
+          // 2026-07-31 — reachable by anyone with baseline engine access (license +
+          // agentspaceUser) via a direct query/widget call, no per-agent gate for that path.
+          // Correction 2026-08-21: this reachability comes from `state: ENABLED` alone, not
+          // from sharingConfig being auto-set to ALL_USERS — sharingConfig is actually unset
+          // by default on ADK agents, live-confirmed by fetching a real agent's raw body
+          // before/after explicitly PATCHing it (PERMISSION-MAPPING-ARCHITECTURE.md §1a).
+          // grantAgentAccess()/ensureAgentAccess() below are confirmed to work on ADK agents
+          // the same as low-code. Correction 2026-08-22 (§6 of that same doc): per-agent
+          // grants DO correctly control gallery/console discoverability — live-tested three
+          // ways (individual/group/org-wide) on a real ADK agent, each exactly matching who
+          // could see it in their own "From your organization" view. What's still
+          // unconfirmed is the narrower, separate question of direct-link/widget reachability
+          // for someone with baseline access but zero grant — that's the scenario the
+          // original comment above was based on (Email Manager Outlook), and it has not been
+          // re-tested since. Don't conflate the two: "shows in the gallery" is now proven
+          // grant-accurate; "can't be reached at all without a grant" is not proven either
+          // way. When source chat access was narrower than org-wide, record an honest
+          // over-share handoff regardless, since the direct-reachability question stays open.
           result.deployed = true;
           const perms = row.mapped.ir.permissions;
           const hasPerms = !!perms;
@@ -3108,7 +3151,7 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               create.agentId,
               resolution,
               perms,
-              'ADK registration shares ALL_USERS automatically; source was narrower — restrict via console Share / User permissions. Gemini API cannot apply per-user/group sharing.',
+              'ADK registration leaves the agent reachable by anyone with baseline access to this Gemini engine (state: ENABLED, no per-agent gate) — this is not narrowed by granting specific principals below. The grants below ensure the source-specified users/groups have explicit access; whether the agent can additionally be restricted to ONLY them is still unconfirmed for this agent type — restrict further via console Share / User permissions if needed.',
             );
             result.permissionHandoff = handoff;
             const grant = await ensureAgentAccess(
@@ -3200,7 +3243,7 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               create.agentId,
               resolution,
               perms,
-              'Gemini API has no per-user/group agent sharing (only ALL_USERS). Manual console steps required.',
+              'Source chat access was not org-wide — granting license + engine role + roles/discoveryengine.agentUser to the resolved principals below instead of sharing ALL_USERS. Any unresolved/failed principals need manual console follow-up (see below).',
             );
             result.permissionHandoff = handoff;
             const grant = await ensureAgentAccess(

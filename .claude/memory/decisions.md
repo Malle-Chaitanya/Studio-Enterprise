@@ -6,6 +6,109 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
+## 2026-08-22 — Removed `guardAgainstRestrictedSharingOnAdk`: a scope decision, not a reversal of the underlying safety concern
+
+- **Decision:** Deleted `services/permissionMapping.ts` and its call site in
+  `orchestrator.ts` (the block that routed a restricted-sharing fresh agent to low-code
+  instead of ADK). ADK now always proceeds via `publishAgentToGallery()` regardless of
+  source sharing state; the existing restricted-sharing handling further down (calling
+  `ensureAgentAccess()` for the resolved principals, unchanged) still applies afterward.
+- **Why:** explicit product-scope call — the actual sharing requirement is "the Gemini
+  Enterprise UI (gallery, console Permissioned-users table) shows the agent to the right
+  people," which the same-day WorkMate test (see the entry above) proved ADK does correctly
+  across individual/group/org-wide. Low-code's own per-agent grant path is confirmed
+  **broken** for exactly the individual/group case (`setIamPolicy` on a private agent →
+  `FAILED_PRECONDITION`) — so the guard was routing restricted-sharing agents to the path
+  that doesn't work, to protect against a narrower, separate concern (see below) that was
+  never conclusively confirmed either way.
+- **What this does NOT mean — read before touching this area again:** the guard's original
+  concern (an `ENABLED` ADK agent's baseline reachability, via a direct link/query bypassing
+  the gallery, may not be narrowable by per-agent grants) was NOT disproven. The strongest
+  existing evidence on that specific question (Email Manager Outlook — zero grants, yet
+  reachable via a real widget-style query) still stands unchallenged; a same-day attempt to
+  re-test it on a different agent was inconclusive (request-format failure, not a permission
+  signal). This removal is scoped to "gallery/console visibility is correct," which is a
+  different, now-proven property — not "an ADK agent can be fully restricted to only its
+  grantees." Do not cite this decision as evidence for the latter claim.
+- **Impact:** `services/permissionMapping.ts` deleted (no other call sites existed).
+  `orchestrator.ts`'s ADK branch simplified; typecheck clean. See
+  `docs/design/PERMISSION-MAPPING-ARCHITECTURE.md` §6 (2026-08-22 entries) for full detail.
+  If a future requirement needs to prevent direct-link bypass specifically, resolve the open
+  question with a real browser test before reintroducing a guard.
+
+---
+
+## 2026-08-22 — Corrected an overstated claim: ADK per-agent grants DO control gallery/console discoverability
+
+- **Decision:** No code change to the sharing functions themselves — corrected documentation
+  and comments (`docs/design/PERMISSION-MAPPING-ARCHITECTURE.md` §6, `orchestrator.ts`'s
+  ADK-branch comment) that overstated a prior finding. The prior claim, based only on direct
+  API/widget reachability tests, implied a per-agent grant on an `ENABLED` ADK agent was
+  close to meaningless. Live-tested against a real ADK agent (WorkMate, migrated by a
+  teammate, no prior CS_GE involvement) with three sequential real grants — individual,
+  group, org-wide — each verified in the Cloud Console's own "User permissions" table and in
+  two separate real people's own "From your organization" gallery: every step matched the
+  grant exactly (Austin-only grant → only Austin saw it; group grant → both members saw it;
+  `ALL_USERS` → Console literally reads "All users"). Also found and fixed a real bug along
+  the way: `checkUserLicense()`'s `filter=user_principal="{email}"` query silently matches
+  nothing on this API even against a demonstrably-present, `ASSIGNED` license — confirmed by
+  testing multiple filter syntax variants, all either rejected or accepted-but-empty. Fixed
+  by dropping the filter and matching client-side against the full list (`gemini.ts`).
+- **What this does NOT settle:** whether a person with baseline license + engine role but
+  zero per-agent grant can still open an `ENABLED` ADK agent via a direct query/widget call
+  (not the gallery UI) if they have its agent id — the scenario the original claim was
+  actually built on (Email Manager Outlook: zero grants, zero `sharingConfig`, yet reachable
+  via direct widget-style query). That has not been re-tested since. Gallery discoverability
+  and direct-link reachability are two different mechanisms; only the first is now confirmed
+  grant-accurate. The `guardAgainstRestrictedSharingOnAdk` guard's safety rationale rests on
+  the still-unconfirmed direct-reachability question, not gallery listing — not weakened by
+  this finding.
+- **Why:** a real live test surfaced console/gallery behavior that directly contradicted the
+  too-strong version of an earlier claim; correcting the record rather than leaving a
+  misleading "per-agent grants don't restrict anything" statement in the architecture doc.
+- **Impact:** Documentation/comment correction plus one real bug fix (`checkUserLicense`).
+  No behavior change to `ensureAgentAccess`/`shareAgent`/`grantAgentAccess` themselves.
+
+---
+
+## 2026-08-21 — Live-validated `ensureAgentAccess`/`shareAgent` end-to-end against three real migrated ADK agents, one per sharing shape
+
+- **Decision:** No code change. Ran the actual production functions from `services/gemini.ts`
+  (not raw fetch, not a throwaway test agent) against three real, already-migrated, `ENABLED`
+  agents in the `studio-enterprise-migration` tenant — `ensureAgentAccess({users:[...]})` on
+  "Teams Coordinator" (individual), `ensureAgentAccess({groups:[...]})` on "SharePoint
+  Connector Agent (ADK)" (group), `shareAgent()` on "CloudFuze Studio Migrate (full: docs +
+  live + topics)" (org-wide) — then verified each via a raw `getIamPolicy`/agent-body fetch.
+  All three succeeded. Full detail, agent ids, and the exact API calls: see
+  `docs/design/PERMISSION-MAPPING-ARCHITECTURE.md` §3.0.1. Scripts kept as
+  `server/src/spikes/_diag_real_sharing_via_code.ts`, `_diag_real_sharing_individual_retry.ts`,
+  `_diag_confirm_adk_and_enable_timing.ts`, `_diag_role_titles.ts`.
+- **New fact, confirmed via `GET iam.googleapis.com/v1/roles/{role}` rather than assumed:**
+  `roles/discoveryengine.agentspaceUser`'s console title is literally **"Gemini Enterprise
+  User"** (engine-level, layer 2); `roles/discoveryengine.agentUser`'s title is **"Agent
+  User"** (per-agent, layer 3). These are two different roles at two different resource
+  levels, both required together — not interchangeable, not either/or. A prior question in
+  this project conflated the two by name; this settles it authoritatively.
+- **Operational gotcha worth remembering:** agent IDs in this tenant are not stable across
+  re-migrations. A stale id from an earlier session (`3490661072028616401` for "Teams
+  Coordinator") produced a red-herring `400 "Policy etag is required"` from
+  `ensureAgentAccess`'s internal `setIamPolicy` call — looked like a code bug, wasn't one.
+  The agent simply no longer existed at that id (confirmed via a direct 404 on
+  `getIamPolicy`); Google rejects the malformed request (missing etag, because the
+  preceding `getIamPolicy` 404'd) before ever checking resource existence, so the error
+  surfaces as a 400 about etags rather than a 404 about the agent. Always re-pull an
+  agent's current id live (`_diag_agents.ts`) before scripting against it.
+- **Why:** the user asked for a real, code-driven (not console-driven) test of all three
+  sharing shapes against real production-migrated agents before doing a fresh end-to-end
+  migration run to test destination-side sharing themselves.
+- **Impact:** No code or schema change. Confirms (does not newly build) that both
+  `ensureAgentAccess` and `shareAgent` work correctly end-to-end on real ADK agents — closes
+  out the "genuinely hopeful, not yet tested" framing around ADK sharing for the individual/
+  group cases specifically (org-wide `ALL_USERS` was already confirmed in the 2026-08-21
+  entries above this one).
+
+---
+
 ## 2026-08-12 — Implement `ensureAgentAccess`: license check/assign + engine-role grant in front of `grantAgentAccess`
 
 - **Decision:** Added `checkUserLicense`, `assignUserLicense`, `grantEngineUserRole`, and

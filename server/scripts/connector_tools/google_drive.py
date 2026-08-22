@@ -111,7 +111,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
             result["note"] = f"This folder has more than {len(items)} files — list was capped, not exhaustive."
         return result
 
-    def google_drive_read_file(file_id: str) -> dict:
+    def google_drive_read_file(file_id: str, offset: int = 0) -> dict:
         """Read the TEXT CONTENT of a Google Drive file, so you can answer
         questions about what it contains.
 
@@ -119,12 +119,25 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
         Google Docs/Sheets/Slides (auto-exported to text/CSV). Images and
         other binary formats cannot be read.
 
+        Large files are returned one chunk at a time rather than silently
+        cut off — confirmed live 2026-08-17: a two-table docx with several
+        prose sections came back hard-truncated mid-table with no signal
+        the model could act on, and it told the user "no additional
+        information" instead of admitting the file wasn't fully read. If
+        `truncated` is true, you MUST tell the user the content is partial
+        and call this again with `offset` set to the returned `nextOffset`
+        to keep reading — never present a partial read as the whole file.
+
         Args:
             file_id: the Drive file ID (from google_drive_list_files, or the
                 /d/<id>/ segment of a shared link).
+            offset: character offset to resume reading from (from a prior
+                call's `nextOffset`). Defaults to 0 (start of file).
 
         Returns:
-            dict with `text` (extracted, possibly truncated) or `error`.
+            dict with `text` (this chunk), `truncated` (more remains),
+            `nextOffset` (pass this back in to continue, only present when
+            `truncated`), `totalChars`, or `error`.
         """
         import io
         import json as _json
@@ -132,7 +145,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
         import urllib.request
 
         MAX_BYTES = 20 * 1024 * 1024
-        MAX_CHARS = 60000
+        CHUNK_CHARS = 60000
 
         try:
             token = mint_token(fill)
@@ -235,13 +248,24 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
         except Exception as e:  # noqa: BLE001
             return {"error": f"Google Drive read failed for {meta.get('name')}: {e}"}
 
-        truncated = len(text) > MAX_CHARS
-        return {
+        end = offset + CHUNK_CHARS
+        truncated = end < len(text)
+        result = {
             "file": meta.get("name"),
             "webUrl": meta.get("webViewLink"),
+            "totalChars": len(text),
             "truncated": truncated,
-            "text": text[:MAX_CHARS],
+            "text": text[offset:end],
         }
+        if truncated:
+            result["nextOffset"] = end
+            result["note"] = (
+                f"Only characters {offset}-{end} of {len(text)} were returned. "
+                f"Tell the user this is a partial read and call "
+                f"google_drive_read_file(file_id, offset={end}) to continue — "
+                f"do not present this chunk as the complete file."
+            )
+        return result
 
     def google_drive_get_metadata(file_id: str) -> dict:
         """Get metadata for a Google Drive file or folder — name, type,
