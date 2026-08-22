@@ -2248,3 +2248,1276 @@ and only a fidelity note to show for it.
 3. Grade it. If you are choosing between `P` and something weaker, it is the weaker one.
 4. If the evidence is a name match, a docs statement, or an absence, it is **not** `P` —
    write the inference and label it as one, like §1.3 and §1.4 do.
+### 1.41 Parser-vs-LLM blind-spot diff — built, and it found one on its first sweep (2026-08-19)
+
+Ledger §1.23 cost us 26 operations because a topic-embedded `InvokeConnectorAction` was not
+the shape the TaskDialog parser expected, and nothing surfaced it until someone dumped raw
+refs by hand. `services/blindSpot.ts` automates that check: an LLM reads the same raw payload
+the parser read, identifies tools by INTENT, and `diffTools()` reports what only one of them
+saw. `llmOnly` is the blind-spot signal.
+
+The LLM never supplies an identifier we bind on — proven necessary in this very run, below.
+
+**Sweep: 12 agents, `org32322095` (`_diag_blind_spot.ts`)** — 38 tools confirmed by both
+readers, 3 parser-only, 5 leads to review.
+
+**CONFIRMED FINDING — `InvokeAIBuilderModelAction` inside a topic is absent from `agentTools`.**
+Verified against the raw payload with `_dump_component.ts`, agent "D365 Sales - Data
+Enrichment", which `extractAgent` reports as **0 tools**:
+
+```yaml
+kind: AdaptiveDialog            # component "Field Extraction", componenttype=9
+  actions:
+    - kind: InvokeAIBuilderModelAction
+      id: invokeAIBuilderModelAction_KNOX9p
+      aIModelId: 1dab332e-18ee-419c-bb78-a0736981d6a7
+```
+
+Scope of the gap, stated precisely — this is NOT a silent loss:
+- `dataverse.ts:734` sets a topic-level `usesAiBuilder` flag, so `TopicIR` knows.
+- `assess.ts:222` reports it ("the model itself is not migrated").
+- But it never becomes an `agentTools` entry, and `agentTools` is what drives tool migration
+  and the connector readiness counts. An agent whose only outward call is an AI Builder model
+  therefore reports **0 tools**.
+
+Same shape found on "Sales Opportunity Agent - Stakeholder" and 3 topics of "Sales
+Qualification Agent Config Assistant". Whether these should become `agentTools` entries is a
+product decision (the model is not migratable today); the point of the ledger entry is that
+the pipeline can now SEE them.
+
+**Three false-positive classes found and fixed in the same session**, each by real data, each
+now covered by a test in `blindSpot.test.ts`:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Knowledge sources reported as tools (SharePoint PDFs, `*SearchSource`, skill configs) | prompt excluded them in one line, with no examples | explicit never/always lists + "could this call fail because an external system was down?" |
+| Topic redirects reported as tools (`BeginDialog`, `Topic.X`) | same | added to the never-list |
+| `GetPagesBySpace` reported as a blind spot the parser HAD extracted | single-pass greedy matching: model's "Confluence - Get pages" consumed parser's "Confluence - Get pages within a space" by containment | two-pass — every exact match (name / operationId / `foundIn`) claimed before any containment |
+
+Before: 5 of 6 leads were noise. After: "Migrate Advisor" went 26/26 confirmed, 0 false
+positives, and the AI Builder finding survived.
+
+**Why the LLM's ids are leads, never bindings — demonstrated here.** For the confirmed
+finding the model reported `op=InvokeAIBuilderModelTaskAction` (the real kind is
+`InvokeAIBuilderModelAction`) and elsewhere returned the node id where the model id belonged.
+It read the intent correctly every time and got the identifier wrong repeatedly. Binding on
+that output would have bound nothing, or the wrong operation.
+
+Re-run: `cd server && npx tsx src/spikes/_diag_blind_spot.ts "" <envUrl> <limit>` (needs
+`OPENAI_API_KEY`). Confirm any lead with `_dump_component.ts "<agent>" "<component>"`.
+
+
+
+### 1.42 The MS connector work is 1 operation, not 340 — measured, then shipped (2026-08-19)
+
+The spec sized Microsoft connector parity off the SWAGGER surface: `office365` 143 +
+`sharepointonline` 141 + `onedrive` 56 = **340 blocked operations**, ~3 weeks of mapping.
+That number counts every operation the connectors EXPOSE, not the ones anyone calls.
+
+`_diag_ms_op_usage.ts` reads what the staged agents actually reference. Across **131 staged
+agents, 2 environments**:
+
+```
+Microsoft connector tool references: 14
+
+BLOCKED (needs a hand-written mapping)
+    2×  sharepointonline   GetAllTables    Confluence Knowledge Assistant
+
+ALREADY BINDS
+   12×  teams              CreateChat      AA, A, knowledge Nexus
+
+WORK QUEUE: 1 distinct operation in demand, against a swagger surface of 340.
+```
+
+**Real demand is 0.3% of the estimate.** Mapping in swagger order would have spent weeks
+before reaching the only operation a customer actually needs.
+
+**Shipped the same day.** `GetAllTables` ("Get all lists and libraries", input `dataset`)
+became `sharepoint_list_lists` in `connector_tools/sharepoint.py` — Graph
+`GET /sites/{siteId}/lists`, reusing the `_resolve_scope` URL→siteId conversion the file
+tools already had. It lives in the hand-written module rather than `VENDOR_BINDINGS`
+because the source takes a site URL and Graph addresses sites by id or by the
+`{host}:{path}:` form — a transform no URL template can express.
+
+**New: per-operation rescue on a proxy-only connector.** `VendorBinding.customToolOperations`
+and the `custom-tool` binding status. `proxy-only` is a per-CONNECTOR verdict but its reasons
+are per-operation, and without this an operation we genuinely reproduce was still reported to
+the customer as "will not be recreated" — understating what migrated, which fails the honesty
+rule the same way overstating does. `connectorReadiness` now counts these ready and carries a
+note stating the NARROWING (the migrated tool is fixed to the connected site; the source could
+target any site the signed-in user could reach).
+
+`HttpRequest` deliberately stays refused — a test asserts one custom tool does not rescue the
+rest of the connector.
+
+**Caveats, stated because they bound the conclusion:**
+- 2 dev tenants, not a real enterprise sample. A customer heavy on Outlook or OneDrive would
+  produce a different queue. Re-run per customer — that is what the spike is for.
+- It reads `agentTools`, which §1.41 just proved has blind spots (AI Builder actions inside
+  topics are absent). If connector actions hide the same way, this UNDERCOUNTS. The blind-spot
+  diff is the check for that.
+- `teams CreateChat` "already binds" per the table. Binding is not proof it works — no live
+  probe has ever called it. See the `verify.ts` gap.
+
+
+### 1.43 verify.ts no longer passes on silence, and now checks the tools (2026-08-19)
+
+Verification had three code paths that returned `verified: true` with **no evidence at all**:
+
+```
+{ verified: true, note: 'deployed (assist probe unavailable: 404)' }
+{ verified: true, note: 'deployed (assist probe errored)' }
+{ verified: true, note: 'deployed and responded' }   // 200 with no answer text
+```
+
+It also never looked at the deployed agent's TOOLS. `expectsGrounding` proved the data
+stores were reachable; an agent could deploy with every connector tool missing and pass
+every check. That mattered as of the same day: MS connector mapping turned out to be one
+operation (S1.42), so verification, not mapping, is what stands between us and a defensible
+"it works".
+
+**1. Three-valued status.** `VerifyStatus = 'verified' | 'failed' | 'unknown'`. `unknown`
+means the probe could not run - the agent exists, nothing established that it works.
+`verified` is now derived as `status === 'verified'`, so every existing caller reading the
+boolean fails CLOSED without having to change first. Reported separately from `failed`
+because the customer's next action differs: a failure names a defect, an unknown names a
+check somebody still owes.
+
+**2. A 200 is not an answer.** The assist endpoint returns 200 for a turn that produced
+nothing. That now resolves to `unknown`, not to a pass.
+
+**3. Tool inventory (new level 3).** ADK bakes tools into the Reasoning Engine pickle at
+deploy time and no API lists them, so the deployment is asked directly: "list every tool you
+have; if none, reply NO TOOLS." Matching is normalised and substring-based so a cosmetic
+rename is not a false alarm, and an unreadable answer resolves to `unknown` rather than
+either verdict. It reliably catches the case that costs a customer everything - an agent
+deployed with NO tools, or a whole connector's worth absent. Missing tools are named in a
+`verification:tools` FidelityNote.
+
+**4. Tool names are now extracted structurally.** `adkAgentChat.ts` reads tool names out of
+the `function_call` frames (`toolNames`), so "which tools actually fired" is evidence from
+the runtime rather than the model's prose.
+
+**5. The UI stopped lying by omission.** A tick-or-dash chip rendered `unknown` as plain
+"not verified". `VerifyChip` now shows verified / verification failed / **? unverified** as
+three distinct states.
+
+Tests: `verify.test.ts`, 16 cases, one per shipped regression - probe 404, probe threw,
+200-with-no-text, answered-without-retrieving, tool-returned-error, NO TOOLS, partially
+missing tools, unreadable inventory, and an invariant that `verified` is never true unless
+`status === 'verified'`. Suite 155 -> 171.
+
+**Expect more agents to stop reporting verified.** That is the fix working. Those agents
+were never proven; they were only never checked.
+
+
+---
+
+### 1.44 The google-adk pin is proven — a deployed agent answers again (2026-08-19)
+
+**Status: PROVEN LIVE.** Three prior runs failed to establish this for reasons unrelated to
+the fix (a version crash, an over-pin of my own, and a run I killed by editing server files
+mid-deploy). It is now settled by direct evidence.
+
+Every deployed agent had begun failing *every* query with
+
+```
+TypeError: 'NoneType' object is not subscriptable    (llm_agent.py:630, _resolved_model)
+```
+
+with **no change on our side**. Root cause: `adk_deploy.py` shipped UNPINNED requirements,
+so the container installed a newer `google-adk` than the one that wrote the pickle locally.
+The pickle and its runtime silently disagreed. Google shipped a new ADK; our agents broke.
+
+**The proof** (`src/spikes/_test_adk_pin_proof.ts` — one agent, NO grounding, NO connectors,
+through the real `publishAgentToGallery` path, so nothing but the pin is under test):
+
+```
+deploy     5m03s  ->  state ENABLED
+           reasoningEngines/3202579953816174592
+query      200, 812 chars, model gemini-2.5-flash
+answer     "I am a deployment sanity check."
+_resolved_model / NoneType   ABSENT
+```
+
+**Only `google-adk` is pinned, and that limit is load-bearing.** Pinning the whole set makes
+the RE build FAIL outright: `google-adk 2.6.2` needs `google-genai>=2.9,<3` while
+`google-cloud-aiplatform 1.93.0` needs `google-genai<2.0.0` — mutually unsatisfiable in one
+pip resolve. The Dockerfile only escapes this by installing in two sequential passes. Pin the
+library that owns the pickle; let pip resolve a self-consistent set around it.
+
+Local versions confirming the mechanism: `google-adk==2.6.2` (the pin), 
+`google-cloud-aiplatform==1.93.0`, `google-genai==2.16.0` — note genai already sits above
+aiplatform's declared ceiling locally, which is the two-pass install showing through.
+
+**Corollary, and it is the expensive part: every agent deployed BEFORE this fix carries the
+unpinned requirements and is broken the same way.** They will report `deployed=true` and
+answer nothing. They need redeploying, not re-verifying.
+
+**Also fixed here:** the `emit({"info": "reasoning engine requirements"})` line ran *before*
+the conditional appends (`google-cloud-discoveryengine`, `pypdf`/`python-docx`/`openpyxl`),
+so the log understated what the container actually installed. Moved after the appends —
+this log is the first thing read when a build fails, and it was lying by omission.
+
+**Left behind:** reasoning engine `3202579953816174592` / agent `8151998137475559640`
+(`ADK-Pin-Proof`) is a throwaway kept as evidence. Billable — delete once read.
+
+---
+
+### 1.45 Outlook -> Gmail: the first cross-vendor connector, proven live (2026-08-19)
+
+**Status: PROVEN LIVE** for read operations. This is the first connector in the codebase
+where the VENDOR changes, not just the host.
+
+**The distinction that shapes everything.** `VENDOR_BINDINGS` is same-vendor: it prepends a
+base URL and the semantics are identical on both sides (Jira -> Jira). Outlook -> Gmail keeps
+the INTENT and rewrites the semantics. No URL template expresses it, so it lives in a new
+declarative table, `src/connectors/equivalence.ts`, with a fidelity verdict and a
+customer-readable reason on every row.
+
+**The 143-operation number is wrong by 7x.** Measured from
+`fixtures/shared_office365.ops.json`:
+
+```
+143  advertised
+-89  deprecated (Microsoft's own V1/V2/V3 duplicates)
+-34  event triggers
+────
+ 49  live   ->  19 of them mail
+```
+
+Sizing this work off 143 sizes seven times the real surface.
+
+**Triggers are lost for an AGENT reason, not a Google reason.** 34 operations are event
+subscriptions ("when a new email arrives"). A migrated agent is request/response and has no
+event loop, so these would be lost migrating Copilot to ANY agent platform. Recorded as one
+row, not 34, and the reason says so explicitly - a customer must not read it as a Google
+limitation.
+
+**Auth was the gate, and it was a consent line, not a redesign.** `_diag_gmail_dwd_probe.ts`
+tests each layer independently so a failure localises:
+
+```
+                          mia@cloudfuze.com     zara@storefuze.com (after grant)
+1 plain SA token                PASS                    PASS
+2 DWD + admin.directory         FAIL                    PASS
+3 DWD + gmail.readonly          FAIL                    PASS
+4 gmail users.messages.list     SKIP                    PASS  200, 3 message ids
+5 DWD + drive.readonly          FAIL                    PASS
+```
+
+Two findings from this:
+
+1. **DWD scope matching is EXACT STRING matching.** The Workspace grant already held
+   `.../auth/drive`; a request for `.../auth/drive.readonly` was still refused with
+   `unauthorized_client`. A broader grant does NOT cover a narrower scope. This cost a wrong
+   recommendation before the screenshot corrected it.
+2. **cloudfuze.com has no DWD for our SA at all; storefuze.com does.** `unauthorized_client`
+   is domain-scoped, so "DWD is broken" was the wrong conclusion from the first run.
+
+**The Drive connector uses a DIFFERENT service account**, `drive-connector-sa` (client id
+115592590138196046007), and that client id has NO DWD grant in storefuze.com - both
+drive.readonly and gmail.readonly fail for it. This is a sufficient cause for 1.39's
+deployed-Drive failure independent of the stale-pickle diagnosis, but it does NOT refute
+1.39: that run used a different subject/domain. **1.39 stays open**, deliberately, rather
+than being closed on a partial match.
+
+**A live test caught a bug static review would not.** `gmail_search_messages` returned every
+message with an empty from/subject/date while `gmail_read_message` on the SAME id returned
+them correctly. Cause: `metadataHeaders` is a REPEATED query parameter, and
+`urllib.parse.urlencode` without `doseq=True` serialises the list as its Python repr
+(`metadataHeaders=%5B%27From%27...`). Gmail matched no header names and returned none. The
+API answered 200 every time.
+
+**Proven live** (`_test_gmail_tools.ts`, zara@storefuze.com, through the shipped
+`build_tools` contract rather than a reimplementation):
+
+```
+gmail_list_labels      661 labels
+gmail_search_messages  3 messages, real sender/subject/date
+gmail_read_message     full body decoded, attachments=['icon.png'], labels intact
+empty-result path      count=0, clean note, no error
+```
+
+**Fidelity, computed not tallied** (`_dump_equivalence.ts`): Outlook mail is 18 rows -
+**5 exact (28%), 10 narrowed (56%), 3 lost (17%)**; 15/18 = **83% migrates in some form**;
+3 rows marked `verified`.
+
+**Read-only by design.** Send/reply/forward are mapped in the table but NOT built. An agent
+sending mail in a real person's name is an irreversible outward action and whether a migrated
+agent should do it at all is a product decision. Shipping a send tool would have answered it
+silently.
+
+**SECURITY DEBT, taken knowingly (user decision, 2026-08-19).** The deployed connector reads
+`studio-enterprise-shared-gmail-service-account-json`, which holds the PLATFORM service
+account key - the identity that deploys Reasoning Engines and carries `cloud-platform` scope.
+A mail-reading container should not hold it. The right shape is a dedicated
+`gmail-connector-sa` with no project roles, mirroring `drive-connector-sa`. Swap = create the
+SA, grant its client id in Workspace, re-run `_prep_gmail_secrets.ts`. Nothing else changes.
+
+Tests: `equivalence.test.ts`, 19 cases, all honesty invariants rather than shape checks -
+every non-exact row must state a reason, `lost` rows may not name a target, `verified`
+defaults false so a new row cannot silently claim a proof, and `describeEquivalence` may
+never print "Proven live" for an unverified row. Suite 195 -> 214.
+
+**RULE for every connector_tools module: helpers go INSIDE `build_tools`.** The first Gmail
+deploy failed outright — the Reasoning Engine could not start and served no traffic:
+
+```
+ModuleNotFoundError: No module named 'connector_tools'
+Pickle load failed: Missing module. A required module, present when the agent object was
+pickled locally, is missing in the remote environment.
+```
+
+Cause: `gmail.py` defined `_decode_b64url`, `_strip_html`, `_walk_parts` and `_headers_of` at
+MODULE level. cloudpickle serialises the nested tool closures BY VALUE, but a module-level
+function they reference is pickled BY REFERENCE as `connector_tools.gmail._walk_parts`, which
+the container cannot resolve at unpickle time — even though `extra_packages` ships the
+directory.
+
+Every pre-existing module already avoids this, and now the reason is recorded rather than
+folklore: `confluence.py:15`, `google_drive.py:24`, `jira.py:22`, `sharepoint.py:27`,
+`generic_rest.py:12` — **not one module-level helper between them.** Module-level CONSTANTS
+are fine (pickled by value); functions are not.
+
+The failure mode is maximally unhelpful: the deploy reports success at the API layer, the
+engine registers, and the whole agent then fails to start. Confirmed on reasoningEngine
+`3968754840422580224`; fixed by nesting, no other change.
+
+**PROVEN END TO END from a DEPLOYED agent** (2026-08-19, after nesting the helpers):
+
+```
+reasoningEngine 175035104316358656   state ENABLED   secretIamGranted true
+
+"How many labels are in my mailbox?"
+    toolCalled=true toolSucceeded=true  tools=["gmail_list_labels"]
+    -> "There are 661 labels in your mailbox."
+
+"List my 3 most recent emails with sender and subject."
+    toolCalled=true toolSucceeded=true  tools=["gmail_search_messages"]
+    -> Mail Delivery Subsystem / Delivery Status Notification (Failure)
+       Zara Z / Heloo , collins Welcome,
+       Zara Z / (No subject)
+```
+
+The evidence is structural, not prose: `function_call` frames naming `gmail_*` tools plus
+non-error `function_response`, read with `scanToolEvidence` — the same scanner `verify.ts`
+uses. The counts match the local run exactly (661 labels, same three messages), so the
+deployed tools are reading the same live mailbox and not a cached or invented answer.
+
+**A Copilot agent that read Outlook mail now reads Gmail from Gemini Enterprise.** First
+cross-vendor connector in the product.
+
+**CORRECTION, same day: "19 mail operations" was a filter artifact, not a measurement.**
+The user opened Copilot Studio's "Add a tool" menu on a real agent and the list did not match
+what §1.45 derived. Cause: the sweep filtered operationIds on `/mail|message|email/`, which
+drops every mail operation whose NAME lacks those words — `MarkAsRead_V3`, `AssignCategory`,
+`GetOutlookCategoryNames`, `GetAttachment_V2`, `SetAutomaticRepliesSetting_V2`.
+
+Corrected counts, computed by `_dump_equivalence.ts` rather than tallied:
+
+```
+                 before (wrong)        after
+mail rows              18                23
+exact                5 (28%)           6 (26%)
+narrowed            10 (56%)          14 (61%)
+lost                 3 (17%)           3 (13%)
+migrates            15/18 = 83%       20/23 = 87%
+```
+
+The "143 is 7x the real surface" line was also wrong — it divided by the bad mail number.
+143 -> 49 live operations is **~3x**, and the journey doc now says 3x.
+
+**Lesson worth keeping: keyword matching on identifiers is not a measurement.** The live
+authoring UI is a better source of truth for what a customer can actually pick than a regex
+over a swagger fixture. This is the second time in two days that real data corrected a
+number derived by pattern-matching (see §1.41's greedy-containment false positives).
+
+**NEW FINDING — MCP servers are a tool class the operation model does not describe.** The
+same menu offers "Mail MCP" and "Calendar MCP" beside individual actions, and the fixture
+carries `mcp_EmailsManagement`, `mcp_ContactsManagement`, `mcp_MeetingManagement` (the first
+and third already flagged deprecated, so Microsoft is still moving this).
+
+This changes the migration UNIT. An agent wired to "Mail MCP" is not five connector actions
+to map — it is ONE binding to a Microsoft-hosted server whose tool list is only knowable at
+runtime, so per-operation fidelity cannot be stated in advance for such an agent. Google ADK
+supports MCP toolsets, so the shape is migratable; Microsoft's hosted server is not (it
+authenticates against M365 and talks to Outlook). Migrated agents get our Gmail tools
+instead — a re-implementation, not a re-binding. Recorded as `MCP_SERVERS` in
+`equivalence.ts`: Mail MCP `narrowed`, Calendar and Contacts MCP `lost` (no Google Calendar
+or Contacts tools exist in this product at all).
+
+Blind-spot implication, stated because it bounds §1.42's "1 operation of demand" finding:
+if a staged agent uses an MCP server, `agentTools` may record one entry for what is really
+several capabilities. The MS-demand measurement should be re-run with MCP entries counted
+separately before it is quoted again.
+
+**CORRECTION — "87% migrates" was overclaiming, caught by the user asking what it meant.**
+The journey doc led with a single percentage over the equivalence table. It counted rows
+whose DESTINATION IS KNOWN, and any reader takes "87% migrates" to mean "87% works". The
+three numbers are far apart:
+
+```
+23  mail capabilities analysed
+20  MAPPED   we know the Gmail equivalent and the limits     87%
+ 4  BUILT    code exists                                     17%
+ 3  PROVEN   a real call returned real data                  13%
+```
+
+What a customer gets today is **3 operations**: search, read, list labels. The 16 rows in
+between (reply, forward, move, flag, delete, drafts, send, mark-read, categories,
+attachments) are design with no code. "`SendEmailV2` maps to `users.messages.send`" is a
+true statement about two APIs and is not a feature.
+
+The denominator flattered us too: 23 is what we CHOSE to analyse, not the connector's size.
+The live surface is 49 operations including calendar, contacts and rooms — none analysed,
+none built. A percentage over our own list silently excludes what we never looked at.
+
+Fixed: the doc now reports mapped / built / proven as three separate rows and leads with
+"what works today is 3 operations". `summarise()` gained a `built` count, and
+`equivalence.test.ts` gained 4 tests that make the collapse impossible — mapped must exceed
+built, built must be >= verified, a verified row must name a tool, and a mapped row with no
+tool is asserted to be NORMAL rather than a defect to be "fixed" by inventing tool names.
+Suite 214 -> 218.
+
+**This is the third pattern-matching overclaim in two days** (§1.41 greedy containment,
+§1.45 keyword filter, this one). Each was caught by real data or a direct question, never by
+review of the derivation. Worth treating as a standing bias rather than three incidents.
+
+**ALL 15 Gmail tools proven live (2026-08-19).** `_test_gmail_all_tools.ts`, 16 assertions,
+**0 failures**, against `zara@storefuze.com` through the shipped `build_tools` contract:
+
+```
+gmail_list_labels 661 · gmail_search_messages · gmail_read_message · gmail_get_attachment
+gmail_create_draft · gmail_list_drafts · gmail_update_draft · gmail_send_draft
+gmail_send_message · gmail_reply_to_message (thread=1a01a6919ad7322c — threading correct)
+gmail_forward_message · gmail_mark_read (both directions) · gmail_star_message
+gmail_modify_labels (+IMPORTANT -STARRED) · gmail_trash_message
+```
+
+Test design worth reusing: **every message is self-addressed and trashed afterwards**, so
+send/reply/forward are genuinely exercised without a single mail reaching another human. A
+send tool that is never tested end to end is a send tool nobody should ship.
+
+`gmail_reply_to_message` returning the ORIGINAL message's threadId is the assertion that
+matters — it proves the `In-Reply-To`/`References` headers are set, which is the one Gmail
+behaviour that silently degrades (a reply without them starts a new conversation and looks
+fine until someone reads the thread).
+
+Counts move accordingly: mail is now **20 mapped / 17 built / 17 proven** (was 20/4/3). The
+journey doc and equivalence table are updated, and `equivalence.test.ts` pins the exact
+17-row verified set so a future edit cannot quietly widen the claim.
+
+**Scope trap, second instance in one day.** The DWD grant needed `gmail.modify`; the console
+screenshot showed 11 scopes and that one absent while 10 others (including 4 added in the
+same paste) worked. Diagnosed by probing each scope individually rather than as a set —
+`_diag_all_scopes.ts` — which distinguishes "the save landed on the wrong entry" from "one
+string is missing". Keep that spike: exact-string matching means this WILL recur per
+customer.
+
+**Over-grant found in the customer's console, flagged not fixed:** `cloud-platform` is
+listed in the domain-wide delegation entry. It does not belong there — the SA uses it as its
+OWN identity for Vertex/Discovery Engine via IAM roles, and in a DWD list it lets the SA
+impersonate any user against every Google Cloud API. Removing it breaks nothing.
+
+**SCOPE CORRECTION, from the user: this tool does not migrate mail.** Mailbox migration is a
+separate project. What CS_GE does is rebuild the API CALL — the Copilot agent had a tool that
+called Outlook; the migrated agent gets a tool that makes the equivalent call at conversation
+time. No message is ever copied, indexed or stored. The journey doc said this at line 229
+under "Not in scope", which is far too late in a document whose headline reads "Outlook ->
+Gmail"; it now leads the document.
+
+**Both destinations are now mapped per operation, not just Google.** An agent with Outlook
+tools has THREE real choices, and offering only Gmail-or-nothing quietly forced a mail
+migration on anyone who just wanted the agent moved:
+
+```
+Keep Outlook   agent moves to Gemini, mail stays in M365 (Graph)   outlook.py, 14 tools
+Use Gmail      agent moves and mail moves                          gmail.py,  15 tools
+Skip mail      agent migrates with no mail tools
+```
+
+`Equivalence.graph` records the Graph call and tool per operation alongside the Gmail one.
+The two columns have DIFFERENT fidelity and that is the point: `MoveV2`, `Flag_V2` and the
+category operations are `narrowed` against Gmail (folders vs labels, due dates, colours) and
+lose nothing against Graph. `GetMailTips_V2` is `lost` against Gmail yet fully available on
+Graph — "impossible on Google", not "impossible". A customer keeping Outlook keeps it.
+
+Registry: `shared_outlook` reuses the existing `ms_graph` credential group, so nothing is
+re-entered. `shared_office365` stays `proxy-only` and unbindable — its swagger describes a
+Power Platform dataset abstraction, so this is a Graph rebuild, not a binding.
+
+**Two mapping gaps were caught by the new tests, not by review** — `SetAutomaticRepliesSetting_V2`
+had no Graph mapping at all, and `DeleteEmail_V2` carried an abbreviated path
+(`POST .../move`) rather than a real one. Both were in code I had just written and read back.
+Consistent with the day's pattern: the assertions find what re-reading does not.
+
+Ordering choice: **Keep Outlook is offered FIRST.** It is the lower-risk option and changes
+least about how the agent behaves; leading with Gmail would nudge customers toward a mail
+migration they did not ask for. A test asserts the Outlook summary does NOT copy the Gmail
+caveats — overclaiming losses on the safer path is its own dishonesty.
+
+Still unproven: the 14 Outlook tools are written and typechecked but NOT exercised against a
+live tenant — the Entra app needs `Mail.ReadWrite` and `Mail.Send` APPLICATION permissions
+with admin consent. A test asserts every `graph.verified` is false until that happens.
+
+## 1.46 — All 14 Outlook tools proven live against a real mailbox (2026-08-19)
+
+**PROVEN.** The keep-Microsoft path is no longer theory. `_test_outlook_all_tools.ts` against
+`alex@filefuze.co` (tenant `807d6772-847c-40e2-9bec-e2c930b3a42e`, app `ConnectorsTest`):
+**15 assertions passed, 0 failed** — 14 distinct tools, `outlook_set_categories` covering two
+operations. Every message was self-addressed and moved to Deleted Items at the end; nothing
+reached another human.
+
+Proven: `list_folders` (17 folders), `search_messages`, `read_message`, `get_attachment`,
+`create_draft`, `send_draft`, `send_message`, `reply_to_message`, `forward_message`,
+`mark_read` (both directions), `flag_message`, `set_categories`, `move_message` (to Archive),
+`delete_message`.
+
+**The failure that got there was worth the round trip.** The first run returned
+`ErrorAccessDenied` on all four tools it reached, while `GET /users` worked fine — so the
+credential was good and only mail was refused. `ErrorAccessDenied` covers three different
+causes (permission absent, consent not granted, Exchange Application Access Policy), and
+guessing between them costs a round trip with the customer's admin each time.
+
+`_diag_graph_roles.ts` decodes the minted token's `roles` claim, which is ground truth for the
+first two: it lists exactly the application permissions that were granted **and** consented.
+Before: four roles, no mail. After: six, including `Mail.ReadWrite` and `Mail.Send`. The
+diagnosis was one command, not a conversation. **Delegated permissions never appear in `roles`
+on an app-only token** — and the Graph picker defaults to Delegated with identically-named
+entries, which is the trap that produced this.
+
+Counts now (computed by `_dump_equivalence.ts`, not tallied by hand):
+
+```
+OUTLOOK MAIL -> USE GMAIL          20/23 migrate, 17 proven live
+OUTLOOK MAIL -> KEEP OUTLOOK       21/23 mapped to Graph, 15 built, 15 proven live
+```
+
+Both columns matter. A row `narrowed` against Gmail is often `exact` against Graph, and
+`GetMailTips_V2` is `lost` on Google yet fully available on Graph. "Impossible on Gmail" is
+not "impossible".
+
+The stale test asserting `graph.verified === false` for every row was replaced by the
+invariant that actually holds: a row claiming `verified` must name a tool, and **every row
+naming a tool must be proven live**. A new Graph tool therefore fails the suite until it is
+actually run — which is the point. 234 tests across 18 files, typecheck clean.
+
+**Production prerequisite, not built:** `Mail.ReadWrite` as an *application* permission grants
+access to **every mailbox in the tenant**. Microsoft's intended narrowing is an Exchange
+**Application Access Policy** scoping the app to a mail-enabled security group. Fine for a
+test tenant; it must be a documented deployment step before a customer's mail credential runs
+through this.
+
+## 1.47 — The customer's own agent, and a false PASS I wrote (2026-08-19)
+
+"Email Manager" was built by hand in Copilot Studio by the customer, so unlike every prior
+proof its shape was not chosen by me. Extracted live from Dataverse
+(`org32322095`, 0 instruction chars, 0 topics — the author configured tools only):
+
+```
+SendEmailV2              mail     -> migrates (narrowed)
+GetEmailsV3              mail     -> migrates (narrowed)
+GetEventsCalendarViewV3  CALENDAR -> LOST, not in the equivalence table
+```
+
+Two of three migrate. **The pass condition was an honest partial**, not three green tools —
+three would have meant we invented a calendar mapping.
+
+**GMAIL path: PASS.** RE `2544491458266660864`, `secretIamGranted: true`.
+`gmail_search_messages` fired and returned three real messages with senders and subjects.
+Asked "what meetings do I have tomorrow?", it answered *"I do not have access to your
+calendar"* and called no tool — the lost capability surfaced as a refusal rather than an
+invention, which is the behaviour the fidelity rules exist to produce.
+
+**OUTLOOK path: FAILED, and my own checker called it PASS.** The agent answered *"The
+authentication to Outlook failed"* while the spike printed `succeeded=true` → `PASS`.
+
+Two separate defects, one in a spike and one in shipped code:
+
+1. **`scanToolEvidence` could not see a connector tool's error.** It tested for
+   `"status":"error"`, `PERMISSION_DENIED` and `"error_message"`. Every tool in
+   `scripts/connector_tools/` reports failure as `return {"error": "..."}` — a payload that
+   rides inside a perfectly well-formed `function_response`. So **any** connector tool
+   failing on credentials, scope or an upstream 403 scored as a success, and
+   `verify.ts` — which decides verified/failed/unknown from exactly this — would have
+   marked it verified. This is the "a 200 is not an answer" bug reappearing one layer in:
+   the frame was well-formed, the content was a failure. Fixed, plus three tests including
+   one asserting a succeeding tool cannot mask a failing neighbour.
+
+2. **The spike hand-wrote its connector spec and omitted `tokenUrlTemplate`.** The container
+   then had no token endpoint, so `_mint_token` could not run. The registry has held the
+   right value all along (`login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token`) — the
+   product path builds specs through `buildLiveConnectorSpecsDetailed`, which reads it.
+   Rewritten to derive from `REGISTRY_BY_ID` so the spike cannot drift from what ships.
+
+Defect 2 was mine and cost only a rerun. Defect 1 was latent in shipped code and would have
+reported broken connector agents as verified to a customer. It surfaced only because a real
+agent failed in a way I was watching closely — which is the argument for running the
+customer's own agents rather than the ones I write.
+
+**Correction to the record:** the `PASS` printed for the Outlook path in the first run of
+`_e2e_email_manager.ts` is void.
+
+**Outlook rerun, with both fixes in place: PASS.** RE `3173869506191687680`,
+`secretIamGranted: true`. `outlook_search_messages` fired and returned three real messages
+through Graph; the calendar question was again refused without inventing a tool. This PASS is
+trustworthy in a way the first was not — the corrected `scanToolEvidence` would have caught
+the `{"error": ...}` payload that produced the false one.
+
+Honest note on the content: the three messages returned are the self-addressed artifacts from
+the 14-tool test (§1.46), not organic mail — that mailbox is quiet. The auth, the Graph call
+and the retrieval are real; the messages happen to be ours.
+
+**Both destinations are now proven with the SAME customer-built agent**, which is what makes
+the surface choice real rather than aspirational:
+
+```
+Email Manager -> Gmail    RE 2544491458266660864   gmail_search_messages    PASS
+Email Manager -> Outlook  RE 3173869506191687680   outlook_search_messages  PASS
+              -> calendar tool LOST on both, refused honestly on both
+```
+
+New guard added the same day: `connectors/registryAuth.test.ts` asserts every OAuth connector
+declares a `tokenUrlTemplate` and can reach its credentials. All 9 pass — the registry was
+never the offender, only the hand-written spec. Suite: 240 tests, 19 files, typecheck clean.
+
+Four Reasoning Engines from this section need reaping: `2544491458266660864`,
+`8324861579996692480` (the failed-auth one), `3173869506191687680`, plus §1.46's.
+
+## 1.48 — Teams + Google Chat built, and keep-Teams turns out to be READ-ONLY (2026-08-20)
+
+Built both paths for Copilot's Teams connector, mirroring the mail work: `chat.py` (11 Google
+Chat tools), `teams.py` (Graph), `shared_googlechat` in the registry, a `shared_teams` entry
+in `SURFACE_EQUIVALENTS`, dispatch branches in `adk_deploy.py`, and 53 source operations
+bucketed into 21 honest rows in `teamsEquivalence.ts`.
+
+**The UI needed no changes at all.** `SURFACE_EQUIVALENTS` is iterated generically by both the
+route and the React component, so adding one key produced the whole three-way choice for
+Teams agents. That generality was not planned for Teams — it fell out of writing the mail
+version without special-casing, and it is the cheapest thing in this codebase.
+
+**THE FINDING, and it contradicts what I told the user an hour earlier.** I said Teams
+posting was ungated and READING was gated behind Microsoft's protected-APIs programme. Both
+halves were wrong, measured against tenant `807d6772` with app `ConnectorsTest`:
+
+```
+READ  channel messages  GET /teams/{id}/channels/{id}/messages   PASS
+READ  chat messages     GET /chats/{id}/messages                 PASS (3 messages)
+WRITE channel message   POST .../messages      403 "requires one of Teamwork.Migrate.All"
+WRITE chat message      POST /chats/{id}/messages
+                                               403 "requires one of Teamwork.Migrate.All"
+CREATE channel          POST /teams/{id}/channels
+                                               403 "requires one of Channel.Create, ..."
+```
+
+`ChannelMessage.Send` does not EXIST as an application permission — it is delegated-only,
+which is why the user could not find it in the Entra picker. Microsoft's only app-only write
+route for Teams messages is `Teamwork.Migrate.All`, the bulk import API, which requires the
+team to be in migration mode. Delegated auth would allow posting, but this product is pinned
+to app-only `client_credentials` for Microsoft by security-rules.md (delegated resource scopes
+trigger `AADSTS65001`). **So the limit is architectural, not a missing grant.**
+
+Consequences, applied rather than noted:
+- The three send/reply tools were **removed** from `teams.py`, not left to 403. A tool that
+  always fails is worse than an absent one: the model retries it and reports the failure as
+  its own, so the customer sees an agent that looks broken instead of one honestly missing a
+  capability. `teams_create_channel` stays — `Channel.Create` is a real permission a customer
+  can grant.
+- The option is renamed **"Keep Teams (read-only)"**. "Keep Teams" reads as "nothing
+  changes", and a customer would pick it expecting an agent that can still reply.
+- Google Chat is now labelled the ONLY path where a migrated agent can still send. The two
+  paths are NOT symmetric here, unlike mail where both read and wrote.
+
+**A test I wrote an hour earlier asserted the wrong thing** — it required the word "protected"
+in the keep-Teams prerequisite, encoding my incorrect belief. Corrected to assert
+`Teamwork.Migrate.All`. Worth recording: a test can lock in a wrong assumption just as firmly
+as a right one, and this one would have defended the error.
+
+Also caught by the probe: `$top` is rejected on `/teams/{id}/channels` and `/joinedTeams`
+("Query option 'Top' is not allowed"). `teams.py` sent it on both, so two tools would have
+failed live. Now sliced client-side.
+
+Counts (computed by `_dump_equivalence.ts`):
+
+```
+TEAMS (53 source operations, bucketed into 21 rows)
+  exact 2  narrowed 14  lost 5
+  -> USE GOOGLE CHAT   13 rows backed by a built tool, 0 proven live
+  -> KEEP TEAMS        12 rows backed by a built tool, 0 proven live
+  NOTE: 0 proven. Tools written, none exercised from a deployed agent.
+```
+
+**Still unproven and stated as such:** whether domain-wide delegation works for Chat at all.
+Gmail worked because DWD lets the SA become the user; Google documents Chat auth differently.
+If DWD is unsupported the fallback is registering the SA as a Chat app that must be ADDED to
+each space, posting visibly as the app rather than as a person. `chat.py` serves both through
+one code path, so no rewrite either way — but it is a real product difference. 256 tests, 20
+files, typecheck clean in server and web.
+
+## 1.49 — Chat DWD works for reads; writes need a configured Chat app (2026-08-20)
+
+Probed before deploying anything, which is the point: every finding below cost seconds
+instead of a five-minute deploy cycle.
+
+**DWD works for Chat reads.** All six layers of `_diag_chat_dwd_probe.ts` pass impersonating
+`zara@storefuze.com` — `spaces.list` returned 25 spaces, `spaces.messages.list` real
+messages. The agent acts as a PERSON, not as a visible app. That was the open risk from
+§1.48 and it resolved the good way.
+
+At the tool layer (`chat.py` through the shipped `build_tools` contract):
+
+```
+chat_list_spaces          PASS  25 spaces (818 with pagination)
+chat_list_messages        PASS  real messages
+chat_get_message          PASS
+chat_list_thread_replies  PASS  threaded=True
+chat_list_members         403   needs chat.memberships.readonly — scope was missing
+chat_create_space         404   "Google Chat app not found"
+chat_send_message         404   "Google Chat app not found"  <- the finding
+```
+
+**WRITES REQUIRE A CONFIGURED CHAT APP, AND THAT IS NOT A SCOPE.** Chat message creation
+needs the Cloud project to have a Chat app configured (Chat API -> Configuration). Reads do
+not. So reading and posting have DIFFERENT prerequisites, and a customer who grants every
+scope will read perfectly and never be able to post — a failure that looks like our bug. Now
+stated in the registry hint, the option's prerequisite text, `chat.py`, and a test.
+
+Once configured, the agent posts AS THE APP and everyone in the space sees that. Not a
+detail: it changes who the message appears to come from.
+
+**Consequence for the customer's own "Teams Coordinator"** (4 tools: `PostMessageToSelf`,
+`PostMessageToConversation`, `GetTeam`, `CreateChat` — three of them WRITES):
+
+```
+Keep Teams (read-only)  1 of 4 works   only GetTeam
+Use Google Chat         reads work; the 3 writes blocked until a Chat app is configured
+```
+
+So today that agent cannot be fully migrated either way, and saying so is the honest position.
+It also inverts the usual assumption: for THIS agent "keep Microsoft" is the WORSE option,
+which is the clearest argument yet for never defaulting the choice.
+
+**Space names now resolve to ids** — `practice_1504` -> `spaces/AAQAMx3E6AU`, verified.
+People know space names, not ids, and an agent is told about spaces in the words its user
+uses. Ambiguity is REFUSED, never guessed: two spaces called "General" and a tool that picks
+the first one posts visibly into the wrong room. Pagination follows `nextPageToken` because a
+first-page-only lookup silently "cannot find" a space that exists.
+
+Three of my own bugs caught in the same pass:
+- The resolver treated any single word as a bare id and built `spaces/<typo>`, turning a typo
+  into a malformed-resource 400 instead of "no such space". Bare ids are indistinguishable
+  from names, so they are now refused with instructions.
+- `chat_get_message` reported `sender: ''`. Chat returns only `users/{id}` with no display
+  name (unlike Graph), so the empty string read as a tool bug. Now explicit.
+- A test asserted "unknown space is refused" and PASSED on an auth failure — any-error
+  assertions are how false passes happen. Tightened to require the space-specific error. This
+  is the second time this session an assertion passed for the wrong reason (§1.47); the
+  pattern is mine to watch.
+
+Still not granted: `chat.spaces.create` and `chat.memberships.readonly` (verified absent
+per-scope by `_diag_chat_scopes.ts` — 2 of 5 granted on client id 110659723964649683952).
+
+## 1.50 — Tier 1 + HubSpot: every operation real agents call is now judged, and 29 of 34 are proven live (2026-08-20/21)
+
+> **Corrected by §1.52.** Every "N agents" figure below is a count of staged ROWS, not agents (151 rows are 64 agents), and the surface is now 35 operations / 30 proven once HubSpot CMS is included. The judgements stand; the impact numbers do not.
+
+**The question.** "Can we migrate these agents without errors?" cannot be answered from a
+swagger surface — `office365` alone exposes 143 operations and nobody calls most of them
+(§1.42). The only number that matters is what the customer's OWN staged agents reference. That
+is 34 distinct operations across the Tier-1 connectors plus HubSpot.
+
+**Where it started, where it ended.**
+
+```
+                        start of session      end of session
+proven live                     2                   29
+unjudged or lost               28                    0
+judged, not proven live         4                    5
+```
+
+The 5 remaining are each blocked by something OUTSIDE this codebase, named precisely below.
+Nothing is unjudged. That is the whole point: "nobody looked" and "we looked and it cannot be
+done" must never render identically in a report.
+
+**The instrument was wrong first, and that mattered more than any single fix.**
+`_diag_tier1_coverage.ts` consulted only `equivalence.ts`, which is keyed by `M365Surface`.
+`surfaceForConnector` returns null for Drive, Jira, Confluence and HubSpot, so those four were
+unjudged BY CONSTRUCTION — finished work reported as a gap, and the gap count was noise. It
+also collapsed the two migration paths into one verdict, which listed `GetTeam` as an 11-agent
+gap when it is `lost` against Google Chat (no team object exists) and PROVEN on keep-Teams. A
+board that mis-scores its own rows sends the night's effort at the wrong things.
+
+**A harness that proves the shipped path, not a reimplementation of it.**
+The Confluence and Jira harnesses each re-implemented `secret`, `fill` and `auth_header` before
+calling `build_tools`. That proves the spike's idea of the contract — and the contract is
+exactly where the expensive bugs live (a module-level helper that pickles by reference, an
+empty auth header for the bearer kind). `_lib_live_tools.ts` now calls the REAL entry point,
+`adk_deploy._build_live_connector_tool(conn, project)`, fed a `conn` built by the same
+`buildLiveConnectorSpecsDetailed` the orchestrator uses.
+
+It also has to reproduce the DEPLOYED SHAPE, which took three corrections, all of which first
+looked like product bugs:
+- **Drive as the bare service account**: root listed 0 items and every upload 403'd. A service
+  account owns no Drive. Drive is only ever deployed alongside a confirmed per-agent
+  `impersonate_email` (the orchestrator drops the connector otherwise), so the harness now
+  resolves one.
+- **Teams with no user**: every tool answered "No user is configured for this agent." That is
+  the tool being careful. Only Drive has an `agentConnectorIdentity` record, so the harness now
+  ENUMERATES Secret Manager for the right `impersonate_email` rather than guessing names.
+- **SharePoint scoped to a file**: `sharepoint_list_files` answered HTTP 422. The orchestrator
+  deliberately excludes single-FILE sources from tool scopes ("a scope with no children to
+  list"); the harness took `uris[0]` blindly. Now it prefers a folder.
+
+### Bugs found and fixed, none of which a status-code check would have caught
+
+- **HubSpot had NO tool module at all.** All 33 staged agents across three connector ids fell
+  through to `generic_rest.py`'s "call any REST API" tool — the shape the model was MEASURED
+  declining to use (§Drive/Confluence, 2026-08-10). Written from scratch: 8 tools, proven live.
+- **`GetTheDailyApiUsageAndLimitsForAHubspotAccount` has no portal-level endpoint.** Five
+  candidate paths 404 on this account; usage is reported per private app. And that endpoint's
+  `currentUsage` is a LAGGING SNAPSHOT — it read 0 while the same response header showed 14
+  calls used today. Both are now returned, labelled, with the live figure leading. An agent
+  quoting the snapshot tells the user zero calls have been made on an active account.
+- **HubSpot associations return IDS ONLY.** "Which contacts work at this company?" answered
+  with a list of 18-digit numbers is useless, so the tool hydrates them into names in a second
+  batch call and surfaces the association LABEL ("Contact with Primary Company"), which is
+  often the real answer.
+- **Jira `/search/jql` returns no `total`.** `data.get("total", len(issues))` made the agent
+  answer **20** to "how many tickets do we have?" The real count is **32,353**, now taken from
+  `/search/approximate-count` — or not reported at all, which is the honest alternative.
+- **A trashed Drive file read back as a live one.** Every listing filters `trashed = false`,
+  but a lookup BY ID returned normal metadata with no indication, so an agent that had just
+  trashed a file described it as current. `get_metadata` now returns `trashed`.
+- **Every 1:1 Teams chat was named "(no topic)".** A list of ten chats rendered as ten
+  identical opaque rows, so "which chat do you mean?" was unanswerable. `$expand=members` now
+  names each chat by its participants.
+- **"No tickets are linked to that companie."** `type[:-1]` as singularisation. A tool right
+  about the data and wrong about the English still reads as broken.
+- **My own near-miss:** I nearly deleted the `mcp_JiraIssueManagement` coverage row believing
+  it unreachable. Measured instead: `opsByConnector` is built from RAW `ir.agentTools`, where
+  the MCP tool still carries that operationId — `boundToolSpec` expands it only downstream. The
+  row IS consulted. I had also marked it `verified: true`; the six operations were each called
+  live, but the Power Platform MCP proxy has never been callable at all, so it is now `false`
+  with a test locking it there.
+- **Two contradictions I introduced and reverted:** new `GetAllChannelsForTeam` and `GetChats`
+  rows that COVERED existing `ListChannels`/`ListChats` rows while grading them differently —
+  two verdicts for one operation, resolved by array order. Folded into the existing rows
+  instead. The operations were real and only the SPELLINGS the agents use were missing.
+
+### The 5 that are not proven, and exactly why
+
+| Operation | Agents | Blocker |
+|---|---|---|
+| `CreateChat` | 29 | Microsoft permits app-only `chatMessage` POST **only for import** (`Teamwork.Migrate.All`). No application permission exists for live sending, so no consent unblocks it. Delegated permissions or a Bot Framework app are different products, not a setting. |
+| `PostMessageToConversation` | 11 | Same, measured: 403 "requires one of Teamwork.Migrate.All". On the Chat side, 404 "Google Chat app not found" until a Chat app is configured. |
+| `PostMessageToSelf` | 11 | Same — a note-to-self is still a `chatMessage` POST. |
+| `mcp_JiraIssueManagement` | 34 | The MCP TRANSPORT is unreproducible (a Copilot MCP tool carries no server URL). All six tools it exposed are reproduced as direct calls, so the capability survives; the dynamic discovery does not. |
+| `GetEventsCalendarViewV3` | 1 | `outlook_list_calendar_events` written; Graph answered **ErrorAccessDenied** because `Calendars.Read` (application) is not consented. A tenant grant, separate from the `Mail.*` ones. |
+
+### What the customer must grant (nothing else is outstanding)
+
+1. **`Calendars.Read`** (Application) with admin consent on the app registration → unblocks the
+   calendar operation. This is the only item where a grant turns an unproven row into a proven
+   one.
+2. **A Google Chat app** on the Cloud project (Chat API → Configuration) → unblocks Chat
+   writes. Reads already work; writes have a different prerequisite, which is why a customer
+   who grants every scope still cannot post (§1.49).
+3. Teams message POSTING cannot be unblocked by any grant. If an agent must post into
+   Microsoft Teams, that needs a Bot Framework app or delegated sign-in — say so rather than
+   promising a permission that does not exist.
+
+### Proven live, by connector
+
+```
+Google Drive   11/11 ops   24 assertions   incl. every WRITE, in a scratch folder, round-tripped
+HubSpot         3/3  ops   20 assertions   3 connector ids, one module, one token
+Jira            6/6  ops   12 assertions   totalApproximate=32,353
+Confluence      4/4  ops   10 assertions
+Teams (Graph)   3/3  reads  9 assertions   as erik@filefuze.co
+SharePoint      2/2  reads  6 assertions   9 named lists; a 12,547-char document read back
+Outlook cal     0/1        blocked on Calendars.Read
+```
+
+Assertions are round-trips, not status codes: content written is read back and compared, a copy
+must carry the bytes, an update must REPLACE rather than append, an extracted zip member must
+really appear in Drive, and a listed team must contain the General channel — the last one being
+what distinguishes "the call worked" from "the call addressed the team we asked about".
+
+**Suite:** 23 files, 300 tests, `tsc --noEmit` clean in both `server/` and `web/`.
+
+## 1.51 — The tables were right and the report was silent: 13 verdicts that never reached the customer (2026-08-21)
+
+Found while checking whether the night's work would actually be visible to anyone. It would
+not have been.
+
+**The mechanism.** `findCoverage` was consulted in exactly ONE place: the loop over
+`readiness.blocked` (orchestrator.ts ~2001). There was no loop over the BINDABLE operations,
+because a bindable operation normally becomes a real exact-argument replay and the tool IS the
+answer. But for a connector with a dedicated Python module the bound spec is DROPPED at deploy
+(`connectors/toolModule.ts`) — and the log said, in as many words, *"capability is reported per
+operation below"*. For a bindable operation there was nothing below.
+
+**The measurement** (`_diag_bindable_vs_blocked.ts`):
+
+```
+Confluence   4 operations   bindable + dedicated module   verified coverage row   NOT REPORTED
+Jira         6 operations   bindable + dedicated module   verified coverage row   NOT REPORTED
+HubSpot      3 operations   bindable + dedicated module   verified coverage row   NOT REPORTED
+Google Drive 11 operations  BLOCKED                       verified coverage row   reported
+```
+
+Six of the thirteen are on 34 agents each. Drive was reported only because its operations
+happen to be blocked rather than bindable — an accident of the captured swagger, not a design,
+which is why this went unnoticed: the connector with the most rows looked fine.
+
+**The fix.** A reporting loop over the dropped bound specs, consulting BOTH tables —
+`coverage.ts` (same-vendor, keyed by connectorId) and `equivalence.ts` (cross-vendor, keyed by
+`M365Surface`) — and emitting `needs-review` with a specific sentence when neither has a
+verdict. An unjudged operation and a judged-and-fine one must not render identically, and
+emitting nothing made them identical.
+
+**Two over-reports of my own, in the instrument, in the same hour.** The spike checked only
+`findCoverage`, so it twice flagged operations that DO have verdicts — the six Teams ones and
+SharePoint's `GetAllTables` live in `equivalence.ts`. Checking one table and concluding about
+both is the same error the board itself had at the start of the session (§1.50). It is worth
+naming as a pattern: in this codebase there are two verdict tables for two kinds of move, and
+any code or diagnostic that consults one of them is wrong until proven otherwise.
+
+**A latent Tier-1 hole found in the same pass.** `surfaceForConnector` mapped
+`shared_onedriveforbusiness` — an id that exists nowhere in the registry. The real id is
+`shared_onedrive`, which therefore fell through to `null`, so every operation a OneDrive agent
+declared resolved to nothing and reported as unjudged. The surface also had ZERO rows. Same
+class as the HubSpot ids (§1.10): registry ids guessed from product names rather than measured.
+Both fixed; the OneDrive row is deliberately NOT marked verified, because the tools are shared
+with SharePoint (which IS proven) and a personal-drive URL shape has never been resolved by
+them — sharing a code path with something proven is exactly the argument that would make a
+false claim here feel reasonable.
+
+**After:** 0 of 34 operations reach a reporting path without a verdict. `coverageReporting.test.ts`
+pins the wiring (4 tests), because the failure mode this guards is SILENCE, which no assertion
+on a passing migration run would ever notice.
+
+## 1.52 — Making the CORE solid, and a correction: every agent count in §1.50 was a row count (2026-08-21)
+
+The goal changed shape: not "migrate these agents" but "any agent a customer builds, using any
+Tier-1 connector or knowledge source, migrates without errors". That is a property of the core,
+and it cannot be established by testing the agents that happen to exist today.
+
+### CORRECTION: §1.50's "N agents" figures were staged ROWS, not agents
+
+`stagedAgents` holds one row per agent PER RUN, and this tenant has re-extracted dozens of
+times. **151 rows are 64 distinct agents.** The board incremented a counter per row, so every
+per-operation figure it printed — and every figure quoted from it into §1.50 and to the user —
+was inflated by a factor that varies per connector. The measured truth is much flatter.
+
+The two figures §1.50 actually put a number on, re-measured (`_diag_row_vs_agent.ts`):
+
+| §1.50 claim | what it said | measured rows | measured DISTINCT agents |
+|---|---|---|---|
+| Teams `GetTeam` "an 11-agent gap" | 11 agents | 11 | **1** |
+| HubSpot "all 33 staged agents across three connector ids" | 33 agents | 25 | **3** |
+
+The `GetTeam` figure was exactly the row count. The `33` reproduces as NOTHING — not rows (25),
+not tool references (48), not references to any id containing "hubspot" (126) — so it was not
+even consistently wrong; it was a number carried between runs and never re-derived. The
+per-operation figures quoted verbally were row counts of the same kind.
+
+No operation in the whole Tier-1 surface is used by more than 3 agents. The WORK was not
+misdirected — every connector and operation is real, and is genuinely referenced — but the
+impact numbers were wrong, and impact numbers are what got used to decide what to build first.
+`_diag_tier1_coverage.ts` now accumulates a `Set` keyed on `sourceId` (the stable Dataverse id,
+falling back to displayName, and to `_id` for a row with neither so two unknowns cannot merge).
+
+A second correction, smaller: I drafted this entry with per-connector counts from memory before
+re-running the board. They were wrong too — invented, plausible, and higher than the truth. The
+table above is what the instrument printed. **Do not write a number into this ledger that has
+not just been measured.**
+
+### A hand-written list can only have gaps in connectors someone already thought of
+
+The board iterates a literal `TIER1` array. `_diag_connector_census.ts` instead reads every
+connector id and knowledge-source kind that any agent has EVER referenced (stagedAgents +
+agentIRCache) and asks three questions per id: registry entry, tool module, verdict. It found
+two ids the list never contained:
+
+- **`shared_hubspotcms`** (1 agent, `TemplatesList`) — and in the worst possible state.
+  `hasDedicatedToolModule` answers TRUE for it, because the Python dispatch matches any kind
+  starting `hubspot`, so the pipeline announced that its bound operations had been dropped in
+  favour of purpose-built tools — while no registry entry existed, so no spec was built and the
+  agent received NO TOOL AT ALL. Registry entry added, `hubspot_list_templates` written, and
+  the id added back into `TIER1` so the board covers it.
+- **`shared_get-20crm-20objects-20from-20hubspot-…`** (**2** agents, 78 tool references — the
+  "5 agents" I said earlier was another figure never re-derived) — a CUSTOM connector, resolved
+  at runtime through the custom-connector path, which needs a live capture context and so is
+  invisible to an offline census. Noted rather than "fixed": it already works, having rebuilt
+  four operations on the "Hubspot agentt" run.
+
+### HubSpot CMS: a different scope family, and a token echoed back inside an error
+
+Measured on portal 246967746: `/cms/v3/design-manager/templates` **404s** — templates exist
+only on the legacy `/content/api/v2/templates`, which answers **403** naming the scopes it
+wants (`design-manager-access`, `content-editor-access`, `landingpages-read`). CMS access is a
+different scope family from CRM and is not implied by it, so this is the `Calendars.Read`
+pattern again: a grant only the customer can make, where the tool's job is to NAME the missing
+scope instead of returning a bare 403. Because a private app's scopes are fixed at creation,
+adding one means issuing a new token.
+
+**A credential leak found inside that same 403.** HubSpot echoes the token back in the response
+body, and `_request` was putting that body straight into the error `detail` — which reaches the
+logs and the agent's own reply to the user. This project's rules forbid logging token values at
+all. Now redacted to `pat-[redacted]` before the detail is used for anything.
+
+### The core-robustness matrix: 14 tests over agent shapes that do not exist yet
+
+`services/coreRobustness.test.ts` drives the core path over SYNTHETIC agents — every Tier-1
+connector at once on ONE agent, an unknown connector, a tool with no operation, an empty agent,
+every knowledge-source kind ever observed, and kinds no agent has ever used. The bar is not
+"it works" but "nothing throws and nothing goes quiet". Properties now pinned:
+
+- A connector with a dedicated Python module must ALSO have a registry entry — exactly the
+  combination `shared_hubspotcms` was in, and the one that produces a silent no-tool agent.
+- One agent using every Tier-1 operation must produce UNIQUE tool names. Two connectors once
+  collided on names and 400'd every message (live, 2026-08-07), so this is a measured failure
+  mode, not a hypothetical.
+- A genuinely unrecognised knowledge-source kind must reach `manual-review`, be
+  `automatable: false`, and NAME the kind in its note.
+
+### Two of my own assumptions, corrected by the test I had just written
+
+Both were the same error — encoding my guess about a rule, then calling the rule wrong:
+
+1. I asserted `AzureBlobKnowledgeSource` must be `manual-review`. It is `copy-and-index` with
+   `automatable: false` and a note saying it needs the customer's blob credentials. That is the
+   classifier being right; my assertion conflated "has a strategy" with "claims to be automatic".
+2. I then asserted `AzureAiSearchSource` must produce an `agent-tool`. It is deliberately
+   `manual-review` / `none`, because a prebuilt index cannot be moved, and its note names the
+   two options a human has.
+
+The test now asserts the PROPERTY — every claimed kind either names something concrete it will
+build, or defers to a human, and never neither — instead of a table of my expectations. A test
+that encodes the author's guess about each rule only tests the guess.
+
+### Where Tier-1 stands, measured this hour
+
+```
+35 operation(s) used across Tier-1 connectors (incl. HubSpot CMS)
+30 proven live, 0 unjudged or lost, 5 judged but not proven live
+```
+
+The 5 unproven are each blocked OUTSIDE our code: three Teams writes (`CreateChat`,
+`PostMessageToSelf`, `PostMessageToConversation`) by Microsoft's import-only rule for app-only
+`chatMessage` POSTs; `mcp_JiraIssueManagement` by a Power Platform MCP proxy that has never
+been callable; `TemplatesList` by the missing CMS scope above. 151/151 staged rows build tool
+specs with no exception, and 14/14 connectors pass the live pre-flight.
+
+**Suite:** 25 files, 318 tests, `tsc --noEmit` clean in `server/` and `web/`.
+
+### Still the blocker for an end-to-end run
+
+`migrationSessions` is empty (Mongo TTL) and a session requires a real browser OAuth sign-in,
+which I cannot perform. Everything reachable without one is green. `forceRedeploy` is now wired
+through the web client, so a re-run of an already-migrated agent stops being silently skipped.
+
+## 1.53 — Two live migrations, and the worst bug this project has had (2026-08-21)
+
+Six agents migrated through the UI across two runs, then interrogated over the API. Four
+deployed, one skipped correctly, one failed on a network drop. Questioning them found three
+bugs that a green run had reported as success, and one of them hands an agent another agent's
+tools.
+
+### The severe one: every ADK deploy staged its package to the SAME GCS object
+
+`agent_engines.create()` was called without `gcs_dir_name`. The SDK defaults it to the literal
+`agent_engine`, so EVERY deploy in a project pickles its agent to:
+
+```
+gs://<staging-bucket>/agent_engine/agent_engine.pkl
+```
+
+Two deploys in flight together overwrite each other, and both containers get built from
+whichever package landed last.
+
+**Measured, not theorised.** "Hubspot agentt" (deploy started 11:47:32) and "Email Manager"
+(11:47:50) produced two correctly-named engines — `displayName` right on both — created in the
+SAME SECOND, 11:48:35. Asked what tools they had, BOTH answered with Email Manager's 16 Outlook
+tools. The HubSpot agent had none of its own four. A control question to two engines from the
+earlier run returned their own correct tools, so the harness was not the confusion.
+
+What makes this the worst bug so far is the failure mode, not the frequency:
+
+- Verification caught it only because the two toolsets DIFFERED (`none of the 4 wired tool(s)
+  are present`). Two agents sharing a connector would have swapped packages silently, both
+  passing verification.
+- Multi-tenant, this is one customer's agent running another customer's tools — with that
+  customer's connector identities baked in.
+- The function's own docblock has said *"Deploy takes ~2-5 min. Callers should run this with
+  low concurrency"* since it was written, while the orchestrator ran `concurrency 5`. **A
+  comment is not an enforcement.** Nothing had to change for this to start happening; it was
+  latent from the first concurrent run.
+
+Fixed by passing a per-deploy `--gcs-dir` (`agent_engine/<sanitized-name>-<uuid>`) through to
+`gcs_dir_name`. `adkStagingIsolation.test.ts` (4 tests) drives the real `deployReasoningEngine`
+against a worker that echoes its argv: the flag must be present, unique across two different
+agents, unique across two deploys of the SAME agent (a retry must not reuse a path), and
+confined to the `agent_engine/` prefix with no traversal from a Copilot display name. All four
+FAIL with the fix removed — verified by removing it.
+
+### One function, two opposite wiring bugs, on one agent
+
+`agentConnectorIds` decides which connectors get wired onto an agent. On "Knowledge Assistant"
+it did both possible things wrong at once:
+
+**Wired Confluence the agent never had.** The rule matched `/confluence/i` against
+`classification.notes`, and the note it matched is the one that RULES CONFLUENCE OUT:
+
+> `Ambiguous "FederatedStructuredSearchSource" kind with no Confluence-matching description …`
+
+Proven by counterfactual, not by reading: blank the notes and every connector disappeared, so
+the substring was the sole cause. Neither real signal (`strategy === 'confluence-crawler'`,
+`confluenceSpaceNames`) was present. Blast radius measured across all 64 distinct agents: 1.
+
+**Did not wire SharePoint the agent did have.** The rule keyed on
+`kind === 'SharePointSearchSource'`. These sources carry `FederatedStructuredSearchSource`, so
+five real SharePoint sources were wired nothing — while the same run logged *"SharePoint: 5
+source(s) served by live tools (list/read, scoped to the folders this agent named)"*. The
+classifier had declined to copy them PRECISELY BECAUSE live tools would serve them. Confirmed
+by asking the deployed agent, which answered *"I cannot directly access SharePoint folders"*.
+
+Both are the same underlying error, and it is the `hubspotcms` shape again (§1.52): a verdict
+inferred from something that was never meant to carry it. The fix moves the answer to the only
+place that knows it — `KnowledgeClassification.requiresConnectorId`, stamped by the classifier
+rule that already did the disambiguation — and `agentConnectorIds` now reads that field.
+Structural fallbacks (`strategy`, `confluenceSpaceNames`, the raw SharePoint kind) stay for
+`stagedAgents` rows classified by earlier releases, which outlive a deploy. The prose match is
+gone. `connectorWiring.test.ts` (8 tests), of which the two that name these bugs fail on the
+old logic — verified.
+
+Verified on the real agent afterwards: re-classified, it needs `shared_sharepointonline` and
+NOT `shared_confluence`. Every run re-extracts and re-classifies in Phase 1, so the next run
+gets this without a backfill.
+
+### A cleanup I talked myself out of, and should have checked first
+
+I reported "36 of 42 data stores attached to no engine" and offered to delete them to free the
+`documents_regional` quota. That metric was the wrong question. An ADK-migrated agent grounds
+through `groundingDataStores` resource paths baked INTO its Reasoning Engine; it never appears
+in `engine.dataStoreIds`. "Not attached to an engine" is therefore the NORMAL state for exactly
+the stores that matter, and deleting on that signal would have silently un-grounded live
+migrated agents.
+
+Cross-referencing our own records instead (`adkKnowledgeStores`, `knowledgeConnectors`,
+`migrationResults`) leaves 31 of 44 claimed by nothing — but that list still contains
+`ca57b355-…-tbl-cr88d-faqentries`, which the LIVE Knowledge Assistant queries through
+`search_faq_entry`. So the records only track uploaded FILES, not Dataverse or connector-backed
+stores. **Nothing was deleted.** Safe cleanup needs that tracking gap closed first; until then
+the quota needs a Google increase, not a purge. The near miss is the lesson: a destructive
+action justified by a metric nobody checked against the mechanism.
+
+### Smaller, from the same runs
+
+- **`documents_regional` quota exhausted**: `FAQ Entry` indexed 0/20 rows, so the agent's
+  Dataverse grounding is empty. It reports this honestly when asked — *"empty or contains no
+  relevant information"* — rather than inventing an answer, and verification failed the agent
+  for it (`the agent answered without retrieving anything`). Deployed is not working, and the
+  pipeline said so.
+- **A 404 logged as WARN on the normal path.** `upsertSecretIfChanged` reads before writing to
+  compare; a secret being written for the FIRST time 404s, and every per-agent identity printed
+  `WARN Secret Manager: access version failed`. A warning that fires on the happy path teaches
+  people to ignore warnings. Both comparison reads now pass `{ optional: true }` and log at
+  debug for a 404 only — any other status still warns.
+- **Deploy timeout left an anonymous orphan.** Killing the Python worker does not cancel the
+  create, so the engine finishes building with nobody holding its id. The timeout error now
+  names the agent and location so it can be reaped instead of joining the other forty.
+- **Five identical calendar rows.** `outlook_list_calendar_events` returned "STEST11" five times
+  with identical start and end — indistinguishable from the tool repeating itself. They are five
+  real separate entries, so the fix is `id` on every event plus a `duplicateEntries` note, NOT
+  deduplication: collapsing them would delete events the calendar actually contains.
+- **The ACL gate held.** The first attempt stopped with *nothing created* because one Confluence
+  source cannot carry its permissions; the re-run recorded the acknowledgement. Separately the
+  crawl then failed because the space `Migration Knowledge Source` does not exist on the site at
+  all — so the gate blocked a run over a source that could never have been migrated. Ordering
+  worth revisiting; not yet changed.
+
+### What answered correctly, live
+
+Teams Coordinator: 25 real Google Chat spaces, real messages in `finance`, and an honest *"No
+user is configured for this agent"* on the Teams side rather than a fake answer. Email Manager:
+10 real calendar events through the new `Calendars.Read` path. Knowledge Assistant: the PRD PDF
+quoted with `[INDEXED]`, 22 Confluence spaces, and the full Deployment Guide page with a `[LIVE]`
+citation carrying the real Atlassian URL. Nothing hallucinated in any answer.
+
+### Re-run after the fix — the staging collision is closed, proven end to end
+
+"Hubspot agentt" deleted from the destination and migrated again, alone, through the real HTTP
+API (reusing the operator's own browser login session — the sign-in had happened; nothing
+bypassed `requireAuth`):
+
+```
+BEFORE (concurrent with Email Manager):  deployed=true verified=FALSE
+   tools on the deployment: call_office365_api + 15 outlook_* ...  (Email Manager's)
+AFTER  (with per-deploy gcs_dir_name):   deployed=true verified=TRUE
+   tools on the deployment: get_deals, get_tickets, get_companies, get_contacts  (its own)
+```
+
+Live answers from the redeployed agent: `get_companies` -> 9 real companies, `get_deals` -> 6
+real deals with amounts, `get_contacts` -> real contacts. `get_tickets` fails with an honest
+scope error ("the necessary scope for this API call is not available") — the HubSpot `tickets`
+scope is not on the private app token, which is a customer grant, not a defect. Three of four
+proven live; the fourth proven to report its blocker instead of inventing an answer.
+
+Also confirmed on the way: the agent had been deleted in the Gemini console, so the stored
+deployment record 404'd and the pipeline recreated it — the recreate-after-out-of-band-delete
+path (§ADK notes, fixed 2026-08-13) ran for real and produced a working agent.
+
+**Note on the server log.** A duplicate `npm run dev` truncated the log file while the original
+process kept writing at its own offset, so the log tail became unreliable mid-investigation and
+the run's outcome had to be read from `migrationResults` instead. Read state from the database,
+not from a file another process owns.
+
+**Suite:** 27 files, 330 tests (+12), `tsc --noEmit` clean in `server/` and `web/`, all Python
+modules parse.
+
+## 1.54 — SharePoint tools were unusable against any real tenant; three bugs, found by asking (2026-08-22)
+
+The connector-wiring fix (§1.53) put SharePoint tools on the agent that needed them. Asking that
+agent to use them found the tools themselves had never worked against a real tenant. Each bug
+hid the next, so each was only visible after the one before it was fixed.
+
+1. **Paths were not percent-encoded.** urllib refuses outright rather than encoding:
+   `URL can't contain control characters ... (found at least ' ')`. Real SharePoint paths are
+   full of spaces and brackets — `Microsoft Teams Chat Files`,
+   `Ben file 2[1]_1779290909_6257.pdf` — so every SharePoint tool failed on its first call
+   against any tenant whose folders have spaces in the name, which is all of them.
+
+2. **Personal sites were not parsed.** `_resolve_scope` understood `/sites/<name>/…` only. A
+   OneDrive-for-Business URL is `https://<tenant>-my.sharepoint.com/personal/<user>/Documents/…`,
+   so `personal` fell to the root-site branch: it resolved the -my host's ROOT site and then
+   looked for `personal/<user>/…` as a folder inside that site's drive. Graph answers 404 and
+   the agent reports *"the default SharePoint folder is not configured"* — a parsing bug wearing
+   a setup problem's clothes. **Teams chat attachments always live on a personal site**, so any
+   agent grounded on a file shared in a Teams chat hit this.
+
+3. **A single-file scope broke reading.** `read_file` joined the caller's filename onto the
+   scope, and when the scope IS the file that builds `.../Ben file.pdf/Ben file.pdf` → 404. The
+   model cannot know: `list_files` had just correctly reported the one file, so asking to read
+   it by name is the obvious next move. `list_files` now detects a file scope and says so;
+   `read_file` accepts the empty ask, the exact name, or the full path, and refuses anything
+   else as outside scope.
+
+**Proven end to end afterwards**: the deployed agent listed its file, then returned the extracted
+PDF text. Path with a space AND brackets, on a personal site, scoped to one file — every one of
+the three conditions that used to fail.
+
+Also fixed in the same pass: **ADK deploys now retry once on a transport failure**
+(`ENOTFOUND`, `ConnectionResetError(10054)`, `Connection aborted`). Two of seven deploys over
+2026-08-21/22 were lost to the network alone, and the fallback is not graceful — a low-code agent
+carries no connector tools, no topic sub-agents, and cannot be un-privated through any API. One
+of those failures also left a PRIVATE tool-less DUPLICATE of an agent that had deployed correctly
+minutes earlier, while `adkDeployments` still pointed at the good one. The retry is deliberately
+narrow: transport only, never a bad spec, quota or auth error, which fail identically twice.
+
+**Lesson, repeated from §1.53:** every one of these deployed green. `deployed=true`,
+`verified=true`, no warnings. They were found by asking the agent to do its job.
+
+**Suite:** 28 files, 337 tests, `tsc --noEmit` clean in `server/` and `web/`.
