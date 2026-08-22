@@ -418,11 +418,21 @@ export async function planMigration(
   /** The customer has seen, and accepted, that indexed knowledge loses its source
    *  permissions. Without it the server stops between extract and insert. */
   acknowledgeAclLoss = false,
+  /**
+   * Redeploy an agent that already exists, instead of skipping it.
+   *
+   * The server has accepted this since the plan endpoint was written; the web client never
+   * sent it, so a second migration of the same agent was always skipped as "already exists".
+   * That is right for a resumed run and wrong after a fix on our side: the only way to pick
+   * up a corrected tool was to delete the agent by hand in the Google console first, which
+   * is not something a customer should have to know.
+   */
+  forceRedeploy = false,
 ): Promise<PlanPreview> {
   const res = await fetch('/api/migrate/plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session, scope, destination, dryRun, acknowledgeAclLoss }),
+    body: JSON.stringify({ session, scope, destination, dryRun, acknowledgeAclLoss, forceRedeploy }),
   });
   if (!res.ok) throw new Error('plan_failed');
   return (await res.json()) as PlanPreview;
@@ -707,4 +717,127 @@ export async function fetchCustomConnectors(
   );
   if (!res.ok) throw new Error('custom_connectors_failed');
   return (await res.json()) as { listed: boolean; connectors: CustomConnectorInfo[] };
+}
+
+// ── Cross-vendor surfaces (Outlook → Gmail) ───────────────────────────────────
+
+/**
+ * One agent's Microsoft surface that has a Google equivalent, and what the customer has
+ * decided about it. `decision: null` means UNDECIDED — the migration wires nothing, because
+ * silence must not read as consent to give an agent someone's mailbox.
+ */
+export interface SurfaceTarget {
+  connectorId: string;
+  name: string;
+  /** What is kept and what is lost. Shown verbatim before the customer chooses. */
+  summary: string;
+  /** An admin step required first, when there is one. */
+  prerequisite?: string;
+}
+
+/**
+ * One agent's Microsoft surface and where it can point after migration.
+ *
+ * `decision: null` means UNDECIDED — the migration wires no mail tools, because silence must
+ * not read as consent to point an agent at a mailbox. `'skip'` is an explicit no.
+ */
+export interface SurfaceEquivalence {
+  sourceId: string;
+  agentName: string;
+  sourceConnectorId: string;
+  sourceName: string;
+  /**
+   * What this surface IS in the customer's words — 'mail', 'Teams messaging'. The screen was
+   * written for mail and hardcoded that word, so a Teams agent was asked for a "Mailbox" and
+   * offered "No mail tools". The noun comes from the server so one screen serves every
+   * surface without a second copy of it.
+   *
+   * OPTIONAL on the wire: an older server does not send it. Marked optional so the screen is
+   * forced to handle its absence instead of crashing on it.
+   */
+  noun?: string;
+  /** Where this surface can point, in the order to offer them. */
+  targets: SurfaceTarget[];
+  /** A target connectorId, `'skip'`, or null when undecided. */
+  decision: string | null;
+  impersonateEmail: string | null;
+}
+
+/**
+ * The agents selected per environment, from the SERVER-side plan.
+ *
+ * The Connectors screen reads its selection from sessionStorage, which is per browser tab
+ * and empty after a restart or in a new tab — so every per-agent section silently vanished.
+ * This is the durable fallback.
+ */
+export async function fetchSelection(
+  session: string,
+): Promise<Array<{ env: string; envName?: string; botIds: string[] }>> {
+  const res = await fetch(`/api/migrate/selection?session=${session}`);
+  if (!res.ok) throw new Error('selection_failed');
+  return ((await res.json()) as { selection: Array<{ env: string; envName?: string; botIds: string[] }> })
+    .selection;
+}
+
+/**
+ * Read back ONE stored credential value, on demand.
+ *
+ * Called only when the admin clicks to reveal — never on page load. Every other credential
+ * call in this file returns field names and secret ids only; this one returns the value, so
+ * it is kept deliberately narrow (one field, one request) rather than folded into
+ * fetchSavedConnectors where it would ride along on every page render.
+ */
+export async function fetchCredentialValue(
+  session: string,
+  connectorId: string,
+  field: string,
+): Promise<string> {
+  const res = await fetch(
+    `/api/migrate/connector-credential-value?session=${session}` +
+      `&connectorId=${encodeURIComponent(connectorId)}&field=${encodeURIComponent(field)}`,
+  );
+  if (!res.ok) {
+    throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error || 'reveal_failed');
+  }
+  return ((await res.json()) as { value: string }).value;
+}
+
+/** Which of these agents use a Microsoft surface that has a Google equivalent. */
+export async function fetchSurfaceEquivalences(
+  session: string,
+  envUrl: string,
+  sourceIds: string[],
+): Promise<SurfaceEquivalence[]> {
+  if (sourceIds.length === 0) return [];
+  const res = await fetch(
+    `/api/migrate/surface-equivalence?session=${session}&envUrl=${encodeURIComponent(envUrl)}&sourceIds=${encodeURIComponent(sourceIds.join(','))}`,
+  );
+  // Carry the server's own error code. The screen used to swallow any failure and render
+  // nothing, which looked exactly like "no agent uses this surface" — so a customer never
+  // saw the choice and never knew one existed. The code makes the cause visible.
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+    throw new Error(body.detail || body.error || `surface_equivalence_failed (${res.status})`);
+  }
+  return ((await res.json()) as { surfaces: SurfaceEquivalence[] }).surfaces;
+}
+
+/** Record whether ONE agent's Microsoft surface migrates to its Google equivalent. */
+export async function saveSurfaceDecision(
+  session: string,
+  sourceId: string,
+  sourceConnectorId: string,
+  /** A target connectorId (e.g. 'shared_outlook', 'shared_gmail') or 'skip'. */
+  decision: string,
+  email?: string,
+): Promise<void> {
+  const res = await fetch('/api/migrate/surface-equivalence', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, sourceId, sourceConnectorId, decision, email }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+    throw new Error(body.detail || body.error || 'surface_decision_save_failed');
+  }
 }

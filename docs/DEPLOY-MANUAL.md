@@ -80,8 +80,35 @@ checked before anything is torn down.
 Compose mounts it read-only at `/run/secrets/service_account.json`. It is never baked
 into an image — the images are published to GHCR and the repo is public.
 
+### 640, not 600 — the container is not the owner
+
 ```bash
-chmod 600 /data/studio-ent/service_account.json
+chmod 640 /data/studio-ent/service_account.json     # NOT 600, NOT 644
+```
+
+A bind mount carries the host's uid/gid and mode through unchanged. The key is owned by
+`laxman` (1005); the container drops to `csge` (uid 10001). At mode 600 — owner only —
+the container is not the owner, so every read failed:
+
+```
+EACCES: permission denied, open '/run/secrets/service_account.json'
+```
+
+which the UI surfaced as *"Google Workspace directory couldn't be read"* with a hint
+about Domain-Wide Delegation scopes — sending the reader to the Workspace admin console
+to fix a file permission.
+
+`640` gives the group read access, and `docker-compose.yml` adds that group to the
+container via `group_add: ["${SECRET_GID:-1005}"]`. Owner keeps `rw` (a human edits
+it), group gets `r`, others get nothing.
+
+**Do not use 644.** This box runs 41 other sites, and the key unlocks domain-wide
+delegation over the customer's Workspace.
+
+If `laxman`'s gid differs on another host, override it — `id -g` gives the number:
+
+```bash
+SECRET_GID=$(id -g) docker compose up -d
 ```
 
 ## The .env
@@ -128,7 +155,8 @@ Only the nginx front door needs root; everything else runs as `laxman`.
 ```bash
 # as laxman
 cd /data/studio-ent
-chmod 600 .env service_account.json
+chmod 600 .env                  # read by compose ON THE HOST, as laxman
+chmod 640 service_account.json  # bind-mounted INTO the container — see "640, not 600"
 
 # as root — nginx is shared with 41 other sites, so validate before reloading
 cp deploy/nginx-csge.conf /etc/nginx/sites-available/csge
@@ -186,6 +214,79 @@ docker compose pull
 docker compose up -d --remove-orphans
 ```
 
+## Running compose by hand: export TAG and CSGE_SUBNET first
+
+The deploy workflow exports both. A by-hand `docker compose up` does not, and each
+default is wrong in a way that does damage before it errors:
+
+- **`TAG` unset** resolves to `:latest`, which the host cannot pull (it holds no GHCR
+  credential — the deploy always names an explicit SHA). Compose then falls through to the
+  `build:` blocks, whose `./src` context does not exist on a registry-deployed host, and
+  reports `lstat /data/studio-ent/src/server: no such file or directory` — a message about
+  a missing checkout when the real cause is a missing tag.
+- **`CSGE_SUBNET` unset** falls back to the literal default in the compose file, which is
+  almost certainly *not* the subnet the last deploy chose. A changed network config makes
+  compose recreate the network, so it **stops `api` and `mongo`** to do it, then fails to
+  remove the network because `web` still holds an endpoint. The site is down at that point
+  and the command has already returned an error.
+
+Both values are recorded on the host — the tag on the running container, the subnet in
+`/data/studio-ent/.subnet`. Put them in `.env`, which compose reads for variable
+substitution as well as feeding to the API container, and a bare `docker compose up -d`
+becomes safe:
+
+```bash
+cd /data/studio-ent
+grep -q '^TAG=' .env || echo "TAG=$(docker inspect -f '{{.Config.Image}}' studio-ent-api-1 | sed 's/.*://')" >> .env
+grep -q '^CSGE_SUBNET=' .env || echo "CSGE_SUBNET=$(cat .subnet)" >> .env
+```
+
+The workflow exports both explicitly, so it overrides these and deploys are unaffected.
+
+Recovery, if a manual run has already half-torn-down the stack:
+
+```bash
+cd /data/studio-ent
+export TAG=<sha> CSGE_SUBNET=$(cat .subnet)
+docker compose up -d --no-build --pull never \
+  || { docker compose down --remove-orphans; docker compose up -d --no-build --pull never; }
+```
+
+`--no-build --pull never` is worth keeping on any by-hand run: it forces compose to use
+the local image and takes both failure modes above off the table.
+
+## The login account
+
+There is no default login in production. `db/mongo.ts` seeds `appUsers` only while that
+collection is **empty**, and the built-in `admin@cloudfuze.com` pair is a development
+fallback that is explicitly skipped when `NODE_ENV=production` — which the API image sets.
+Deploy without seed values and the boot log says so:
+
+```
+No app users exist and none were seeded — set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD,
+then restart, or nobody can sign in.
+```
+
+Add to `/data/studio-ent/.env`, then recreate (`restart` reuses the old container's
+environment and will not pick up an `.env` change):
+
+```
+SEED_ADMIN_EMAIL=...
+SEED_ADMIN_PASSWORD=...
+SEED_ADMIN_NAME=...
+```
+
+```bash
+docker compose up -d --force-recreate --no-build --pull never api
+docker compose logs --tail 30 api | grep -i seed
+```
+
+Seeding runs only against an empty collection, so once the account exists these variables
+do nothing on later boots — and `SEED_ADMIN_PASSWORD` is then just a plaintext credential
+sitting in `.env`. Delete that line once sign-in is confirmed; the bcrypt hash in Mongo is
+what authenticates. To change a password afterwards, use
+[server/src/scripts/rekeyAppUser.ts](../server/src/scripts/rekeyAppUser.ts).
+
 ## Verify — do not skip
 
 ```bash
@@ -218,6 +319,7 @@ known artifact — no rebuild, no guessing which `latest` was live.
 | Symptom | Cause |
 |---|---|
 | deploy fails at preflight naming `service_account.json` | the file is missing; see above — without it Node still authenticates and only ADK deploys fail |
+| "Google Workspace directory couldn't be read", or any `EACCES` on `/run/secrets/service_account.json` | the key is mode 600 and the container runs as a different uid. `chmod 640` + `group_add` — NOT 644. The DWD hint in that message is a red herring |
 | `api` restart-loops immediately | missing/misnamed secret in `.env`; `docker compose logs api` names it |
 | `api` exits with `EADDRINUSE` | something bypassed compose's `PORT: 8083`; 8080 is taken by `ats-app` |
 | `/api/health` answers with another app's JSON | curled the bare IP with no `Host:` header on a 41-site nginx |

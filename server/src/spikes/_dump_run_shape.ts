@@ -1,0 +1,12 @@
+import 'dotenv/config';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+await connectMongo();
+const db = getDb();
+const r = await db.collection('migrationRuns').find({}).sort({ $natural: -1 }).limit(1).next();
+console.log('migrationRuns keys:', Object.keys(r ?? {}).join(', '));
+console.log(JSON.stringify(r, null, 1).slice(0, 1500));
+const m = await db.collection('migrationResults').find({}).sort({ $natural: -1 }).limit(1).next();
+console.log('\nmigrationResults keys:', Object.keys(m ?? {}).join(', '));
+console.log(JSON.stringify(m, null, 1).slice(0, 1800));
+process.exit(0);

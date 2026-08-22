@@ -22,14 +22,25 @@ export interface ImportOperation {
     totalCount?: number | string;
   };
   response?: {
-    /** Per-document error samples. Field is `message` (confirmed live 2026-08-21
-     *  against a real ImportDocumentsResponse) — NOT `errorMessage`, which this type
-     *  incorrectly declared before, silently discarding every real error (e.g. a
-     *  documents_regional quota-exceeded message) as the generic "unknown error"
-     *  fallback below. There is no separate `document` field either — the failing
-     *  document's id is embedded in `message` itself ("...ingest document with id: `...`").
+    /**
+     * Per-document failures. Discovery Engine returns these as `google.rpc.Status`
+     * (`code` / `message` / `details`), NOT as `{errorMessage}` — which is what this type
+     * used to declare. TypeScript could not catch the mismatch because the payload is
+     * untyped JSON at the boundary, so every sample rendered as "unknown error" and a
+     * 0/178 import reported a count with no cause (live 2026-08-19, reconfirmed 2026-08-21:
+     * `message` carries the real reason, `document` is rarely populated separately — the
+     * failing document's id is usually embedded in `message` itself).
+     *
+     * Both spellings are accepted, and `toSampleText` keeps a raw fallback so an
+     * unrecognised shape still prints something a human can act on.
      */
-    errorSamples?: { code?: number; message?: string }[];
+    errorSamples?: Array<{
+      message?: string;
+      errorMessage?: string;
+      code?: number;
+      document?: string;
+      details?: unknown[];
+    }>;
   };
 }
 
@@ -90,9 +101,7 @@ export function reconcileImport(
   const unaccounted = Math.max(0, attemptedUploads - (succeeded + reportedFailed));
   const failed = reportedFailed + unaccounted;
 
-  const failureSamples = (op.response?.errorSamples ?? [])
-    .slice(0, 5)
-    .map((s) => s.message ?? 'unknown error');
+  const failureSamples = (op.response?.errorSamples ?? []).slice(0, 5).map(toSampleText);
   if (unaccounted > 0) {
     failureSamples.push(`${unaccounted} document(s) uploaded but not accounted for by the import — treat as failed until verified.`);
   }
@@ -108,4 +117,33 @@ export function reconcileImport(
     failureSamples,
     operationError,
   };
+}
+
+
+/**
+ * Render one import error sample as something a human can act on.
+ *
+ * Falls back to the RAW sample rather than to the words "unknown error". A literal
+ * "unknown error" is indistinguishable from a bug in this function, and that ambiguity
+ * cost two full migration runs: the API had reported the cause every time, and we printed
+ * a placeholder over it.
+ */
+export function toSampleText(s: {
+  message?: string;
+  errorMessage?: string;
+  code?: number;
+  document?: string;
+  details?: unknown[];
+}): string {
+  const doc = s.document ? `${s.document.split('/').pop()}: ` : '';
+  const text =
+    s.message?.trim() ||
+    s.errorMessage?.trim() ||
+    (s.details?.length ? JSON.stringify(s.details).slice(0, 300) : '');
+  if (text) return `${doc}${s.code ? `[${s.code}] ` : ''}${text}`;
+
+  // Nothing recognised. Print the sample itself so the next run tells us the real shape
+  // instead of hiding it behind a placeholder again.
+  const raw = JSON.stringify(s);
+  return `${doc}unparsed import error sample: ${raw.slice(0, 300)}`;
 }

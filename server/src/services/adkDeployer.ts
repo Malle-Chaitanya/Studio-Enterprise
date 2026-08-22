@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { assistantBase } from './gemini.js';
 import { geminiWriteLimiter } from './rateLimiter.js';
 import { logger } from '../logger.js';
@@ -383,7 +384,7 @@ export async function createWebsiteGroundingDataStore(
  */
 /** Resolve a project id to its numeric project number (cached per process). */
 const projectNumberCache = new Map<string, string>();
-async function resolveProjectNumber(project: string, saToken: string): Promise<string | null> {
+export async function resolveProjectNumber(project: string, saToken: string): Promise<string | null> {
   const cached = projectNumberCache.get(project);
   if (cached) return cached;
   const res = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${project}`, {
@@ -448,6 +449,15 @@ export interface DeployResult {
   /** The worker refused to wire googleSearch because it cannot coexist with the
    *  function tools this agent has. Reported so it becomes a fidelity note. */
   droppedGoogleSearch?: boolean;
+  /**
+   * The tool names the worker ACTUALLY wired onto the agent.
+   *
+   * Ground truth for verification. The server cannot compute this: a connector with a
+   * hand-written Python module supplies its own tools and discards the bound operations the
+   * server planned, so any server-side list is either wrong (demands tools that were dropped)
+   * or empty (skips the check entirely). Only the worker knows.
+   */
+  toolNames?: string[];
 }
 
 /**
@@ -468,33 +478,134 @@ export function deployReasoningEngine(
 ): Promise<DeployResult> {
   const python = opts?.pythonBin || process.env.PYTHON_BIN || 'python';
   const script = opts?.scriptPath || 'scripts/adk_deploy.py';
-  const args = [script, '--project', project, '--location', location, '--spec', JSON.stringify(spec)];
+  // A staging directory UNIQUE TO THIS DEPLOY. The Vertex SDK defaults `gcs_dir_name` to the
+  // literal "agent_engine", so every deploy in a project pickles its agent to the same object:
+  // gs://<bucket>/agent_engine/agent_engine.pkl. Two deploys in flight together overwrite each
+  // other and both containers are built from whichever package landed last.
+  //
+  // Confirmed live 2026-08-21, not theorised: "Hubspot agentt" (11:47:32) and "Email Manager"
+  // (11:47:50) both produced engines created in the SAME second, and both came up with Email
+  // Manager's 16 Outlook tools — the HubSpot agent had none of its own 4. Verification caught
+  // it only because the toolsets differed; two agents sharing a connector would have swapped
+  // silently. Multi-tenant, that is one customer's agent running another customer's tools.
+  //
+  // The comment below this function has always said "run this with low concurrency" while the
+  // orchestrator ran concurrency 5. A comment is not an enforcement; a unique path is.
+  const gcsDir = `agent_engine/${sanitize(spec.name || 'agent')}-${randomUUID()}`;
+  const args = [
+    script,
+    '--project', project,
+    '--location', location,
+    '--gcs-dir', gcsDir,
+    '--spec', JSON.stringify(spec),
+  ];
   if (opts?.stagingBucket || process.env.ADK_STAGING_BUCKET) {
     args.push('--staging-bucket', opts?.stagingBucket || process.env.ADK_STAGING_BUCKET!);
   }
   const timeoutMs = opts?.timeoutMs ?? 15 * 60_000;
 
-  return new Promise((resolve) => {
-    const child = spawn(python, args, { env: process.env });
-    let out = '';
-    let err = '';
-    const timer = setTimeout(() => { child.kill(); resolve({ ok: false, error: `deploy timed out after ${timeoutMs}ms` }); }, timeoutMs);
-    child.stdout.on('data', (d) => (out += d.toString()));
-    child.stderr.on('data', (d) => (err += d.toString()));
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      // The worker prints a JSON result on its LAST non-empty stdout line.
-      const line = out.trim().split(/\r?\n/).filter(Boolean).pop() || '';
-      try {
-        const j = JSON.parse(line) as { reasoningEngine?: string; error?: string; droppedGoogleSearch?: boolean };
-        if (j.reasoningEngine) {
-          return resolve({ ok: true, reasoningEngine: j.reasoningEngine, droppedGoogleSearch: j.droppedGoogleSearch });
+  const attempt = (): Promise<DeployResult & { neverStarted?: boolean }> =>
+    new Promise((resolve) => {
+      const child = spawn(python, args, { env: process.env });
+      let out = '';
+      let err = '';
+      // Killing the worker does NOT cancel the deploy: the Reasoning Engine create call is
+      // already in flight server-side, so a timeout usually leaves an engine that finishes
+      // building with nobody holding its id — an anonymous orphan, billed, attached to nothing.
+      // Live 2026-08-21: "Confluence Knowledge Assistant" timed out at 15 min (the network had
+      // dropped) and the orphan count rose with no record of which engine was whose. Name the
+      // agent and location in the error so the engine can be identified and reaped instead of
+      // being indistinguishable from the other forty.
+      const timer = setTimeout(() => {
+        child.kill();
+        resolve({
+          ok: false,
+          error:
+            `deploy timed out after ${timeoutMs}ms — killing the worker does not cancel the ` +
+            `create, so a Reasoning Engine displayed as "${spec.displayName ?? spec.name}" may ` +
+            `still finish building in ${location} and become an orphan; check before retrying`,
+        });
+      }, timeoutMs);
+      child.stdout.on('data', (d) => (out += d.toString()));
+      child.stderr.on('data', (d) => (err += d.toString()));
+      child.on('error', (e) => {
+        clearTimeout(timer);
+        resolve({ ok: false, error: `deploy could not start python: ${e.message}`, neverStarted: true });
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        // The worker prints a JSON result on its LAST non-empty stdout line.
+        const line = out.trim().split(/\r?\n/).filter(Boolean).pop() || '';
+        try {
+          const j = JSON.parse(line) as { reasoningEngine?: string; error?: string; droppedGoogleSearch?: boolean; toolNames?: string[] };
+          if (j.reasoningEngine) {
+            return resolve({ ok: true, reasoningEngine: j.reasoningEngine, droppedGoogleSearch: j.droppedGoogleSearch, toolNames: j.toolNames });
+          }
+          return resolve({ ok: false, error: j.error || `deploy failed (exit ${code}): ${err.slice(-300)}` });
+        } catch {
+          // NOTHING on either stream means the interpreter died before running a line of our
+          // code — the worker always prints JSON, even to report its own failure. On Windows
+          // this surfaces as exit 3221225794 (0xC0000142 STATUS_DLL_INIT_FAILED), a transient
+          // process-init crash: seen once on 2026-08-20, and 25/25 identical spawns straight
+          // afterwards were clean. Separate it from a real deploy failure so it can be retried
+          // rather than silently downgrading the agent.
+          const neverStarted = out.trim() === '' && err.trim() === '' && code !== 0;
+          return resolve({
+            ok: false,
+            neverStarted,
+            error: neverStarted
+              ? `python never started (exit ${code}) - no output on either stream`
+              : `deploy produced no JSON result (exit ${code}): ${(err || out).slice(-300)}`,
+          });
         }
-        return resolve({ ok: false, error: j.error || `deploy failed (exit ${code}): ${err.slice(-300)}` });
-      } catch {
-        return resolve({ ok: false, error: `deploy produced no JSON result (exit ${code}): ${(err || out).slice(-300)}` });
-      }
+      });
     });
+
+  // Retry ONCE, for a worker that never ran OR for a TRANSPORT failure. A genuine deploy
+  // failure (bad spec, quota, auth) is still NOT retried: it fails identically twice and
+  // re-staging the package to GCS is expensive.
+  //
+  // Why transport was added: the fallback is not a graceful degradation, it is a downgrade
+  // that loses the whole point of the migration. A low-code agent carries NO live connector
+  // tools and NO topic sub-agents, and it cannot be un-privated through any API. Two of seven
+  // deploys over 2026-08-21/22 were lost this way to the network alone —
+  //   getaddrinfo ENOTFOUND discoveryengine.googleapis.com
+  //   ('Connection aborted.', ConnectionResetError(10054, ...))
+  // — and each left the customer a PRIVATE, tool-less duplicate of an agent that had deployed
+  // correctly minutes earlier. A dropped connection says nothing about whether the spec is
+  // good, so it is worth one more attempt before accepting that outcome.
+  //
+  // The risk is honest: a connection that drops AFTER the create was accepted server-side
+  // leaves an engine behind, and the retry builds a second. That trade is deliberate — an
+  // orphan costs money and is reapable, while a silent low-code downgrade costs the customer
+  // the agent's behaviour and is not detectable from the run's status.
+  const TRANSPORT_FAILURE = [
+    'ENOTFOUND',
+    'ECONNRESET',
+    'ConnectionResetError',
+    'Connection aborted',
+    'Connection reset',
+    'ETIMEDOUT',
+    'EAI_AGAIN',
+    'Temporary failure in name resolution',
+    'Remote end closed connection',
+    'ServiceUnavailable',
+    '503',
+  ];
+  const isTransport = (msg: string | undefined): boolean =>
+    !!msg && TRANSPORT_FAILURE.some((needle) => msg.includes(needle));
+
+  return attempt().then((first) => {
+    if (first.ok) return first;
+    if (first.neverStarted) {
+      logger.warn(`adk: python worker never started (${first.error}) - retrying once before falling back`);
+      return attempt();
+    }
+    if (isTransport(first.error)) {
+      logger.warn(`adk: deploy hit a transport failure (${first.error}) - retrying once before falling back`);
+      return attempt();
+    }
+    return first;
   });
 }
 
@@ -704,6 +815,8 @@ export async function publishAgentToGallery(
    *  so the caller must report it rather than let a green deploy imply working tools. */
   secretIamGranted?: boolean;
   secretIamError?: string;
+  /** Tool names the worker really wired — ground truth for verification. */
+  toolNames?: string[];
 }> {
   const location = opts?.location || process.env.ADK_LOCATION || 'us-central1';
   // Key the website grounding store by the Copilot botid, NOT the agent's display name.
@@ -847,5 +960,7 @@ export async function publishAgentToGallery(
       googleSearchDropped,
     };
   }
-  return { ok: true, agentId: reg.agentId, reasoningEngine: dep.reasoningEngine, state: reg.state, groundingIamGranted, groundingIamError, googleSearchDropped, secretIamGranted, secretIamError };
+  // `toolNames` is passed straight through: verification compares against what the worker
+  // really wired, not what the server planned to wire.
+  return { ok: true, agentId: reg.agentId, reasoningEngine: dep.reasoningEngine, state: reg.state, groundingIamGranted, groundingIamError, googleSearchDropped, secretIamGranted, secretIamError, toolNames: dep.toolNames };
 }

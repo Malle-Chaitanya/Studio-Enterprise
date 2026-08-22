@@ -1,0 +1,14 @@
+import 'dotenv/config';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
+await connectMongo();
+const db = getDb();
+const m = await db.collection('migrationResults').find({ name: /Teams Coordinator/ }).sort({ updatedAt: -1 }).limit(1).next();
+const r = m as Record<string, unknown> | null;
+console.log(`verifyStatus : ${String(r?.verifyStatus)}`);
+console.log(`verified     : ${r?.verified}`);
+console.log(`\nverifySample (what the deployed agent said its tools are):`);
+console.log(String(r?.verifySample ?? '(none)'));
+const fid = (r?.fidelity ?? []) as Array<{ component: string; detail: string }>;
+for (const f of fid.filter((x) => /verif/i.test(x.component))) console.log(`\n[${f.component}] ${f.detail}`);
+process.exit(0);

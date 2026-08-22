@@ -219,10 +219,30 @@ async function ensureCollections(): Promise<void> {
   //     connector should impersonate (Erik's agent -> Erik's Drive, Alex's -> Alex's),
   //     distinct from the shared service-account key used across a whole migration.
   //     See db/repos/agentConnectorIdentity.ts and
+
+  // rawAgents — verbatim Copilot payloads, landed before parsing. OFF unless
+  // RAW_RETENTION_DAYS > 0. The TTL index is what makes retention real: `expiresAt` is
+  // written on every row and Mongo deletes it, so unredacted customer data cannot outlive
+  // the window because a cleanup job was never wired up. appUserId leads the read index
+  // because every read of this collection is tenant-scoped.
+  await ensure('rawAgents');
+  await db.collection('rawAgents').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+  await db.collection('rawAgents').createIndex(
+    { appUserId: 1, runId: 1, sourceId: 1 },
+    { unique: true },
+  );
   //     docs/connector-architecture-decisions.md §12.5.
   await ensure('agentConnectorIdentity');
   await db.collection('agentConnectorIdentity').createIndex(
     { appUserId: 1, sourceId: 1, connectorId: 1 },
+    { unique: true },
+  );
+
+  // Per-agent decision on cross-vendor surfaces (Outlook -> Gmail). Absent means UNDECIDED,
+  // which the resolver treats as "do not wire" — see db/repos/agentSurfaceChoice.ts.
+  await ensure('agentSurfaceChoice');
+  await db.collection('agentSurfaceChoice').createIndex(
+    { appUserId: 1, sourceId: 1, sourceConnectorId: 1 },
     { unique: true },
   );
 

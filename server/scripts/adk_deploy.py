@@ -324,12 +324,52 @@ def _build_live_connector_tool(conn: dict, project: str):
         from connector_tools.google_drive import build_tools as _build
         return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
+    # Cross-vendor: a Copilot agent that read Outlook mail migrates to one that reads Gmail.
+    # Requires scope=gmail.readonly and an `impersonate_email` secret — a mailbox belongs to
+    # a person, so DWD needs a subject. See connector_tools/gmail.py for the fidelity
+    # divergences (folders vs labels, flags vs stars) this mapping cannot avoid.
+    if kind == "gmail":
+        from connector_tools.gmail import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
+    # Mail that STAYS in Microsoft: the agent moves to Gemini, Graph still serves its mail.
+    # Requires app-only ms_graph credentials plus Mail.ReadWrite / Mail.Send APPLICATION
+    # permissions with admin consent.
+    if kind == "outlook":
+        from connector_tools.outlook import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
+    # CROSS-VENDOR, second of two: Copilot's Teams connector -> Google Chat. Chat is FLAT,
+    # so the Team -> Channel hierarchy has no equivalent; see connector_tools/chat.py.
+    # Identity is either a DWD-impersonated user or the service account acting as a
+    # registered Chat app — the same code serves both.
+    if kind in ("googlechat", "chat"):
+        from connector_tools.chat import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
+    # Teams messaging that STAYS in Microsoft. Nothing is translated, so the hierarchy and
+    # threading survive. Reading channel/chat message CONTENT app-only is additionally gated
+    # by Microsoft's protected-APIs programme, which no code change here can satisfy.
+    if kind == "teams":
+        from connector_tools.teams import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
+
     if kind == "jira":
         from connector_tools.jira import build_tools as _build
         return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
     if kind == "confluence":
         from connector_tools.confluence import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
+    # FOUR connector ids, one module. Power Platform ships HubSpot as several separate
+    # connectors (the Microsoft one plus three Independent Publisher ones) and agents in
+    # the field use the Independent Publisher names — but they are all the same REST API
+    # behind the same private app token, so they share a credential group and a tool set.
+    # Matching only "hubspot" would miss every id a real agent actually declares.
+    if kind.startswith("hubspot"):
+        from connector_tools.hubspot import build_tools as _build
         return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
     # Generic REST connector fallback: bound per-operation tools when the server
@@ -580,6 +620,15 @@ def main():
     ap.add_argument("--spec", help="ADK spec as JSON (inline)")
     ap.add_argument("--spec-file", help="path to a file containing the ADK spec JSON")
     ap.add_argument("--staging-bucket", default=os.environ.get("ADK_STAGING_BUCKET"))
+    # PER-DEPLOY staging directory. Without it the SDK defaults gcs_dir_name to the
+    # literal "agent_engine", so EVERY deploy in a project writes the pickled agent to
+    # gs://<bucket>/agent_engine/agent_engine.pkl. Two deploys running at once therefore
+    # overwrite each other and both containers get built from whichever package landed
+    # last. Confirmed live 2026-08-21: "Hubspot agentt" and "Email Manager" deployed 18s
+    # apart, both engines created in the SAME second, and both came up with Email
+    # Manager's 16 Outlook tools — the HubSpot agent had none of its own. The server
+    # always passes a unique value; the default here only keeps a hand-run working.
+    ap.add_argument("--gcs-dir", default=None)
     args = ap.parse_args()
 
     try:
@@ -818,12 +867,37 @@ def main():
     # confirmed live 2026-08-05: a real 2-knowledge-source agent deployed fine,
     # then every single query (including one needing no tool at all) failed
     # with "ImportError: cannot import name 'discoveryengine_v1beta'".
-    # Pinned to what THIS process just imported to build root_agent — see _pinned()
-    # for why an unpinned "google-adk" broke every deployed agent on 2026-08-16.
-    requirements = [
-        _pinned("google-cloud-aiplatform", "agent_engines,adk"),
-        _pinned("google-adk"),
-    ]
+    # PIN google-adk TO THE VERSION THAT PICKLED THIS AGENT. Correctness, not hygiene.
+    #
+    # Agent Engine ships the agent as a PICKLE and rebuilds it inside a container it
+    # provisions from this list. Unpinned, that container resolved `google-adk` to whatever
+    # PyPI had that day, so an object pickled by our 2.6.2 (or 2.5.0 — confirmed on both,
+    # 2026-08-16 and 2026-08-19) was unpickled by a newer ADK. Pydantic private attributes
+    # did not survive the mismatch:
+    #
+    #   File "google/adk/agents/llm_agent.py", line 630, in canonical_model
+    #     resolved = self._resolved_model          # <- absent from the older ADK entirely
+    #   File "pydantic/main.py", line 1024, in __getattr__
+    #     return self.__pydantic_private__[item]
+    #   TypeError: 'NoneType' object is not subscriptable
+    #
+    # EVERY query failed while deploy reported success, the agent registered ENABLED, and
+    # the same agent had verified clean days earlier. The break arrived with no change on
+    # our side and nothing local reproduces it. See _pinned() above for the pin mechanism.
+    #
+    # ONLY google-adk is pinned, and that limit is load-bearing. Pinning google-cloud-aiplatform
+    # alongside it made the RE build FAIL outright (live 2026-08-19, same agent), because the
+    # versions our environment runs are mutually unsatisfiable in a single pip resolve:
+    #
+    #   google-adk 2.6.2               requires google-genai >=2.9,<3
+    #   google-cloud-aiplatform 1.93.0 requires google-genai <2.0.0
+    #
+    # The Dockerfile only gets away with it by installing them in TWO sequential passes and
+    # letting adk upgrade google-genai past aiplatform's declared ceiling. A requirements
+    # list has no such escape hatch, so pinning aiplatform alongside adk guarantees
+    # ResolutionImpossible and a fallback to the low-code path. Pin the library that owns
+    # the pickle; let pip resolve a self-consistent set around it.
+    requirements = ["google-cloud-aiplatform[agent_engines,adk]", _pinned("google-adk")]
     emit({"log": f"pinning deploy container to {requirements}"})
     if grounding_data_stores:
         requirements.append(_pinned("google-cloud-discoveryengine"))
@@ -840,6 +914,7 @@ def main():
     if any((c.get("kind") or "").lower() in ("sharepointonline", "sharepoint", "onedrive", "googledrive")
            for c in live_connectors):
         requirements += ["pypdf", "python-docx", "openpyxl"]
+    emit({"info": "reasoning engine requirements", "requirements": requirements})
 
     # Ship the connector_tools/ package alongside this script whenever a live
     # connector tool is configured — _build_live_connector_tool (above) imports
@@ -877,15 +952,35 @@ def main():
             from vertexai.reasoning_engines import AdkApp
         agent_engine = AdkApp(agent=root_agent, enable_tracing=False)
         vertexai.init(project=args.project, location=args.location, staging_bucket=bucket)
-        remote = agent_engines.create(
-            agent_engine=agent_engine,
-            display_name=spec.get("displayName", spec.get("name", "Migrated Agent")),
-            requirements=requirements,
-            extra_packages=extra_packages or None,
-        )
+        # gcs_dir_name is what isolates one deploy's package from another's — see --gcs-dir.
+        create_kwargs = {
+            "agent_engine": agent_engine,
+            "display_name": spec.get("displayName", spec.get("name", "Migrated Agent")),
+            "requirements": requirements,
+            "extra_packages": extra_packages or None,
+        }
+        if args.gcs_dir:
+            create_kwargs["gcs_dir_name"] = args.gcs_dir
+        remote = agent_engines.create(**create_kwargs)
+        # The tool names ACTUALLY built, reported back so verification can compare against
+        # ground truth instead of guessing.
+        #
+        # The server used to hand verification the names of the *bound* operations it had
+        # planned. For any connector with a hand-written module those names are discarded
+        # here (the module returns its own tools), so verification demanded tools that were
+        # never going to exist and failed a working agent. Filtering them out on the server
+        # then left the list EMPTY, which skipped the tool check altogether - a vacuous pass,
+        # which is worse than a wrong failure. Only this process knows what was really wired,
+        # so it is the only honest source for the comparison.
+        built_tool_names = []
+        for _t in tools:
+            _n = getattr(_t, "__name__", None) or getattr(_t, "name", None)
+            if _n:
+                built_tool_names.append(str(_n))
         emit({
             "reasoningEngine": remote.resource_name,
             "droppedGoogleSearch": dropped_google_search,
+            "toolNames": built_tool_names,
         })
     except Exception as e:  # noqa: BLE001
         emit({"error": f"deploy failed: {e}"})

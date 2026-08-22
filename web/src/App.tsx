@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Outlet, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Navigate, Outlet, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchSession } from './api.ts';
 import { AgentChat } from './components/AgentChat.tsx';
 import { WizardProvider } from './context/WizardContext.tsx';
@@ -15,6 +15,16 @@ import { MapUsers } from './pages/MapUsers.tsx';
 import { Migrate } from './pages/Migrate.tsx';
 import { SelectData } from './pages/SelectData.tsx';
 import { SelectMap } from './pages/SelectMap.tsx';
+import ConnectV2 from './pages/v2/ConnectV2.tsx';
+import PairEnvsV2 from './pages/v2/PairEnvsV2.tsx';
+import MapUsersV2 from './pages/v2/MapUsersV2.tsx';
+import SelectAgentsV2 from './pages/v2/SelectAgentsV2.tsx';
+import ReviewV2 from './pages/v2/ReviewV2.tsx';
+import ConnectorsV2 from './pages/v2/ConnectorsV2.tsx';
+import MigrateV2 from './pages/v2/MigrateV2.tsx';
+import ReportV2 from './pages/v2/ReportV2.tsx';
+import PhaseSoon from './pages/v2/PhaseSoon.tsx';
+import { SourceProvider, resolveSource } from './v2/data/index.ts';
 
 function AppHeader() {
   const navigate = useNavigate();
@@ -306,10 +316,49 @@ function AppShell() {
   );
 }
 
+/**
+ * Shell for the v2 (agent-dock) screens.
+ *
+ * Same header, guard and wizard context as AppShell — but no chat pane and no
+ * divider, because in v2 the agent IS the dock at the bottom of the page. The
+ * two shells run side by side while the v2 slice is proven; the old one stays
+ * untouched so nothing that works today can regress.
+ */
+function V2Shell() {
+  const [params] = useSearchParams();
+  // The data source is chosen once, here, and handed down: screens never decide
+  // where their data comes from. `?fixture=1` is honoured in dev builds only.
+  const source = useMemo(() => resolveSource(params), [params]);
+  return (
+    <WizardProvider>
+      <SourceProvider value={source}>
+        {/* Fixture mode has no real session to validate — running the guard would
+            bounce a design review straight back to the login screen. */}
+        {!source.isFixture && <SessionGuard />}
+        <AppHeader />
+        <Outlet />
+      </SourceProvider>
+    </WizardProvider>
+  );
+}
+
 export function App() {
   return (
     <Routes>
       <Route path="/" element={<Login />} />
+      <Route element={<V2Shell />}>
+        <Route path="/v2/connect" element={<ConnectV2 />} />
+        <Route path="/v2/pair-envs" element={<PairEnvsV2 />} />
+        <Route path="/v2/map-users" element={<MapUsersV2 />} />
+        <Route path="/v2/select-agents" element={<SelectAgentsV2 />} />
+        <Route path="/v2/review" element={<ReviewV2 />} />
+        <Route path="/v2/connectors" element={<ConnectorsV2 />} />
+        <Route path="/v2/migrate" element={<MigrateV2 />} />
+        <Route path="/v2/report" element={<ReportV2 />} />
+        {/* Kept as the catch-all: a mistyped phase says so instead of blanking. */}
+        <Route path="/v2/:phase" element={<PhaseSoon />} />
+        <Route path="/v2" element={<Navigate to="/v2/connect" replace />} />
+      </Route>
       <Route element={<AppShell />}>
         <Route path="/home" element={<Home />} />
         <Route path="/pair" element={<ChoosePair />} />

@@ -564,6 +564,15 @@ export interface MigrationResult {
   draftPreserved?: boolean;
   shared: boolean;
   verified?: boolean;
+  /**
+   * The three-value truth behind `verified`.
+   *
+   * `unknown` means the probe could not run (endpoint unavailable, network, no readable
+   * answer) — the agent was created but nothing established that it works. It is reported
+   * separately from `failed` because the customer action differs: a failure names a
+   * defect, an unknown names a check somebody still has to do by hand.
+   */
+  verifyStatus?: 'verified' | 'failed' | 'unknown';
   verifySample?: string;
   error?: string;
   fidelity: FidelityNote[];

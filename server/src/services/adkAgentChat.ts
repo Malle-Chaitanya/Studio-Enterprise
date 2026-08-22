@@ -24,6 +24,7 @@
  */
 
 import { logger } from '../logger.js';
+import { fetchTextTransient } from './httpTransient.js';
 
 const DEFAULT_LOCATION = process.env.ADK_LOCATION || 'us-central1';
 
@@ -78,13 +79,25 @@ export interface AdkChatResult {
   sessionId?: string;
   /** True when the agent's VertexAiSearchTool was invoked for this turn. */
   usedSearchTool?: boolean;
+  /**
+   * Names of the tools the runtime invoked this turn, read from the `function_call`
+   * frames rather than from the model's prose.
+   *
+   * This is the only trustworthy statement about which tools a deployed agent HAS: ADK
+   * bakes tools into the Reasoning Engine pickle at deploy time, so there is no API that
+   * lists them. A name appearing here is proof that tool exists on the deployment and
+   * that the model can reach it.
+   */
+  toolNames?: string[];
   error?: string;
 }
 
-interface ToolEvidence {
+export interface ToolEvidence {
   called: boolean;
   succeeded: boolean;
   error?: string;
+  /** Names of the tools the runtime actually invoked this turn, deduped. */
+  names: string[];
 }
 
 function unescapeJsonString(s: string): string {
@@ -112,7 +125,7 @@ function unescapeJsonString(s: string): string {
  * an explicit non-error `function_response`, and model-side retrieval that appears only
  * as grounding chunks / retrieved context.
  */
-function scanToolEvidence(raw: string): ToolEvidence {
+export function scanToolEvidence(raw: string): ToolEvidence {
   const responseIdx: number[] = [];
   const reResp = /"function_response"|"functionResponse"/g;
   let m: RegExpExecArray | null;
@@ -126,10 +139,21 @@ function scanToolEvidence(raw: string): ToolEvidence {
     const start = responseIdx[i];
     const end = Math.min(responseIdx[i + 1] ?? raw.length, start + 4000);
     const window = raw.slice(start, end);
-    const failed = /"status":\s*"error"|IAM_PERMISSION_DENIED|PERMISSION_DENIED|"error_message"/i.test(window);
+    // `"error":` is the convention EVERY connector tool in scripts/connector_tools/ uses to
+    // report failure (`return {"error": "..."}`). Without it a tool that failed cleanly —
+    // bad credential, missing scope, 403 from the upstream API — arrives as a perfectly
+    // well-formed function_response and was counted as SUCCESS. Measured live on
+    // 2026-08-19: a deployed agent answered "the authentication to Outlook failed" while
+    // this function reported succeeded=true, so verify.ts would have marked it verified.
+    const failed =
+      /"status":\s*"error"|IAM_PERMISSION_DENIED|PERMISSION_DENIED|"error_message"|"error":\s*"/i.test(
+        window,
+      );
     if (failed) {
       if (!error) {
-        const msg = /"error_message":\s*"((?:[^"\\]|\\.)*)"/.exec(window)?.[1];
+        const msg =
+          /"error_message":\s*"((?:[^"\\]|\\.)*)"/.exec(window)?.[1] ??
+          /"error":\s*"((?:[^"\\]|\\.)*)"/.exec(window)?.[1];
         error = msg ? unescapeJsonString(msg) : 'tool returned an error';
       }
     } else {
@@ -143,7 +167,20 @@ function scanToolEvidence(raw: string): ToolEvidence {
   if (grounded) succeeded = true;
 
   const called = responseIdx.length > 0 || grounded || /"function_call"|"functionCall"/.test(raw);
-  return { called, succeeded, error };
+
+  // Tool names, from the call frames. Both spellings appear depending on how the runtime
+  // serialises the turn, and the `name` key can precede or follow `args`, so the window is
+  // scanned rather than assuming a fixed field order.
+  const names = new Set<string>();
+  const reCall = /"(?:function_call|functionCall)"\s*:\s*\{/g;
+  let c: RegExpExecArray | null;
+  while ((c = reCall.exec(raw)) !== null) {
+    const window = raw.slice(c.index, c.index + 400);
+    const name = /"name"\s*:\s*"([^"\\]{1,120})"/.exec(window)?.[1];
+    if (name) names.add(name);
+  }
+
+  return { called, succeeded, error, names: [...names] };
 }
 
 /** Which class methods does this deployment expose? */
@@ -153,14 +190,23 @@ export async function getReasoningEngineMethods(
   reasoningEngineId: string,
   location = DEFAULT_LOCATION,
 ): Promise<{ methods: string[]; framework?: string; displayName?: string } | null> {
-  const res = await fetch(engineUrl(project, location, reasoningEngineId), {
-    headers: { Authorization: `Bearer ${saToken}` },
-  });
-  if (!res.ok) return null;
-  const json = (await res.json()) as {
+  const r = await fetchTextTransient(
+    engineUrl(project, location, reasoningEngineId),
+    { headers: { Authorization: `Bearer ${saToken}` } },
+    { label: 'adkChat: get_engine' },
+  );
+  if (!r.ok || r.status < 200 || r.status >= 300) return null;
+  let json: {
     displayName?: string;
     spec?: { agentFramework?: string; classMethods?: Array<{ name?: string }> };
   };
+  try {
+    json = JSON.parse(r.text);
+  } catch {
+    // A 2xx that isn't JSON means we cannot say what the deployment exposes. Null is the
+    // honest answer; inventing an empty method list would read as "supports nothing".
+    return null;
+  }
   return {
     methods: (json.spec?.classMethods ?? []).map((m) => m.name ?? '').filter(Boolean),
     framework: json.spec?.agentFramework,
@@ -180,23 +226,24 @@ export async function createAdkSession(
   // caller — sessions are an optimisation for multi-turn history, and stream_query works
   // without one. An unhandled ECONNRESET here took down a whole deploy run whose agent
   // had already been created successfully.
-  let res: Response;
-  try {
-    res = await fetch(`${engineUrl(project, location, reasoningEngineId)}:query`, {
+  const r = await fetchTextTransient(
+    `${engineUrl(project, location, reasoningEngineId)}:query`,
+    {
       method: 'POST',
       headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ class_method: 'create_session', input: { user_id: userId } }),
-    });
-  } catch (e) {
-    logger.warn({ reasoningEngineId, err: (e as Error).message }, 'adkChat: create_session request failed, continuing sessionless');
+    },
+    { label: 'adkChat: create_session' },
+  );
+  if (!r.ok) {
+    logger.warn({ reasoningEngineId, err: r.error }, 'adkChat: create_session request failed, continuing sessionless');
     return null;
   }
-  const text = await res.text();
-  if (!res.ok) {
-    logger.debug({ reasoningEngineId, status: res.status }, 'adkChat: create_session unsupported, continuing sessionless');
+  if (r.status < 200 || r.status >= 300) {
+    logger.debug({ reasoningEngineId, status: r.status }, 'adkChat: create_session unsupported, continuing sessionless');
     return null;
   }
-  return /"id":\s*"([^"]+)"/.exec(text)?.[1] ?? null;
+  return /"id":\s*"([^"]+)"/.exec(r.text)?.[1] ?? null;
 }
 
 /**
@@ -222,24 +269,25 @@ export async function chatWithAdkAgent(
 
   // Same reasoning as createAdkSession: a network-level failure is an error to REPORT,
   // never an exception that escapes into a route handler or migration run.
-  let res: Response;
-  try {
-    res = await fetch(`${engineUrl(project, location, args.reasoningEngineId)}:streamQuery?alt=sse`, {
+  const r = await fetchTextTransient(
+    `${engineUrl(project, location, args.reasoningEngineId)}:streamQuery?alt=sse`,
+    {
       method: 'POST',
       headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ class_method: 'stream_query', input }),
-    });
-  } catch (e) {
-    const msg = (e as Error).message;
-    logger.warn({ reasoningEngineId: args.reasoningEngineId, err: msg }, 'adkChat: stream_query request failed');
-    return { ok: false, error: `network: ${msg}` };
+    },
+    { label: 'adkChat: stream_query' },
+  );
+  if (!r.ok) {
+    logger.warn({ reasoningEngineId: args.reasoningEngineId, err: r.error }, 'adkChat: stream_query request failed');
+    return { ok: false, error: `network: ${r.error}` };
   }
-  const raw = await res.text();
+  const raw = r.text;
 
-  if (!res.ok) {
+  if (r.status < 200 || r.status >= 300) {
     const detail = errorDetail(raw);
-    logger.warn({ reasoningEngineId: args.reasoningEngineId, status: res.status, detail }, 'adkChat: stream_query failed');
-    return { ok: false, error: `${res.status}: ${detail}` };
+    logger.warn({ reasoningEngineId: args.reasoningEngineId, status: r.status, detail }, 'adkChat: stream_query failed');
+    return { ok: false, error: `${r.status}: ${detail}` };
   }
 
   // A 200 does NOT mean the agent answered. When the container throws (e.g. a
@@ -266,6 +314,7 @@ export async function chatWithAdkAgent(
     toolError: evidence.error,
     toolCalled: evidence.called,
     toolSucceeded: evidence.succeeded,
+    toolNames: evidence.names,
     sessionId: args.sessionId,
     // VertexAiSearchTool shows up as a function call or as a grounding event in the stream.
     usedSearchTool: evidence.called || /vertex_ai_search|VertexAiSearch|grounding/i.test(raw),

@@ -87,6 +87,37 @@ describe('bindOperation — refusals are named, never guessed', () => {
     expect(r.reason).toContain('tunnel');
   });
 
+  it('reports SharePoint GetAllTables as reproduced by a hand-written tool, not blocked', () => {
+    // GetAllTables is the ONE operation across the three proxy-only Microsoft connectors
+    // that any staged agent actually calls (_diag_ms_op_usage.ts, 131 agents, 2026-08-19).
+    // It is reproduced by `sharepoint_list_lists`, so reporting it as "will not be
+    // recreated" would understate what migrated — the honesty rule cuts both ways.
+    const r = bindOperation(index('shared_sharepointonline'), 'GetAllTables');
+    expect(r.status).toBe('custom-tool');
+    if (r.status !== 'custom-tool') return;
+    expect(r.reason).toContain('sharepoint_list_lists');
+    // The note must state the narrowing, or a customer reads "migrated" as "identical".
+    expect(r.reason).toContain('NARROWED');
+  });
+
+  it('counts a custom-tool operation as ready, while still surfacing its note', () => {
+    const r = connectorReadiness(index('shared_sharepointonline'), ['GetAllTables']);
+    expect(r.ready).toBe(true);
+    expect(r.bindable).toContain('GetAllTables');
+    expect(r.blocked).toHaveLength(0);
+    expect(r.customTool).toHaveLength(1);
+    expect(r.customTool[0].operationId).toBe('GetAllTables');
+  });
+
+  it('does not let a custom tool rescue the rest of a proxy-only connector', () => {
+    // The override is per-operation on purpose. HttpRequest stays refused: reproducing it
+    // faithfully would grant tenant-wide site read.
+    const r = connectorReadiness(index('shared_sharepointonline'), ['GetAllTables', 'HttpRequest']);
+    expect(r.ready).toBe(false);
+    expect(r.blocked.map((b) => b.operationId)).toEqual(['HttpRequest']);
+    expect(r.customTool).toHaveLength(1);
+  });
+
   it('reports an operation the captured index does not have', () => {
     const r = bindOperation(index('shared_confluence'), 'NoSuchOperation');
     expect(r.status).toBe('unknown-operation');

@@ -7,10 +7,16 @@ import { findCandidates } from './services/graphSearch.js';
 import { resolveShareUrlSmart, downloadDriveItemBytes } from './services/graphFiles.js';
 import { buildOrganizationProfile } from './services/organizationProfile.js';
 import { createAgent, defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, ensureAgentAccess, effectiveGeminiProject, type CreateOutcome } from './services/gemini.js';
+import { preflightConnectors } from './services/connectorPreflight.js';
+import { hasDedicatedToolModule } from './connectors/toolModule.js';
+import { findCoverage } from './connectors/coverage.js';
+import { findEquivalence, surfaceForConnector } from './connectors/equivalence.js';
+import { resolveProjectNumber } from './services/adkDeployer.js';
 import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
+import { resolveSurfaceTarget, SURFACE_EQUIVALENTS } from './db/repos/agentSurfaceChoice.js';
 import { connectorsSharingCredentials, connectorSecretId } from './services/connectorCredentials.js';
 import { getAgentConnectorIdentity } from './db/repos/agentConnectorIdentity.js';
 import { readinessFor } from './connectors/readiness.js';
@@ -46,6 +52,7 @@ import { DEFAULT_APP_USER_ID, credentialScope, newId, type Session } from './ses
 import { appendLog, finishRun, saveResult, startRun } from './db/repos/migrations.js';
 import { cacheAgentIR } from './db/repos/agentIR.js';
 import { listStaged, markStaged, stageAgent } from './db/repos/staged.js';
+import { saveRawAgent, rawLandingEnabled, rawRetentionDays } from './db/repos/rawAgents.js';
 import {
   attributeMemory,
   migrateAgentMemory,
@@ -898,11 +905,30 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
 
   // ── PHASE 1 — EXTRACT → stage in DB (parallel, batched) ───────────────────
   emitLog('info', `── Phase 1: extract → stage in DB (${total} agents) ──`);
+  // Announce capture explicitly. Landing unredacted customer payloads must never be a
+  // silent side effect of a config value nobody remembers setting.
+  if (rawLandingEnabled()) {
+    emitLog('info', `Raw payload capture is ON — verbatim Copilot payloads retained for ${rawRetentionDays()} day(s), then auto-deleted`);
+  }
   let extracted = 0;
   await mapPool(workItems, CONCURRENCY, async (item) => {
     try {
       const token = await tokenFor(item.envUrl);
-      const ir = await extractAgent(item.envUrl, token, item.bot);
+      // Land the verbatim payload before parsing, when the operator has opted in. The sink
+      // is fire-and-forget: `saveRawAgent` never throws and never blocks, so a diagnostic
+      // capture cannot slow or fail the extraction it exists to explain.
+      const ir = await extractAgent(item.envUrl, token, item.bot, (raw) => {
+        void saveRawAgent({
+          appUserId,
+          runId,
+          envUrl: raw.envUrl,
+          sourceId: raw.sourceId,
+          sourceName: raw.sourceName,
+          components: raw.components,
+          botRecord: raw.botRecord,
+          disabledComponentNames: raw.disabledComponentNames,
+        });
+      });
       // Compile topics ONCE (Topic → Capability → Connected-Agent plan) so a
       // flat, queryable copy of the capabilities can be staged. Topics are not
       // migrated in this phase, so the plan is not surfaced in the fidelity
@@ -1244,13 +1270,19 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
           result.knowledgeTableRowsIndexed = (result.knowledgeTableRowsIndexed ?? 0) + snap.succeeded;
           result.knowledgeTableRowsFailed = (result.knowledgeTableRowsFailed ?? 0) + snap.failed;
           const via = snap.viaBigQuery ? ' (via BigQuery)' : '';
-          const sampleText = snap.failureSamples?.length ? ` | sample errors: ${snap.failureSamples.join(' || ')}` : '';
           emitLog(
             snap.error || snap.failed ? 'warn' : 'ok',
             `    Dataverse snapshot "${src.name}"${via}: ${snap.succeeded}/${snap.attempted} row(s) indexed` +
               (snap.failed ? `, ${snap.failed} failed` : '') +
               (snap.error ? ` — ${snap.error}` : '') +
-              sampleText,
+              // WHY the rows failed, not just how many. Discovery Engine returns per-row
+              // errorSamples and they were reconciled all the way up to this result, then
+              // dropped here — so a 0/198 import printed a count and no cause, and the
+              // only way to learn anything was to re-run with a debugger. A failure we
+              // captured and chose not to show is worse than one we never captured.
+              (snap.failureSamples?.length
+                ? ` — ${snap.failureSamples.slice(0, 2).join('; ')}`
+                : ''),
           );
           // Row counts/logs are path-independent — always reported once,
           // here. The "grounded via X" headline note is path-specific and
@@ -1605,6 +1637,10 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
       /** How many data stores the ADK deploy was given — drives whether verification
        *  requires the agent to retrieve something. */
       let adkGroundedStoreCount = 0;
+      // Tool names actually wired onto this agent, carried out to verification. Declared
+      // here, beside the other verify inputs, because the bound-tool build happens in a
+      // deeper block that verification cannot see into.
+      let adkWiredToolNames: string[] = [];
       // True when the agent was created via low-code + dataStoreSpecs (native
       // grounding), bypassing ADK/RE entirely for connector-grounded agents.
       let usedDataStoreSpecs = false;
@@ -1977,6 +2013,29 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
               // difference, but it is `partial`, not `lost`.
               const hasLiveTool = liveConnectorSpecs.some((c) => c.id === connectorId);
               for (const blockedOp of readiness.blocked) {
+                // A judged operation gets its real verdict: the TOOL that serves it, whether
+                // it was proven live, and what is actually narrowed. The generic wording
+                // below ("decides its own arguments at conversation time") is true but says
+                // nothing a customer can check — and for connectors with a hand-written
+                // module it understates the case badly, because a purpose-built tool is not
+                // a degraded replay of the original call. See connectors/coverage.ts.
+                const cov = findCoverage(connectorId, blockedOp.operationId);
+                if (cov && cov.fidelity !== 'lost' && cov.tool) {
+                  result.fidelity.push({
+                    component: `connector:${connectorId}:${blockedOp.operationId}`,
+                    status: cov.fidelity === 'exact' ? 'mapped' : 'partial',
+                    detail:
+                      `"${cov.label}" (${blockedOp.operationId}) is served by the ` +
+                      `${cov.tool} tool${cov.verified ? ', proven against a real tenant' : ''}. ` +
+                      (cov.reason ? `${cov.reason}` : 'No information is lost.'),
+                  });
+                  emitLog(
+                    'info',
+                    `  ${row.name}: ${connectorId}.${blockedOp.operationId} -> ${cov.tool}` +
+                      ` (${cov.fidelity}${cov.verified ? ', verified' : ''}).`,
+                  );
+                  continue;
+                }
                 result.fidelity.push({
                   component: `connector:${connectorId}:${blockedOp.operationId}`,
                   status: hasLiveTool ? 'partial' : 'lost',
@@ -2027,12 +2086,171 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
                 ? { ...withBound, scopeUri: spScopeUri, scopeUris: spScopeUris.length ? spScopeUris : undefined }
                 : withBound;
             });
-            const boundCount = [...boundBuild.byConnector.values()].reduce((n, l) => n + l.length, 0);
+            // Mailbox chosen per agent, applied as a per-agent secret further down.
+            const surfaceMailboxes = new Map<string, string>();
+            // CROSS-VENDOR SUBSTITUTION: Outlook -> Gmail, and only when the customer said so.
+            //
+            // Every other connector is same-vendor, so wiring it needs no decision. A mailbox
+            // does: the source agent read Microsoft mail, and whether it should now read
+            // Google mail is the customer's call. `resolveSurfaceTarget` returns null unless
+            // an explicit 'migrate' was recorded, so an UNDECIDED agent gets no mail tools —
+            // silence never reads as consent for a mailbox.
+            //
+            // The substitution ADDS a spec rather than replacing one: shared_office365 is
+            // proxy-only and never produced a live tool, so there is nothing to replace.
+            for (const msConnectorId of Object.keys(SURFACE_EQUIVALENTS)) {
+              if (!usedConnectorIds.has(msConnectorId)) continue;
+              const target = await resolveSurfaceTarget(appUserId, row.sourceId, msConnectorId);
+              const eq = SURFACE_EQUIVALENTS[msConnectorId];
+              const chosen = target && eq.targets.find((t) => t.connectorId === target.targetConnectorId);
+              if (!target || !chosen) {
+                result.fidelity.push({
+                  component: `surface:${msConnectorId}`,
+                  status: 'needs-review',
+                  detail:
+                    `This agent uses ${eq.sourceName} and has NO ${eq.noun} tools, because no decision ` +
+                    `was recorded for it. On the connector screen choose ` +
+                    `${eq.targets.map((t) => t.name).join(' or ')} — or explicitly skip ${eq.noun} — then re-run.`,
+                });
+                emitLog('warn', `  ${row.name}: uses ${eq.sourceName}; no decision recorded — no ${eq.noun} tools wired.`);
+                continue;
+              }
+              // Build through the SAME builder every other connector uses, so the Gmail spec
+              // gets its secret ids, auth kind and scope from the registry rather than a
+              // hand-rolled copy that can drift.
+              // For Teams the "keep Microsoft" target IS the source connector id, so the
+              // same-vendor path has already built its spec. Adding it again would give the
+              // agent two identical tool sets and a confused model. Mail never hit this
+              // because shared_office365 is proxy-only and produced no spec to collide with.
+              const already = scopedConnectors.some((c) => c.id === target.targetConnectorId);
+              const built = already
+                ? { specs: [], unsupported: [] }
+                : buildLiveConnectorSpecsDetailed([target.targetConnectorId], secretIdOpts);
+              // WHICH mailbox is not carried on the spec — it becomes a per-agent secret
+              // further down, exactly as the Drive identity does. Recorded here and applied
+              // there so both cross-vendor identities go through one mechanism.
+              if (target.impersonateEmail) {
+                surfaceMailboxes.set(target.targetConnectorId, target.impersonateEmail);
+              }
+              scopedConnectors = [...scopedConnectors, ...built.specs];
+              if (!built.specs.length && !already) {
+                result.fidelity.push({
+                  component: `surface:${msConnectorId}`,
+                  status: 'lost',
+                  detail:
+                    `"${chosen.name}" was chosen for this agent but its credential is not configured, ` +
+                    `so no ${eq.noun} tools were wired. Add the credential and re-run.`,
+                });
+                emitLog('fail', `  ${row.name}: "${chosen.name}" chosen but no credential configured — no ${eq.noun} tools wired.`);
+                continue;
+              }
+              result.fidelity.push({
+                component: `surface:${msConnectorId}`,
+                status: 'partial',
+                detail:
+                  `${eq.sourceName}: ${chosen.name}` +
+                  `${target.impersonateEmail ? ` (mailbox: ${target.impersonateEmail})` : ''}. ${chosen.summary}`,
+              });
+              emitLog('ok', `  ${row.name}: ${eq.sourceName} -> ${chosen.name}${target.impersonateEmail ? ` (${target.impersonateEmail})` : ''}`);
+            }
+
+            // Counted per connector, because a bound operation only reaches the deployed
+            // agent when its connector falls through to the generic REST builder. Claiming
+            // the total made the log announce exact-argument replays that were dropped
+            // moments later by the Python dispatch (see connectors/toolModule.ts).
+            let boundCount = 0;
+            const boundDropped: string[] = [];
+            for (const [connectorId, specs] of boundBuild.byConnector) {
+              const spec = scopedConnectors.find((c) => c.id === connectorId);
+              if (hasDedicatedToolModule(spec?.kind ?? connectorId)) {
+                boundDropped.push(`${spec?.name ?? connectorId} (${specs.length})`);
+              } else {
+                boundCount += specs.length;
+              }
+            }
             if (boundCount) {
               emitLog(
                 'info',
                 `    ${row.name}: ${boundCount} connector operation(s) rebuilt as exact API calls with the source agent's own arguments.`,
               );
+            }
+            if (boundDropped.length) {
+              // Not a failure: these connectors ship purpose-built tools that cover the same
+              // ground more reliably than a replayed swagger call. Said out loud anyway,
+              // because "exact-argument replay" and "general-purpose tool" are different
+              // promises and the report must not blur them.
+              emitLog(
+                'info',
+                `    ${row.name}: ${boundDropped.join(', ')} use purpose-built tools rather than ` +
+                  'exact-argument replays — capability is reported per operation below.',
+              );
+
+              // ...AND ACTUALLY REPORT IT, which that sentence had been promising without
+              // delivering.
+              //
+              // findCoverage was consulted in exactly one place: the loop over
+              // `readiness.blocked`. There is no loop over the BINDABLE operations, so an
+              // operation that binds emits no per-operation note — and for a connector with a
+              // dedicated Python module the bound spec is then DROPPED at deploy
+              // (connectors/toolModule.ts). The result was silence about the operations we
+              // know the most about. Measured 2026-08-20 with
+              // `_diag_bindable_vs_blocked.ts`: 13 operations across Confluence (4), Jira (6)
+              // and HubSpot (3) had a verified coverage row that never reached the customer,
+              // including six Jira operations on 34 agents. Drive's eleven were reported only
+              // because they happen to be blocked rather than bindable — an accident of the
+              // captured swagger, not a design.
+              for (const [connectorId, specs] of boundBuild.byConnector) {
+                const spec = scopedConnectors.find((c) => c.id === connectorId);
+                if (!hasDedicatedToolModule(spec?.kind ?? connectorId)) continue;
+                const seen = new Set<string>();
+                for (const bound of specs) {
+                  if (seen.has(bound.operationId)) continue;
+                  seen.add(bound.operationId);
+                  const cov = findCoverage(connectorId, bound.operationId);
+                  if (cov && cov.fidelity !== 'lost' && cov.tool) {
+                    result.fidelity.push({
+                      component: `connector:${connectorId}:${bound.operationId}`,
+                      status: cov.fidelity === 'exact' ? 'mapped' : 'partial',
+                      detail:
+                        `"${cov.label}" (${bound.operationId}) is served by the ${cov.tool} ` +
+                        `tool${cov.verified ? ', proven against a real tenant' : ''}. ` +
+                        (cov.reason ? cov.reason : 'No information is lost.'),
+                    });
+                    continue;
+                  }
+                  // TWO tables, for two kinds of move, and checking only one mislabels the
+                  // other's rows as unjudged. coverage.ts is same-vendor and keyed by
+                  // connectorId; equivalence.ts is cross-vendor and keyed by M365Surface.
+                  // SharePoint's GetAllTables lives in the second one, so a coverage-only
+                  // check would have reported a proven capability as needing review.
+                  const surface = surfaceForConnector(connectorId);
+                  const eq = surface ? findEquivalence(surface, bound.operationId) : undefined;
+                  if (eq && eq.fidelity !== 'lost' && (eq.tool || eq.graph?.tool)) {
+                    const tool = eq.tool ?? eq.graph!.tool!;
+                    const proven = eq.verified || eq.graph?.verified;
+                    result.fidelity.push({
+                      component: `connector:${connectorId}:${bound.operationId}`,
+                      status: eq.fidelity === 'exact' ? 'mapped' : 'partial',
+                      detail:
+                        `"${eq.label}" (${bound.operationId}) is served by the ${tool} tool` +
+                        `${proven ? ', proven against a real tenant' : ''}. ` +
+                        (eq.reason ? eq.reason : 'No information is lost.'),
+                    });
+                    continue;
+                  }
+                  // No verdict for this operation. Say THAT, rather than nothing: an
+                  // unjudged operation and a judged-and-fine one must not look identical.
+                  result.fidelity.push({
+                    component: `connector:${connectorId}:${bound.operationId}`,
+                    status: 'needs-review',
+                    detail:
+                      `This agent calls "${bound.operationId}" on ${spec?.name ?? connectorId}. ` +
+                      `The migrated agent has purpose-built ${spec?.name ?? connectorId} tools, ` +
+                      'but nobody has confirmed which of them answers this specific operation — ' +
+                      'compare a result against the original agent before relying on it.',
+                  });
+                }
+              }
             }
 
             // Google Drive needs a PER-AGENT identity — the shared service-account key
@@ -2053,6 +2271,28 @@ async function execute(session: Session, plan: ResolvedPlan, emit: Emit): Promis
             // harmless (ensureSecretInProject no-ops on a source miss) but indistinguishable
             // from a real failure in the logs.
             const destScopedSecretIds = new Set<string>();
+
+            // Per-agent MAILBOX for a cross-vendor surface (Outlook -> Gmail). Same mechanism
+            // as the Drive identity below: the service-account key is shared across the
+            // migration, but WHICH mailbox an agent reads is a per-agent fact, so it travels
+            // as an agent-scoped secret rather than a migration-wide one.
+            for (const [targetConnectorId, mailbox] of surfaceMailboxes) {
+              const idx = scopedConnectors.findIndex((c) => c.id === targetConnectorId);
+              if (idx === -1) continue;
+              const agentSecretId = connectorSecretId(
+                `${targetConnectorId}:agent-${row.sourceId}`,
+                'impersonate_email',
+                credentialScope(session),
+              );
+              await upsertSecretIfChanged(saToken, dest.project, agentSecretId, mailbox);
+              destScopedSecretIds.add(agentSecretId);
+              const entry = scopedConnectors[idx];
+              scopedConnectors = scopedConnectors.map((c, i) =>
+                i === idx ? { ...c, secretIds: { ...entry.secretIds, impersonate_email: agentSecretId } } : c,
+              );
+              emitLog('info', `    ${row.name}: ${entry.name} will act as ${mailbox}.`);
+            }
+
             const driveIndex = scopedConnectors.findIndex((c) => c.id === 'shared_googledrive');
             if (driveIndex !== -1) {
               const identity = await getAgentConnectorIdentity(appUserId, row.sourceId, 'shared_googledrive');
@@ -2149,6 +2389,57 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
             // restricted-sharing agents there was routing them to the path that doesn't work,
             // not the safer one.
 
+            // GATE: will this agent's connectors actually work once deployed?
+            //
+            // Placed here, after the secrets have been synced into the destination project
+            // and before anything is built, because this is the last moment the answer can
+            // change the outcome. Deploy behaviour is frozen into the Reasoning Engine
+            // pickle, so a connector that cannot authenticate at inference stays broken for
+            // the life of that engine — and the failure is invisible until a customer asks
+            // the agent a question and gets an apology.
+            //
+            // It does NOT abort the migration. A blocked connector is a real problem the
+            // customer can fix (a grant, a re-entered credential) and the rest of the agent
+            // — instructions, knowledge, topics — is still worth migrating. What it does is
+            // make the problem impossible to miss: a warning in the run log and a
+            // `needs-review` note against the agent, instead of a green `deployed=true`.
+            if (scopedConnectors.length) {
+              const preflightProjectNumber = await resolveProjectNumber(dest.project, saToken);
+              if (preflightProjectNumber) {
+                const checks = await preflightConnectors(
+                  saToken,
+                  dest.project,
+                  preflightProjectNumber,
+                  scopedConnectors.map((c) => ({
+                    connectorId: c.id,
+                    name: c.name ?? c.id,
+                    secretIds: c.secretIds ?? {},
+                  })),
+                );
+                for (const check of checks.filter((c) => !c.ok)) {
+                  emitLog(
+                    'warn',
+                    `    ${row.name}: ${check.name} will NOT work once deployed - ${check.detail}`,
+                  );
+                  result.fidelity.push({
+                    component: `connector:${check.connectorId}`,
+                    status: 'needs-review',
+                    detail:
+                      `${check.detail} Until this is fixed the migrated agent has this tool but ` +
+                      'every call to it fails, so treat the connector as unmigrated rather than working.',
+                  });
+                }
+                const good = checks.filter((c) => c.ok).length;
+                if (good) {
+                  emitLog(
+                    'info',
+                    `    ${row.name}: ${good}/${checks.length} connector(s) passed pre-flight ` +
+                      '(credentials present, readable by the deployed agent).',
+                  );
+                }
+              }
+            }
+
             const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, {
               websiteSource,
               groundingDataStores,
@@ -2174,6 +2465,11 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
             // this check existed).
             if (adk.ok && adk.agentId && adk.reasoningEngine) {
               adkReasoningEngineId = adk.reasoningEngine.split('/').pop();
+              // Prefer what the worker really built over what the server planned. An empty
+              // array from the worker is meaningful (an agent with no function tools) and is
+              // NOT overwritten with the planned list — that would resurrect the false
+              // expectation this replaced.
+              if (adk.toolNames) adkWiredToolNames = adk.toolNames;
               adkGroundedStoreCount = groundingDataStores.length;
               for (const name of groundedFileNames) {
                 result.fidelity.push({
@@ -2201,6 +2497,34 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               const boundOpsByConnector = new Map<string, Set<string>>(
                 [...boundBuild.byConnector].map(([id, specs]) => [id, new Set(specs.map((s) => s.operationId))]),
               );
+              // The same specs by TOOL name — what the deployed agent should be able to
+              // call. Verification asks the deployment for its inventory and compares.
+              //
+              // ONLY for connectors whose bound operations actually survive the deploy. A
+              // connector with a hand-written Python module (`connector_tools/<kind>.py`)
+              // gets that module's own tools and never sees `boundOperations` — so listing
+              // bound names here made verification demand tools that were never going to
+              // exist. Measured 2026-08-20: "Teams Coordinator" was reported as
+              // "4 operations rebuilt as exact API calls", then failed verification with
+              // "none of the 4 wired tool(s) are present" while its nine Teams read tools
+              // were deployed and working. The agent was fine; the expectation was wrong.
+              // GROUND TRUTH FIRST: the worker reports the tool names it actually wired
+              // (`adk.toolNames`), and that is what verification is given a few lines below.
+              // This server-side list is only the fallback for an older worker that does not
+              // report them.
+              //
+              // Neither of the obvious server-side answers works. Listing every bound
+              // operation demands tools that a hand-written Python module discards, which
+              // failed a working agent (measured 2026-08-20: "none of the 4 wired tool(s) are
+              // present" while nine Teams read tools were deployed and fine). Filtering those
+              // out leaves the list EMPTY for such connectors, and verify.ts skips the check
+              // when it is empty — a vacuous pass, which is the worse of the two errors.
+              adkWiredToolNames = [...boundBuild.byConnector]
+                .filter(([connectorId]) => {
+                  const spec = scopedConnectors.find((c) => c.id === connectorId);
+                  return !hasDedicatedToolModule(spec?.kind ?? connectorId);
+                })
+                .flatMap(([, specs]) => specs.map((sp) => sp.toolName));
               // Agents in THIS run, so a connected-agent tool can say whether its target
               // is migrating alongside it (reconnect them) or is not in scope at all
               // (migrate it first). "Migrate the other agent" is useless advice when the
@@ -2516,6 +2840,10 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                 (snap.viaBigQuery ? ` via BigQuery (${snap.attempted} row(s), large-table path)` : ` inline (${snap.attempted} row(s))`) +
                 ` — ${snap.succeeded}/${snap.attempted} row(s) indexed` +
                 (snap.failed ? `, ${snap.failed} failed` : '') +
+                // The customer reads this note, not the server log. "20 failed" with no
+                // reason is unactionable; it reads as a tool defect when it is usually a
+                // schema or permission problem they can fix.
+                (snap.failureSamples?.length ? ` (${snap.failureSamples.slice(0, 2).join('; ')})` : '') +
                 (usedDataStoreSpecs
                   ? '. Grounded per-agent via dataStoreSpecs — not engine-wide. Point-in-time snapshot, refresh by re-running the migration.'
                   : '. Point-in-time snapshot, not a live connection — refresh by re-running the migration.'),
@@ -2888,16 +3216,38 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
           reasoningEngineId: adkReasoningEngineId,
           // Only demand retrieval from agents we actually gave knowledge to.
           expectsGrounding: adkGroundedStoreCount > 0,
+          // Grounding proves the DATA STORES are reachable and says nothing about the
+          // connector tools. Without this an agent could deploy with every Jira tool
+          // missing and still report verified.
+          expectsTools: adkWiredToolNames,
         });
         result.verified = v.verified;
+        result.verifyStatus = v.status;
         result.verifySample = v.sample;
-        if (!v.verified && v.note) {
+        if (v.status === 'failed' && v.note) {
           result.fidelity.push({
             component: 'verification',
             status: 'needs-review',
             detail: `The migrated agent was created but did not pass a live probe: ${v.note}.`,
           });
-          emitLog('warn', `  ${row.name}: verification failed — ${v.note}`);
+          emitLog('warn', `  ${row.name}: verification FAILED — ${v.note}`);
+        } else if (v.status === 'unknown' && v.note) {
+          // Distinct from a failure on purpose. "We could not check" used to be reported
+          // as a pass, which is the most misleading thing this pipeline did: a customer
+          // saw `verified` on an agent nobody had ever successfully probed.
+          result.fidelity.push({
+            component: 'verification',
+            status: 'needs-review',
+            detail: `The migrated agent was created, but we could NOT confirm it works: ${v.note}. This is not a failure — it is an unverified migration, and it needs a manual check.`,
+          });
+          emitLog('warn', `  ${row.name}: verification UNKNOWN — ${v.note}`);
+        }
+        if (v.toolsMissing?.length) {
+          result.fidelity.push({
+            component: 'verification:tools',
+            status: 'needs-review',
+            detail: `Tools wired during migration but absent from the deployed agent: ${v.toolsMissing.join(', ')}. The agent will not be able to perform those actions.`,
+          });
         }
         // ── Agent memory ─────────────────────────────────────────────────────
         //

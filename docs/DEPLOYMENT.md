@@ -232,7 +232,8 @@ Compose mounts it read-only at `/run/secrets/service_account.json`. It is never 
 into an image — the images go to GHCR and the repo is public.
 
 ```bash
-chmod 600 /data/studio-ent/.env /data/studio-ent/service_account.json
+chmod 600 /data/studio-ent/.env                 # host-side only
+chmod 640 /data/studio-ent/service_account.json # container must read it (§5)
 ```
 
 ---
@@ -259,7 +260,8 @@ Only nginx needs root. Everything else is `laxman`.
 # --- as laxman ---
 cd /data/studio-ent
 # put .env and service_account.json in place, then:
-chmod 600 .env service_account.json
+chmod 600 .env                  # read by compose ON THE HOST, as laxman
+chmod 640 service_account.json  # bind-mounted INTO the container — see "640, not 600"
 
 # --- as root: nginx is shared with 40 other sites ---
 cp deploy/nginx-csge.conf /etc/nginx/sites-available/csge
@@ -433,6 +435,7 @@ cd server && npx tsx src/spikes/_diag_probe_connectors.ts
 | Symptom | Cause |
 |---|---|
 | deploy fails at preflight naming `service_account.json` | file missing — without it Node still authenticates and only ADK deploys fail (§5) |
+| "Google Workspace directory couldn't be read", or any `EACCES` on `/run/secrets/service_account.json` | the key is mode 600 and the container runs as a different uid. `chmod 640` + `group_add` — NOT 644. The DWD hint in that message is a red herring |
 | `api` restart-loops immediately | missing/misnamed secret in `.env`; `docker compose logs api` names it — `config.ts` is fail-fast by design |
 | `api` exits with `EADDRINUSE` | something bypassed compose's `PORT: 8083`; 8080 is `ats-app` |
 | `/api/health` returns another app's JSON | curled the bare IP with no `Host:` header on a 41-site nginx |

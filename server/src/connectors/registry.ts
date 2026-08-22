@@ -168,6 +168,23 @@ const MS_GRAPH_FIELDS: CredentialField[] = [
     hint: 'Azure Portal -> App registrations -> your app -> Application (client) ID' },
   { key: 'client_secret', label: 'Client Secret', type: 'password',
     hint: 'Azure Portal -> App registrations -> Certificates & secrets -> New client secret. Grant the app the Graph application permissions the agent needs, then Grant admin consent.' },
+  // WHOSE data the Microsoft tools read. App-only Graph reaches every mailbox and chat in the
+  // tenant, so the tools refuse to guess and ask for this by name.
+  //
+  // It was missing, and the failure had no way out: teams.py reads `secret("impersonate_email")`,
+  // nothing declared it, so it never entered `secretIds`, the container read an empty string,
+  // and every Teams tool answered "No user is configured for this agent — set the Teams user on
+  // the connector screen." There was no such field on that screen. Saving the secret by hand did
+  // not help either, because nothing referenced it. Confirmed live 2026-08-22.
+  //
+  // Optional: leave it blank and the Microsoft tools act as the app where that is meaningful
+  // (SharePoint sites), and refuse where it is not (Teams chats belong to a person). A per-AGENT
+  // mailbox recorded on the connector screen still overrides this — see the surface-mailbox
+  // handling in orchestrator.ts, which writes an agent-scoped secret and swaps it into
+  // `secretIds` for that agent only. This is the tenant-wide default beneath that.
+  { key: 'impersonate_email', label: 'Act as user (email)', type: 'text',
+    placeholder: 'person@yourcompany.com',
+    hint: 'The Microsoft 365 user whose Teams chats, mail and files the agent reads. Required for Teams; optional for SharePoint. Per-agent choices override this.' },
 ];
 
 // The Microsoft group's fields are MS_GRAPH_FIELDS, assigned here so the constant
@@ -231,6 +248,34 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     requiredPermissions: ['crm.objects.contacts.read', 'crm.objects.companies.read'],
     permissionsHint:
       'Same private app token as every other HubSpot connector — the customer is not asked twice.',
+    baseUrlTemplate: 'https://api.hubapi.com',
+    authHeaderTemplate: 'Bearer {api_key}',
+  },
+
+  {
+    // MEASURED, not guessed. `shared_hubspotcms` was found on a real staged agent by
+    // `_diag_connector_census.ts` — an id no hand-written Tier-1 list contained. Without an
+    // entry here the connector is reported as unsupported and gets NO TOOL AT ALL, and it was
+    // in the worst possible state: `hasDedicatedToolModule` answers TRUE for it (the Python
+    // dispatch matches any kind starting "hubspot"), so the pipeline announced that its bound
+    // operations were dropped in favour of purpose-built tools while building no spec to
+    // carry them. Same class as the other HubSpot ids in ledger 1.10.
+    id: 'shared_hubspotcms',
+    name: 'HubSpot CMS (Independent Publisher)',
+    category: 'crm',
+    icon: '🟠',
+    docsUrl: 'https://developers.hubspot.com/docs/api/cms/templates',
+    credentialGroup: 'hubspot',
+    credentials: [],
+    // A CMS scope is a DIFFERENT FAMILY from the CRM ones and is not implied by them.
+    // Measured 2026-08-21: /content/api/v2/templates answered 403 naming exactly these, and
+    // /cms/v3/design-manager/templates does not exist (404).
+    requiredPermissions: ['design-manager-access', 'content-editor-access', 'landingpages-read'],
+    permissionsHint:
+      'CMS access is separate from CRM access. A private app token with the CRM scopes still ' +
+      'gets 403 on templates — the app needs one of design-manager-access, ' +
+      'content-editor-access or landingpages-read (newer CMS APIs also want `content`). ' +
+      'Scopes are fixed when a private app is created, so adding one means issuing a new token.',
     baseUrlTemplate: 'https://api.hubapi.com',
     authHeaderTemplate: 'Bearer {api_key}',
   },
@@ -572,6 +617,152 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     // separate 'drive.readonly' scope string (exact-match, not hierarchical), so a
     // customer who only grants the broad scope still needs this to be the same one.
     scope: 'https://www.googleapis.com/auth/drive',
+  },
+
+  {
+    id: 'shared_gmail',
+    name: 'Gmail',
+    category: 'storage',
+    icon: '✉️',
+    docsUrl: 'https://developers.google.com/gmail/api/reference/rest',
+    requiredPermissions: ['https://www.googleapis.com/auth/gmail.modify'],
+    // CROSS-VENDOR. Every other entry in this registry is the destination for the SAME
+    // vendor's connector. This one is the Google destination for Microsoft's Office 365
+    // Outlook connector — a migrated agent that read Outlook mail gets these tools instead.
+    // The per-operation fidelity (folders vs labels, flags vs stars, what is simply lost) is
+    // in src/connectors/equivalence.ts, and the customer sees it in the report.
+    //
+    // Offered per agent, never applied automatically: whether an Outlook agent SHOULD read
+    // Gmail is the customer's call, and a mailbox is more sensitive than a file share.
+    permissionsHint:
+      'Create this service account in your OWN Google Cloud project, then authorize its Client ID for domain-wide delegation in your Workspace admin console with the scope below. NOTE: scope strings are matched EXACTLY — granting a broader scope such as mail.google.com does NOT satisfy gmail.modify. One key covers every agent; WHICH mailbox each agent reads is set per-agent on the next screen.',
+    credentials: [
+      { key: 'service_account_json', label: 'Service Account JSON key (your own project)', type: 'password',
+        placeholder: '{"type":"service_account","project_id":...}',
+        hint: 'Google Cloud Console -> IAM & Admin -> Service Accounts -> Create Service Account -> Keys -> Add key (JSON). Paste the whole file.' },
+    ],
+    baseUrlTemplate: 'https://gmail.googleapis.com/gmail/v1',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'google-service-account',
+    // `gmail.modify` covers read, drafts, labels, star, read-state, trash AND send — one
+    // scope for all 15 tools. `gmail.readonly` alone leaves the agent half working: the read
+    // tools succeed and every write fails at token-mint time, which reads as a code bug
+    // rather than a missing grant (confirmed live 2026-08-19).
+    // Deliberately NOT mail.google.com: that scope also permits PERMANENT deletion, which no
+    // tool here does or should.
+    scope: 'https://www.googleapis.com/auth/gmail.modify',
+  },
+
+  {
+    id: 'shared_googlechat',
+    name: 'Google Chat',
+    category: 'messaging',
+    icon: '💬',
+    docsUrl: 'https://developers.google.com/workspace/chat/api/reference/rest',
+    requiredPermissions: [
+      // Required — the connector does not work without these two.
+      'https://www.googleapis.com/auth/chat.messages',
+      'https://www.googleapis.com/auth/chat.spaces',
+      // OPTIONAL, deliberately NOT in `scope`: each unlocks one tool, and including an
+      // ungranted one in the token request breaks every other tool. See the note on `scope`.
+      'https://www.googleapis.com/auth/chat.memberships.readonly (optional — enables listing space members)',
+      'https://www.googleapis.com/auth/chat.spaces.create (optional — enables creating spaces)',
+    ],
+    // CROSS-VENDOR, the second one after shared_gmail: the Google destination for Microsoft's
+    // Teams connector. Per-operation fidelity lives in src/connectors/equivalence.ts.
+    //
+    // Chat is a HARDER target than Gmail, and not because of the API surface:
+    //   - Chat is FLAT. A Team containing many Channels has no equivalent; both collapse to
+    //     one Space, so "which team is this channel in" stops having an answer.
+    //   - Chat has two identity models. A service account can act as a registered CHAT APP
+    //     (which must be a member of every space it touches), or impersonate a user through
+    //     domain-wide delegation. Whether DWD works for Chat is UNPROVEN here — Google
+    //     documents Chat auth differently from Gmail. The tools are written so the same code
+    //     serves both: impersonate_email set = act as that user; unset = act as the app.
+    //   - Interactive surfaces do not carry over at all. Posting a card works; a card the
+    //     user can click does not, because that needs an app receiving events, and a
+    //     deployed agent is a tool CALLER, not a hosted app.
+    // MEASURED 2026-08-20, not inferred: DWD reads work as the impersonated person, but
+    // message CREATION returns 404 "Google Chat app not found" until the Cloud project has a
+    // Chat app configured. Reading and writing therefore have different prerequisites, which
+    // the hint has to say or a customer grants the scopes and still cannot post.
+    permissionsHint:
+      'READING needs the service account Client ID authorized for domain-wide delegation with the scopes below, exactly as written — scope strings are matched EXACTLY. POSTING additionally needs a Chat app configured on the Cloud project (Google Cloud Console -> Chat API -> Configuration). Without it every send returns 404 "Google Chat app not found", however many scopes are granted. Note that once configured, the agent posts AS THE APP and everyone in the space sees that, rather than posting as a person.',
+    credentials: [
+      { key: 'service_account_json', label: 'Service Account JSON key (your own project)', type: 'password',
+        placeholder: '{"type":"service_account","project_id":...}',
+        hint: 'Google Cloud Console -> IAM & Admin -> Service Accounts -> Create Service Account -> Keys -> Add key (JSON). Paste the whole file. Enable the Google Chat API on that project.' },
+      // Which person the Chat tools act as, through domain-wide delegation. Unset = act as the
+      // app, which only sees spaces the app was added to.
+      { key: 'impersonate_email', label: 'Act as user (email)', type: 'text',
+        placeholder: 'person@yourcompany.com',
+        hint: 'The Workspace user whose Chat spaces and messages the agent reads.' },
+      // THE WRITE GATE. chat.py withholds chat_send_message, chat_reply_to_message,
+      // chat_send_card, chat_update_message and chat_create_space unless this reads true,
+      // because message creation returns 404 "Google Chat app not found" until the Cloud
+      // project has a Chat app configured (measured 2026-08-20) and a model handed a send tool
+      // that always 404s will retry, apologise, and report the failure as its own.
+      //
+      // The gate was unreachable: chat.py read `secret("chat_app_configured")` and no field
+      // declared it, so it could never be set and the five write tools could never appear.
+      // Since Microsoft forbids app-only message POSTs outside import, Google Chat is the ONLY
+      // path to a working send — which made this the single field standing between the product
+      // and any messaging write at all. Found 2026-08-22.
+      { key: 'chat_app_configured', label: 'Chat app configured? (true/false)', type: 'text',
+        placeholder: 'false',
+        hint: 'Set to "true" only after creating a Chat app in the same Google Cloud project (Google Chat API -> Configuration). Until then message-sending tools are withheld, because Chat answers 404 without one.' },
+    ],
+    baseUrlTemplate: 'https://chat.googleapis.com/v1',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'google-service-account',
+    // Read AND write in one grant, mirroring the gmail.modify decision: a half-scoped agent
+    // whose reads work and whose writes fail at token-mint time reads as a code bug rather
+    // than a missing grant. `chat.spaces` covers listing and creating spaces; `chat.messages`
+    // covers reading and posting. Deliberately NOT chat.delete: no tool here deletes a space.
+    // EXACTLY the two scopes the always-on tools need, and no more.
+    //
+    // This list was briefly four. Adding chat.spaces.create and chat.memberships.readonly —
+    // both real, both needed by one tool each — broke the connector ENTIRELY: domain-wide
+    // delegation refuses the WHOLE token request when any single scope in it is ungranted,
+    // so a deployed agent's chat_list_spaces failed with `unauthorized_client` even though
+    // its own scope was granted (measured on RE 1580263741172219904).
+    //
+    // The rule that follows: a connector's `scope` is the minimum its core tools need. An
+    // aspirational scope is not forward-looking, it is an outage for every customer who has
+    // not granted it yet. Optional capabilities go in requiredPermissions as optional, and
+    // their tools report the missing grant themselves.
+    scope:
+      'https://www.googleapis.com/auth/chat.messages ' +
+      'https://www.googleapis.com/auth/chat.spaces',
+  },
+
+
+  {
+    id: 'shared_outlook',
+    name: 'Outlook (stay on Microsoft 365)',
+    category: 'storage',
+    icon: '📧',
+    docsUrl: 'https://learn.microsoft.com/en-us/graph/api/resources/message',
+    requiredPermissions: ['Mail.ReadWrite', 'Mail.Send'],
+    // The OTHER destination for Copilot's Office 365 Outlook connector. Chosen when the
+    // agent migrates to Gemini but the mail platform is NOT moving — a phased migration, or
+    // a customer who only ever wanted the agent moved. Nothing is translated on this path,
+    // so none of the equivalence.ts fidelity notes apply: folders stay folders, flags keep
+    // their due dates, categories keep their colours.
+    //
+    // shared_office365 (the Copilot connector) stays `proxy-only` and unbindable — its
+    // swagger describes a Power Platform dataset abstraction. This entry is the Graph
+    // rebuild, which is why it is a separate id rather than a binding for that one.
+    permissionsHint:
+      'In your Entra app registration add the APPLICATION permissions Mail.ReadWrite and Mail.Send (not delegated), then grant admin consent. App-only access reaches every mailbox in the tenant, so WHICH mailbox each agent reads is set per-agent on the next screen.',
+    credentials: [], // supplied by the ms_graph credential group
+    credentialGroup: 'ms_graph',
+    adminConsentRequired: true,
+    baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'oauth2-client-credentials',
+    tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+    scope: 'https://graph.microsoft.com/.default',
   },
 
   // ── Marketing ──────────────────────────────────────────────────────────────

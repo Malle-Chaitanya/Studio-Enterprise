@@ -99,6 +99,32 @@ services:
       # published to GHCR and the repo is public.
       - /data/studio-ent/service_account.json:/run/secrets/service_account.json:ro
 
+    # Read access to that key, without making it world-readable.
+    #
+    # A bind mount carries the HOST's uid/gid and mode through unchanged. The key is
+    # owned by laxman (1005) at mode 600, and the container drops to csge (uid 10001)
+    # — so the container is not the owner, 600 means owner-only, and every read of the
+    # key failed with:
+    #
+    #   EACCES: permission denied, open '/run/secrets/service_account.json'
+    #
+    # Surfaced as "Google Workspace directory couldn't be read", whose own hint blames
+    # Domain-Wide Delegation scopes — sending the reader to the Workspace admin console
+    # to fix a file permission.
+    #
+    # The fix is a supplementary group, paired with `chmod 640` on the host file:
+    # owner laxman keeps rw (they edit it), group gets r, others get NOTHING. Making it
+    # 644 would also work and is wrong — this box runs 41 other sites, and the key
+    # unlocks domain-wide delegation over the customer's Workspace.
+    #
+    # Alternatives rejected: `user: "1005:1005"` runs as a uid with no /etc/passwd
+    # entry, which breaks any library calling getpwuid()/expanduser(); chown'ing the key
+    # to 10001 locks out the human who maintains it.
+    #
+    # 1005 is laxman's gid on THIS host (`id -g`). Override per host if it differs.
+    group_add:
+      - "${SECRET_GID:-1005}"
+
     # Bound to loopback: the host nginx is the only thing that may reach it.
     ports:
       - "127.0.0.1:8083:8083"

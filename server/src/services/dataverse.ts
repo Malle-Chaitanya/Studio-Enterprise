@@ -1255,13 +1255,35 @@ function parseConfigDescription(configuration?: string): string {
 }
 
 /**
+ * A verbatim copy of what Dataverse returned for one agent, handed out before any parsing.
+ *
+ * Passed OUT rather than persisted here on purpose: services do not talk to repos in this
+ * codebase (see .claude/rules/architecture-boundaries.md), so the orchestrator owns the
+ * write and `dataverse.ts` stays a pure extractor with no database dependency.
+ */
+export interface RawAgentPayload {
+  sourceId: string;
+  sourceName: string;
+  envUrl: string;
+  components: unknown[];
+  botRecord?: Record<string, unknown>;
+  disabledComponentNames: string[];
+}
+
+/**
  * Extract one agent into a complete AgentIR. Pulls all components for the bot
  * in a single query, then partitions by type.
+ *
+ * `onRaw`, when supplied, receives the untouched payload before parsing. It is how the
+ * caller lands raw data for blind-spot analysis (see db/repos/rawAgents.ts) without this
+ * module knowing that a database exists. It is called for its side effect only; anything
+ * it throws is swallowed, because a diagnostic sink must never fail an extraction.
  */
 export async function extractAgent(
   url: string,
   token: string,
   bot: BotSummary,
+  onRaw?: (raw: RawAgentPayload) => void,
 ): Promise<AgentIR> {
   // Paged, not $top=1000: an agent with more components than the cap would have had the
   // remainder dropped without any error, and every downstream count (topics, tools,
@@ -1303,6 +1325,8 @@ export async function extractAgent(
   // 'description'", not a permissions issue) — descriptionColumnUnsupported
   // remembers that per-environment so we stop retrying a doomed query.
   let botDescription = '';
+  /** Verbatim bot-record fields, accumulated across whichever fetch path this environment supports. */
+  let rawBotRecord: Record<string, unknown> = {};
   let agentSettings: ReturnType<typeof parseAgentSettings> = {};
   let gotCombined = false;
   // Some Dataverse orgs/solution versions reject the combined
@@ -1318,6 +1342,7 @@ export async function extractAgent(
         url, token, `bots(${bot.botid})?$select=configuration,description`,
       );
       if (b.description) botDescription = String(b.description).trim();
+      rawBotRecord = b as Record<string, unknown>;
       configDescription = parseConfigDescription(b.configuration);
       agentSettings = parseAgentSettings(b.configuration);
       gotCombined = true;
@@ -1342,16 +1367,37 @@ export async function extractAgent(
       descPromise,
     ]);
     if (confResult.status === 'fulfilled') {
+      rawBotRecord = { ...rawBotRecord, ...(confResult.value as Record<string, unknown>) };
       configDescription = parseConfigDescription(confResult.value.configuration);
       agentSettings = parseAgentSettings(confResult.value.configuration);
     } else {
       logger.warn(`configuration-only fetch failed for "${bot.name}": ${(confResult.reason as Error)?.message ?? confResult.reason}`);
     }
     if (descResult.status === 'fulfilled') {
+      rawBotRecord = { ...rawBotRecord, ...(descResult.value as Record<string, unknown>) };
       if (descResult.value.description) botDescription = String(descResult.value.description).trim();
     } else {
       descriptionColumnUnsupported.set(url, true);
       logger.warn(`"description" column not present on bot entity for this Dataverse environment — skipping for the rest of this run: ${(descResult.reason as Error)?.message ?? descResult.reason}`);
+    }
+  }
+
+  // Hand the untouched payload to the caller before a single field is interpreted. This is
+  // the only point where both halves — components and bot record — are complete and still
+  // unparsed. Wrapped because a diagnostic must not be able to fail the extraction it exists
+  // to explain.
+  if (onRaw) {
+    try {
+      onRaw({
+        sourceId: bot.botid,
+        sourceName: bot.name,
+        envUrl: url,
+        components,
+        botRecord: Object.keys(rawBotRecord).length ? rawBotRecord : undefined,
+        disabledComponentNames,
+      });
+    } catch (err) {
+      logger.warn({ err, bot: bot.name }, 'extractAgent: onRaw sink threw (ignored)');
     }
   }
 
