@@ -45,6 +45,7 @@ export function Migrate() {
   // Deliberately NOT remembered across runs. This acknowledges a specific set of sources
   // seen a moment ago; if the selection changes, it has to be given again.
   const [ackAclLoss, setAckAclLoss] = useState(false);
+  const [forceRedeploy, setForceRedeploy] = useState(false);
   // Agents the server refused to migrate until the permission loss is acknowledged.
   const aclBlocked = results.filter((r) => r.error === 'acl_acknowledgement_required');
   const esRef = useRef<EventSource | null>(null);
@@ -113,7 +114,17 @@ export function Migrate() {
       units: units.map((u) => ({ env: u.env, botIds: u.botIds })),
     };
     setBusy(true);
-    const p = await planMigration(session, scope, { environmentMap: dest }, dry, ack).catch(() => null);
+    const p = await planMigration(
+      session,
+      scope,
+      { environmentMap: dest },
+      dry,
+      ack,
+      // A dry run creates nothing, so forcing a redeploy is meaningless there — and passing it
+      // anyway would let the checkbox change what the preview says without changing what a
+      // live run would do.
+      dry ? false : forceRedeploy,
+    ).catch(() => null);
     setBusy(false);
     if (!p) {
       setStatus('Could not build the migration plan.');
@@ -177,6 +188,34 @@ export function Migrate() {
                   Dry run (preview only — nothing created in Gemini)
                   <span className="chip">recommended first</span>
                 </label>
+                {/*
+                  Only offered on a LIVE run: a dry run creates nothing, so there is nothing to
+                  redeploy and the checkbox would imply otherwise.
+
+                  Without this the second migration of an agent that already exists was always
+                  skipped, and the only way to pick up a fixed tool was to delete the agent by
+                  hand in the Google console. The wording says what actually happens — the same
+                  agent is repointed, not duplicated, and the old Reasoning Engine is left
+                  behind — because "force" on its own reads as "might break something".
+                */}
+                {!dryRun && (
+                  <label style={behLabel}>
+                    <input
+                      type="checkbox"
+                      checked={forceRedeploy}
+                      onChange={(e) => setForceRedeploy(e.target.checked)}
+                    />
+                    Redeploy agents that already exist (instead of skipping them)
+                    <span className="chip">for re-runs</span>
+                  </label>
+                )}
+                {!dryRun && forceRedeploy && (
+                  <p className="lead" style={{ margin: '6px 0 0 26px', fontSize: 13 }}>
+                    Each agent is updated in place — same agent, not a duplicate. Its previous
+                    Reasoning Engine is not deleted automatically and may keep billing until you
+                    remove it.
+                  </p>
+                )}
               </div>
 
               {!dryRun && !summary?.saOk && (
@@ -362,7 +401,9 @@ function AgentCard({ r, dry }: { r: MigrationResult; dry: boolean }) {
             <Chip on={r.created} label="created" />
             <Chip on={r.deployed} label="deployed" />
             <Chip on={r.shared} label="shared" />
-            {r.verified !== undefined && <Chip on={r.verified} label="verified" />}
+            {r.verified !== undefined && (
+              <VerifyChip status={r.verifyStatus ?? (r.verified ? 'verified' : 'failed')} />
+            )}
           </span>
         )}
       </div>
@@ -381,4 +422,18 @@ function AgentCard({ r, dry }: { r: MigrationResult; dry: boolean }) {
 
 function Chip({ on, label }: { on: boolean; label: string }) {
   return <span className={`chip ${on ? 'ok' : 'warn'}`}>{on ? '✓' : '—'} {label}</span>;
+}
+
+/**
+ * Verification is three-valued, and collapsing it to a tick or a dash is what let an
+ * unproven agent read as a good one.
+ *
+ * `unverified` means the probe could not run — the agent exists but nothing established
+ * that it works. It is shown distinctly from a real failure because the reader's next
+ * action differs: a failure is a defect to chase, an unknown is a check still owed.
+ */
+function VerifyChip({ status }: { status: 'verified' | 'failed' | 'unknown' }) {
+  if (status === 'verified') return <span className="chip ok">✓ verified</span>;
+  if (status === 'failed') return <span className="chip warn">— verification failed</span>;
+  return <span className="chip warn" title="The agent was created, but no probe could confirm it works. Check it by hand.">? unverified</span>;
 }

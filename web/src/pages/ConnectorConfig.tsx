@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { SurfaceEquivalenceChoice } from '../components/SurfaceEquivalenceChoice';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   fetchThirdPartyConnectors,
@@ -11,6 +12,8 @@ import {
   fetchCustomConnectors,
   type CustomConnectorInfo,
   fetchAgents,
+  fetchSelection,
+  fetchCredentialValue,
   fetchDriveIdentities,
   saveDriveIdentity,
   type DetectedConnector,
@@ -82,6 +85,29 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
   // Entra hands out a valid token for an app with nothing consented, so a successful
   // save says nothing about whether Graph calls will work. This holds the live check.
   const [validation, setValidation] = useState<ConnectorValidation | null>(null);
+  // Fields the admin has explicitly chosen to overwrite, and which password inputs are
+  // currently revealed. Both mirror the generic connector card, which already had them —
+  // this section did not, which is why Microsoft asked for all three credentials on every
+  // visit while HubSpot, Jira, Confluence and Drive stayed saved.
+  const [replacing, setReplacing] = useState<Record<string, boolean>>({});
+  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const [msExpanded, setMsExpanded] = useState(false);
+  // Stored values the admin has asked to see. Fetched one field at a time, on click — a
+  // credential is never part of a page load, so walking past this screen does not put a
+  // client secret in a response.
+  const [revealedValues, setRevealedValues] = useState<Record<string, string>>({});
+  const reveal = async (fieldKey: string) => {
+    if (revealedValues[fieldKey]) {
+      setRevealedValues((r) => { const next = { ...r }; delete next[fieldKey]; return next; });
+      return;
+    }
+    try {
+      const value = await fetchCredentialValue(session, detectedMsIds[0], fieldKey);
+      setRevealedValues((r) => ({ ...r, [fieldKey]: value }));
+    } catch {
+      setRevealedValues((r) => ({ ...r, [fieldKey]: '(could not read)' }));
+    }
+  };
 
   if (detectedMsIds.length === 0) return null;
 
@@ -98,15 +124,44 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
   );
   const ownValueKey = (id: string, fieldKey: string) => `${id}::${fieldKey}`;
 
+  // Which shared fields Secret Manager already holds. Every ms_graph connector reports the
+  // same shared credential state, so the first detected one answers for all of them.
+  const sharedSupplied = new Set(
+    detectedMsIds
+      .flatMap((id) => reqs?.get(id)?.fields ?? [])
+      .filter((f) => f.shared !== false && f.supplied)
+      .map((f) => f.key),
+  );
+  const needsValue = (key: string, supplied: boolean) => !supplied || replacing[key];
+  const alreadyConfigured = MS_NATIVE_FIELDS.every((f) => sharedSupplied.has(f.key));
+
+  // A field already in Secret Manager is satisfied without input. Only what is being
+  // entered — or deliberately replaced — has to be filled, so a returning admin can press
+  // Save without retyping a client secret the product already has. Each retype also wrote
+  // another identical secret version, which is the cost this avoids.
   const allFilled =
-    MS_NATIVE_FIELDS.every((f) => values[f.key]?.trim()) &&
-    [...ownFieldsById.entries()].every(([id, fields]) => fields.every((f) => values[ownValueKey(id, f.key)]?.trim()));
+    MS_NATIVE_FIELDS.every((f) =>
+      needsValue(f.key, sharedSupplied.has(f.key)) ? !!values[f.key]?.trim() : true,
+    ) &&
+    [...ownFieldsById.entries()].every(([id, fields]) =>
+      fields.every((f) =>
+        needsValue(ownValueKey(id, f.key), !!f.supplied) ? !!values[ownValueKey(id, f.key)]?.trim() : true,
+      ),
+    );
 
   const handleSave = async () => {
     setSaving(true);
     setError('');
     try {
-      const { validation: v } = await saveMsConnectorCredentials(session, values);
+      // Send only what the admin actually typed. The server merges onto the stored record
+      // and skips writing a new secret version for an unchanged value, so omitting an
+      // untouched field leaves both the secret and its id exactly as they are — which
+      // matters because deployed agents resolve credentials by that id.
+      const typed = Object.fromEntries(
+        MS_NATIVE_FIELDS.filter((f) => needsValue(f.key, sharedSupplied.has(f.key)) && values[f.key]?.trim())
+          .map((f) => [f.key, values[f.key]]),
+      );
+      const { validation: v } = await saveMsConnectorCredentials(session, typed);
       setValidation(v ?? null);
       // Connector-OWN fields (e.g. Dynamics `org_url`) are not part of the shared
       // ms_graph credential and are saved separately — the group save above does not
@@ -146,7 +201,10 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
             })}
           </div>
         </div>
-        {saved && (
+        {/* `alreadyConfigured` covers the RETURNING admin: the credentials are in Secret
+            Manager from an earlier visit, so the card must read as done on arrival rather
+            than as an untouched form demanding three values. */}
+        {(saved || alreadyConfigured) && (
           <span style={{
             color: !validation || validation.code === 'ok' || validation.code === 'unverified' ? 'var(--ok)' : '#dc2626',
             fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
@@ -177,7 +235,18 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
         </div>
       )}
 
-      {!saved && (
+      {/* A configured Azure app has nothing left to do on this screen, and it is the widest
+          block on the page — one shared form plus a permissions checklist per Microsoft
+          connector detected. Collapsed to the badge above until the admin asks to change it. */}
+      {alreadyConfigured && !saved && !msExpanded && (
+        <button
+          type="button"
+          onClick={() => setMsExpanded(true)}
+          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--brand)', fontSize: 12 }}
+        >Change credentials or review permissions</button>
+      )}
+
+      {!saved && (!alreadyConfigured || msExpanded) && (
         <>
           {/* One app, but each connector needs its own permissions added to it. */}
           {detectedMsIds.map((id) => {
@@ -210,12 +279,63 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
                     {field.hint}
                   </div>
                 )}
-                <input
-                  type={field.type === 'password' ? 'password' : 'text'}
-                  value={values[field.key] ?? ''}
-                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
-                  style={inputStyle}
-                />
+                {!needsValue(field.key, sharedSupplied.has(field.key)) ? (
+                  // Already in Secret Manager. Shown as satisfied rather than as an empty
+                  // required input. Reveal fetches the stored value on demand (one field per
+                  // request) — it is never included in a page load.
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                    <span style={{ color: 'var(--ok)', fontWeight: 600 }}>✓ Saved</span>
+                    <span style={{ color: 'var(--muted)', letterSpacing: revealedValues[field.key] ? 0 : 2, fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                      {revealedValues[field.key] ?? '••••••••••••'}
+                    </span>
+                    <button
+                      type="button"
+                      title={revealedValues[field.key] ? 'Hide' : 'Show the stored value'}
+                      onClick={() => reveal(field.key)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0 }}
+                    >{revealedValues[field.key] ? '🙈' : '👁'}</button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        // Prefill with the stored value so the admin edits what is there
+                        // instead of retyping a 40-character secret from scratch.
+                        const current = revealedValues[field.key] ?? (await fetchCredentialValue(session, detectedMsIds[0], field.key).catch(() => ''));
+                        setValues((v) => ({ ...v, [field.key]: current }));
+                        setReplacing((r) => ({ ...r, [field.key]: true }));
+                      }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--brand)', fontSize: 12, padding: 0 }}
+                    >Replace</button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type={field.type === 'password' && !revealed[field.key] ? 'password' : 'text'}
+                      value={values[field.key] ?? ''}
+                      onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                      style={{ ...inputStyle, flex: 1 }}
+                    />
+                    {field.type === 'password' && (
+                      // Reveals only what the admin is typing right now, so a mistyped
+                      // secret is caught before saving. It can never show a stored value.
+                      <button
+                        type="button"
+                        title={revealed[field.key] ? 'Hide' : 'Show what you typed'}
+                        onClick={() => setRevealed((r) => ({ ...r, [field.key]: !r[field.key] }))}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: '0 4px' }}
+                      >{revealed[field.key] ? '🙈' : '👁'}</button>
+                    )}
+                    {sharedSupplied.has(field.key) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReplacing((r) => ({ ...r, [field.key]: false }));
+                          setValues((v) => ({ ...v, [field.key]: '' }));
+                        }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 12 }}
+                      >Cancel</button>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -308,13 +428,52 @@ const CATEGORY_COLOR: Record<string, string> = {
  * saves credentials, sees a green tick, and discovers the gap only when a migrated agent
  * gets a 403 mid-conversation.
  */
+/**
+ * A one-line summary that opens to the detail underneath.
+ *
+ * This screen had grown to stack a permissions checklist, a full operation list and a
+ * readiness breakdown under EVERY connector, all expanded, all at once. Each block earned
+ * its place once — during first-time Azure setup, or when judging what an agent does — and
+ * then stayed on screen for every visit afterwards, which is what made the page unreadable.
+ * Collapsed by default keeps the information (nothing here is deleted) while letting the
+ * customer see the whole connector list at a glance.
+ */
+function Disclosure({ summary, children, defaultOpen = false }: {
+  summary: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+          fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 5,
+        }}
+      >
+        <span style={{ fontSize: 9 }}>{open ? '▼' : '▶'}</span>
+        {summary}
+      </button>
+      {open && <div style={{ marginTop: 8 }}>{children}</div>}
+    </div>
+  );
+}
+
 function PermissionsPanel({ req }: { req?: ConnectorRequirement }) {
   if (!req?.requiredPermissions?.length) return null;
+  const n = req.requiredPermissions.length;
+  // Collapsed by default: this is a checklist for ONE Azure setup visit, not standing
+  // reference. Left open on an unconfigured connector whose consent is still needed,
+  // because that admin has not done the setup yet and the list is the whole task.
   return (
+    <Disclosure
+      defaultOpen={!req.configured && !!req.adminConsentRequired}
+      summary={`${n} permission${n === 1 ? '' : 's'} to grant${req.adminConsentRequired ? ' (admin consent required)' : ''}`}
+    >
     <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 12px', marginBottom: 12 }}>
-      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-        Permissions to grant{req.adminConsentRequired ? ' (admin consent required)' : ''}
-      </div>
       {/* Plain stacked lines, not a bulleted <ul> — list-style-position: inside
           pushed the marker+text a few px right of "Permissions to grant" and the
           note below it, so the left edges inside the box didn't line up. */}
@@ -339,6 +498,7 @@ function PermissionsPanel({ req }: { req?: ConnectorRequirement }) {
         </div>
       )}
     </div>
+    </Disclosure>
   );
 }
 
@@ -351,9 +511,12 @@ function PermissionsPanel({ req }: { req?: ConnectorRequirement }) {
  */
 function OperationList({ operations }: { operations?: string[] }) {
   if (!operations?.length) return null;
+  // The COUNT is the part an admin acts on at a glance ("this agent touches 4 Jira calls");
+  // the individual operationIds matter only when judging a specific behaviour, so they move
+  // behind the toggle rather than off the page.
   return (
+    <Disclosure summary={`${operations.length} operation${operations.length === 1 ? '' : 's'} used`}>
     <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
-      Operations used:{' '}
       {operations.map((op) => (
         <code
           key={op}
@@ -366,6 +529,7 @@ function OperationList({ operations }: { operations?: string[] }) {
         </code>
       ))}
     </div>
+    </Disclosure>
   );
 }
 
@@ -393,6 +557,9 @@ function ReadinessPanel({ readiness, hasLiveTool = true }: { readiness?: Connect
   const total = readiness.bindable.length + readiness.blocked.length;
   if (total === 0) return null;
   const ok = readiness.ready;
+  // One line, then the per-operation reasons behind a toggle. This only ever renders for a
+  // connector with NO live tool at all, so the verdict IS the actionable part; the blocked
+  // list explains it and is worth keeping, just not worth stacking on arrival.
   return (
     <div style={{
       fontSize: 12, borderRadius: 6, padding: '8px 10px', marginBottom: 10,
@@ -407,11 +574,15 @@ function ReadinessPanel({ readiness, hasLiveTool = true }: { readiness?: Connect
             : `All ${total} operations map to ${readiness.displayName}'s own API.`
           : `${readiness.bindable.length} of ${total} operations map to ${readiness.displayName}'s own API.`}
       </strong>
-      {readiness.blocked.map((b) => (
-        <div key={b.operationId} style={{ marginTop: 6 }}>
-          <code style={{ fontSize: 11 }}>{b.operationId}</code> — {b.reason}
-        </div>
-      ))}
+      {readiness.blocked.length > 0 && (
+        <Disclosure summary={`Why ${readiness.blocked.length} cannot`}>
+          {readiness.blocked.map((b) => (
+            <div key={b.operationId} style={{ marginTop: 6 }}>
+              <code style={{ fontSize: 11 }}>{b.operationId}</code> — {b.reason}
+            </div>
+          ))}
+        </Disclosure>
+      )}
     </div>
   );
 }
@@ -460,6 +631,15 @@ function ConnectorCard({ c, session, alreadySaved, req, onSaved }: ConnectorCard
   // the credential IS saved, so this is a warning about whether it works, not a failure
   // to save. Showing "✓ Saved" alone is what let a broken connector reach a customer.
   const [validation, setValidation] = useState<ConnectorValidation | null>(null);
+  // A configured connector collapses to a single line. Nothing on an already-saved card is
+  // actionable — the permissions were granted, the operations were reviewed, the credential
+  // is in Secret Manager — so a fully-set-up tenant was rendering a screenful of finished
+  // work above the one connector that still needed attention. Expand restores the full card.
+  const [expanded, setExpanded] = useState(false);
+  // Stored values the admin asked to see, and which inputs are unmasked. Both are per-field
+  // and fetched on click — never on page load.
+  const [stored, setStored] = useState<Record<string, string>>({});
+  const [shown, setShown] = useState<Record<string, boolean>>({});
   const needsValue = (f: { key: string; supplied?: boolean }) => !f.supplied || replacing[f.key];
 
   // An empty field list must never count as "all filled" — that vacuous `true` is what
@@ -490,6 +670,30 @@ function ConnectorCard({ c, session, alreadySaved, req, onSaved }: ConnectorCard
     } finally { setSaving(false); }
   };
 
+  // A finished connector, rendered as one line. It still reports whether the live check
+  // PASSED, because "saved" and "working" are different facts and collapsing must not blur
+  // them — a credential that stored fine but failed validation stays visibly wrong here.
+  if (saved && !expanded && !skipped) {
+    const bad = validation && validation.code !== 'ok' && validation.code !== 'unverified';
+    return (
+      <div
+        className="card"
+        style={{ padding: '10px 16px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}
+      >
+        <span style={{ fontSize: 16 }}>{def.icon}</span>
+        <strong style={{ fontSize: 13, flex: 1 }}>{def.name}</strong>
+        <span style={{ fontSize: 12, fontWeight: 600, color: bad ? '#dc2626' : 'var(--ok)', whiteSpace: 'nowrap' }}>
+          {bad ? 'Saved, but not working' : 'Saved'}
+        </span>
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--brand)', fontSize: 12, padding: 0 }}
+        >Edit</button>
+      </div>
+    );
+  }
+
   return (
     <div className="card" style={{ padding: '18px 20px', marginBottom: 12, opacity: skipped ? 0.5 : 1, transition: 'opacity 0.2s' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
@@ -500,6 +704,15 @@ function ConnectorCard({ c, session, alreadySaved, req, onSaved }: ConnectorCard
             <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: CATEGORY_COLOR[def.category] ?? '#6b7280', borderRadius: 4, padding: '1px 6px', textTransform: 'uppercase' }}>
               {def.category}
             </span>
+            {saved && expanded && (
+              // Way back to the one-line form. Without it, opening a finished connector to
+              // check something left the page permanently more crowded than before.
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 11, padding: 0 }}
+              >collapse</button>
+            )}
           </div>
           {c.connectorId === 'shared_confluence' && (
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
@@ -595,22 +808,57 @@ function ConnectorCard({ c, session, alreadySaved, req, onSaved }: ConnectorCard
                   </div>
                 )}
                 {needsValue(field) ? (
-                  <input
-                    type={field.type === 'password' ? 'password' : 'text'}
-                    value={values[field.key] ?? ''}
-                    onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
-                    placeholder={field.placeholder ?? ''}
-                    style={inputStyle}
-                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type={field.type === 'password' && !shown[field.key] ? 'password' : 'text'}
+                      value={values[field.key] ?? ''}
+                      onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                      placeholder={field.placeholder ?? ''}
+                      style={{ ...inputStyle, flex: 1 }}
+                    />
+                    {field.type === 'password' && (
+                      <button
+                        type="button"
+                        title={shown[field.key] ? 'Hide' : 'Show'}
+                        onClick={() => setShown((r) => ({ ...r, [field.key]: !r[field.key] }))}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: '0 4px' }}
+                      >{shown[field.key] ? '🙈' : '👁'}</button>
+                    )}
+                  </div>
                 ) : (
-                  // Stored values are never sent back to the browser, so this states
-                  // only that one exists. Replacing is deliberate: leaving it alone
-                  // writes nothing, which is what keeps identical secret versions from
-                  // piling up every time this screen is revisited.
+                  // Stored. Reveal fetches the value on demand, one field per request, so a
+                  // credential is never part of a page load. Replacing is still deliberate:
+                  // leaving it alone writes nothing, which is what keeps identical secret
+                  // versions from piling up every time this screen is revisited.
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--muted)', padding: '6px 0' }}>
                     <span style={{ color: 'var(--ok)' }}>✓ Already stored</span>
+                    <span style={{ fontFamily: 'monospace', letterSpacing: shown[field.key] ? 0 : 2, wordBreak: 'break-all', maxWidth: 320 }}>
+                      {stored[field.key] ?? '••••••••••••'}
+                    </span>
+                    <button
+                      type="button"
+                      title={stored[field.key] ? 'Hide' : 'Show the stored value'}
+                      onClick={async () => {
+                        if (stored[field.key]) {
+                          setStored((r) => { const n = { ...r }; delete n[field.key]; return n; });
+                          setShown((r) => ({ ...r, [field.key]: false }));
+                          return;
+                        }
+                        const v = await fetchCredentialValue(session, c.connectorId, field.key)
+                          .catch(() => '(could not read)');
+                        setStored((r) => ({ ...r, [field.key]: v }));
+                        setShown((r) => ({ ...r, [field.key]: true }));
+                      }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0 }}
+                    >{stored[field.key] ? '🙈' : '👁'}</button>
                     <button type="button" className="wbtn" style={{ fontSize: 11, padding: '2px 10px' }}
-                      onClick={() => setReplacing((r) => ({ ...r, [field.key]: true }))}>
+                      onClick={async () => {
+                        // Prefill so the admin edits what is there rather than retyping it.
+                        const current = stored[field.key]
+                          ?? (await fetchCredentialValue(session, c.connectorId, field.key).catch(() => ''));
+                        setValues((v) => ({ ...v, [field.key]: current }));
+                        setReplacing((r) => ({ ...r, [field.key]: true }));
+                      }}>
                       Replace
                     </button>
                   </div>
@@ -1076,9 +1324,40 @@ export function ConnectorConfig() {
         // assuming everything lives in one "default" Dataverse org. A tenant
         // can have agents (and their PA flows / knowledge sources) spread
         // across several environments.
-        const agentSelection: Array<{ env: string; botIds: string[] }> =
-          JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
-        const envsWithAgents = agentSelection.filter((sel) => sel.botIds.length > 0);
+        // Which agents this page asks about, and WHY in this order.
+        //
+        // sessionStorage is the CURRENT selection, written by SelectData one step before
+        // this page. The server plan is NOT an alternative source of the same truth: it is
+        // written by POST /api/migrate/plan on the *Migrate* step, which runs AFTER this
+        // one — so on this screen the plan always describes the PREVIOUS run. Trusting it
+        // first asked about agents the customer had just deselected (a Teams-only selection
+        // was offered the Outlook choice, left over from an earlier run).
+        //
+        // But sessionStorage is per browser TAB and goes empty on a restart, in a new tab,
+        // or when a session is resumed from a URL. When it did, this page believed NO agents
+        // were selected and rendered none of the per-agent sections — including the
+        // Outlook/Teams choice — with no error at all. That is not cosmetic: an agent whose
+        // choice never rendered deploys with NO tools for that service ("uses Outlook; no
+        // decision recorded"), which is exactly what this screen exists to prevent.
+        //
+        // So: the tab's live selection when there is one, the last plan when there is not.
+        // Stale-but-present beats silently-empty, and an over-broad question is visible to
+        // the customer where a missing one is not.
+        let agentSelection: Array<{ env: string; botIds: string[] }> = [];
+        try {
+          agentSelection = JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
+        } catch {
+          agentSelection = [];
+        }
+        if (!agentSelection.some((sel) => sel.botIds?.length)) {
+          try {
+            agentSelection = await fetchSelection(session);
+          } catch {
+            // Leave it empty — the sections below render their own empty states rather
+            // than this failing the whole page.
+          }
+        }
+        const envsWithAgents = agentSelection.filter((sel) => (sel.botIds?.length ?? 0) > 0);
         setEnvsWithAgents(envsWithAgents);
 
         // 1. Scan PA flows for third-party connector dependencies, once per
@@ -1377,6 +1656,18 @@ export function ConnectorConfig() {
             ))}
         </div>
       )}
+
+      {/* Cross-vendor surfaces (Outlook -> Gmail). Rendered per environment because the
+       *  agent selection is per environment, and it renders nothing at all when no selected
+       *  agent uses a Microsoft surface — an empty prompt is noise on every other migration. */}
+      {envsWithAgents.map((sel) => (
+        <SurfaceEquivalenceChoice
+          key={sel.env}
+          session={session}
+          envUrl={sel.env}
+          sourceIds={sel.botIds}
+        />
+      ))}
 
       <div className="wizard-actions" style={{ marginTop: 20 }}>
         <button className="wbtn" onClick={() => navigate(`/select-data?session=${session}`)}>← Back</button>

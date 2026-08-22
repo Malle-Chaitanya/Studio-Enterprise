@@ -29,6 +29,12 @@ export interface MigrationResult {
   deployed: boolean;
   shared: boolean;
   verified?: boolean;
+  /**
+   * The three-value truth behind `verified`. `unknown` means no probe could confirm the
+   * agent works — distinct from `failed`, because the reader's next action differs: a
+   * failure is a defect, an unknown is a check still owed.
+   */
+  verifyStatus?: 'verified' | 'failed' | 'unknown';
   verifySample?: string;
   error?: string;
   fidelity: FidelityNote[];

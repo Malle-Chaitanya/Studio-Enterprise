@@ -1,0 +1,632 @@
+/*
+ * v2 design layer — the approved prototype, as production CSS.
+ *
+ * SCOPED ON PURPOSE: every rule sits under `.v2`, so this file cannot change a
+ * single pixel of the existing wizard while both UIs live side by side. The old
+ * `styles.css` keeps its own :root; the tokens below are additive names, and the
+ * brand values are copied verbatim from it — the palette is not being redesigned.
+ *
+ * Blue means the agent is acting. Amber means it is your turn. Those two are
+ * never the same colour anywhere in this file, because "whose move is it" is the
+ * one question a user must never have to guess during an automated migration.
+ */
+
+.v2 {
+  /* brand — identical values to styles.css, do not diverge */
+  --v2-brand: #0129ac;
+  --v2-brand-h: #0c18d4;
+  --v2-brand-l: #809efc;
+  --v2-tint: #e8effe;
+  --v2-tint-2: #f2f6ff;
+  --v2-teal: #14cfc3;
+  --v2-ok: #20cc83;
+  --v2-fail: #ff1f1f;
+  /* amber exists only to mean "a human must act" */
+  --v2-amber: #e08700;
+
+  /* warm neutrals — the single biggest reason this reads as a tool and not a form */
+  --v2-canvas: #f6f6f4;
+  --v2-paper: #ffffff;
+  --v2-paper-2: #fbfbf9;
+  --v2-sand: #f0f0ed;
+  --v2-edge: #e6e6e1;
+  --v2-edge-2: #d9d9d2;
+
+  --v2-ink: #1a1c1f;
+  --v2-ink-2: #474a50;
+  --v2-ink-3: #7e828a;
+  --v2-ink-4: #a4a7ae;
+
+  --v2-sh-s: 0 1px 2px rgba(26, 28, 31, .04);
+  --v2-sh-l: 0 8px 24px rgba(26, 28, 31, .09), 0 28px 56px rgba(26, 28, 31, .09);
+  --v2-sh-xl: 0 20px 50px rgba(26, 28, 31, .16), 0 50px 110px rgba(26, 28, 31, .18);
+  --v2-sh-dock: 0 8px 24px rgba(26, 28, 31, .18), 0 22px 56px rgba(26, 28, 31, .22);
+
+  --v2-r-s: 7px;
+  --v2-r-m: 11px;
+  --v2-r-l: 15px;
+
+  --v2-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+  --v2-dock-h: 58px;
+
+  /* Poppins carries EVERY word on screen — it is the product's voice, and the
+     v2 layer is a reskin, not a rebrand. The other two faces are allowed to
+     touch numbers only: Instrument Serif for the instrument readouts, JetBrains
+     Mono for ids and values that must line up digit-per-digit. No prose in either. */
+  font-family: 'Poppins', var(--font), system-ui, sans-serif;
+  background: var(--v2-canvas);
+  color: var(--v2-ink);
+  font-size: 14px;
+  line-height: 1.55;
+  /* .appheader is position:fixed, so the v2 shell has to offset for it exactly
+     like .console does — without this the instrument band hides behind the header. */
+  padding-top: var(--header-h);
+  min-height: 100vh;
+}
+
+.v2 *,
+.v2 *::before,
+.v2 *::after { box-sizing: border-box; }
+
+.v2 .mono {
+  font-family: var(--v2-mono);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ── layout ─────────────────────────────────────────────────────────── */
+/* rail | work. The rail is fixed-width and always visible: seeing the whole
+   migration at once is what separates a tool from a sequence of web pages. */
+.v2-frame {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .v2-frame { grid-template-columns: 1fr; }
+  .v2-rail { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--v2-edge); }
+}
+
+.v2-rail {
+  position: sticky;
+  top: var(--header-h);
+  height: calc(100vh - var(--header-h));
+  overflow-y: auto;
+  border-right: 1px solid var(--v2-edge);
+  background: var(--v2-paper);
+  padding-bottom: 24px;
+}
+.v2-rail-h { padding: 14px 16px 12px; border-bottom: 1px solid var(--v2-edge); }
+.v2-rail-h .k {
+  font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
+  color: var(--v2-ink-4); font-weight: 600;
+}
+.v2-rail-h .pair {
+  margin-top: 6px; display: grid; gap: 1px; font-size: 12.5px; font-weight: 500;
+}
+.v2-rail-h .pair .arrow { color: var(--v2-ink-4); font-size: 10px; }
+.v2-rail-l {
+  padding: 13px 16px 7px; font-size: 9.5px; letter-spacing: .11em;
+  text-transform: uppercase; color: var(--v2-ink-4); font-weight: 600;
+}
+
+.v2-phase {
+  appearance: none; cursor: pointer; font: inherit; text-align: left; width: 100%;
+  display: flex; align-items: center; gap: 10px; padding: 8px 16px;
+  background: none; border: 0; border-left: 2px solid transparent; color: var(--v2-ink-2);
+}
+.v2-phase:hover { background: var(--v2-paper-2); }
+.v2-phase .mk {
+  width: 18px; height: 18px; border-radius: 50%; flex: 0 0 auto; display: grid;
+  place-items: center; font-size: 10px; font-weight: 600;
+  border: 1px solid var(--v2-edge-2); color: var(--v2-ink-4); background: var(--v2-paper);
+}
+.v2-phase .lb { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v2-phase .ct { margin-left: auto; font-size: 11px; color: var(--v2-ink-4); }
+.v2-phase .bd {
+  margin-left: auto; font-size: 8.5px; letter-spacing: .09em; font-weight: 700;
+  color: var(--v2-ink-4);
+}
+.v2-phase.done .mk { background: var(--v2-ok); border-color: var(--v2-ok); color: #fff; }
+.v2-phase.current {
+  background: var(--v2-tint-2); border-left-color: var(--v2-brand); color: var(--v2-ink);
+}
+.v2-phase.current .lb { font-weight: 600; }
+.v2-phase.current .mk { background: var(--v2-brand); border-color: var(--v2-brand); color: #fff; }
+/* amber says "your turn" here exactly as it does everywhere else */
+.v2-phase.needs-you { border-left-color: var(--v2-amber); }
+.v2-phase.needs-you .bd { color: #8a5600; }
+.v2-phase.blocked .bd { color: var(--v2-fail); }
+.v2-phase.not-built { color: var(--v2-ink-4); }
+.v2-phase.not-built .bd { color: var(--v2-ink-4); }
+
+.v2-rail-f {
+  margin-top: 14px; padding: 12px 16px 0; border-top: 1px solid var(--v2-edge);
+  font-size: 11px; color: var(--v2-ink-4); display: flex; align-items: center; gap: 7px;
+}
+.v2-rail-f .swatch { width: 14px; height: 2px; border-radius: 2px; flex: 0 0 auto; }
+.v2-rail-f .swatch.amber { background: var(--v2-amber); }
+
+/* Dev-only marker for canned data. Bottom-left so it never covers the band. */
+.v2-fixture {
+  position: fixed; bottom: 10px; left: 12px; z-index: 99;
+  background: var(--v2-ink); color: #fff; font-size: 10.5px; letter-spacing: .08em;
+  text-transform: uppercase; padding: 4px 12px; border-radius: 999px;
+}
+
+.v2-work {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  align-items: start;
+  min-height: calc(100vh - var(--header-h));
+}
+.v2-canvas { padding: 18px 20px 150px; min-width: 0; }
+/* The inspector scrolls INSIDE itself and sticks below the header. Padding it out
+   to clear the dock used to add ~48px of page height, which left the page opening
+   half-scrolled with the instrument labels cut off. */
+.v2-insp {
+  border-left: 1px solid var(--v2-edge);
+  background: var(--v2-paper);
+  position: sticky;
+  top: var(--header-h);
+  height: calc(100vh - var(--header-h));
+  overflow-y: auto;
+  padding-bottom: 130px;
+}
+@media (max-width: 1100px) {
+  .v2-work { grid-template-columns: 1fr; }
+  /* Stacked: it is just another block, so let the page scroll it. */
+  .v2-insp {
+    border-left: 0; border-top: 1px solid var(--v2-edge);
+    position: static; max-height: none; overflow: visible;
+  }
+}
+
+/* ── panel ──────────────────────────────────────────────────────────── */
+.v2-panel {
+  background: var(--v2-paper);
+  border: 1px solid var(--v2-edge);
+  border-radius: var(--v2-r-l);
+  box-shadow: var(--v2-sh-s);
+  overflow: hidden;
+}
+.v2-panel + .v2-panel { margin-top: 14px; }
+.v2-panel-h {
+  display: flex; align-items: center; gap: 10px;
+  padding: 13px 16px; border-bottom: 1px solid var(--v2-edge);
+}
+.v2-panel-h h2 { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.v2-panel-h .sub { font-size: 12px; color: var(--v2-ink-3); margin-top: 1px; }
+.v2-panel-h .sp { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+
+/* ── instrument band. Serif only here, where a number is the point. ── */
+.v2-band { display: flex; flex-wrap: wrap; }
+.v2-band .cell {
+  padding: 13px 18px; border-right: 1px solid var(--v2-edge); min-width: 118px;
+}
+.v2-band label {
+  display: block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--v2-ink-4); font-weight: 600;
+}
+.v2-band .v {
+  display: block; font-family: 'Instrument Serif', Georgia, serif;
+  font-size: 27px; line-height: 1.2; letter-spacing: -.01em;
+}
+.v2-band .v.ok { color: #12855a; }
+.v2-band .v.warn { color: var(--v2-brand); }
+.v2-band .v.bad { color: #d61616; }
+.v2-band .v.amber { color: #a86600; }
+.v2-band .s { display: block; font-size: 10.5px; color: var(--v2-ink-4); }
+.v2-band .grow {
+  flex: 1 1 200px; border-right: 0; display: flex; align-items: center;
+  justify-content: flex-end; padding-right: 18px; gap: 8px;
+}
+.v2-rule { height: 3px; background: var(--v2-sand); position: relative; }
+.v2-rule i { position: absolute; inset: 0 auto 0 0; background: var(--v2-brand); transition: width .4s ease; }
+
+/* ── controls ───────────────────────────────────────────────────────── */
+.v2-btn {
+  appearance: none; cursor: pointer; font-family: inherit; font-size: 12.5px;
+  font-weight: 500; white-space: nowrap; border: 1px solid var(--v2-edge-2);
+  background: var(--v2-paper); color: var(--v2-ink);
+  border-radius: var(--v2-r-s); padding: 6px 12px;
+}
+.v2-btn:hover:not(:disabled) { border-color: var(--v2-ink-4); }
+.v2-btn:disabled { opacity: .45; cursor: not-allowed; }
+.v2-btn.blue { background: var(--v2-brand); border-color: var(--v2-brand); color: #fff; }
+.v2-btn.blue:hover:not(:disabled) { background: var(--v2-brand-h); }
+.v2-btn.amber { background: #fff6e6; border-color: #f3d9a4; color: #8a5600; }
+.v2-btn.amber:hover:not(:disabled) { border-color: var(--v2-amber); }
+.v2-btn.wide { width: 100%; }
+
+.v2-field {
+  height: 36px; width: 100%; border: 1px solid var(--v2-edge-2);
+  border-radius: var(--v2-r-s); background: var(--v2-paper); padding: 0 11px;
+  font-family: var(--v2-mono); font-size: 12.5px; color: var(--v2-ink); outline: 0;
+}
+.v2-field:focus { border-color: var(--v2-brand-l); box-shadow: 0 0 0 3px var(--v2-tint); }
+.v2-field::placeholder { font-family: inherit; color: var(--v2-ink-4); }
+
+/* ── status chips ───────────────────────────────────────────────────── */
+.v2-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px;
+  border-radius: 999px; font-size: 11px; font-weight: 500; white-space: nowrap;
+  border: 1px solid var(--v2-edge); background: var(--v2-sand); color: var(--v2-ink-2);
+}
+.v2-chip i { width: 5px; height: 5px; border-radius: 50%; background: var(--v2-ink-4); }
+.v2-chip.ok { background: #eefaf4; border-color: #cdeee0; color: #12855a; }
+.v2-chip.ok i { background: var(--v2-ok); }
+.v2-chip.warn { background: var(--v2-tint); border-color: #cddcff; color: var(--v2-brand); }
+.v2-chip.warn i { background: var(--v2-brand-l); }
+.v2-chip.run { background: #e9faf8; border-color: #bfeeea; color: #0b8f87; }
+.v2-chip.run i { background: var(--v2-teal); animation: v2-breathe 1.2s ease-in-out infinite; }
+.v2-chip.bad { background: #fff1f1; border-color: #ffd0d0; color: #d61616; }
+.v2-chip.bad i { background: var(--v2-fail); }
+.v2-chip.you { background: #fff6e6; border-color: #f3d9a4; color: #8a5600; }
+.v2-chip.you i { background: var(--v2-amber); }
+@keyframes v2-breathe { 0%, 100% { opacity: 1 } 50% { opacity: .3 } }
+
+/* ── rows ───────────────────────────────────────────────────────────── */
+.v2-row {
+  display: flex; align-items: center; gap: 13px; padding: 0 16px; min-height: 52px;
+  border-bottom: 1px solid var(--v2-edge); position: relative; cursor: pointer;
+  transition: background .16s ease; text-align: left; width: 100%;
+  background: none; border-left: 0; border-right: 0; border-top: 0; font: inherit; color: inherit;
+}
+.v2-row:last-child { border-bottom: 0; }
+.v2-row:hover { background: var(--v2-paper-2); }
+.v2-row.pick { background: var(--v2-tint-2); }
+.v2-row .glyph {
+  width: 28px; height: 28px; border-radius: 8px; background: var(--v2-sand);
+  border: 1px solid var(--v2-edge); display: grid; place-items: center;
+  font-size: 11px; font-weight: 600; color: var(--v2-ink-3); flex: 0 0 auto;
+}
+.v2-row .nmw { flex: 0 0 200px; min-width: 0; }
+.v2-row .nm { display: block; font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
+.v2-row .kind {
+  display: block; font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-4);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.v2-row .why {
+  flex: 1 1 auto; min-width: 140px; font-size: 12px; color: var(--v2-ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A `why` cell holding CONTROLS must not clip them — the ellipsis rules above are
+   for prose. Selects and buttons live in `.why.ctl`. */
+.v2-row .why.ctl {
+  overflow: visible; white-space: normal; display: flex; align-items: center; gap: 8px;
+}
+.v2-row .st { flex: 0 0 148px; display: flex; justify-content: flex-end; }
+.v2-row .act { flex: 0 0 118px; display: flex; justify-content: flex-end; }
+
+/* the element the agent is touching right now */
+.v2-row.acting { background: var(--v2-tint); }
+.v2-row.acting::after {
+  content: ''; position: absolute; inset: 1px; border-radius: 7px; pointer-events: none;
+  border: 1.5px solid var(--v2-brand); box-shadow: 0 0 0 3px rgba(1, 41, 172, .10);
+}
+
+/* ── inspector ──────────────────────────────────────────────────────── */
+.v2-insp-h { padding: 14px 16px 12px; border-bottom: 1px solid var(--v2-edge); }
+.v2-insp-h .k {
+  font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
+  color: var(--v2-ink-4); font-weight: 600;
+}
+.v2-insp-h h3 { font-size: 15px; font-weight: 600; letter-spacing: -.02em; margin-top: 3px; line-height: 1.3; }
+.v2-insp-h .v2-chip { margin-top: 9px; }
+.v2-insp-s { padding: 13px 16px; border-bottom: 1px solid var(--v2-edge); }
+.v2-insp-s h6 {
+  font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
+  color: var(--v2-ink-4); font-weight: 600; margin-bottom: 9px;
+}
+.v2-kv { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; font-size: 12px; }
+.v2-kv dt { color: var(--v2-ink-3); }
+.v2-kv dd { font-family: var(--v2-mono); font-size: 11.5px; text-align: right; word-break: break-all; }
+.v2-note { display: flex; gap: 8px; padding: 6px 0; font-size: 12px; color: var(--v2-ink-2); line-height: 1.45; }
+.v2-note .m { color: var(--v2-brand-l); flex: 0 0 auto; }
+.v2-note.you .m { color: var(--v2-amber); }
+.v2-note.bad .m { color: var(--v2-fail); }
+.v2-note.ok .m { color: var(--v2-ok); }
+.v2-insp-act { padding: 13px 16px; display: flex; flex-direction: column; gap: 7px; }
+
+/* the agent's ledger. One line per step it actually performed. */
+.v2-ldg { display: flex; gap: 9px; padding: 6px 0; font-size: 12px; line-height: 1.45; color: var(--v2-ink-2); }
+.v2-ldg .m { width: 13px; flex: 0 0 auto; text-align: center; font-size: 10px; color: var(--v2-ok); }
+.v2-ldg.live { color: var(--v2-ink); font-weight: 500; }
+.v2-ldg.live .m { color: var(--v2-teal); }
+.v2-ldg.stop { color: #8a5600; font-weight: 500; }
+.v2-ldg.stop .m { color: var(--v2-amber); }
+
+/* ── credential modal ───────────────────────────────────────────────── */
+.v2-scrim {
+  position: fixed; inset: 0; z-index: 90; background: rgba(26, 28, 31, .34);
+  backdrop-filter: blur(3px);
+}
+/* When the dialog IS the handoff, the scrim must not read as a grey modal dim —
+   it carries the same amber that says "your turn" everywhere else. */
+.v2.waiting .v2-scrim { background: rgba(74, 45, 0, .30); }
+.v2-modal {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 91;
+  width: min(540px, calc(100vw - 48px)); max-height: calc(100vh - 80px);
+  display: flex; flex-direction: column;
+  background: var(--v2-paper); border: 1px solid var(--v2-edge);
+  border-radius: var(--v2-r-l); box-shadow: var(--v2-sh-xl); overflow: hidden;
+}
+.v2-modal-h { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--v2-edge); }
+.v2-modal-h .glyph {
+  width: 36px; height: 36px; border-radius: 10px; background: var(--v2-sand);
+  border: 1px solid var(--v2-edge); display: grid; place-items: center;
+  font-size: 13px; font-weight: 600; color: var(--v2-ink-3); flex: 0 0 auto;
+}
+.v2-modal-h h3 { font-size: 16px; font-weight: 600; letter-spacing: -.02em; line-height: 1.3; }
+.v2-modal-h .sub { font-size: 12px; color: var(--v2-ink-3); margin-top: 1px; }
+.v2-modal-h .x {
+  margin-left: auto; appearance: none; border: 0; background: none; cursor: pointer;
+  color: var(--v2-ink-4); font-size: 20px; line-height: 1; padding: 0 4px;
+}
+.v2-modal-h .x:hover { color: var(--v2-ink); }
+.v2-modal-b { padding: 16px 20px; overflow-y: auto; }
+.v2-modal-f {
+  display: flex; align-items: center; gap: 9px; padding: 14px 20px;
+  border-top: 1px solid var(--v2-edge); background: var(--v2-paper-2);
+}
+.v2-modal-f .sp { margin-left: auto; display: flex; gap: 8px; }
+
+.v2-fld { margin-bottom: 14px; }
+.v2-fld label { display: block; font-size: 11.5px; font-weight: 500; color: var(--v2-ink-2); margin-bottom: 5px; }
+.v2-fld label em { font-style: normal; color: var(--v2-ink-4); font-weight: 400; }
+.v2-fld .hint { display: block; font-size: 11px; color: var(--v2-ink-4); margin-top: 5px; line-height: 1.45; }
+/* a secret field is amber because only a human can fill it */
+.v2-fld.secret .v2-field { border-color: #f3d9a4; background: #fffdf8; }
+.v2-fld.secret .v2-field:focus { border-color: var(--v2-amber); box-shadow: 0 0 0 3px #fff2d9; }
+/* already in Secret Manager: shown, never re-asked, never displayed */
+.v2-fld.supplied .v2-field { border-color: #cddcff; background: var(--v2-tint-2); }
+.v2-fld .byagent { display: block; font-size: 10.5px; color: var(--v2-brand); margin-top: 4px; }
+
+.v2-secnote {
+  display: flex; gap: 9px; background: var(--v2-sand); border: 1px solid var(--v2-edge);
+  border-radius: var(--v2-r-m); padding: 11px 13px; font-size: 11.5px;
+  color: var(--v2-ink-2); line-height: 1.5;
+}
+.v2-secnote .m { color: var(--v2-ok); flex: 0 0 auto; }
+.v2-test { font-size: 11.5px; color: var(--v2-ink-3); display: flex; align-items: center; gap: 7px; }
+.v2-test.ok { color: #12855a; }
+.v2-test.bad { color: #d61616; }
+.v2-spin-d {
+  width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto;
+  border: 1.5px solid var(--v2-edge-2); border-top-color: var(--v2-brand);
+  animation: v2-spin .8s linear infinite;
+}
+@keyframes v2-spin { to { transform: rotate(360deg) } }
+
+/* ── the agent dock. Replaces the right-hand chat pane. ─────────────── */
+.v2-dock {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  width: min(680px, calc(100vw - 80px)); z-index: 80;
+}
+.v2-hints { display: flex; gap: 6px; justify-content: center; margin-bottom: 10px; flex-wrap: wrap; }
+.v2-hint {
+  appearance: none; cursor: pointer; font-family: inherit; font-size: 12px;
+  color: var(--v2-ink-2); background: rgba(255, 255, 255, .9); backdrop-filter: blur(12px);
+  border: 1px solid var(--v2-edge); border-radius: 999px; padding: 6px 13px;
+  box-shadow: var(--v2-sh-s); transition: transform .16s ease, color .16s ease, border-color .16s ease;
+}
+.v2-hint:hover { color: var(--v2-brand); border-color: var(--v2-brand-l); transform: translateY(-1px); }
+.v2-dockbar {
+  display: flex; align-items: center; gap: 11px; height: var(--v2-dock-h);
+  padding: 0 8px 0 18px; background: #16181d; border-radius: 999px;
+  box-shadow: var(--v2-sh-dock); border: 1px solid rgba(255, 255, 255, .08);
+  transition: box-shadow .2s ease, border-color .2s ease;
+}
+.v2-dock.focus .v2-dockbar { box-shadow: 0 0 0 4px rgba(1, 41, 172, .20), var(--v2-sh-dock); }
+.v2-dock.waiting .v2-dockbar {
+  border-color: rgba(224, 135, 0, .5);
+  box-shadow: 0 0 0 3px rgba(224, 135, 0, .18), var(--v2-sh-dock);
+}
+.v2-dockbar .spark { color: var(--v2-teal); font-size: 14px; flex: 0 0 auto; }
+.v2-dock.waiting .v2-dockbar .spark { color: var(--v2-amber); }
+.v2-dockbar input {
+  flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: #fff;
+  font-family: inherit; font-size: 14px;
+}
+.v2-dockbar input::placeholder { color: rgba(255, 255, 255, .42); }
+.v2-dockbar .go {
+  width: 42px; height: 42px; border-radius: 50%; border: 0; cursor: pointer; flex: 0 0 auto;
+  background: #fff; color: var(--v2-ink); font-size: 16px; display: grid; place-items: center;
+}
+.v2-dockbar .go:hover { background: var(--v2-tint); color: var(--v2-brand); }
+.v2-runline { flex: 1; min-width: 0; }
+.v2-runline .now, .v2-runline .sub { display: block; }
+.v2-runline .now { font-size: 13.5px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v2-runline .sub { font-family: var(--v2-mono); font-size: 11px; color: rgba(255, 255, 255, .5); }
+.v2-pause {
+  display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 15px;
+  border-radius: 999px; background: rgba(255, 255, 255, .12); color: #fff;
+  border: 1px solid rgba(255, 255, 255, .22); font-family: inherit;
+  font-size: 12.5px; font-weight: 500; cursor: pointer; flex: 0 0 auto;
+}
+.v2-pause:hover { background: rgba(255, 255, 255, .2); }
+.v2-spin {
+  width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto;
+  border: 1.5px solid rgba(255, 255, 255, .28); border-top-color: var(--v2-teal);
+  animation: v2-spin .8s linear infinite;
+}
+
+/* ── takeover: blurred blue EDGES, working area stays sharp ──────────
+ * One masked layer does both jobs — transparent in the middle, solid at the
+ * rim — so the blur only touches the edges of the real UI. The rows the agent
+ * is working on must stay legible; that is the whole point of watching it.
+ */
+.v2-edges {
+  position: fixed; inset: 0; z-index: 60; pointer-events: none;
+  transition: opacity .45s ease; opacity: 0;
+  backdrop-filter: blur(16px) saturate(1.35);
+  background:
+    radial-gradient(112% 94% at 50% 50%, rgba(1, 41, 172, 0) 28%, rgba(1, 41, 172, .42) 60%, rgba(1, 41, 172, .80) 100%),
+    radial-gradient(64% 52% at 50% 110%, rgba(20, 207, 195, .38), transparent 70%);
+  -webkit-mask-image: radial-gradient(104% 88% at 50% 50%, transparent 26%, rgba(0, 0, 0, .5) 48%, rgba(0, 0, 0, .88) 70%, #000 88%);
+  mask-image: radial-gradient(104% 88% at 50% 50%, transparent 26%, rgba(0, 0, 0, .5) 48%, rgba(0, 0, 0, .88) 70%, #000 88%);
+}
+.v2-edges.on { opacity: 1; }
+.v2-rim {
+  position: fixed; inset: 0; z-index: 93; pointer-events: none; opacity: 0;
+  transition: opacity .45s ease, box-shadow .45s ease;
+  box-shadow: inset 0 0 0 1.5px rgba(128, 158, 252, .7), inset 0 0 110px 44px rgba(1, 41, 172, .34);
+}
+.v2-rim.on { opacity: 1; }
+/* handoff wears amber, so "your turn" can never be mistaken for "working" */
+.v2-rim.you {
+  opacity: 1;
+  box-shadow: inset 0 0 0 1.5px rgba(224, 135, 0, .6), inset 0 0 90px 34px rgba(224, 135, 0, .20);
+}
+/* Sits BELOW the app header — at top:12px it was hidden behind the blue bar,
+   which is exactly where "whose turn is it" must never be. */
+.v2-tag {
+  position: fixed; top: calc(var(--header-h) + 12px); left: 50%; transform: translateX(-50%) translateY(-6px);
+  z-index: 94; display: flex; align-items: center; gap: 8px; opacity: 0;
+  transition: opacity .35s ease, transform .35s ease;
+  background: var(--v2-brand); color: #fff; font-size: 11px; font-weight: 500;
+  letter-spacing: .1em; text-transform: uppercase; padding: 6px 15px;
+  border-radius: 999px; box-shadow: 0 6px 20px rgba(1, 41, 172, .4);
+}
+.v2-tag.on { opacity: 1; transform: translateX(-50%); }
+.v2-tag.you { background: var(--v2-amber); box-shadow: 0 6px 20px rgba(224, 135, 0, .4); }
+
+/* the agent's cursor. It only ever moves in response to a real event. */
+.v2-cursor {
+  position: fixed; z-index: 95; width: 22px; height: 22px; pointer-events: none;
+  opacity: 0; transition: opacity .2s ease;
+}
+.v2-cursor.on { opacity: 1; }
+.v2-cursor svg { width: 22px; height: 22px; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, .3)); }
+.v2-cursor .ring {
+  position: absolute; inset: -9px; border-radius: 50%;
+  border: 2px solid var(--v2-brand); opacity: 0; transform: scale(.4);
+}
+.v2-cursor.click .ring { animation: v2-tap .45s ease-out; }
+@keyframes v2-tap {
+  0% { opacity: .9; transform: scale(.4) }
+  100% { opacity: 0; transform: scale(1.5) }
+}
+.v2-caption {
+  position: fixed; z-index: 96; pointer-events: none; opacity: 0;
+  display: flex; align-items: center; gap: 9px; max-width: 430px;
+  background: var(--v2-ink); color: #fff; font-size: 12.5px; padding: 8px 14px;
+  border-radius: 999px; box-shadow: var(--v2-sh-l);
+  transition: opacity .2s ease, transform .3s cubic-bezier(.4, 0, .2, 1);
+}
+.v2-caption.on { opacity: 1; }
+.v2-caption.you { background: #7a4b00; }
+
+/* Someone who has asked not to be animated gets the same information,
+   delivered instantly, with no travelling cursor. */
+@media (prefers-reduced-motion: reduce) {
+  .v2-cursor { display: none; }
+  .v2-edges, .v2-rim, .v2-tag, .v2-caption { transition: none; }
+  .v2-chip.run i, .v2-spin, .v2-spin-d { animation: none; }
+}
+
+.v2-toast {
+  position: fixed; left: 50%; bottom: 152px; transform: translateX(-50%) translateY(8px);
+  z-index: 88; display: flex; align-items: center; gap: 10px; background: var(--v2-ink);
+  color: #fff; font-size: 12.5px; padding: 10px 16px; border-radius: 999px;
+  box-shadow: var(--v2-sh-l); opacity: 0; pointer-events: none;
+  transition: opacity .28s ease, transform .28s ease;
+}
+.v2-toast.on { opacity: 1; transform: translateX(-50%); }
+.v2-toast .m { color: var(--v2-ok); }
+
+/* ── wizard footer: the manual path. The agent is optional. ─────────── */
+.v2-wizard { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.v2-wizard .next { flex: 1; justify-content: center; padding: 11px 18px; font-size: 14px; }
+.v2-wizard .back { padding: 11px 18px; font-size: 14px; }
+.v2-wizard .note { font-size: 11.5px; color: var(--v2-ink-4); }
+.v2-wizard .note.blocked { color: #8a5600; }
+
+/* ── selection ───────────────────────────────────────────────────────── */
+.v2-tick {
+  width: 17px; height: 17px; border-radius: 4px; flex: 0 0 auto; cursor: pointer;
+  border: 1.5px solid var(--v2-edge-2); background: var(--v2-paper);
+  display: grid; place-items: center; font-size: 10px; color: #fff; line-height: 1;
+}
+.v2-tick.on { background: var(--v2-brand); border-color: var(--v2-brand); }
+.v2-tick.mixed { background: var(--v2-brand-l); border-color: var(--v2-brand-l); }
+
+.v2-select {
+  height: 32px; max-width: 190px; min-width: 120px; border: 1px solid var(--v2-edge-2);
+  border-radius: var(--v2-r-s); background: var(--v2-paper); color: var(--v2-ink);
+  font-family: inherit; font-size: 12.5px; padding: 0 8px; cursor: pointer;
+}
+.v2-select:focus { outline: 0; border-color: var(--v2-brand-l); box-shadow: 0 0 0 3px var(--v2-tint); }
+.v2-select:disabled { opacity: .5; cursor: not-allowed; }
+
+.v2-selbar {
+  display: flex; align-items: center; gap: 10px; padding: 11px 16px;
+  border-bottom: 1px solid var(--v2-edge); background: var(--v2-paper-2);
+}
+.v2-selbar .big { font-size: 13px; font-weight: 500; }
+.v2-selbar .sp { margin-left: auto; display: flex; gap: 7px; flex-wrap: wrap; }
+
+.v2-grp { border-bottom: 1px solid var(--v2-edge); }
+.v2-grp:last-child { border-bottom: 0; }
+.v2-grp .grp-h {
+  display: flex; align-items: center; gap: 11px; padding: 11px 16px;
+  background: var(--v2-paper-2); cursor: pointer;
+}
+.v2-grp .grp-h:hover { background: var(--v2-sand); }
+.v2-grp .grp-h .nm { display: block; font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.v2-grp .grp-h .id { display: block; font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-4); }
+.v2-grp .grp-h .cnt { margin-left: auto; font-size: 11.5px; color: var(--v2-ink-3); }
+.v2-grp .grp-h .caret { color: var(--v2-ink-4); font-size: 9px; transition: transform .18s ease; }
+.v2-grp.shut .caret { transform: rotate(-90deg); }
+.v2-grp.shut .grp-b { display: none; }
+.v2-grp .v2-row { padding-left: 34px; }
+
+/* ── connect cards + direction ───────────────────────────────────────── */
+.v2-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 800px) { .v2-cards { grid-template-columns: 1fr; } }
+.v2-card {
+  background: var(--v2-paper); border: 1px solid var(--v2-edge);
+  border-radius: var(--v2-r-l); box-shadow: var(--v2-sh-s); padding: 18px;
+}
+.v2-card.live { border-color: #cdeee0; }
+.v2-card .role {
+  font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
+  color: var(--v2-ink-4); font-weight: 600;
+}
+.v2-card h3 { font-size: 17px; font-weight: 600; letter-spacing: -.02em; margin: 4px 0 2px; }
+.v2-card .acct { font-family: var(--v2-mono); font-size: 12px; color: var(--v2-ink-2); }
+.v2-card .det { font-size: 12px; color: var(--v2-ink-3); margin-top: 6px; line-height: 1.45; }
+.v2-card .foot { margin-top: 14px; display: flex; align-items: center; gap: 8px; }
+
+/* The direction, stated once both sides are live. */
+.v2-dir {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  margin-top: 14px; padding: 14px 18px; background: var(--v2-paper);
+  border: 1px solid var(--v2-edge); border-radius: var(--v2-r-l);
+  box-shadow: var(--v2-sh-s); flex-wrap: wrap;
+}
+.v2-dir .side { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.v2-dir .side .sub { display: block; font-family: var(--v2-mono); font-size: 11px; font-weight: 400; color: var(--v2-ink-4); }
+.v2-dir .to {
+  color: var(--v2-brand); font-size: 18px; padding: 0 4px;
+}
+.v2-dir .found { margin-left: auto; display: flex; gap: 18px; }
+.v2-dir .found .n {
+  font-family: 'Instrument Serif', Georgia, serif; font-size: 22px; line-height: 1.1; display: block;
+}
+.v2-dir .found label {
+  font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--v2-ink-4); font-weight: 600;
+}
+
+/* ── run log ─────────────────────────────────────────────────────────── */
+.v2-log { max-height: 300px; overflow-y: auto; padding: 10px 16px; background: var(--v2-paper-2); }
+.v2-log .ln {
+  display: flex; gap: 9px; font-family: var(--v2-mono); font-size: 11.5px;
+  line-height: 1.6; color: var(--v2-ink-2);
+}
+.v2-log .ln .m { flex: 0 0 auto; width: 11px; text-align: center; }
+.v2-log .ln.ok { color: #12855a; }
+.v2-log .ln.warn { color: #8a5600; }
+.v2-log .ln.fail { color: #d61616; }
