@@ -79,6 +79,25 @@ export interface KnowledgeClassification {
   automatable: boolean;
   /** Reasons / caveats surfaced in the fidelity report (never silently dropped). */
   notes: string[];
+  /**
+   * The connector this source needs credentials/tools from, when it needs one.
+   *
+   * The classifier is the ONLY place that knows what a source actually is — every rule below
+   * has already done the disambiguation (`FederatedStructuredSearchSource` means Confluence or
+   * SharePoint depending on the description, and nothing downstream can redo that cheaply).
+   * Stating the answer here stops consumers from re-deriving it from other fields.
+   *
+   * Both directions of that re-derivation shipped and both were wrong, live 2026-08-21 on one
+   * agent ("Knowledge Assistant"):
+   *   - `agentConnectorIds` matched /confluence/i against `notes`, and the note it hit was the
+   *     one that RULES CONFLUENCE OUT ("...with no Confluence-matching description..."), so the
+   *     agent was wired a live Confluence connector it never had.
+   *   - the same function keyed SharePoint on `kind === 'SharePointSearchSource'`, which these
+   *     federated sources are not, so five real SharePoint sources got no tool while the run
+   *     logged "5 source(s) served by live tools".
+   * A verdict must not be inferred from the prose explaining it.
+   */
+  requiresConnectorId?: string;
 }
 
 export interface ClassifierInput {
@@ -244,6 +263,7 @@ const RULES: Rule[] = [
       strategy: 'reconnect',
       retrievability: 'reference-only',
       geminiTarget: 'sharepoint-connector',
+      requiresConnectorId: 'shared_sharepointonline',
       automatable: false, // confirmed broken 2026-08-06 — see module docstring
       notes: [
         'SharePoint reference: Gemini\'s native SharePoint connector (federated or ingestion) is the intended target, but is confirmed BROKEN as of 2026-08-06 — returns zero content even fully healthy/authenticated (see module docstring + decisions.md). Escalated to Google Cloud Support; not yet fixed.',
@@ -257,6 +277,7 @@ const RULES: Rule[] = [
       strategy: 'reconnect',
       retrievability: 'reference-only',
       geminiTarget: 'onedrive-connector',
+      requiresConnectorId: 'shared_onedrive',
       automatable: false,
       notes: [
         'OneDrive reference: use Gemini\'s native OneDrive federated connector against the same account/paths.',
@@ -279,6 +300,7 @@ const RULES: Rule[] = [
         (input.description ?? '').toLowerCase().includes('confluence')),
     build: ({ description }) => ({
       strategy: 'confluence-crawler',
+      requiresConnectorId: 'shared_confluence',
       retrievability: 'connector-backed',
       geminiTarget: 'document-data-store',
       automatable: true,
@@ -311,6 +333,7 @@ const RULES: Rule[] = [
       strategy: 'reconnect',
       retrievability: 'reference-only',
       geminiTarget: 'sharepoint-connector',
+      requiresConnectorId: 'shared_sharepointonline',
       automatable: false,
       notes: [
         'Ambiguous "FederatedStructuredSearchSource" kind with no Confluence-matching description — Copilot Studio reuses this generic kind for SharePoint federated search or Confluence; inferred SharePoint by elimination, not confirmed.',
@@ -448,6 +471,7 @@ function inferFromReferences(input: ClassifierInput): KnowledgeClassification | 
   if (/sharepoint\.com/.test(hay) && !/-my\.sharepoint\.com/.test(hay)) {
     return {
       strategy: 'reconnect', retrievability: 'reference-only', geminiTarget: 'sharepoint-connector', automatable: false,
+      requiresConnectorId: 'shared_sharepointonline',
       notes: [
         `Kind "${input.kind}" unrecognized; inferred SharePoint from the reference URL.`,
         'Reconnect via Gemini\'s native SharePoint connector — requires identity federation for ACL enforcement.',
@@ -457,6 +481,7 @@ function inferFromReferences(input: ClassifierInput): KnowledgeClassification | 
   if (/-my\.sharepoint\.com|onedrive/.test(hay)) {
     return {
       strategy: 'reconnect', retrievability: 'reference-only', geminiTarget: 'onedrive-connector', automatable: false,
+      requiresConnectorId: 'shared_onedrive',
       notes: [`Kind "${input.kind}" unrecognized; inferred OneDrive from the reference URL.`, 'Reconnect via Gemini\'s native OneDrive connector — requires identity federation.'],
     };
   }

@@ -439,18 +439,26 @@ export function agentConnectorIds(ir: AgentIR): Set<string> {
     (ir.agentTools ?? []).map((t) => t.connectorId).filter((id): id is string => !!id),
   );
   for (const ks of ir.knowledgeSources) {
-    // Keyed on the SOURCE being Confluence, not on the strategy it happens to carry
-    // today. Keying on `confluence-crawler` meant that rerouting these sources to a live
-    // tool would drop `shared_confluence` here, the orchestrator's per-agent filter would
-    // then remove the Confluence spec, and the agent would deploy with neither a data
-    // store nor a tool — reporting success the whole way. Every Confluence source is
-    // classified `confluence-crawler` today, so this changes nothing now; it stops the
-    // reroute from being a silent regression later.
-    if (
-      ks.classification?.strategy === 'confluence-crawler' ||
-      (ks.confluenceSpaceNames?.length ?? 0) > 0 ||
-      /confluence/i.test(ks.classification?.notes?.join(' ') ?? '')
-    ) {
+    // ASK THE CLASSIFIER, which is the only place that knows what the source is. Every rule
+    // there has already disambiguated the generic Copilot kinds, and it now states the answer
+    // outright as `requiresConnectorId`.
+    //
+    // What this replaces, and why — both directions were wrong, live 2026-08-21 on the one
+    // agent "Knowledge Assistant":
+    //   - Confluence was added when /confluence/i matched `classification.notes`. The note it
+    //     matched is the one that RULES CONFLUENCE OUT ("...with no Confluence-matching
+    //     description..."), so the agent got a live Confluence connector its Copilot original
+    //     never had. Proven by counterfactual: blank the notes and every connector disappeared.
+    //   - SharePoint was keyed on `kind === 'SharePointSearchSource'`. These federated sources
+    //     carry kind `FederatedStructuredSearchSource`, so five real SharePoint sources were
+    //     wired nothing while the run logged "5 source(s) served by live tools" — the classifier
+    //     had declined to copy them precisely BECAUSE live tools would serve them.
+    // Never infer a verdict from the prose that explains it.
+    if (ks.classification?.requiresConnectorId) ids.add(ks.classification.requiresConnectorId);
+    // Structural fallbacks, for sources classified before `requiresConnectorId` existed (staged
+    // rows persist across releases) — and for Confluence space names, which are evidence in
+    // their own right regardless of how the source was classified.
+    if (ks.classification?.strategy === 'confluence-crawler' || (ks.confluenceSpaceNames?.length ?? 0) > 0) {
       ids.add('shared_confluence');
     }
     if (ks.kind === 'SharePointSearchSource') ids.add('shared_sharepointonline');
