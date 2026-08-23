@@ -423,6 +423,18 @@ jobs:
           # the api answered health, but mongo had lost its compose DNS alias during a
           # network rebuild, so appUsers was unreadable. A deploy nobody can log into is
           # a failed deploy, so gate on db too rather than only on the process existing.
+          #
+          # POLL, do not probe once. The api listens BEFORE it finishes connecting to
+          # Mongo -- deliberately, so a Mongo outage cannot stop the app booting -- which
+          # means the first health answer after a recreate legitimately carries
+          # "db":false. A single read of that turned a deploy that had already succeeded
+          # into a red job: the very next line of the same log said "MongoDB connected".
+          # Wait for the transition, and only call it a failure if it never happens.
+          for i in $(seq 1 15); do
+            grep -q '"db":true' health-direct.json && break
+            sleep 2
+            ssh deploy-target 'curl -fsS --noproxy "*" --max-time 5 http://127.0.0.1:8083/api/health' > health-direct.json || true
+          done
           if grep -q '"db":false' health-direct.json; then
             echo '::error::API is up but its database is unreachable — sign-in would fail for every user.'
             ssh deploy-target "cd ${DEPLOY_DIR} && docker compose logs --tail 40 api | grep -i mongo || true"
