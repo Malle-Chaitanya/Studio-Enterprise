@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, Outlet, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchSession, resumeSession } from './api.ts';
 import { AgentChat } from './components/AgentChat.tsx';
 import { WizardProvider } from './context/WizardContext.tsx';
@@ -327,6 +327,12 @@ const FIXTURE_SESSION = 'ui';
 
 function V2Shell() {
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  // Connect is the one v2 phase that must render with no session: it is the
+  // page that CREATES the session. Blocking it here — like every other v2
+  // phase, which genuinely need a session to read — stranded new sign-ins on
+  // a dead end pointing at the legacy /home wizard.
+  const isConnectPhase = location.pathname === '/v2/connect';
   // The data source is chosen once, here, and handed down: screens never decide
   // where their data comes from. `?fixture=1` is honoured in dev builds only.
   const source = useMemo(() => resolveSource(params), [params]);
@@ -376,7 +382,7 @@ function V2Shell() {
             bounce a design review straight back to the login screen. */}
         {!source.isFixture && hasSession && <SessionGuard />}
         <AppHeader />
-        {!source.isFixture && !hasSession ? (
+        {!source.isFixture && !hasSession && !isConnectPhase ? (
           // No session, said out loud. A blank "not connected" card is a lie when
           // the truth is that this page does not know which migration it is on.
           <div className="v2">
@@ -396,7 +402,7 @@ function V2Shell() {
                   {resume === 'none' && (
                     <div className="v2-row note">
                       <span className="why">
-                        <a className="v2-btn blue" href="/home">Go to Home</a>
+                        <a className="v2-btn blue" href="/v2/connect">Go to Home</a>
                       </span>
                     </div>
                   )}

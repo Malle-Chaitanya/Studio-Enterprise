@@ -87,7 +87,9 @@ export interface ConnectState {
 
 export interface ConnectSource {
   read(session: string): Promise<ConnectState>;
-  disconnect(session: string, platform: 'microsoft' | 'google'): Promise<void>;
+  /** Disconnecting the source (Microsoft) ends the whole session server-side —
+   *  callers must check `sessionEnded` rather than re-reading the now-dead id. */
+  disconnect(session: string, platform: 'microsoft' | 'google'): Promise<{ sessionEnded?: boolean }>;
 }
 
 // ── environments -> projects ────────────────────────────────────────────────

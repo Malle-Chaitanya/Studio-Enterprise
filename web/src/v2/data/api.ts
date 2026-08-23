@@ -190,7 +190,10 @@ const connect: ConnectSource = {
         : undefined,
     };
   },
-  disconnect: async (session, platform) => { await disconnectPlatform(session, platform); },
+  disconnect: async (session, platform) => {
+    const r = await disconnectPlatform(session, platform);
+    return { sessionEnded: r.sessionEnded };
+  },
 };
 
 const pair: PairSource = {

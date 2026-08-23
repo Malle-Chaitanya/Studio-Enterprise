@@ -104,8 +104,8 @@ export default function ConnectV2() {
       const start = platform === 'microsoft' ? microsoftStartUrl(session) : googleStartUrl(session);
       const res = await connectViaPopup(
         start,
-        platform === 'microsoft' ? 'ms-connected' : 'google-connected',
-        platform === 'microsoft' ? 'ms-error' : 'google-error',
+        platform === 'microsoft' ? 'ms-auth-success' : 'google-auth-success',
+        platform === 'microsoft' ? 'ms-auth-error' : 'google-auth-error',
       );
       // A refused connection has to say so. Silence after a popup closes is the
       // failure shape that cost a whole afternoon last time.
@@ -118,6 +118,15 @@ export default function ConnectV2() {
       } else {
         setConnectError('');
       }
+      // Microsoft mints (or resumes) the session and posts its id back — a fresh
+      // connect never had one in the URL, so adopt it here or `load()` re-reads
+      // the empty session it started with and the connection looks like it never happened.
+      if (res.ok && res.session && res.session !== session) {
+        const next = new URLSearchParams(params);
+        next.set('session', res.session);
+        navigate(`/v2/connect?${next.toString()}`, { replace: true });
+        return;
+      }
       // Re-read rather than trusting the popup: the only proof a cloud is connected
       // is the server saying so.
       await load();
@@ -129,9 +138,20 @@ export default function ConnectV2() {
   const disconnect = async (platform: 'microsoft' | 'google'): Promise<void> => {
     setBusy(platform);
     try {
-      await source.connect.disconnect(session, platform);
-      await load();
-      setToast(`Disconnected ${platform === 'microsoft' ? 'Microsoft' : 'Google'}.`);
+      const r = await source.connect.disconnect(session, platform);
+      if (r.sessionEnded) {
+        // Disconnecting the source ends the session server-side — re-reading the
+        // now-dead id just produced "session_not_found" while stale state (e.g.
+        // Google still shown "connected") lingered on screen. Drop the dead
+        // session and start clean instead.
+        setState(EMPTY);
+        setError('');
+        navigate('/v2/connect', { replace: true });
+        setToast('Disconnected Microsoft — session ended, reconnect to start over.');
+      } else {
+        await load();
+        setToast(`Disconnected ${platform === 'microsoft' ? 'Microsoft' : 'Google'}.`);
+      }
       window.setTimeout(() => setToast(''), 3000);
     } finally {
       setBusy(null);

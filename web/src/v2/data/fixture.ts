@@ -328,7 +328,7 @@ const connect: ConnectSource = {
       detail: 'Service account has Discovery Engine access to contoso-gemini' },
     found: { environments: 4, agents: 9, topics: 164 },
   }),
-  disconnect: async () => { await wait(null); },
+  disconnect: async (_session, platform) => { await wait(null); return { sessionEnded: platform === 'microsoft' }; },
 };
 
 const pair: PairSource = {
