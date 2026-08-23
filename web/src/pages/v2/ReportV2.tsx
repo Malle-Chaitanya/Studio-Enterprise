@@ -355,6 +355,31 @@ export default function ReportV2() {
 
 
 
+/**
+ * The agent's one-chip verdict.
+ *
+ * The rule comes from worstVerdict() in fidelity.tsx rather than being re-derived here.
+ * One lost behaviour outranks twenty clean ones and must never be averaged, and this
+ * codebase has already been bitten more than once by the same fact having two
+ * implementations that drift into disagreeing.
+ *
+ * `partial` counts toward needs-review: a partly reproduced operation is precisely the
+ * thing somebody has to go and check.
+ */
+function AgentVerdict({ result }: { result: MigrationResult }) {
+  if (result.error) return <Chip tone="bad">{result.error}</Chip>;
+  const notes = result.fidelity.filter((f) => !HIDDEN_ON_SCREEN.has(f.component));
+  const counts = {
+    clean: notes.filter((f) => f.status === 'mapped').length,
+    'needs-review': notes.filter((f) => f.status === 'needs-review' || f.status === 'partial').length,
+    lost: notes.filter((f) => f.status === 'lost').length,
+  };
+  const verdict = worstVerdict(counts);
+  if (verdict === 'lost') return <Chip tone="bad">{`Live · ${counts.lost} not carried over`}</Chip>;
+  if (verdict === 'needs-review') return <Chip tone="warn">{`Live · ${counts['needs-review']} to check`}</Chip>;
+  return <Chip tone="ok">Live in Gemini</Chip>;
+}
+
 function Check({ ok, label, pending }: { ok: boolean; label: string; pending?: boolean }) {
   return (
     <li className={ok ? 'ok' : pending ? 'pending' : 'bad'}>

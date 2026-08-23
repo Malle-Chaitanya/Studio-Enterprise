@@ -798,17 +798,12 @@
 .v2 .v2-rep-banner .sub { color: var(--v2-ink-3); font-size: 12.5px; margin-top: 2px; }
 
 /* The four numbers. This row is the answer to "what did I get". */
-.v2 .v2-rep-stats {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
   text-align: center; padding: 4px 0 2px;
 }
-.v2 .v2-rep-stat .n { font-size: 26px; line-height: 1.2; color: var(--v2-ink); }
 /* An em dash means NOT RECORDED. It must never look like a measured zero, so it
    is dimmed: a 0 next to "connectors wired" claims we wired nothing, which is a
    false statement about a run whose data simply predates the field. */
-.v2 .v2-rep-stat .n.unknown { color: var(--v2-ink-4); }
-.v2 .v2-rep-stat .l { color: var(--v2-ink-3); font-size: 12px; margin-top: 2px; }
-.v2 .v2-rep-stat .d { color: var(--v2-ink-4); font-size: 11px; margin-top: 1px; }
 
 .v2 .v2-rep-agent { border-top: 1px solid var(--v2-edge); padding-top: 14px; }
 .v2 .v2-rep-agent > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -820,11 +815,6 @@
   border-bottom: 1px solid var(--v2-edge); padding-bottom: 4px;
 }
 
-.v2 .v2-rep-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.v2 .v2-rep-table td { padding: 4px 8px 4px 0; vertical-align: baseline; }
-.v2 .v2-rep-table td.tick { color: var(--v2-ok); width: 1em; }
-.v2 .v2-rep-table td.num { width: 6.5em; }
-.v2 .v2-rep-table td.dim { color: var(--v2-ink-3); }
 
 .v2 .v2-rep-checks {
   list-style: none; margin: 0; padding: 0; font-size: 13px;
@@ -844,6 +834,5 @@
 .v2 .v2-rep-foot strong { color: var(--v2-ink-2); }
 
 @media (max-width: 720px) {
-  .v2 .v2-rep-stats { grid-template-columns: repeat(2, 1fr); row-gap: 14px; }
   .v2 .v2-rep-checks { grid-template-columns: 1fr; }
 }
