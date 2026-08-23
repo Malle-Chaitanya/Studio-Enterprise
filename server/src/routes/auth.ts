@@ -154,16 +154,32 @@ function takeState(
   }
 }
 
-const web = (path: string) => `${config.WEB_ORIGIN}${path}`;
+const web = (path: string) => `${config.WEB_ORIGIN.split(',')[0]?.trim()}${path}`;
+
+// Same allowlist the CORS middleware in server.ts builds from config.WEB_ORIGIN — kept as
+// its own const here rather than imported, since server.ts doesn't export it and this is a
+// one-line derivation, not shared logic worth a module for.
+const WEB_ORIGINS = config.WEB_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
 
 /**
  * Popup-mode OAuth response: instead of navigating the whole app away, the OAuth
  * flow runs in a small window; on completion we serve this tiny page that posts
  * the result back to the opener (main app) and closes itself — GEM_CO-style UX.
+ *
+ * `postMessage`'s targetOrigin must be a single exact origin, never a list — passing
+ * the raw, possibly comma-separated config.WEB_ORIGIN broke every deployment with more
+ * than one allowed origin (confirmed live 2026-08-23: postMessage silently rejected with
+ * "target origin ... does not match the recipient window's origin", so a popup-based
+ * connect could complete on the server and the main window would never find out). The
+ * popup is always opened BY one of our own already-CORS-approved origins, so the request
+ * that lands here carries that real origin in its own Origin/Referer header — match it
+ * against the same allowlist CORS uses, and echo back that one, not the whole list.
  */
-function popupResult(res: Response, type: string, payload: Record<string, unknown> = {}): void {
+function popupResult(req: Request, res: Response, type: string, payload: Record<string, unknown> = {}): void {
   const msg = JSON.stringify({ type, ...payload });
-  const origin = JSON.stringify(config.WEB_ORIGIN);
+  const requestOrigin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : undefined);
+  const matched = requestOrigin && WEB_ORIGINS.includes(requestOrigin) ? requestOrigin : WEB_ORIGINS[0];
+  const origin = JSON.stringify(matched);
   res.type('html').send(
     `<!doctype html><meta charset="utf-8"><title>Connecting…</title>` +
       `<body style="font:14px system-ui,sans-serif;padding:28px;color:#334">Connected — you can close this window.` +
@@ -246,11 +262,11 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
   const st = takeState(state);
   const popup = !!st?.popup;
   if (error) {
-    if (popup) return void popupResult(res, 'ms-auth-error', { error });
+    if (popup) return void popupResult(req, res, 'ms-auth-error', { error });
     return void res.redirect(web(`/?error=${encodeURIComponent(error)}`));
   }
   if (!st || st.expired) {
-    if (popup) return void popupResult(res, 'ms-auth-error', { error: 'state_expired' });
+    if (popup) return void popupResult(req, res, 'ms-auth-error', { error: 'state_expired' });
     return void res.redirect(web('/?error=state_expired'));
   }
 
@@ -324,7 +340,7 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
         'microsoft callback: signed-in user changed mid-flow — refusing to attach the connection',
       );
       const detail = 'Your sign-in changed while connecting. Start the connection again.';
-      if (popup) return void popupResult(res, 'ms-auth-error', { error: detail });
+      if (popup) return void popupResult(req, res, 'ms-auth-error', { error: detail });
       return void res.redirect(web(`/?error=${encodeURIComponent(detail)}`));
     }
 
@@ -355,7 +371,7 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
       const owner = req.appUser?.appUserId;
       if (!owner) {
         const detail = 'Sign in to CloudFuze before connecting a cloud, so the connection has an owner.';
-        if (popup) return void popupResult(res, 'ms-auth-error', { error: detail });
+        if (popup) return void popupResult(req, res, 'ms-auth-error', { error: detail });
         return void res.redirect(web(`/?error=${encodeURIComponent(detail)}`));
       }
       sessionId = await createSession({ step: 'ms_done', appUserId: owner, ...msFields });
@@ -380,11 +396,11 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
     }
 
     // Land back on the platform screen so the user sees "1 cloud connected".
-    if (popup) return void popupResult(res, 'ms-auth-success', { session: sessionId });
+    if (popup) return void popupResult(req, res, 'ms-auth-success', { session: sessionId });
     res.redirect(web(`/home?session=${sessionId}`));
   } catch (err) {
     logger.error({ err }, 'microsoft callback failed');
-    if (popup) return void popupResult(res, 'ms-auth-error', { error: (err as Error).message });
+    if (popup) return void popupResult(req, res, 'ms-auth-error', { error: (err as Error).message });
     res.redirect(web(`/?error=${encodeURIComponent((err as Error).message)}`));
   }
 }
@@ -395,7 +411,7 @@ authRouter.get('/google/start', async (req, res) => {
   const session = req.query.session as string;
   const popup = req.query.popup === '1';
   if (!(await getSession(session))) {
-    if (popup) return void popupResult(res, 'google-auth-error', { error: 'session_expired' });
+    if (popup) return void popupResult(req, res, 'google-auth-error', { error: 'session_expired' });
     return void res.redirect(web('/?error=session_expired'));
   }
 
@@ -412,12 +428,12 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
   const st = takeState(state);
   const popup = !!st?.popup;
   if (error) {
-    if (popup) return void popupResult(res, 'google-auth-error', { error });
+    if (popup) return void popupResult(req, res, 'google-auth-error', { error });
     return void res.redirect(web(`/?error=${encodeURIComponent(error)}`));
   }
   if (!st || st.expired || !st.msSessionId || !(await getSession(st.msSessionId))) {
     const errMsg = !st || st.expired ? 'state_expired' : 'session_expired';
-    if (popup) return void popupResult(res, 'google-auth-error', { error: errMsg });
+    if (popup) return void popupResult(req, res, 'google-auth-error', { error: errMsg });
     return void res.redirect(web(`/?error=${errMsg}`));
   }
   // Same cross-check as the Microsoft callback: a different signed-in user coming back means
@@ -430,7 +446,7 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
         'google callback: signed-in user changed mid-flow — refusing to attach the connection',
       );
       const detail = 'Your sign-in changed while connecting. Start the connection again.';
-      if (popup) return void popupResult(res, 'google-auth-error', { error: detail });
+      if (popup) return void popupResult(req, res, 'google-auth-error', { error: detail });
       return void res.redirect(web(`/?error=${encodeURIComponent(detail)}`));
     }
   }
@@ -469,11 +485,11 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
     }
 
     // Back to the platform screen — now showing "2 of 2 clouds connected".
-    if (popup) return void popupResult(res, 'google-auth-success', { session: st.msSessionId });
+    if (popup) return void popupResult(req, res, 'google-auth-success', { session: st.msSessionId });
     res.redirect(web(`/home?session=${st.msSessionId}`));
   } catch (err) {
     logger.error({ err }, 'google callback failed');
-    if (popup) return void popupResult(res, 'google-auth-error', { error: (err as Error).message });
+    if (popup) return void popupResult(req, res, 'google-auth-error', { error: (err as Error).message });
     res.redirect(web(`/?error=${encodeURIComponent((err as Error).message)}`));
   }
 }
