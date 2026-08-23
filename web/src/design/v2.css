@@ -834,13 +834,14 @@
 .v2 .v2-rep-checks li.pending { color: var(--v2-ink-3); }
 .v2 .v2-rep-checks li.bad span { color: var(--v2-fail); }
 
-.v2 .v2-rep-tally { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
-.v2 .v2-rep-tally-cell .n { font-size: 22px; line-height: 1.2; }
-.v2 .v2-rep-tally-cell .l { color: var(--v2-ink-3); font-size: 12px; }
-.v2 .v2-rep-tally-cell .d { color: var(--v2-ink-4); font-size: 11px; }
-.v2 .v2-rep-tally-cell.bad .n { color: var(--v2-fail); }
-.v2 .v2-rep-tally-cell.warn .n { color: var(--v2-amber); }
-.v2 .v2-rep-tally-cell.plain .n { color: var(--v2-ink-2); }
+/* The single closing line. Small and quiet on purpose: the screen's job is to say
+   what migrated, and this exists so "complete" is never quietly implied to mean
+   "nothing was lost". Every sentence behind the number is in the .xlsx. */
+.v2 .v2-rep-foot {
+  border-top: 1px solid var(--v2-edge); margin: 0; padding-top: 12px;
+  color: var(--v2-ink-3); font-size: 12.5px;
+}
+.v2 .v2-rep-foot strong { color: var(--v2-ink-2); }
 
 @media (max-width: 720px) {
   .v2 .v2-rep-stats { grid-template-columns: repeat(2, 1fr); row-gap: 14px; }

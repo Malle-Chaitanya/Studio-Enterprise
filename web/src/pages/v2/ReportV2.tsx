@@ -6,6 +6,8 @@ import {
   Inspector,
   InspectorHead,
   InspectorSection,
+  Band,
+  BandCell,
   Chip,
   Note,
   Panel,
@@ -234,16 +236,26 @@ export default function ReportV2() {
                 </button>
               </div>
 
-              <div className="v2-rep-stats">
-                <Stat n={String(t.live)} label="agents migrated" denom={`of ${t.rows.length}`} />
-                <Stat n={t.connectorsKnown ? String(t.connectors) : undefined} label="connectors live" />
-                <Stat
-                  n={t.toolsKnown ? String(t.tools) : undefined}
-                  label="tools reproduced"
-                  denom={t.toolsKnown ? `across ${t.connectors}` : undefined}
-                />
-                <Stat n={t.subAgentsKnown ? String(t.subAgents) : undefined} label="sub-agents" />
-              </div>
+              {/* The same Band every other phase screen opens with, rather than a
+                  second set of big-number styles that would drift from it. An
+                  undefined value still means NOT RECORDED and still renders as a
+                  dash with the reason underneath — see the note on Stat below. */}
+              <Band>
+                <BandCell label="Agents migrated" value={t.live}
+                  note={`of ${t.rows.length}`} tone={t.failed ? 'warn' : 'ok'} />
+                <BandCell label="Connectors live"
+                  value={t.connectorsKnown ? t.connectors : '—'}
+                  note={t.connectorsKnown ? 'reconnected' : 'not recorded'} />
+                <BandCell label="Tools reproduced"
+                  value={t.toolsKnown ? t.tools : '—'}
+                  note={t.toolsKnown ? `across ${t.connectors}` : 'not recorded'} />
+                <BandCell label="Sub-agents"
+                  value={t.subAgentsKnown ? t.subAgents : '—'}
+                  note={t.subAgentsKnown ? 'from topics' : 'not recorded'} />
+                <BandCell label="Failed" value={t.failed || '—'}
+                  note={t.failed ? 'see the spreadsheet' : 'none'}
+                  tone={t.failed ? 'bad' : 'plain'} />
+              </Band>
 
               {t.rows.map((r) => (
                 <section key={r.sourceId} className="v2-rep-agent">
@@ -263,18 +275,20 @@ export default function ReportV2() {
                   {(r.connectorsWired?.length ?? 0) > 0 && (
                     <>
                       <h4>Connectors &amp; tools</h4>
-                      <table className="v2-rep-table">
-                        <tbody>
-                          {r.connectorsWired!.map((c) => (
-                            <tr key={c.name}>
-                              <td className="tick" aria-hidden="true">✓</td>
-                              <td>{c.name}</td>
-                              <td className="mono num">{plural(c.toolCount, 'tool')}</td>
-                              <td className="dim">{c.actsAs ? `acts as ${c.actsAs}` : ''}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                      {/* .v2-row, not a table of its own: this is the same
+                          name/detail/verdict shape as every other list in v2, and a
+                          second row geometry here would diverge from it the first
+                          time either is touched. */}
+                      {r.connectorsWired!.map((c) => (
+                        <div className="v2-row" key={c.name}>
+                          <span className="nmw">
+                            <span className="nm">{c.name}</span>
+                            <span className="kind">{plural(c.toolCount, 'tool')}</span>
+                          </span>
+                          <span className="why">{c.actsAs ? `acts as ${c.actsAs}` : ''}</span>
+                          <span className="st"><Chip tone="ok">wired</Chip></span>
+                        </div>
+                      ))}
                     </>
                   )}
 
@@ -304,15 +318,14 @@ export default function ReportV2() {
                 </section>
               ))}
 
-              {(t.lost > 0 || t.partial > 0 || t.review > 0) && (
-                <section className="v2-rep-worth">
-                  <h4>Not carried over exactly</h4>
-                  <div className="v2-rep-tally">
-                    <Tally n={t.lost} of={t.all} label="not carried over" tone="bad" />
-                    <Tally n={t.partial} of={t.all} label="partly reproduced" tone="warn" />
-                    <Tally n={t.review} of={t.all} label="to review" tone="plain" />
-                  </div>
-                </section>
+              {/* One line, not a section. The screen says what MIGRATED; the count is
+                  here so nothing is quietly implied to be complete when it is not, and
+                  the .xlsx above carries every sentence behind it. */}
+              {t.lost + t.partial + t.review > 0 && (
+                <p className="v2-rep-foot">
+                  <strong className="mono">{t.lost + t.partial + t.review}</strong> of{' '}
+                  <span className="mono">{t.all}</span> checks need a look — see the full report
+                </p>
               )}
             </div>
           )}
@@ -340,61 +353,7 @@ export default function ReportV2() {
   );
 }
 
-/**
- * One headline number.
- *
- * `n` undefined means NOT RECORDED and renders as a dimmed em dash -- never 0. A zero
- * beside "connectors live" claims the migration wired nothing, which is a false statement
- * about a run whose data merely predates the field. Unknown and zero are different facts
- * and the screen has to be able to say which one it holds.
- */
-/**
- * The agent's one-chip verdict.
- *
- * The rule comes from worstVerdict() in fidelity.tsx rather than being re-derived here.
- * One lost behaviour outranks twenty clean ones and must never be averaged, and this
- * codebase has already been bitten more than once by the same fact having two
- * implementations that drift into disagreeing.
- *
- * `partial` counts toward needs-review: a partly reproduced operation is precisely the
- * thing somebody has to go and check.
- */
-function AgentVerdict({ result }: { result: MigrationResult }) {
-  if (result.error) return <Chip tone="bad">{result.error}</Chip>;
-  const notes = result.fidelity.filter((f) => !HIDDEN_ON_SCREEN.has(f.component));
-  const counts = {
-    clean: notes.filter((f) => f.status === 'mapped').length,
-    'needs-review': notes.filter((f) => f.status === 'needs-review' || f.status === 'partial').length,
-    lost: notes.filter((f) => f.status === 'lost').length,
-  };
-  const verdict = worstVerdict(counts);
-  if (verdict === 'lost') return <Chip tone="bad">{`Live · ${counts.lost} not carried over`}</Chip>;
-  if (verdict === 'needs-review') return <Chip tone="warn">{`Live · ${counts['needs-review']} to check`}</Chip>;
-  return <Chip tone="ok">Live in Gemini</Chip>;
-}
 
-function Stat({ n, label, denom }: { n?: string; label: string; denom?: string }) {
-  return (
-    <div className="v2-rep-stat">
-      <div className={`n mono ${n === undefined ? 'unknown' : ''}`}>{n ?? '—'}</div>
-      <div className="l">{label}</div>
-      <div className="d">{n === undefined ? 'not recorded' : denom ?? ''}</div>
-    </div>
-  );
-}
-
-/** A number with a two-word label. Prose about WHY lives in the .xlsx. */
-function Tally({ n, of, label, tone }: {
-  n: number; of: number; label: string; tone: 'bad' | 'warn' | 'plain';
-}) {
-  return (
-    <div className={`v2-rep-tally-cell ${tone}`}>
-      <div className="n mono">{n}</div>
-      <div className="l">{label}</div>
-      <div className="d">of {of} checks</div>
-    </div>
-  );
-}
 
 function Check({ ok, label, pending }: { ok: boolean; label: string; pending?: boolean }) {
   return (
