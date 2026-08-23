@@ -81,7 +81,15 @@ services:
       MONGO_HOST: mongodb://mongo:27017
       CSGE_DB: csge
 
-      WEB_ORIGIN: https://studioent.cftools.live
+      # Overridable from the host .env, because the allowlist is deployment config:
+      # a second frontend gets added without a code change and a redeploy. The literal
+      # stays as the default so a host with no WEB_ORIGIN line still serves the SPA.
+      #
+      # It was a bare literal until 2026-08-23, and an explicit `environment:` entry
+      # BEATS the .env file -- so an operator who correctly added two origins to
+      # /data/studio-ent/.env saw them silently discarded, with nothing logged and
+      # nothing to distinguish "not applied" from "applied and still refused".
+      WEB_ORIGIN: ${WEB_ORIGIN:-https://studioent.cftools.live}
       PUBLIC_BASE_URL: https://studioent.cftools.live
       MS_REDIRECT_URI: https://studioent.cftools.live/callback/microsoft
       GOOGLE_REDIRECT_URI: https://studioent.cftools.live/callback/google
