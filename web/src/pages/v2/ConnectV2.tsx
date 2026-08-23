@@ -215,7 +215,21 @@ export default function ConnectV2() {
             </div>
           )}
 
-          {error && (
+          {/* A dead session id is NOT an error the customer caused, and nothing about
+              their clouds is broken when it happens — the connections live in their
+              own durable record. The shell drops the id and resumes, so this says
+              what is happening rather than shouting about a failed read. */}
+          {error === 'session_not_found' && (
+            <div className="v2-test" style={{ marginTop: 14 }}>
+              <span aria-hidden="true">i</span>
+              <span>
+                That session link is no longer valid, so we are starting a fresh one. Your
+                connected clouds are unaffected — anything already connected stays connected.
+              </span>
+            </div>
+          )}
+
+          {error && error !== 'session_not_found' && (
             <div className="v2-test bad" style={{ marginTop: 14 }}>
               <span aria-hidden="true">!</span>
               <span>Could not read the session: {error}</span>
