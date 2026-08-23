@@ -45,6 +45,17 @@
 google-cloud-aiplatform==1.93.0
 google-cloud-storage==2.19.0
 google-auth==2.56.2
+# cloudpickle is what agent_engines uses to serialise the agent when it creates a
+# reasoning engine. It arrives via the google-cloud-aiplatform[agent_engines] extra
+# on the dev machine, but the extra is NOT used here — it would drag its own
+# versions of packages the two-step order above resolves by hand. Pinned explicitly
+# instead, at the version the dev machine deploys with.
+#
+# It bites at DEPLOY time, not import time, which is why its absence survived the
+# Dockerfile's import check and only surfaced live on 2026-08-23: ADK deploy failed
+# with "cloudpickle is not installed", fell back to low-code create, and WorkMate
+# landed as an undeployed draft. It is in that import check now.
+cloudpickle==3.1.2
 
 # ── step 2 (installed after step 1; upgrades google-genai past aiplatform's pin)
 google-adk==2.6.2
