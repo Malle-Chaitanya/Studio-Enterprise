@@ -205,6 +205,21 @@ jobs:
       # aborting the deploy, because this host sits behind a proxy that its git cannot
       # get through at all (`Proxy CONNECT aborted` on a plain github.com clone), so
       # registry egress is not something to assume. The fallback below covers it.
+      # The host's own GHCR credential is not a thing we keep. On 2026-08-23 the
+      # config on the box held a leftover `ghs_` Actions token from some past run —
+      # those die with the job that minted them, so every pull since had been
+      # answering `denied: denied` and silently falling through to the slow path.
+      # Egress was never the problem: the same step pulled mongo:7.0 fine.
+      #
+      # So mint one for THIS run and hand it over on stdin (never argv — argv is
+      # visible in the host's process list). Revoked below whatever happens.
+      - name: Log host into GHCR for this run
+        id: hostlogin
+        continue-on-error: true
+        run: |
+          ssh deploy-target 'docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin' \
+            <<< '${{ secrets.GITHUB_TOKEN }}'
+
       - name: Pull images on host
         id: hostpull
         continue-on-error: true
@@ -213,6 +228,14 @@ jobs:
             cd ${DEPLOY_DIR}
             TAG=${{ github.sha }} docker compose pull
           "
+
+      # Always, including after a failed pull. Leaving a credential behind on a box
+      # fronting 41 other sites is the thing this whole dance exists to avoid, and a
+      # stale one is what caused the fallback in the first place.
+      - name: Revoke host GHCR credential
+        if: always()
+        continue-on-error: true
+        run: ssh deploy-target 'docker logout ${{ env.REGISTRY }}'
 
       # Fallback: the runner has GHCR access by definition, so it pulls both images and
       # streams them straight into the host's docker daemon. No registry credential on
