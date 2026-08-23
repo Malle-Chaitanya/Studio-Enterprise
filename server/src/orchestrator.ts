@@ -2115,9 +2115,16 @@ async function execute(
             // connector/tool counts existed, and it does not survive the screen being
             // closed or the container being restarted — so the report, read months later,
             // could not say what the migrated agent could actually do.
+            //
+            // Count from `opsByConnector`, NOT from `c.operations`. The specs coming out of
+            // buildLiveConnectorSpecsDetailed never carry operations -- they are attached
+            // further down, when `scopedConnectors` is derived -- so reading them here ran
+            // ~25 lines too early and every connector reported `0 tools`, with the header
+            // summing to "0 tools reproduced across 5 connectors" on a run that reproduced
+            // plenty. Zero was not a missing value the report could flag: it was a wrong one.
             result.connectorsWired = applicable.map((c) => ({
               name: c.name,
-              toolCount: c.operations?.length ?? 0,
+              toolCount: opsByConnector.get(c.id)?.length ?? 0,
             }));
             const droppedConnectors = liveConnectorSpecs
               .filter((c) => !usedConnectorIds.has(c.id))
