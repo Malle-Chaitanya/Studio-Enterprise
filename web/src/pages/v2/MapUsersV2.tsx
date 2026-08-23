@@ -63,7 +63,7 @@ export default function MapUsersV2() {
 
   /** The row as it stands now: saved value, or the unsaved edit on top of it. */
   const effective = (r: UserRow): { target?: string; state: UserRow['state'] } => {
-    const d = draft[r.sourceId];
+    const d = draft[r.sourceEmail];
     if (d) return { target: d, state: 'mapped' };
     if (r.mapped) return { target: r.mapped, state: 'mapped' };
     return { target: undefined, state: r.suggested ? 'suggested' : 'unmapped' };
@@ -161,7 +161,7 @@ export default function MapUsersV2() {
     // Bulk-accept is offered, but it is still an explicit act by a person — and it
     // only ever touches rows where we actually have a proposal.
     const next: Record<string, string> = { ...draft };
-    for (const r of rows) if (!r.mapped && r.suggested) next[r.sourceId] = r.suggested;
+    for (const r of rows) if (!r.mapped && r.suggested) next[r.sourceEmail] = r.suggested;
     setDraft(next);
   };
 
@@ -199,7 +199,7 @@ export default function MapUsersV2() {
             value={eff.target ?? ''}
             placeholder="Choose the Google account"
             options={options}
-            onChange={(id) => setDraft((d) => ({ ...d, [r.sourceId]: id }))}
+            onChange={(id) => setDraft((d) => ({ ...d, [r.sourceEmail]: id }))}
           />
           {eff.state === 'suggested' && r.suggested && (
             // Label stays short so it cannot collide with the status chip; the
@@ -207,7 +207,7 @@ export default function MapUsersV2() {
             <Btn
               tone="amber"
               title={`Use ${r.suggested}`}
-              onClick={() => setDraft((d) => ({ ...d, [r.sourceId]: r.suggested as string }))}
+              onClick={() => setDraft((d) => ({ ...d, [r.sourceEmail]: r.suggested as string }))}
             >
               Use suggestion
             </Btn>
@@ -215,7 +215,7 @@ export default function MapUsersV2() {
         </span>
         <span className="st">
           {eff.state === 'mapped'
-            ? <Chip tone={draft[r.sourceId] ? 'warn' : 'ok'}>{draft[r.sourceId] ? 'unsaved' : 'mapped'}</Chip>
+            ? <Chip tone={draft[r.sourceEmail] ? 'warn' : 'ok'}>{draft[r.sourceEmail] ? 'unsaved' : 'mapped'}</Chip>
             : eff.state === 'suggested'
               ? <Chip tone="you">suggestion</Chip>
               : <Chip tone="bad">not mapped</Chip>}
@@ -409,7 +409,7 @@ export default function MapUsersV2() {
           {selected.suggested && !selected.mapped && (
             <InspectorActions>
               <Btn wide tone="amber"
-                onClick={() => setDraft((d) => ({ ...d, [selected.sourceId]: selected.suggested as string }))}>
+                onClick={() => setDraft((d) => ({ ...d, [selected.sourceEmail]: selected.suggested as string }))}>
                 Use {selected.suggested}
               </Btn>
             </InspectorActions>
