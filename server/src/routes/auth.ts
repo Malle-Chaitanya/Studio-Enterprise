@@ -206,15 +206,24 @@ authRouter.get('/resume', async (req, res) => {
  * Idempotent and never fails — a sign-out that errors would strand someone on a page
  * they are trying to leave.
  */
-authRouter.post('/logout', async (req, res) => {
-  const sessionId = (req.body as { session?: string })?.session ?? '';
-  if (sessionId) {
-    try {
-      await deleteSession(sessionId);
-    } catch (err) {
-      logger.warn({ err }, 'logout: could not delete session');
-    }
-  }
+authRouter.post('/logout', async (_req, res) => {
+  // Deliberately does NOT delete the migration session any more.
+  //
+  // It used to, on the reasoning that otherwise the Back button plus /resume would hand
+  // the cloud connections straight back. That reasoning does not survive contact with the
+  // guards that now exist: every /api/* migration route sits behind `requireAuth` (401
+  // `not_signed_in`) and `enforceSessionOwnership`, and /resume itself returns null
+  // without `req.appUser`. A signed-out browser holding a stale `?session=` id can do
+  // nothing with it. The cookie is what makes signing out mean something, not the delete.
+  //
+  // What the delete DID accomplish was destroying both cloud connections on every sign
+  // out, so the next sign-in showed Microsoft and Google disconnected and the customer
+  // re-ran two OAuth flows to get back to where they were. The credentials themselves
+  // were never gone -- `authSessions` keeps them and logout never touched that row -- so
+  // the tool was discarding only the link to them, and calling that security.
+  //
+  // Signing out is not disconnecting. Disconnecting is its own button (POST /disconnect),
+  // it revokes per platform, and it is the thing that should end a connection.
   res.json({ ok: true });
 });
 

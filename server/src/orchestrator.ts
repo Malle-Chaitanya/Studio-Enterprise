@@ -2085,6 +2085,14 @@ async function execute(
             }
 
             const applicable = liveConnectorSpecs.filter((c) => usedConnectorIds.has(c.id));
+            // Carry this onto the result, not just the log. The log is the only place the
+            // connector/tool counts existed, and it does not survive the screen being
+            // closed or the container being restarted — so the report, read months later,
+            // could not say what the migrated agent could actually do.
+            result.connectorsWired = applicable.map((c) => ({
+              name: c.name,
+              toolCount: c.operations?.length ?? 0,
+            }));
             const droppedConnectors = liveConnectorSpecs
               .filter((c) => !usedConnectorIds.has(c.id))
               .map((c) => c.name);

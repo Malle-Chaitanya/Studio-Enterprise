@@ -21,6 +21,7 @@ import SelectAgentsV2 from './pages/v2/SelectAgentsV2.tsx';
 import ConnectorsV2 from './pages/v2/ConnectorsV2.tsx';
 import MigrateV2 from './pages/v2/MigrateV2.tsx';
 import PhaseSoon from './pages/v2/PhaseSoon.tsx';
+import ReportV2 from './pages/v2/ReportV2.tsx';
 import { SourceProvider, resolveSource } from './v2/data/index.ts';
 
 function AppHeader() {
@@ -467,10 +468,12 @@ export function App() {
         <Route path="/v2/select-agents" element={<SelectAgentsV2 />} />
         <Route path="/v2/connectors" element={<ConnectorsV2 />} />
         <Route path="/v2/migrate" element={<MigrateV2 />} />
-        {/* The fidelity report screen was removed on request. Redirected, not
-            404'd, so an existing link lands on the run it belonged to. What a
-            migration cost is still recorded server-side per run and still shows on
-            Migrate while the run is on screen. */}
+        {/* Post-migration report for ONE run, read back from the server. The old
+            always-on fidelity screen was removed on request for being a wall of
+            review data mid-wizard; this replaces it at the end of the flow, where
+            a customer is asking what they got rather than what to worry about.
+            Bare /v2/report has no run to show, so it still lands on Migrate. */}
+        <Route path="/v2/report/:runId" element={<ReportV2 />} />
         <Route path="/v2/report" element={<Navigate to="/v2/migrate" replace />} />
         {/* Kept as the catch-all: a mistyped phase says so instead of blanking. */}
         <Route path="/v2/:phase" element={<PhaseSoon />} />

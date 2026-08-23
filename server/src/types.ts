@@ -609,6 +609,20 @@ export interface MigrationResult {
       parentContext?: string;
     }[];
   }[];
+  /**
+   * The connectors actually wired for THIS agent, and how many operations each
+   * contributed as tools.
+   *
+   * Recorded because it was the one thing a customer wanted from the report and the one
+   * thing the report could not answer: "5 connectors, 31 tools" existed only in the live
+   * run log, so it was gone the moment the screen was closed or the container restarted.
+   * Only connectors this agent references are listed — a credential configured but never
+   * called is not a capability this agent has.
+   *
+   * Optional: results written before this field existed have none, and the report shows
+   * the connector names it can prove rather than a fabricated zero.
+   */
+  connectorsWired?: { name: string; toolCount: number }[];
   /** Manual permission steps when Gemini cannot apply per-principal sharing. */
   permissionHandoff?: PermissionHandoff;
 }

@@ -49,6 +49,10 @@ export interface MigrationResult {
   geminiAgentId?: string;
   created: boolean;
   deployed: boolean;
+  /** `deployed: false` because the SOURCE was a Draft in Copilot Studio — the source's
+   *  intent kept faithfully, not a half-finished deploy. Reporting it as "not published"
+   *  turns a correct outcome into a defect. */
+  draftPreserved?: boolean;
   shared: boolean;
   verified?: boolean;
   /**
@@ -63,6 +67,10 @@ export interface MigrationResult {
    *  different conclusions about the same run. Absent on older results. */
   verifyEvidence?: VerificationEvidence;
   error?: string;
+  /** Connectors wired for THIS agent and how many operations each contributed as tools.
+   *  Absent on runs recorded before the field existed — the report shows "—" rather than
+   *  a zero, which would be a claim about the agent instead of about our own records. */
+  connectorsWired?: { name: string; toolCount: number }[];
   fidelity: FidelityNote[];
   permissionHandoff?: {
     agentName: string;
