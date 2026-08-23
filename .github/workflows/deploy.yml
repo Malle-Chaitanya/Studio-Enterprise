@@ -265,14 +265,21 @@ jobs:
               raw = subprocess.run(['docker','network','inspect',*ids],
                                    capture_output=True, text=True).stdout
               for net in json.loads(raw or '[]'):
-                  # Skip OUR OWN network. Without this, `used` contains the subnet this
-                  # stack is already on, so free(previous) is always False — the subnet
-                  # overlaps itself — and every deploy renumbered to a fresh /24. That
-                  # forced compose to recreate the network EVERY time, which is the
-                  # 'network <id> not found' churn the retry below exists to survive, and
-                  # when the retry's down/up raced mongo's 20s healthcheck start_period
-                  # the api came up first and died on `getaddrinfo ENOTFOUND mongo` —
-                  # taking sign-in down with it, because appUsers lives in that database.
+                  # Skip OUR OWN network. Without this, the used list contains the
+                  # subnet this stack is already on, so free(previous) is always False
+                  # (the subnet overlaps itself) and every deploy renumbered to a fresh
+                  # /24. That forced compose to recreate the network EVERY time.
+                  #
+                  # Recreating the network is not harmless. Containers that compose
+                  # leaves Running are re-attached to the rebuilt network WITHOUT their
+                  # compose service alias, while recreated ones get theirs back. On
+                  # 2026-08-23 that left mongo reachable only as studio-ent-mongo-1, so
+                  # the api could not resolve the host mongo, ran without persistence,
+                  # and sign-in failed for everyone because appUsers lives there.
+                  #
+                  # NOTE: no backticks in this block. The whole python program is inside
+                  # a double-quoted ssh argument, so the LOCAL shell expands backticks
+                  # before the remote ever sees them.
                   if net.get('Name') == 'studio-ent_default':
                       continue
                   for cfg in (net.get('IPAM') or {}).get('Config') or []:
@@ -388,6 +395,16 @@ jobs:
           done
           echo "API never became healthy"; cd '"${DEPLOY_DIR}"'; docker compose logs --tail 80 api; exit 1' | tee health-direct.json
           grep -q '"status"' health-direct.json
+          # The process being up and the database being reachable are two different
+          # facts. On 2026-08-23 this step passed while sign-in was refusing everyone:
+          # the api answered health, but mongo had lost its compose DNS alias during a
+          # network rebuild, so appUsers was unreadable. A deploy nobody can log into is
+          # a failed deploy, so gate on db too rather than only on the process existing.
+          if grep -q '"db":false' health-direct.json; then
+            echo '::error::API is up but its database is unreachable — sign-in would fail for every user.'
+            ssh deploy-target "cd ${DEPLOY_DIR} && docker compose logs --tail 40 api | grep -i mongo || true"
+            exit 1
+          fi
 
       # HTTPS, via --resolve rather than a Host header on port 80. Once certbot added the
       # 80->443 redirect, the plain-HTTP form returned 301 and the grep failed on the
