@@ -118,7 +118,21 @@ migrateRouter.post('/plan', async (req, res) => {
     }
     // A newly written plan is by definition unconsumed. Clearing here is what makes a
     // deliberate re-run work while a stray reconnect still does not.
-    await updateSession(sessionId!, { plan, planConsumedAt: undefined, planConsumedSummary: undefined });
+    // Keep agentSelection in step with the plan. GET /selection prefers agentSelection,
+    // so leaving a stale one behind would make the decision screens describe a set of
+    // agents the next run is not going to migrate — the same one-fact-two-places drift
+    // this field was added to fix, just pointing the other way.
+    const agentSelection = plan.units.map((u) => ({
+      envUrl: u.envUrl,
+      envName: u.envName,
+      botIds: (u.bots ?? []).map((b) => b.botid),
+    }));
+    await updateSession(sessionId!, {
+      plan,
+      agentSelection,
+      planConsumedAt: undefined,
+      planConsumedSummary: undefined,
+    });
     res.json({
       totalAgents: plan.totalAgents,
       environments: plan.units.map((u) => ({ name: u.envName, agents: u.bots.map((b) => b.name) })),
@@ -578,17 +592,75 @@ migrateRouter.post('/drive-identities', async (req, res) => {
  *
  * The plan is authoritative and survives all of that, so it is the fallback.
  */
+/** One selected environment and the agents chosen inside it. */
+export interface SelectionUnit { env: string; envName?: string; botIds: string[] }
+
+/**
+ * Normalise a client-supplied selection.
+ *
+ * Empty units are dropped rather than stored. A unit with no bots is not a choice, and
+ * keeping it would make the stored selection LOOK present while answering nothing — which
+ * is the failure this whole field exists to remove.
+ */
+export function normalizeSelection(input: unknown): { envUrl: string; envName?: string; botIds: string[] }[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((u) => (u ?? {}) as { env?: unknown; envName?: unknown; botIds?: unknown })
+    .filter((u) => typeof u.env === 'string' && u.env)
+    .map((u) => ({
+      envUrl: u.env as string,
+      envName: typeof u.envName === 'string' ? u.envName : undefined,
+      botIds: Array.isArray(u.botIds)
+        ? (u.botIds.filter((b) => typeof b === 'string' && !!b) as string[])
+        : [],
+    }))
+    .filter((u) => u.botIds.length > 0);
+}
+
+/**
+ * What the customer picked, preferring the recorded selection over the last run's plan.
+ *
+ * The plan is only written when a migration STARTS, so before that it is either absent
+ * (first pass) or describes the PREVIOUS run. Screens that ask this question run earlier
+ * than the plan exists.
+ */
+export function selectionFor(session: {
+  agentSelection?: { envUrl: string; envName?: string; botIds: string[] }[];
+  plan?: { units?: { envUrl: string; envName?: string; bots?: { botid: string }[] }[] };
+}): SelectionUnit[] {
+  if (session.agentSelection?.length) {
+    return session.agentSelection.map((u) => ({ env: u.envUrl, envName: u.envName, botIds: u.botIds }));
+  }
+  return (session.plan?.units ?? []).map((u) => ({
+    env: u.envUrl,
+    envName: u.envName,
+    botIds: (u.bots ?? []).map((b) => b.botid),
+  }));
+}
+
 migrateRouter.get('/selection', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
-  const units = session.plan?.units ?? [];
-  res.json({
-    selection: units.map((u) => ({
-      env: u.envUrl,
-      envName: u.envName,
-      botIds: (u.bots ?? []).map((b) => b.botid),
-    })),
-  });
+  res.json({ selection: selectionFor(session) });
+});
+
+/**
+ * POST /api/migrate/selection  { session, selection: [{ env, envName?, botIds }] }
+ *
+ * Record the chosen agents as soon as they are chosen, so every later screen can ask the
+ * server rather than the tab. Idempotent: the same selection posted twice is one state.
+ */
+migrateRouter.post('/selection', async (req, res) => {
+  const { session: sessionId, selection } = (req.body ?? {}) as {
+    session?: string;
+    selection?: unknown;
+  };
+  const session = await getSession(sessionId);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!Array.isArray(selection)) return void res.status(400).json({ error: 'selection_required' });
+  const agentSelection = normalizeSelection(selection);
+  await updateSession(sessionId!, { agentSelection });
+  res.json({ selection: selectionFor({ agentSelection }) });
 });
 
 migrateRouter.get('/surface-equivalence', async (req, res) => {

@@ -56,6 +56,21 @@ export interface Session {
   // resolved migration plan (set by POST /api/migrate/plan)
   plan?: ResolvedPlan;
   /**
+   * Which agents the customer has PICKED, recorded when they pick them.
+   *
+   * Separate from `plan` on purpose. `plan` is written by POST /plan, which in v2 only
+   * runs when the migration STARTS — so anything earlier in the wizard that asked the
+   * server "which agents did they choose" got an empty answer on a first pass, and the
+   * PREVIOUS run's answer on a second. That is what hid the per-agent Teams and Drive
+   * decisions on the Connectors screen: the panel renders nothing when the selection is
+   * empty, so both were silently left undecided and the migration dropped those tools.
+   *
+   * Server-side rather than sessionStorage because the screen that needs it must survive
+   * a reload and a second tab — reading the tab is what the v2 rewrite deliberately moved
+   * away from.
+   */
+  agentSelection?: { envUrl: string; envName?: string; botIds: string[] }[];
+  /**
    * Set when a run for the CURRENT `plan` finished, and cleared whenever POST /plan
    * writes a new one.
    *
