@@ -10,7 +10,12 @@ import type {
 
 export async function fetchSession(id: string): Promise<SessionSummary> {
   const res = await fetch(`/api/auth/session/${id}`);
-  if (!res.ok) throw new Error('session_not_found');
+  // 404 means this id is DEAD — migrationSessions has no TTL, so the doc was
+  // deleted and no retry will ever bring it back. Anything else (500, gateway,
+  // restart mid-request) is a read that may well succeed next time. Collapsing the
+  // two would throw away a working session on one bad response.
+  if (res.status === 404) throw new Error('session_not_found');
+  if (!res.ok) throw new Error('session_read_failed');
   return (await res.json()) as SessionSummary;
 }
 

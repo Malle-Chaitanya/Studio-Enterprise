@@ -140,8 +140,11 @@ function SessionGuard() {
     if (!session) return;
     let cancelled = false;
     fetchSession(session)
-      .catch(() => {
-        if (!cancelled) navigate('/', { replace: true });
+      .catch((e: Error) => {
+        // ONLY a rejected id sends someone back to sign in. A 500 or a server
+        // restart mid-request used to do it too, which threw away a working
+        // session and the whole flow behind it over one bad response.
+        if (!cancelled && e.message === 'session_not_found') navigate('/', { replace: true });
       });
     return () => { cancelled = true; };
   }, [session, navigate]);
@@ -356,9 +359,41 @@ function V2Shell() {
    * which is the worst shape a failure can take.
    */
   const [resume, setResume] = useState<'idle' | 'looking' | 'none'>('idle');
-  const hasSession = Boolean(params.get('session'));
+  const sessionParam = params.get('session') ?? '';
+  /**
+   * A session id the SERVER has rejected.
+   *
+   * `migrationSessions` has no TTL on purpose — a cloud connection persists until
+   * someone disconnects it — so a 404 here does not mean "expired", it means the doc
+   * is gone and this id will never work again. Holding on to it made every screen
+   * read fail forever: the browser kept presenting a dead id, and because resume
+   * only ran when there was NO id, recovery could never start. Nothing about the
+   * customer's clouds is wrong in this state, which is why it must not read as a
+   * failure.
+   */
+  const [deadSession, setDeadSession] = useState('');
   useEffect(() => {
-    if (source.isFixture || hasSession) return;
+    if (source.isFixture || !sessionParam || deadSession === sessionParam) return;
+    let live = true;
+    void fetchSession(sessionParam).catch((e: Error) => {
+      // Only a rejected ID is fatal to the id. A network blip must not throw away a
+      // perfectly good session and silently start a new one.
+      if (live && e.message === 'session_not_found') setDeadSession(sessionParam);
+    });
+    return () => { live = false; };
+  }, [source.isFixture, sessionParam, deadSession]);
+
+  // Drop the dead id from the URL, which re-arms the resume below.
+  useEffect(() => {
+    if (!deadSession || sessionParam !== deadSession) return;
+    const next = new URLSearchParams(params);
+    next.delete('session');
+    setParams(next, { replace: true });
+  }, [deadSession, sessionParam, params, setParams]);
+
+  const hasSession = Boolean(sessionParam) && sessionParam !== deadSession;
+  useEffect(() => {
+    if (source.isFixture || hasSession || sessionParam) return;
     let live = true;
     setResume('looking');
     void resumeSession().then((id) => {
@@ -378,9 +413,12 @@ function V2Shell() {
   return (
     <WizardProvider>
       <SourceProvider value={source}>
-        {/* Fixture mode has no real session to validate — running the guard would
-            bounce a design review straight back to the login screen. */}
-        {!source.isFixture && hasSession && <SessionGuard />}
+        {/* No SessionGuard here on purpose. It answers a dead id by returning to
+            sign in, which for v2 is the wrong answer twice over: the customer is
+            already signed in, and their clouds are still connected in their own
+            durable record — only the migration session doc is gone. This shell
+            recovers instead: the dead id is dropped and a live session resumed, and
+            if there genuinely is none, the "no session" state below says so. */}
         <AppHeader />
         {!source.isFixture && !hasSession && !isConnectPhase ? (
           // No session, said out loud. A blank "not connected" card is a lie when
