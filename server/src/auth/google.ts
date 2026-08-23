@@ -443,3 +443,34 @@ export async function discoverGeminiProject(gToken: string): Promise<string> {
   }
   return fallback;
 }
+
+/**
+ * Run a Discovery Engine read with the SA's two credential paths, in the order the
+ * product intends: DIRECT IAM first (production — the customer granted our SA a role
+ * on their project), then DWD impersonation of their admin.
+ *
+ * Extracted because the order was written out by hand in each caller and one of them
+ * only ever tried direct IAM. That is invisible rather than loud: an org with
+ * `constraints/iam.allowedPolicyMemberDomains` cannot grant an outside service account
+ * any role, so direct IAM is not merely slower there — it can never succeed, and the
+ * caller quietly degraded instead of using the DWD path that was working.
+ *
+ * `fn` is retried on a throw AND on a null result, because "read failed" reaches this
+ * layer both ways. Returns null when neither path produced an answer — callers must
+ * treat that as "unknown", never as "the answer is empty".
+ */
+export async function withSaTokens<T>(
+  adminEmail: string | undefined,
+  fn: (saToken: string) => Promise<T | null>,
+): Promise<T | null> {
+  try {
+    const direct = await getSaToken();
+    const viaDirect = await fn(direct);
+    if (viaDirect != null) return viaDirect;
+  } catch (err) {
+    logger.warn({ err }, 'direct-IAM read failed; trying DWD');
+  }
+  if (!adminEmail) return null;
+  const impersonated = await getSaToken(adminEmail);
+  return fn(impersonated);
+}

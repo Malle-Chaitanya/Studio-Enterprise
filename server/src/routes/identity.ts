@@ -4,7 +4,7 @@ import {
   graphTokenFromRefresh,
   listGraphUsersFiltered,
 } from '../auth/microsoft.js';
-import { getSaToken, listWorkspaceUsersFilteredAsAdmin } from '../auth/google.js';
+import { listWorkspaceUsersFilteredAsAdmin, withSaTokens } from '../auth/google.js';
 import { listLicensedPrincipals, resolveDestination } from '../services/gemini.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -223,9 +223,18 @@ identityRouter.get('/google-users', async (req, res) => {
     const wantLicence = !showAll && config.DIRECTORY_LICENSED_ONLY;
     if (wantLicence && session.geminiProject) {
       try {
-        const saToken = await getSaToken();
-        const dest = await resolveDestination(session.geminiProject, saToken);
-        const licensed = await listLicensedPrincipals(dest, saToken);
+        // Direct IAM first, DWD second — the same order verifySaReachable uses
+        // (routes/auth.ts). Reading only the direct token was wrong for any customer
+        // whose org sets constraints/iam.allowedPolicyMemberDomains: an outside service
+        // account cannot be granted a role there AT ALL, so direct IAM is not a slow
+        // path to fall back from, it is permanently unavailable. Observed live on
+        // 2026-08-23 against project 505103737920 — the bare SA resolved zero engines,
+        // listLicensedPrincipals 403'd, and licence filtering silently switched itself
+        // off for a tenant where DWD was working the whole time.
+        const licensed = await withSaTokens(session.gEmail, async (saToken) => {
+          const dest = await resolveDestination(session.geminiProject!, saToken);
+          return listLicensedPrincipals(dest, saToken);
+        });
         if (licensed) {
           licenceCheck = 'applied';
           const kept = out.filter((u) => licensed.has(u.email));
