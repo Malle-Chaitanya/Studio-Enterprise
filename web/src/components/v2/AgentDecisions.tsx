@@ -29,18 +29,19 @@ import {
 
 interface Unit { env: string; envName?: string; botIds: string[] }
 
-export function AgentDecisions({ session, driveAgentNames, nameById, live = true, onSaved }: {
+export function AgentDecisions({ session, driveAgentIds, nameById, live = true, onSaved }: {
   session: string;
   /**
-   * Agent names the connector scan saw on the Google Drive connector.
+   * Botids the connector scan saw on the Google Drive connector.
    *
    * The Drive endpoint answers for whatever ids it is asked about and does not
-   * itself say who uses Drive, so the scan is what narrows it. Names, because that
-   * is what the scan carries — a wrong match here would offer a harmless extra row,
-   * never attach a decision to the wrong agent, because the id sent to the server
-   * always comes from the selection and never from this list.
+   * itself say who uses Drive, so the scan is what narrows it. Ids, not names: the
+   * scan used to expose only names, so an agent whose display name could not be
+   * resolved had no row at all and nobody could tell, and two agents sharing a name
+   * collided. The scan now returns ids wherever it saw one, which is strictly more
+   * often than it could name them.
    */
-  driveAgentNames: string[];
+  driveAgentIds: string[];
   /** botId -> agent name, from the same agent list the rest of the screen uses. */
   nameById: Record<string, string>;
   /**
@@ -227,26 +228,23 @@ export function AgentDecisions({ session, driveAgentNames, nameById, live = true
 
   // Only Drive-using agents are asked. The endpoint answers for ANY id it is given,
   // so without this every selected agent would be offered a Drive account it has no
-  // use for. An unmatched name simply drops the row: offering one Drive box too few
-  // is recoverable from the run's own fidelity note, whereas a screen full of
-  // irrelevant account pickers is the wall of noise this rewrite exists to remove.
-  // Matching is by display name because that is all the connector scan carries —
-  // it reports agentNames, never botids. Names are compared case- and
-  // space-insensitively, and anything the name map cannot resolve is REPORTED
-  // below rather than quietly vanishing, which is what a silent drop did: an agent
-  // that uses Drive would simply have no row and nobody would know to look.
-  const norm = (n: string): string => n.trim().toLowerCase();
-  const wantsDrive = new Set(driveAgentNames.filter(Boolean).map(norm));
-  const driveRows = drives.filter((d) => d.name && wantsDrive.has(norm(d.name)));
-  const resolved = new Set(drives.map((d) => norm(d.name)).filter(Boolean));
-  const unresolvedDrive = driveAgentNames.filter((n) => n && !resolved.has(norm(n)));
+  // use for.
+  //
+  // Matched on botid, exactly. This was a display-name comparison for as long as
+  // names were the only key the scan exposed, which meant an agent whose name could
+  // not be resolved silently had no row — a Drive tool dropped from the run with
+  // nothing on screen to say so — and two agents sharing a name collided. The scan
+  // now returns ids wherever it saw one, so the failure mode is gone rather than
+  // merely visible, and the normalisation and unmatched-name notice went with it.
+  const wantsDrive = new Set(driveAgentIds.filter(Boolean));
+  const driveRows = drives.filter((d) => wantsDrive.has(d.sourceId));
 
   const undecided = surfaces.filter((s) => s.decision === null).length;
   const unwired = driveRows.filter((d) => d.current?.status !== 'confirmed').length;
 
   // Only truly silent when a successful read found nothing AND nothing failed. Any
   // other combination has something to say.
-  if (!loading && !error && !surfaceError && !driveError && unresolvedDrive.length === 0
+  if (!loading && !error && !surfaceError && !driveError
     && surfaces.length === 0 && driveRows.length === 0) return null;
 
   return (
@@ -268,15 +266,7 @@ export function AgentDecisions({ session, driveAgentNames, nameById, live = true
           Could not read the Drive identities ({driveError}). Unknown, not none.
         </NoteRow>
       )}
-      {unresolvedDrive.length > 0 && (
-        <NoteRow tone="you">
-          {unresolvedDrive.length} agent{unresolvedDrive.length > 1 ? 's' : ''} use Google Drive
-          ({unresolvedDrive.slice(0, 3).join(', ')}{unresolvedDrive.length > 3 ? ', …' : ''}) but
-          could not be matched to the selected agents, so no account can be set here. They will
-          deploy without the Drive tool.
-        </NoteRow>
-      )}
-
+      
       {!loading && undecided > 0 && (
         <NoteRow tone="you">
           {undecided} surface decision{undecided > 1 ? 's' : ''} not recorded. An agent with no

@@ -363,7 +363,7 @@ export default function ConnectorsV2() {
           the card would otherwise report after the fact. */}
       <AgentDecisions
         session={session}
-        driveAgentNames={rows.find((r) => r.connectorId === 'shared_googledrive')?.agentNames ?? []}
+        driveAgentIds={rows.find((r) => r.connectorId === 'shared_googledrive')?.agentIds ?? []}
         // The assessment already fetched the selected agents, so the map costs
         // nothing extra and comes from the same read as the rest of the screen.
         nameById={nameById}

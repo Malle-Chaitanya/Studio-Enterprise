@@ -294,6 +294,9 @@ export interface ConnectorNeeded {
   siteUrl: string;
   kind: 'sharepoint-connector' | 'onedrive-connector';
   agentNames: string[];
+  /** The agents' botids. A superset of `agentNames`: the id is recorded whenever it
+   *  exists, including when the display name could not be resolved. Match on this. */
+  agentIds: string[];
 }
 
 /**
@@ -610,6 +613,9 @@ export interface DetectedConnector {
   unsupported?: boolean;
   /** Which of the selected agents actually use this connector. */
   agentNames?: string[];
+  /** The same agents by botid. Present wherever the scan saw an id, which is more
+   *  often than it could resolve a name — so this is the reliable key. */
+  agentIds?: string[];
   /** The exact operations the agent invokes, e.g. ListIssues, GetIssue_V2. */
   operations?: string[];
   /**

@@ -93,6 +93,18 @@ const AGENTS: Record<string, string[]> = {
   shared_smartsheet: ['Vendor Risk Screener'],
 };
 
+/** The same agents by botid, matching AGENT_ROWS below. The real scan returns ids
+ *  alongside names, and the per-agent decisions match on ids, so a fixture without
+ *  them would exercise a path production no longer uses. */
+const AGENT_IDS: Record<string, string[]> = {
+  shared_confluence: ['b1', 'b5', 'b6'],
+  shared_jira: ['b9'],
+  shared_sharepointonline: ['b3', 'b7'],
+  shared_hubspot: ['b2'],
+  shared_smartsheet: ['b4'],
+  shared_googledrive: ['b1', 'b2'],
+};
+
 const FLOWS: Record<string, string[]> = {
   shared_jira: ['Escalate ticket', 'Create bug', 'Sync status'],
   shared_hubspot: ['Log objection', 'Update deal'],
@@ -125,6 +137,7 @@ function toRow(id: string): ConnectorRow {
     connectorId: id,
     name: req?.name ?? id.replace(/^shared_/, ''),
     agentNames: AGENTS[id] ?? [],
+    agentIds: AGENT_IDS[id] ?? [],
     flowNames: FLOWS[id] ?? [],
     detected: {
       connectorId: id,

@@ -134,11 +134,17 @@ async function scan(session: string): Promise<ConnectorScan> {
     const agentNames = det?.agentNames ?? (knowledgeMsIds.includes(id)
       ? [...new Set(needed.filter((n) => KNOWLEDGE_MS_IDS[n.kind] === id).flatMap((n) => n.agentNames))]
       : []);
+    // Both entry points, or half the rows would be unmatchable: a row can come from
+    // the flow/knowledge scan OR from connectors-needed, and the two are merged here.
+    const agentIds = det?.agentIds ?? (knowledgeMsIds.includes(id)
+      ? [...new Set(needed.filter((n) => KNOWLEDGE_MS_IDS[n.kind] === id).flatMap((n) => n.agentIds ?? []))]
+      : []);
 
     return {
       connectorId: id,
       name: req?.name ?? det?.def?.name ?? id.replace(/^shared_/, ''),
       agentNames,
+      agentIds,
       flowNames: det?.flowNames ?? [],
       detected: det,
       req,

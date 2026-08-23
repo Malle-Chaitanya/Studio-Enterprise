@@ -25,6 +25,14 @@ export interface ConnectorRow {
   name: string;
   /** Agents that reference it — the answer to "why is this here?". */
   agentNames: string[];
+  /**
+   * The same agents by botid.
+   *
+   * Names were the only key the scan used to expose, so a per-agent decision could
+   * only be matched by display name — which dropped any agent whose name did not
+   * resolve, and collided when two agents shared one. Ids are a superset and exact.
+   */
+  agentIds: string[];
   flowNames: string[];
   detected: DetectedConnector | null;
   req: ConnectorRequirement | null;
