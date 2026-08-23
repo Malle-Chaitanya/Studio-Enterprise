@@ -8,6 +8,16 @@ import { z } from 'zod';
 const schema = z.object({
   PORT: z.coerce.number().default(8080),
   PUBLIC_BASE_URL: z.string().default('http://localhost:8080'),
+  /**
+   * Allowed browser origin(s), comma-separated.
+   *
+   * A LIST rather than one value because several origins are legitimate at once -- a
+   * developer on localhost, the deployed SPA, a teammate's host -- and the alternative
+   * people reach for when one of them is blocked is `origin: '*'`. That is not a weaker
+   * setting here, it is a broken one: this API sends credentials, and browsers refuse a
+   * wildcard origin on any credentialed request, so the cookie stops being sent and every
+   * origin fails, including the one that already worked.
+   */
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 

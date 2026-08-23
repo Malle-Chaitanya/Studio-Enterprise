@@ -19,7 +19,21 @@ import { runPendingGroundingRechecks } from './services/groundingRecheck.js';
 
 const app = express();
 
-app.use(cors({ origin: config.WEB_ORIGIN, credentials: true }));
+// Exact-match allowlist, never a wildcard and never a reflect-any. `credentials: true`
+// is what makes the difference: the browser rejects `*` outright on a credentialed
+// request, and reflecting whatever Origin arrives would let any page a signed-in admin
+// visits call this API with their cookie attached.
+//
+// A request with no Origin header (curl, a server-to-server health check, a same-origin
+// navigation) is allowed through: CORS is a browser mechanism, and refusing those would
+// break the deploy's own smoke tests without stopping anything.
+const WEB_ORIGINS = config.WEB_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
+app.use(
+  cors({
+    origin: (origin, cb) => cb(null, !origin || WEB_ORIGINS.includes(origin)),
+    credentials: true,
+  }),
+);
 app.use(express.json({ limit: '2mb' }));
 // Resolve the signed-in user on every request. Attaching it globally (rather than only
 // where it is required) means an open route can still record WHO acted, without any route
@@ -76,7 +90,7 @@ async function start(): Promise<void> {
   // it report `db: false` instead of the request simply hanging.
   app.listen(config.PORT, () => {
     logger.info(`CloudFuze Studio Migrate API on http://localhost:${config.PORT}`);
-    logger.info(`Web origin: ${config.WEB_ORIGIN}`);
+    logger.info(`Web origin(s): ${WEB_ORIGINS.join(', ')}`);
     if (!serviceAccountConfigured()) {
       logger.warn('No Google service account configured — Gemini operations will fail.');
     }
