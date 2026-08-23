@@ -6,10 +6,12 @@ import {
   Inspector,
   InspectorHead,
   InspectorSection,
+  Chip,
   Note,
   Panel,
   SkeletonRows,
 } from '../../components/v2/primitives.tsx';
+import { worstVerdict } from '../../components/v2/fidelity.tsx';
 import { fetchRun, fetchRuns } from '../../api.ts';
 import type { MigrationResult, RunHeader } from '../../types.ts';
 
@@ -93,7 +95,6 @@ export default function ReportV2() {
   const [results, setResults] = useState<MigrationResult[] | null>(null);
   const [header, setHeader] = useState<RunHeader | null>(null);
   const [error, setError] = useState('');
-  const [showNotes, setShowNotes] = useState(false);
 
   useEffect(() => {
     if (!session) { setError('This report needs a session.'); return; }
@@ -127,14 +128,23 @@ export default function ReportV2() {
     let tools = 0;
     let toolsKnown = false;
     let subAgents = 0;
+    let subAgentsKnown = false;
+    let connectorsKnown = false;
     for (const r of rows) {
-      for (const c of r.connectorsWired ?? []) {
-        connectors.add(c.name);
-        tools += c.toolCount;
-        toolsKnown = true;
+      if (r.connectorsWired) {
+        connectorsKnown = true;
+        for (const c of r.connectorsWired) {
+          connectors.add(c.name);
+          tools += c.toolCount;
+          toolsKnown = true;
+        }
       }
-      subAgents += r.subAgents ?? 0;
+      if (r.subAgents !== undefined) { subAgents += r.subAgents; subAgentsKnown = true; }
     }
+    // Denominator or it is not a fact: "11 not carried over" is a mood, "11 of 39
+    // checks" is data. `all` counts every fidelity note the run recorded, including
+    // the clean ones, which is what the other numbers are a fraction OF.
+    const all = rows.reduce((n, r) => n + r.fidelity.filter((f) => !HIDDEN_ON_SCREEN.has(f.component)).length, 0);
     const raw = rows.flatMap((r) =>
       r.fidelity.filter((f) => NOTEWORTHY.has(f.status) && !HIDDEN_ON_SCREEN.has(f.component)));
     const grouped = new Map<string, { label: string; status: string; count: number; detail: string }>();
@@ -155,13 +165,21 @@ export default function ReportV2() {
       // claim about the agent; "--" is a claim about our own record-keeping, which is the
       // true one.
       toolsKnown,
+      connectorsKnown,
       subAgents,
+      subAgentsKnown,
+      all,
       notes: [...grouped.values()],
+      // Counts, not prose. The detail strings are paragraphs -- rendering them turned
+      // this screen into the wall of review text the old fidelity screen was removed
+      // for. The numbers say the same thing at a glance; the sentences stay in the
+      // .xlsx, which is where someone goes when a number prompts a question.
       lost: raw.filter((n) => n.status === 'lost').length,
+      partial: raw.filter((n) => n.status === 'partial').length,
+      review: raw.filter((n) => n.status === 'needs-review').length,
     };
   }, [results]);
 
-  useEffect(() => { if (t.lost > 0) setShowNotes(true); }, [t.lost]);
 
   const download = async (): Promise<void> => {
     if (!results) return;
@@ -217,10 +235,14 @@ export default function ReportV2() {
               </div>
 
               <div className="v2-rep-stats">
-                <Stat n={String(t.live)} label={`${t.live === 1 ? 'agent' : 'agents'}\nmigrated`} />
-                <Stat n={String(t.connectors)} label={'connectors\nlive'} />
-                <Stat n={t.toolsKnown ? String(t.tools) : '—'} label={'tools\nreproduced'} />
-                <Stat n={String(t.subAgents)} label={'sub-agents\nfrom topics'} />
+                <Stat n={String(t.live)} label="agents migrated" denom={`of ${t.rows.length}`} />
+                <Stat n={t.connectorsKnown ? String(t.connectors) : undefined} label="connectors live" />
+                <Stat
+                  n={t.toolsKnown ? String(t.tools) : undefined}
+                  label="tools reproduced"
+                  denom={t.toolsKnown ? `across ${t.connectors}` : undefined}
+                />
+                <Stat n={t.subAgentsKnown ? String(t.subAgents) : undefined} label="sub-agents" />
               </div>
 
               {t.rows.map((r) => (
@@ -235,9 +257,7 @@ export default function ReportV2() {
                         </p>
                       )}
                     </div>
-                    <span className={`v2-rep-live ${r.error ? 'bad' : 'ok'}`}>
-                      {r.error ? r.error : '✓ Live in Gemini'}
-                    </span>
+                    <AgentVerdict result={r} />
                   </header>
 
                   {(r.connectorsWired?.length ?? 0) > 0 && (
@@ -247,7 +267,7 @@ export default function ReportV2() {
                         <tbody>
                           {r.connectorsWired!.map((c) => (
                             <tr key={c.name}>
-                              <td className="ok" aria-hidden="true">✓</td>
+                              <td className="tick" aria-hidden="true">✓</td>
                               <td>{c.name}</td>
                               <td className="mono num">{plural(c.toolCount, 'tool')}</td>
                               <td className="dim">{c.actsAs ? `acts as ${c.actsAs}` : ''}</td>
@@ -284,24 +304,14 @@ export default function ReportV2() {
                 </section>
               ))}
 
-              {t.notes.length > 0 && (
+              {(t.lost > 0 || t.partial > 0 || t.review > 0) && (
                 <section className="v2-rep-worth">
-                  <header>
-                    <h4>Worth knowing</h4>
-                    <button type="button" className="v2-linkish" onClick={() => setShowNotes((v) => !v)}>
-                      {t.notes.length} {t.notes.length === 1 ? 'item' : 'items'} {showNotes ? '▴' : '▾'}
-                    </button>
-                  </header>
-                  {showNotes && (
-                    <ul>
-                      {t.notes.map((n) => (
-                        <li key={`${n.label}-${n.status}`} className={n.status === 'lost' ? 'lost' : undefined}>
-                          <strong>{n.label}</strong>
-                          {n.count > 1 ? ` (${plural(n.count, 'action')})` : ''} — {n.detail}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  <h4>Not carried over exactly</h4>
+                  <div className="v2-rep-tally">
+                    <Tally n={t.lost} of={t.all} label="not carried over" tone="bad" />
+                    <Tally n={t.partial} of={t.all} label="partly reproduced" tone="warn" />
+                    <Tally n={t.review} of={t.all} label="to review" tone="plain" />
+                  </div>
                 </section>
               )}
             </div>
@@ -330,11 +340,58 @@ export default function ReportV2() {
   );
 }
 
-function Stat({ n, label }: { n: string; label: string }) {
+/**
+ * One headline number.
+ *
+ * `n` undefined means NOT RECORDED and renders as a dimmed em dash -- never 0. A zero
+ * beside "connectors live" claims the migration wired nothing, which is a false statement
+ * about a run whose data merely predates the field. Unknown and zero are different facts
+ * and the screen has to be able to say which one it holds.
+ */
+/**
+ * The agent's one-chip verdict.
+ *
+ * The rule comes from worstVerdict() in fidelity.tsx rather than being re-derived here.
+ * One lost behaviour outranks twenty clean ones and must never be averaged, and this
+ * codebase has already been bitten more than once by the same fact having two
+ * implementations that drift into disagreeing.
+ *
+ * `partial` counts toward needs-review: a partly reproduced operation is precisely the
+ * thing somebody has to go and check.
+ */
+function AgentVerdict({ result }: { result: MigrationResult }) {
+  if (result.error) return <Chip tone="bad">{result.error}</Chip>;
+  const notes = result.fidelity.filter((f) => !HIDDEN_ON_SCREEN.has(f.component));
+  const counts = {
+    clean: notes.filter((f) => f.status === 'mapped').length,
+    'needs-review': notes.filter((f) => f.status === 'needs-review' || f.status === 'partial').length,
+    lost: notes.filter((f) => f.status === 'lost').length,
+  };
+  const verdict = worstVerdict(counts);
+  if (verdict === 'lost') return <Chip tone="bad">{`Live · ${counts.lost} not carried over`}</Chip>;
+  if (verdict === 'needs-review') return <Chip tone="warn">{`Live · ${counts['needs-review']} to check`}</Chip>;
+  return <Chip tone="ok">Live in Gemini</Chip>;
+}
+
+function Stat({ n, label, denom }: { n?: string; label: string; denom?: string }) {
   return (
     <div className="v2-rep-stat">
+      <div className={`n mono ${n === undefined ? 'unknown' : ''}`}>{n ?? '—'}</div>
+      <div className="l">{label}</div>
+      <div className="d">{n === undefined ? 'not recorded' : denom ?? ''}</div>
+    </div>
+  );
+}
+
+/** A number with a two-word label. Prose about WHY lives in the .xlsx. */
+function Tally({ n, of, label, tone }: {
+  n: number; of: number; label: string; tone: 'bad' | 'warn' | 'plain';
+}) {
+  return (
+    <div className={`v2-rep-tally-cell ${tone}`}>
       <div className="n mono">{n}</div>
       <div className="l">{label}</div>
+      <div className="d">of {of} checks</div>
     </div>
   );
 }
