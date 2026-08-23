@@ -15,8 +15,20 @@
  *   - Sign-in mints an opaque 32-byte token stored server-side in `appLoginSessions` with
  *     a TTL. The cookie holds only the token; the browser never learns the appUserId, so
  *     it cannot assert one.
- *   - httpOnly + sameSite=lax + secure-in-production. The token is not reachable from JS,
- *     which is what keeps an XSS in the SPA from becoming a stolen migration session.
+ *   - httpOnly, and secure-in-production. The token is not reachable from JS, which is what
+ *     keeps an XSS in the SPA from becoming a stolen migration session.
+ *   - SameSite is None in production, Lax in dev. None is what lets a frontend on a DIFFERENT
+ *     origin (diycf.cloudfuze.com, localhost:3003) send the cookie at all -- under Lax the
+ *     browser withholds it on every cross-site XHR and the API answers 401 with the operator
+ *     seeing a correct CORS allowlist and a signed-in user. None REQUIRES Secure, so dev
+ *     (plain http on localhost) stays Lax: a None cookie without Secure is dropped outright,
+ *     which looks like a broken login rather than a policy choice.
+ *
+ *     Dropping Lax gives up the browser's built-in CSRF defence. What replaces it: every
+ *     state-changing route takes a JSON body or a non-simple method, so the browser preflights
+ *     it, and the CORS allowlist in server.ts refuses the preflight for any origin not on the
+ *     list. Keep it that way -- a state-changing plain GET, or a route that accepts
+ *     form-encoded input, would be reachable from any page on the internet.
  *   - No JWT. A revocable server-side row is what lets sign-out actually end a session;
  *     a self-contained token cannot be withdrawn before it expires.
  */
@@ -124,20 +136,32 @@ function cookieValue(req: Request, name: string): string | undefined {
   return undefined;
 }
 
-export function setAuthCookie(res: Response, token: string): void {
-  res.cookie(COOKIE, token, {
+/**
+ * The attributes the auth cookie is set with.
+ *
+ * Shared by set and clear on purpose: a browser only removes a cookie when the clearing
+ * Set-Cookie carries the SAME sameSite/secure/path, so defining these twice would mean
+ * sign-out silently leaving the cookie in place on cross-site frontends.
+ */
+function cookieOptions() {
+  // The dev server is plain http on localhost; forcing `secure` there would silently drop
+  // the cookie and look like a broken login. SameSite=None is only legal WITH Secure, so
+  // the two move together.
+  const crossSite = process.env.NODE_ENV === 'production';
+  return {
     httpOnly: true,
-    sameSite: 'lax',
-    // The dev server is plain http on localhost; forcing `secure` there would silently
-    // drop the cookie and look like a broken login.
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: TTL_DAYS * 86400_000,
+    sameSite: crossSite ? ('none' as const) : ('lax' as const),
+    secure: crossSite,
     path: '/',
-  });
+  };
+}
+
+export function setAuthCookie(res: Response, token: string): void {
+  res.cookie(COOKIE, token, { ...cookieOptions(), maxAge: TTL_DAYS * 86400_000 });
 }
 
 export function clearAuthCookie(res: Response): void {
-  res.clearCookie(COOKIE, { path: '/' });
+  res.clearCookie(COOKIE, cookieOptions());
 }
 
 export function authTokenFrom(req: Request): string | undefined {
