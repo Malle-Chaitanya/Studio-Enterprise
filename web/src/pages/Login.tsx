@@ -39,7 +39,10 @@ export function Login() {
       });
       if (res.ok) {
         const sid = await resumeSession();
-        navigate(sid ? `/home?session=${sid}` : '/home');
+        // v2 is the product now. The old wizard stays REACHABLE at /home and its
+        // other routes — nothing is deleted while Migrate and Report are still
+        // being compared against it — but it is no longer where signing in lands.
+        navigate(sid ? `/v2/connect?session=${sid}` : '/v2/connect');
         return;
       }
       const data = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };

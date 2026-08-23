@@ -142,8 +142,12 @@
 
 .v2-rail-f {
   margin-top: 14px; padding: 12px 16px 0; border-top: 1px solid var(--v2-edge);
-  font-size: 11px; color: var(--v2-ink-4); display: flex; align-items: center; gap: 7px;
+  font-size: 11px; color: var(--v2-ink-4);
+  /* Column, not row: as a flex ROW the three legend lines became three squashed
+     vertical columns of one word each, which is unreadable. */
+  display: flex; flex-direction: column; gap: 6px;
 }
+.v2-rail-f .lg { display: flex; align-items: center; gap: 7px; line-height: 1.35; }
 .v2-rail-f .swatch { width: 14px; height: 2px; border-radius: 2px; flex: 0 0 auto; }
 .v2-rail-f .swatch.amber { background: var(--v2-amber); }
 
@@ -217,9 +221,13 @@
 .v2-band .v.bad { color: #d61616; }
 .v2-band .v.amber { color: #a86600; }
 .v2-band .s { display: block; font-size: 10.5px; color: var(--v2-ink-4); }
+/* The controls cell must never sit on top of a readout: with six cells the band
+   wraps, and a `flex-basis` smaller than the controls themselves let them overlap
+   the last number. Basis is now the real content width, and it wraps instead. */
 .v2-band .grow {
-  flex: 1 1 200px; border-right: 0; display: flex; align-items: center;
-  justify-content: flex-end; padding-right: 18px; gap: 8px;
+  flex: 1 0 auto; min-width: 280px; border-right: 0; display: flex;
+  align-items: center; justify-content: flex-end; padding-right: 18px; gap: 8px;
+  flex-wrap: wrap;
 }
 .v2-rule { height: 3px; background: var(--v2-sand); position: relative; }
 .v2-rule i { position: absolute; inset: 0 auto 0 0; background: var(--v2-brand); transition: width .4s ease; }
@@ -296,6 +304,14 @@
 .v2-row .why.ctl {
   overflow: visible; white-space: normal; display: flex; align-items: center; gap: 8px;
 }
+/* A NoteRow states a fact in full sentences. Truncating it to one ellipsised line
+   would hide exactly the part that matters (what was lost, and why). */
+.v2-row.note { align-items: flex-start; }
+.v2-row.note .why { overflow: visible; white-space: normal; text-overflow: clip; }
+/* One agent's findings, grouped so the agent name reads as a heading for them. */
+.v2-fid { padding: 4px 0 8px; border-bottom: 1px solid var(--v2-line-2, rgba(0,0,0,.06)); }
+.v2-fid:last-child { border-bottom: 0; }
+.v2-fid .v2-note:not(:first-child) { padding-left: 12px; }
 .v2-row .st { flex: 0 0 148px; display: flex; justify-content: flex-end; }
 .v2-row .act { flex: 0 0 118px; display: flex; justify-content: flex-end; }
 
@@ -333,6 +349,9 @@
 .v2-ldg { display: flex; gap: 9px; padding: 6px 0; font-size: 12px; line-height: 1.45; color: var(--v2-ink-2); }
 .v2-ldg .m { width: 13px; flex: 0 0 auto; text-align: center; font-size: 10px; color: var(--v2-ok); }
 .v2-ldg.live { color: var(--v2-ink); font-weight: 500; }
+/* Inconclusive: the step ran and proved nothing. Amber, because it is a check
+   still owed — red would call it a defect, green would claim a pass. */
+.v2-ldg.warn .m { color: var(--v2-amber); }
 .v2-ldg.live .m { color: var(--v2-teal); }
 .v2-ldg.stop { color: #8a5600; font-weight: 500; }
 .v2-ldg.stop .m { color: var(--v2-amber); }
@@ -594,7 +613,11 @@
   font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
   color: var(--v2-ink-4); font-weight: 600;
 }
-.v2-card h3 { font-size: 17px; font-weight: 600; letter-spacing: -.02em; margin: 4px 0 2px; }
+.v2-card .hd { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
+.v2-card h3 { font-size: 17px; font-weight: 600; letter-spacing: -.02em; margin: 0; }
+/* Drawn, not fetched: a broken remote logo makes a working product look dead. */
+.v2-mark { width: 22px; height: 22px; flex: 0 0 auto; display: block; }
+.v2-dir .side .v2-mark { display: inline-block; vertical-align: -4px; margin-right: 7px; }
 .v2-card .acct { font-family: var(--v2-mono); font-size: 12px; color: var(--v2-ink-2); }
 .v2-card .det { font-size: 12px; color: var(--v2-ink-3); margin-top: 6px; line-height: 1.45; }
 .v2-card .foot { margin-top: 14px; display: flex; align-items: center; gap: 8px; }
@@ -630,3 +653,125 @@
 .v2-log .ln.ok { color: #12855a; }
 .v2-log .ln.warn { color: #8a5600; }
 .v2-log .ln.fail { color: #d61616; }
+
+
+/* ── loading ──────────────────────────────────────────────────────────────────
+   Skeletons appear on a FIRST read only. A refresh over existing data leaves the
+   data alone: swapping real rows for grey bars reads as "your data is gone". */
+.v2-skel {
+  display: block; border-radius: 5px;
+  background: linear-gradient(90deg, rgba(0,0,0,.055) 25%, rgba(0,0,0,.085) 37%, rgba(0,0,0,.055) 63%);
+  background-size: 400% 100%; animation: v2-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes v2-shimmer { 0% { background-position: 100% 0 } 100% { background-position: 0 0 } }
+@media (prefers-reduced-motion: reduce) { .v2-skel { animation: none } }
+.v2-row.skel { pointer-events: none; }
+.v2-skel.g { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+.v2-skel.l1 { width: 46%; height: 12px; margin-bottom: 6px; }
+.v2-skel.l2 { width: 28%; height: 9px; }
+.v2-skel.l3 { width: 62%; height: 11px; }
+.v2-skel.ctl { width: 128px; height: 28px; border-radius: var(--v2-r-s, 7px); }
+.v2-skel.chip { width: 82px; height: 20px; border-radius: 999px; margin-left: auto; }
+
+/* ── fold ─────────────────────────────────────────────────────────────────────
+   For rows that are true but not actionable (an environment we cannot read).
+   Collapsed by default so the list is about what you can act on; never removed,
+   because a missing environment is a support ticket. */
+.v2-fold { border-top: 1px solid var(--v2-line, rgba(0,0,0,.07)); }
+.v2-fold > .hd {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 11px 16px;
+  background: none; border: 0; cursor: pointer; text-align: left; font: inherit;
+}
+.v2-fold > .hd:hover { background: rgba(0,0,0,.015); }
+.v2-fold > .hd .cv { color: var(--v2-ink-4); font-size: 10px; width: 10px; }
+.v2-fold > .hd .tl { font-size: 12.5px; font-weight: 500; color: var(--v2-ink-2); }
+.v2-fold > .hd .nt { font-size: 11.5px; color: var(--v2-ink-4); }
+.v2-fold.open > .hd .tl { color: var(--v2-ink); }
+
+
+/* ── credential steps ─────────────────────────────────────────────────────────
+   One card per CREDENTIAL, not per connector: one Entra app serves seven
+   Microsoft connectors, so a card each would ask for the same client secret
+   seven times. Numbered because it is a queue of work, not a form. */
+.v2-step { border-top: 1px solid var(--v2-line, rgba(0,0,0,.07)); }
+.v2-step > .hd {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px;
+  background: none; border: 0; cursor: pointer; text-align: left; font: inherit;
+}
+.v2-step > .hd:hover { background: rgba(0,0,0,.014); }
+.v2-step .n {
+  flex: 0 0 auto; width: 24px; height: 24px; border-radius: 999px;
+  display: grid; place-items: center; font-size: 11.5px; font-weight: 600;
+  background: rgba(1,41,172,.08); color: var(--v2-brand);
+  font-family: var(--v2-mono);
+}
+.v2-step.done .n { background: rgba(22,140,90,.10); color: var(--v2-ok); }
+.v2-step.dead .n { background: rgba(200,42,42,.09); color: var(--v2-fail); }
+.v2-step.dead > .hd { cursor: default; }
+.v2-step .tx { flex: 1 1 auto; min-width: 0; }
+.v2-step .tx .nm { display: block; font-size: 13.5px; font-weight: 600; letter-spacing: -.01em; }
+.v2-step .tx .sb {
+  display: block; font-size: 11.5px; color: var(--v2-ink-3); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.v2-step.open .tx .sb { white-space: normal; }
+.v2-step .st { flex: 0 0 auto; }
+.v2-step .cv { flex: 0 0 auto; color: var(--v2-ink-4); font-size: 10px; width: 10px; }
+.v2-step .ed {
+  flex: 0 0 auto; font-size: 11.5px; font-weight: 500; color: var(--v2-brand);
+  padding: 3px 9px; border: 1px solid var(--v2-edge-2); border-radius: 999px;
+  background: var(--v2-paper);
+}
+.v2-step > .hd:hover .ed { border-color: var(--v2-brand); }
+.v2-step > .bd { padding: 4px 16px 18px 52px; }
+.v2-step.open { background: rgba(1,41,172,.012); }
+
+/* The inline form's own footer — the dialog version keeps using .v2-modal-f. */
+.v2-fld-f {
+  display: flex; align-items: center; gap: 10px; margin-top: 16px;
+  padding-top: 14px; border-top: 1px solid var(--v2-line, rgba(0,0,0,.07));
+}
+.v2-fld-f .sp { margin-left: auto; display: flex; gap: 8px; }
+
+
+/* The rail legend explains its own markers, so a step number is not mistaken for
+   a count and an unticked phase is not mistaken for a broken one. */
+.v2-rail-f .mk {
+  display: inline-grid; place-items: center; width: 17px; height: 17px;
+  border-radius: 999px; font-size: 9.5px; font-family: var(--v2-mono);
+  background: var(--v2-sand); color: var(--v2-ink-3); flex: 0 0 auto;
+}
+.v2-rail-f .mk.done { background: rgba(22,140,90,.12); color: var(--v2-ok); }
+
+/* ── per-agent decisions ─────────────────────────────────────────────────
+   Its own row, not `.v2-row`: that row is a single nowrap flex line, so the
+   account field collapsed to a sliver and a prerequisite sentence was cut off
+   mid-word. A decision row has to hold a picker, a text field, a verdict AND an
+   explanation, so it is a grid with somewhere for the long text to go. */
+.v2-dec {
+  display: grid; grid-template-columns: minmax(150px, 1fr) auto auto;
+  gap: 8px 14px; align-items: center; padding: 12px 16px;
+  border-bottom: 1px solid var(--v2-edge);
+}
+.v2-dec:last-child { border-bottom: 0; }
+.v2-dec .nmw { min-width: 0; }
+.v2-dec .nm { display: block; font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
+.v2-dec .kind {
+  display: block; font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-4);
+}
+.v2-dec .ctl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* Wide enough for an email address, which is what goes in it. */
+.v2-dec .v2-field { width: 250px; max-width: 100%; }
+.v2-dec .v2-select { max-width: none; width: 210px; }
+/* The long lines wrap on their own row underneath instead of fighting the
+   controls for horizontal space. */
+.v2-dec .pre, .v2-dec .err {
+  grid-column: 1 / -1; font-size: 11.5px; line-height: 1.5; white-space: normal;
+}
+.v2-dec .pre { color: var(--v2-ink-4); }
+.v2-dec .err { color: var(--v2-fail); }
+
+/* A next button the width of its label. Stretched edge-to-edge it read as the
+   only thing on the screen, which on Migrate it very nearly was. */
+.v2-wizard .next { flex: 0 0 auto; min-width: 210px; }
+.v2-wizard .note { margin-left: auto; text-align: right; }

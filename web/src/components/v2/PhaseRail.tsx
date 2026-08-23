@@ -13,8 +13,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
  */
 
 export type PhaseId =
-  | 'connect' | 'pair-envs' | 'map-users' | 'select-agents'
-  | 'review' | 'connectors' | 'migrate' | 'report';
+  | 'connect' | 'map-users' | 'select-agents'
+  | 'connectors' | 'migrate';
 
 export type PhaseState = 'done' | 'current' | 'needs-you' | 'blocked' | 'pending' | 'not-built';
 
@@ -32,39 +32,38 @@ export interface PhaseStatus {
  *    Enterprise), so a whole screen to confirm it was a screen that asked a
  *    question with one answer. The direction now shows on Connect itself, under
  *    the two cards, the moment both clouds are connected.
- *  - "Review what changes" is new, and it is the step that was missing between
- *    picking agents and configuring connectors: what will happen to each agent,
- *    what maps cleanly, what needs review, what cannot come across. Backed by the
- *    per-agent assessment the server already produces — see AgentAssessment.
- *    Reviewing fidelity AFTER migrating is how a customer gets surprised.
+ *  - "Environments → projects" is gone the same way, and for a sharper reason: the
+ *    pairing table now sits on Connect, so keeping the phase too showed the very
+ *    same table on two consecutive screens. /v2/pair-envs still resolves — it
+ *    redirects to Connect rather than 404ing a link someone may have kept.
+ *  - "Review what changes" was briefly its own phase and is no longer one: it read
+ *    as an extra step for information that belongs beside the run. The per-agent
+ *    assessment did NOT go away — Connectors runs it and shows every lost and
+ *    needs-review finding in its inspector, so fidelity is still seen BEFORE the
+ *    first write. Reviewing fidelity only AFTER migrating is how a customer gets
+ *    surprised, and that is still the thing to avoid.
  */
 export const PHASES: Array<{ id: PhaseId; label: string }> = [
   { id: 'connect', label: 'Connect clouds' },
-  { id: 'pair-envs', label: 'Environments → projects' },
   { id: 'map-users', label: 'Map users' },
   { id: 'select-agents', label: 'Select agents' },
-  { id: 'review', label: 'Review what changes' },
   { id: 'connectors', label: 'Connectors' },
   { id: 'migrate', label: 'Migrate' },
-  { id: 'report', label: 'Fidelity report' },
 ];
 
 /** Where each phase lives in the CURRENT ui, for the not-built-yet placeholder. */
 export const OLD_ROUTE: Record<PhaseId, string> = {
   connect: '/connect',
-  'pair-envs': '/map',
   'map-users': '/map-users',
   'select-agents': '/select-data',
-  review: '/explore',
   connectors: '/connector-config',
   migrate: '/migrate',
-  report: '/migrate',
 };
 
-/** Phases with a v2 screen. All eight exist now; the set stays because a mistyped
+/** Phases with a v2 screen. All seven exist now; the set stays because a mistyped
  *  or future phase must still be able to say "not built" rather than blank. */
 export const BUILT: ReadonlySet<PhaseId> = new Set<PhaseId>([
-  'connect', 'pair-envs', 'map-users', 'select-agents', 'review', 'connectors', 'migrate', 'report',
+  'connect', 'map-users', 'select-agents', 'connectors', 'migrate',
 ]);
 
 const BADGE: Partial<Record<PhaseState, string>> = {
@@ -116,8 +115,18 @@ export function PhaseRail({ current, status }: {
       })}
 
       <div className="v2-rail-f">
-        <span className="swatch amber" aria-hidden="true" />
-        amber = a phase only you can finish
+        <div className="lg">
+          <span className="mk done" aria-hidden="true">✓</span>
+          <span>done — we read something that proves it</span>
+        </div>
+        <div className="lg">
+          <span className="mk" aria-hidden="true">3</span>
+          <span>just the step number — not done yet</span>
+        </div>
+        <div className="lg">
+          <span className="swatch amber" aria-hidden="true" />
+          <span>amber — only you can finish it</span>
+        </div>
       </div>
     </nav>
   );

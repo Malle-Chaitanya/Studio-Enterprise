@@ -8,11 +8,11 @@ export type {
   V2Source, ConnectorRow, ConnectorScan, ScopeEnv, ConnectorsSource,
   CloudLink, ConnectState, ConnectSource,
   EnvRow, DestOption, EnvPair, PairSource,
-  UserRow, UsersSource,
+  UserRow, UsersSource, CandidatePage,
   AgentRow, AgentsSource,
   Verdict, ReviewFinding, ReviewRow, ReviewSource,
-  RunLine, RunAgent, RunUpdate, MigrateSource,
-  ReportRow, ReportSource,
+  RunLine, RunAgent, RunUpdate, RunStep, RunHandoff, RunEvidence, MigrateSource,
+  ReportRow, ReportSource, RunHistoryEntry,
 } from './types.ts';
 export { apiSource } from './api.ts';
 export { fixtureSource } from './fixture.ts';

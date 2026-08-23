@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 /**
  * v2 primitives.
@@ -164,11 +164,127 @@ export function Row({ glyph, name, sub, why, status, action, selected, onSelect,
 }
 
 /** A row that states a fact instead of listing an item (empty, error, loading). */
-export function NoteRow({ children, tone }: { children: ReactNode; tone?: 'bad' }) {
+export function NoteRow({ children, tone }: { children: ReactNode; tone?: 'bad' | 'you' }) {
+  // `you` is amber because it is the human's to resolve; `bad` is red because it is
+  // a fact about the migration. The two colours never mean the same thing.
+  const colour = tone === 'bad' ? 'var(--v2-fail)' : tone === 'you' ? 'var(--v2-amber)' : undefined;
   return (
-    <div className="v2-row" style={tone === 'bad' ? { color: 'var(--v2-fail)' } : undefined}>
-      <span className="why">{children}</span>
+    <div className="v2-row note">
+      {/* The colour goes on the text, not the row: `.v2-row .why` sets its own
+          colour, so tinting the parent silently loses. */}
+      <span className="why" style={colour ? { color: colour } : undefined}>{children}</span>
     </div>
+  );
+}
+
+// ── loading ─────────────────────────────────────────────────────────────────
+
+/**
+ * Row skeletons.
+ *
+ * Shown ONLY on a first read with nothing cached. Once data exists it stays on
+ * screen during a refresh — replacing real rows with grey bars tells the reader
+ * their data went away.
+ */
+export function SkeletonRows({ rows = 4, controls }: { rows?: number; controls?: boolean }) {
+  return (
+    <div aria-busy="true" aria-live="polite">
+      {Array.from({ length: rows }, (_, i) => (
+        <div className="v2-row skel" key={i}>
+          <span className="v2-skel g" />
+          <span className="nmw">
+            <span className="v2-skel l1" />
+            <span className="v2-skel l2" />
+          </span>
+          <span className="why ctl">
+            {controls ? <><span className="v2-skel ctl" /><span className="v2-skel ctl" /></> : <span className="v2-skel l3" />}
+          </span>
+          <span className="st"><span className="v2-skel chip" /></span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A collapsed group of rows that are true but not actionable — kept reachable
+ *  so nothing is hidden, kept shut so the list is about what you can do. */
+export function Fold({ title, note, count, children, open: initial = false }: {
+  title: string;
+  note?: string;
+  count?: number;
+  children: ReactNode;
+  open?: boolean;
+}) {
+  const [open, setOpen] = useState(initial);
+  return (
+    <div className={`v2-fold${open ? ' open' : ''}`}>
+      <button type="button" className="hd" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <span className="cv" aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <span className="tl">{title}{count !== undefined ? ` (${count})` : ''}</span>
+        {note && <span className="nt">{note}</span>}
+      </button>
+      {open && <div className="bd">{children}</div>}
+    </div>
+  );
+}
+
+// ── the agent's ledger ──────────────────────────────────────────────────────
+
+/**
+ * The list of steps the agent actually performed. Rendered in one place because
+ * a new state (like the inconclusive `warn`) must not be handled on one screen
+ * and forgotten on another — that is how a screen ends up showing a tick for
+ * something nothing confirmed.
+ */
+export function Ledger({ lines, limit }: {
+  lines: Array<{ text: string; state: 'ok' | 'live' | 'stop' | 'fail' | 'warn' }>;
+  limit?: number;
+}) {
+  const shown = limit ? lines.slice(-limit) : lines;
+  return (
+    <>
+      {shown.map((l, i) => (
+        <div className={`v2-ldg ${l.state === 'ok' ? '' : l.state}`} key={`${i}-${l.text}`}>
+          <span className="m" aria-hidden="true">
+            {l.state === 'ok' ? '✓'
+              : l.state === 'live' ? '◍'
+                : l.state === 'stop' ? '◉'
+                  : l.state === 'warn' ? '?' : '!'}
+          </span>
+          <span>{l.text}</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+// ── cloud marks ─────────────────────────────────────────────────────────────
+
+/**
+ * The two clouds, drawn rather than fetched.
+ *
+ * Inline SVG on purpose: a remote logo is a request that can fail, and a broken
+ * image on the sign-in screen makes a working product look dead. These are simple
+ * vendor-coloured marks, not exact brand lockups.
+ */
+export function CloudMark({ platform }: { platform: 'microsoft' | 'google' }) {
+  if (platform === 'microsoft') {
+    return (
+      <svg className="v2-mark" viewBox="0 0 24 24" role="img" aria-label="Microsoft">
+        <rect x="1" y="1" width="10" height="10" fill="#f25022" />
+        <rect x="13" y="1" width="10" height="10" fill="#7fba00" />
+        <rect x="1" y="13" width="10" height="10" fill="#00a4ef" />
+        <rect x="13" y="13" width="10" height="10" fill="#ffb900" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="v2-mark" viewBox="0 0 24 24" role="img" aria-label="Google">
+      <path d="M12 2.5 13.9 9 20.5 12 13.9 15 12 21.5 10.1 15 3.5 12 10.1 9Z" fill="#4285f4" />
+      <path d="M12 2.5 13.9 9 12 12Z" fill="#ea4335" />
+      <path d="M20.5 12 13.9 15 12 12Z" fill="#fbbc04" />
+      <path d="M12 21.5 10.1 15 12 12Z" fill="#34a853" />
+    </svg>
   );
 }
 
@@ -232,7 +348,9 @@ export function InspectorActions({ children }: { children: ReactNode }) {
 export function WizardFooter({ onBack, onNext, nextLabel, blocked, note, backLabel = 'Back' }: {
   onBack?: () => void;
   onNext?: () => void;
-  nextLabel: string;
+  /** Omitted on the LAST screen of the flow: a disabled Next that leads nowhere is
+   *  a promise of a step that does not exist. */
+  nextLabel?: string;
   blocked?: boolean;
   note: string;
   backLabel?: string;
@@ -240,7 +358,9 @@ export function WizardFooter({ onBack, onNext, nextLabel, blocked, note, backLab
   return (
     <div className="v2-wizard">
       {onBack && <Btn className="back" onClick={onBack}>{backLabel}</Btn>}
-      <Btn tone="blue" className="next" onClick={onNext} disabled={blocked}>{nextLabel}</Btn>
+      {nextLabel && (
+        <Btn tone="blue" className="next" onClick={onNext} disabled={blocked}>{nextLabel}</Btn>
+      )}
       <span className={`note${blocked ? ' blocked' : ''}`}>{note}</span>
     </div>
   );

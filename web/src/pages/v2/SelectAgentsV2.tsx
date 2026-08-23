@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import { useEffect, useMemo, useReducer, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
   Band, BandCell, Btn, Chip, Group, Inspector, InspectorHead, InspectorSection, KeyValue,
-  Note, NoteRow, Panel, PanelHead, SelectBar, Tick, WizardFooter,
+  Note, NoteRow, Panel, PanelHead, SelectBar, SkeletonRows, Tick, WizardFooter,
 } from '../../components/v2/primitives.tsx';
-import { useSource, type AgentRow, type EnvPair } from '../../v2/data/index.ts';
+import { readAgo, useResource } from '../../v2/data/cache.ts';
+import { useSource, type AgentRow } from '../../v2/data/index.ts';
 
 /**
  * Select agents.
@@ -22,37 +23,50 @@ export default function SelectAgentsV2() {
   const navigate = useNavigate();
   const source = useSource();
 
-  const [rows, setRows] = useState<AgentRow[]>([]);
-  const [pairs, setPairs] = useState<EnvPair[]>([]);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [shut, setShut] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [picked, setPicked] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [agent, dispatch] = useReducer(reduceAgent, initialAgentState);
 
-  const load = useCallback(async (): Promise<void> => {
-    if (!session) { setLoading(false); setError('no_session'); return; }
-    setLoading(true);
-    try {
-      const paired = await source.pair.read(session);
-      const usable = paired.filter((p) => p.project && p.engine);
-      setPairs(usable);
-      // Only environments with a destination: an agent in an unpaired environment
-      // has nowhere to go, and offering it would be offering a dead end.
-      const list = await source.agents.list(session, usable.map((p) => p.env));
-      setRows(list);
-      setChosen(new Set(list.map((a) => a.botId)));
-      setError('');
-    } catch (e) {
-      setError((e as Error).message || 'agents_failed');
-    } finally {
-      setLoading(false);
-    }
-  }, [session, source]);
+  // Cache-first. Walking back here used to re-read Dataverse and reset the
+  // selection to "everything", quietly discarding the choice you had just made.
+  const paired = useResource(
+    `pairs:${session}`, () => source.pair.read(session), Boolean(session),
+  );
+  const usable = (paired.data ?? []).filter((p) => p.project && p.engine);
+  const envKey = usable.map((p) => p.env).sort().join('|');
+  const agents = useResource<AgentRow[]>(
+    `agents:${session}:${envKey}`,
+    // Only environments with a destination: an agent in an unpaired environment
+    // has nowhere to go, and offering it would be offering a dead end.
+    () => source.agents.list(session, usable.map((p) => p.env)),
+    Boolean(session) && usable.length > 0,
+  );
+  const rows = agents.data ?? [];
+  const pairs = usable;
+  const loading = paired.loading || agents.loading;
+  const syncing = paired.syncing || agents.syncing;
+  const error = !session ? 'no_session' : paired.error || agents.error;
 
-  useEffect(() => { void load(); }, [load]);
+  // The saved selection wins over "everything": a selection is a decision, and a
+  // remount is not a reason to throw a decision away.
+  useEffect(() => {
+    if (rows.length === 0) return;
+    setChosen((prev) => {
+      if (prev.size > 0) return prev;
+      try {
+        const saved: Array<{ env: string; botIds: string[] }> =
+          JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
+        const ids = new Set(saved.flatMap((x) => x.botIds));
+        const known = rows.filter((r) => ids.has(r.botId)).map((r) => r.botId);
+        if (known.length > 0) return new Set(known);
+      } catch {
+        /* fall through to selecting everything */
+      }
+      return new Set(rows.map((r) => r.botId));
+    });
+  }, [rows, session]);
 
   const byEnv = useMemo(() => {
     const m = new Map<string, AgentRow[]>();
@@ -98,7 +112,8 @@ export default function SelectAgentsV2() {
       <Panel>
         <Band>
           <BandCell label="Selected" value={selectedRows.length} note={`of ${rows.length} available`} tone="warn" />
-          <BandCell label="Topics" value={topics || '—'} note="will be compiled" />
+          {/* Dash, not zero: the topic count is not read here (see the inspector). */}
+          <BandCell label="Topics" value={topics || '—'} note={topics ? 'will be compiled' : 'not counted here'} />
           <BandCell label="Knowledge" value={knowledge || '—'} note="sources to index" />
           <BandCell label="Environments" value={new Set(selectedRows.map((r) => r.env)).size}
             note="in this run" tone="ok" />
@@ -108,8 +123,15 @@ export default function SelectAgentsV2() {
       <Panel>
         <PanelHead
           title="Select agents"
-          sub="Read live from Dataverse, grouped by environment. Everything after this step — connectors, identities, the run — is scoped to what you pick here."
-          actions={<Btn onClick={() => void load()} disabled={loading}>{loading ? 'Reading…' : 'Re-read'}</Btn>}
+          sub={`Grouped by environment; only environments with a Gemini app appear. Everything after this step — connectors, identities, the run — is scoped to what you pick here · ${readAgo(agents.readAt)}`}
+          actions={
+            <>
+              {syncing && <Chip tone="run">syncing</Chip>}
+              <Btn onClick={() => { paired.sync(); agents.sync(); }} disabled={syncing}>
+                {syncing ? 'Syncing…' : 'Sync'}
+              </Btn>
+            </>
+          }
         />
         <SelectBar summary={`${selectedRows.length} of ${rows.length} selected`}>
           <Btn onClick={() => setChosen(new Set(rows.map((r) => r.botId)))}>Select all</Btn>
@@ -121,6 +143,8 @@ export default function SelectAgentsV2() {
             {error === 'no_session' ? 'No connected session — connect both clouds first.' : `Could not read agents: ${error}`}
           </NoteRow>
         )}
+        {loading && <SkeletonRows rows={5} />}
+
         {!loading && !error && rows.length === 0 && (
           <NoteRow>
             No agents in the paired environments. Pair an environment that has agents, or check
@@ -180,10 +204,12 @@ export default function SelectAgentsV2() {
 
       <WizardFooter
         onBack={() => navigate(`/v2/map-users?${params.toString()}`)}
-        onNext={async () => { await save(); navigate(`/v2/review?${params.toString()}`); }}
-        nextLabel="Continue to review"
+        onNext={async () => { await save(); navigate(`/v2/connectors?${params.toString()}`); }}
+        nextLabel="Continue to connectors"
         blocked={selectedRows.length === 0}
-        note={selectedRows.length ? `${selectedRows.length} agents will be assessed next` : 'Select at least one agent'}
+        note={selectedRows.length
+          ? `${selectedRows.length} agents will be assessed before anything is written`
+          : 'Select at least one agent'}
       />
     </>
   );
@@ -207,10 +233,12 @@ export default function SelectAgentsV2() {
             </dl>
           </InspectorSection>
           {!selected.topics && (
-            <InspectorSection title="Why no counts">
+            <InspectorSection title="Why no topic count">
               <Note>
-                Topic and knowledge counts come from the per-agent assessment, which runs in the
-                next phase. This list will not print numbers it has not actually read.
+                Knowledge counts are read from this list. Topics are not: the number of topic rows
+                in Dataverse does not agree with the number that ends up staged, and until that is
+                understood a topic count here would contradict the one shown later. Two numbers
+                that disagree discredit each other, so this screen shows neither.
               </Note>
             </InspectorSection>
           )}
@@ -233,9 +261,6 @@ export default function SelectAgentsV2() {
     <V2Layout
       phase="select-agents"
       phaseStatus={{
-        connect: { state: 'done' },
-        'pair-envs': { state: 'done' },
-        'map-users': { state: 'done' },
         'select-agents': { state: 'current', count: selectedRows.length || undefined },
       }}
       agent={agent}

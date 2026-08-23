@@ -16,7 +16,7 @@ import { sortRows } from './api.ts';
 import type {
   AgentRow, AgentsSource, ConnectSource, ConnectorRow, ConnectorScan, ConnectorsSource,
   DestOption, EnvPair, EnvRow, MigrateSource, PairSource, ReportRow, ReportSource,
-  ReviewFinding, ReviewRow, ReviewSource, UserRow, UsersSource, V2Source, Verdict,
+  ReviewFinding, ReviewRow, ReviewSource, RunState, UserRow, UsersSource, V2Source, Verdict,
 } from './types.ts';
 
 const ATLASSIAN_GROUP = {
@@ -272,6 +272,9 @@ const REVIEWS: Record<string, { effort: 'low' | 'medium' | 'high'; findings: Rev
   ] },
 };
 
+/** The fixture agents whose sources carry permissions that cannot come across. */
+const ACL_INVERTS = new Set([FIX_AGENTS[0]?.botId, FIX_AGENTS[3]?.botId].filter(Boolean) as string[]);
+
 function reviewRow(botId: string): ReviewRow {
   const agent = FIX_AGENTS.find((a) => a.botId === botId);
   const rec = REVIEWS[botId] ?? { effort: 'low' as const, findings: [] };
@@ -284,6 +287,21 @@ function reviewRow(botId: string): ReviewRow {
     effort: rec.effort,
     counts,
     findings: rec.findings,
+    // Only agents with a RESTRICTED source invert a permission. The knowledge-
+    // bearing agents that do not (a public site, say) must exist in the fixture
+    // too, or the narrow predicate never gets tested against a false case.
+    permissionLoss: ACL_INVERTS.has(botId)
+      ? {
+        inverts: true,
+        orgWide: false,
+        items: [
+          { source: 'HR Policies (SharePoint)', readableBy: 'anyone who can use this agent',
+            detail: 'was restricted to the HR site members' },
+          { source: 'Benefits FAQ (SharePoint)', readableBy: 'anyone who can use this agent' },
+        ],
+        summary: 'Two restricted SharePoint sources become readable by anyone who can use this agent.',
+      }
+      : { inverts: false, orgWide: false, items: [], summary: '' },
   };
 }
 
@@ -321,15 +339,50 @@ const pair: PairSource = {
 };
 
 const users: UsersSource = {
-  list: async () => wait(USERS.map((u) => {
+  mappedCount: async () => wait(Object.keys(userMap).length),
+  // The fixture has no slow half to skip, so the fast pass IS the full pass —
+  // minus the `referenced` flags, which is exactly what the real one omits.
+  directory: async () => wait(USERS.map((u) => {
     const mapped = userMap[u.sourceId];
     return mapped
-      ? { ...u, mapped, state: 'mapped' as const }
-      : { ...u, mapped: undefined, state: u.suggested ? ('suggested' as const) : ('unmapped' as const) };
+      ? { ...u, referenced: false, mapped, state: 'mapped' as const }
+      : { ...u, referenced: false, mapped: undefined,
+          state: u.suggested ? ('suggested' as const) : ('unmapped' as const) };
   })),
-  candidates: async (_s, q) => wait(
-    CANDIDATES.filter((c) => !q || c.email.includes(q.toLowerCase()) || (c.name ?? '').toLowerCase().includes(q.toLowerCase())),
-  ),
+  list: async () => wait(USERS.map((u, i) => {
+    const mapped = userMap[u.sourceId];
+    // The first four are named by the fixture's agents; the last two are
+    // directory-only, so the screen shows both lists it has to handle.
+    const referenced = i < 4;
+    return mapped
+      ? { ...u, referenced, mapped, state: 'mapped' as const }
+      : { ...u, referenced, mapped: undefined, state: u.suggested ? ('suggested' as const) : ('unmapped' as const) };
+  })),
+  candidates: async (_s, q, all) => {
+    const hit = CANDIDATES.filter((c) => !q
+      || c.email.includes(q.toLowerCase())
+      || (c.name ?? '').toLowerCase().includes(q.toLowerCase()));
+    // Two extra accounts exist that the filter hides: that is what "show all"
+    // reveals, and why the counts have to be on screen.
+    const hidden = [
+      { email: 'former.dev@contoso-gws.com', name: 'Former Developer (suspended)' },
+      { email: 'contractor@contoso-gws.com', name: 'Contractor (no Gemini seat)' },
+    ];
+    return wait({
+      users: all ? [...hit, ...hidden] : hit,
+      truncated: false,
+      filter: {
+        returned: all ? hit.length + hidden.length : hit.length,
+        excludedInactive: all ? 0 : 1,
+        excludedUnlicensed: all ? 0 : 1,
+        excludedGuest: 0,
+        // Excluded even with `all`: there is no address to map this account BY, so
+        // showing it would offer a target that cannot receive anything.
+        excludedNoAddress: 1,
+        licenceCheck: 'applied' as const,
+      },
+    });
+  },
   save: async (_s, map) => { userMap = { ...userMap, ...map }; await wait(null); },
 };
 
@@ -337,10 +390,11 @@ const agents: AgentsSource = {
   list: async (_s, envs) => wait(
     envs.length ? FIX_AGENTS.filter((a) => envs.includes(a.env)) : FIX_AGENTS,
   ),
-  saveSelection: async (_s, selection) => {
-    // Mirror what the real screen persists, so Connectors and Review downstream
-    // are scoped to the same agents in fixture mode as they would be for real.
-    sessionStorage.setItem('csge_data_fixture', JSON.stringify(selection));
+  saveSelection: async (session, selection) => {
+    // Key off the REAL session id, not a hardcoded one: the downstream screens read
+    // `csge_data_<session>`, so hardcoding "fixture" here meant a selection saved
+    // under any other session id was written where nothing would ever read it.
+    sessionStorage.setItem(`csge_data_${session}`, JSON.stringify(selection));
     await wait(null);
   },
 };
@@ -350,6 +404,10 @@ const review: ReviewSource = {
 };
 
 const migrate: MigrateSource = {
+  // The fixture has no server holding a run, so there is never one to attach to
+  // or stop. Saying so is truer than pretending.
+  runState: async () => wait<RunState>({ phase: null }),
+  stop: async () => { await wait(null); },
   start: async () => { await wait(null); },
   subscribe: (_session, onUpdate) => {
     // A scripted run, but every line is emitted as it "happens" and the report is
@@ -381,12 +439,57 @@ const migrate: MigrateSource = {
           name: a.name, env: a.env, ok: !failed, verified: !failed,
           counts: review.counts, findings: review.findings,
         });
+        // The step stream, as the server now emits it: extract, then verify, with
+        // the three outcomes represented so their colours are actually seen.
+        onUpdate({ step: { phase: 'start', tool: 'extract', target: `agent:${a.botId}`,
+          msg: `Reading ${a.name} from Copilot Studio` } });
+        onUpdate({ step: { phase: 'end', tool: 'extract', target: `agent:${a.botId}`,
+          ok: true, outcome: 'ok',
+          msg: `Extracted ${a.name} · ${a.topics} topic(s), ${a.knowledge} knowledge source(s)` } });
+        // Inconclusive verification: proved nothing either way, so amber.
+        if (i === 2) {
+          onUpdate({ step: { phase: 'end', tool: 'verify', target: `agent:${a.botId}`,
+            ok: false, outcome: 'unknown',
+            msg: `Verification inconclusive for ${a.name} — nothing was proven either way` } });
+        }
+
+        // The one case worth rendering: frames present, but they belong to ANOTHER
+        // agent. That is a failure, not a tick, and the fixture must be able to
+        // show it or the copy for it never gets read.
+        const swapped = i === 1;
+        // Same agent as the inconclusive verify above. Its row must say
+        // "created · unverified", not "verified", or the ledger and the row
+        // contradict each other on screen.
+        const inconclusive = i === 2;
         onUpdate({
-          agent: { name: a.name, state: failed ? 'failed' : 'done',
-            note: failed ? 'Created, but behaviour was lost' : 'Created, published and verified' },
-          line: failed
-            ? { level: 'warn', msg: `${a.name} migrated with losses — see the report` }
-            : { level: 'ok', msg: `${a.name} created in Gemini and verified` },
+          agent: {
+            name: a.name,
+            sourceId: a.botId,
+            state: swapped || failed ? 'failed' : inconclusive ? 'created' : 'verified',
+            note: swapped
+              ? 'Answered using another agent’s tools — not this agent'
+              : failed ? 'Created, but behaviour was lost'
+                : inconclusive ? 'Created — verification proved nothing either way'
+                  : 'Created, published and verified',
+            evidence: swapped
+              ? { verdict: 'wrong_agent_tools', expected: ['jira_search'],
+                  observed: ['confluence_search'], unexpected: ['confluence_search'],
+                  missing: ['jira_search'], returnedData: true }
+              : inconclusive
+                ? { verdict: 'not_probed', expected: ['jira_search'], observed: [],
+                    unexpected: [], missing: ['jira_search'], returnedData: false }
+                : { verdict: 'tools_confirmed', expected: ['jira_search'],
+                    observed: ['jira_search'], unexpected: [], missing: [], returnedData: true },
+          },
+          // The log has to agree with the row. A line saying "verified" beside a row
+          // saying "failed" is the exact contradiction this screen exists to avoid.
+          line: swapped
+            ? { level: 'fail', msg: `${a.name} created, but it answered with another agent's tools` }
+            : inconclusive
+              ? { level: 'warn', msg: `${a.name} created — verification was inconclusive` }
+              : failed
+              ? { level: 'warn', msg: `${a.name} migrated with losses — see the report` }
+              : { level: 'ok', msg: `${a.name} created in Gemini and verified` },
           pct: 52 + i * 8,
         });
       }, 600);
@@ -400,6 +503,17 @@ const migrate: MigrateSource = {
 
 const report: ReportSource = {
   list: async () => wait(lastRun),
+  // Two past runs so the screen has to handle the case it will meet in production:
+  // a run where verified + failed does NOT equal the agent count, because some
+  // agents are still owed a check.
+  history: async () => wait([
+    { runId: 'run-fixture-2', startedAt: '2026-08-21T09:14:00.000Z',
+      finishedAt: '2026-08-21T09:31:00.000Z', status: 'completed',
+      summary: '6 agents migrated, 2 need review', agents: 6, verified: 5, failed: 1 },
+    { runId: 'run-fixture-1', startedAt: '2026-08-19T16:02:00.000Z',
+      finishedAt: '2026-08-19T16:20:00.000Z', status: 'completed',
+      summary: 'Dry run — nothing written', agents: 6, verified: 0, failed: 0 },
+  ]),
 };
 
 /**

@@ -24,8 +24,16 @@ export type AgentEvent =
   | { kind: 'thinking'; note: string }
   /** The agent has begun a step against a specific element. */
   | { kind: 'tool_start'; tool: string; note: string; target?: AgentTarget }
-  /** The step finished. `ok:false` records a real failure — it is still a fact. */
-  | { kind: 'tool_end'; tool: string; note: string; target?: AgentTarget; ok: boolean }
+  /**
+   * The step finished. `ok:false` records a real failure — it is still a fact.
+   *
+   * `outcome` carries the three-value truth where the server has it: 'unknown'
+   * means nothing was proven either way, which is a check still owed rather than
+   * a defect. It is optional, and when absent `ok` decides — so a caller that
+   * knows nothing about outcomes still cannot turn an unknown into a success.
+   */
+  | { kind: 'tool_end'; tool: string; note: string; target?: AgentTarget; ok: boolean;
+      outcome?: 'ok' | 'failed' | 'unknown' }
   /** The agent has stopped because only a human may do the next part. */
   | { kind: 'awaiting_human'; note: string; target?: AgentTarget }
   /** Nothing left to do. */
@@ -38,7 +46,9 @@ export type AgentMode = 'idle' | 'thinking' | 'driving' | 'waiting' | 'done';
 /** One line the agent has earned the right to display. */
 export interface LedgerLine {
   text: string;
-  state: 'ok' | 'live' | 'stop' | 'fail';
+  /** `warn` is the inconclusive one: the step ran and proved nothing. It is not
+   *  `ok` (nothing was confirmed) and not `fail` (nothing went wrong). */
+  state: 'ok' | 'live' | 'stop' | 'fail' | 'warn';
 }
 
 export interface AgentDriverState {
@@ -97,7 +107,12 @@ export function reduceAgent(state: AgentDriverState, ev: AgentEvent): AgentDrive
         caption: ev.note,
         target: ev.target ?? state.target,
         clickEpoch: state.clickEpoch + 1,
-        ledger: withLine(state.ledger, { text: ev.note, state: ev.ok ? 'ok' : 'fail' }),
+        ledger: withLine(state.ledger, {
+          text: ev.note,
+          // An unknown outcome is amber. Colouring it red would call a check
+          // nobody has done a defect; green would claim a pass nobody earned.
+          state: ev.outcome === 'unknown' ? 'warn' : ev.ok ? 'ok' : 'fail',
+        }),
       };
 
     case 'awaiting_human':

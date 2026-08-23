@@ -2,10 +2,11 @@ import { useCallback, useEffect, useReducer, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { connectViaPopup, googleStartUrl, microsoftStartUrl } from '../../api.ts';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
+import { EnvPairing } from '../../components/v2/EnvPairing.tsx';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
-  Btn, Chip, Inspector, InspectorHead, InspectorSection, KeyValue, Note, Panel, PanelHead,
-  WizardFooter,
+  Btn, Chip, CloudMark, Inspector, InspectorHead, InspectorSection, KeyValue, Note, Panel,
+  PanelHead, WizardFooter,
 } from '../../components/v2/primitives.tsx';
 import { useSource, type CloudLink, type ConnectState } from '../../v2/data/index.ts';
 
@@ -27,7 +28,10 @@ function CloudCard({ role, title, link, busy, onConnect, onDisconnect }: {
   return (
     <div className={`v2-card${link.connected ? ' live' : ''}`} data-agent-target={`cloud:${link.platform}`}>
       <div className="role">{role}</div>
-      <h3>{title}</h3>
+      <div className="hd">
+        <CloudMark platform={link.platform} />
+        <h3>{title}</h3>
+      </div>
       {link.connected ? (
         <>
           <div className="acct">{link.account ?? 'connected'}</div>
@@ -76,6 +80,8 @@ export default function ConnectV2() {
   const [busy, setBusy] = useState<'microsoft' | 'google' | null>(null);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
+  /** Why a connect attempt was refused, in words the person can act on. */
+  const [connectError, setConnectError] = useState('');
   const [agent, dispatch] = useReducer(reduceAgent, initialAgentState);
 
   const load = useCallback(async (): Promise<void> => {
@@ -96,11 +102,22 @@ export default function ConnectV2() {
     setBusy(platform);
     try {
       const start = platform === 'microsoft' ? microsoftStartUrl(session) : googleStartUrl(session);
-      await connectViaPopup(
+      const res = await connectViaPopup(
         start,
         platform === 'microsoft' ? 'ms-connected' : 'google-connected',
         platform === 'microsoft' ? 'ms-error' : 'google-error',
       );
+      // A refused connection has to say so. Silence after a popup closes is the
+      // failure shape that cost a whole afternoon last time.
+      if (!res.ok && res.error && res.error !== 'closed') {
+        setConnectError(/sign-in changed|state|mismatch/i.test(res.error)
+          // The server refuses the connection if the signed-in user changed while
+          // the popup was open. The fix is to try again, not to report a fault.
+          ? 'Your sign-in changed while connecting, so the connection was refused. Try again.'
+          : res.error);
+      } else {
+        setConnectError('');
+      }
       // Re-read rather than trusting the popup: the only proof a cloud is connected
       // is the server saying so.
       await load();
@@ -122,6 +139,12 @@ export default function ConnectV2() {
   };
 
   const both = state.source.connected && state.destination.connected;
+  // Pairing now happens on this screen, so Connect has to know whether it is done
+  // before it can honestly offer Continue.
+  const [paired, setPaired] = useState({ done: 0, total: 0 });
+  const onPairChange = useCallback(
+    (done: number, total: number) => setPaired({ done, total }), [],
+  );
 
   const canvas = (
     <>
@@ -156,11 +179,13 @@ export default function ConnectV2() {
           {both && (
             <div className="v2-dir" data-agent-target="direction">
               <span className="side">
+                <CloudMark platform="microsoft" />
                 Copilot Studio
                 <span className="sub">{state.source.account ?? '—'}</span>
               </span>
               <span className="to" aria-hidden="true">→</span>
               <span className="side">
+                <CloudMark platform="google" />
                 Gemini Enterprise
                 <span className="sub">{state.destination.account ?? '—'}</span>
               </span>
@@ -183,6 +208,13 @@ export default function ConnectV2() {
             </div>
           )}
 
+          {connectError && (
+            <div className="v2-test bad" style={{ marginTop: 14 }}>
+              <span aria-hidden="true">!</span>
+              <span>{connectError}</span>
+            </div>
+          )}
+
           {error && (
             <div className="v2-test bad" style={{ marginTop: 14 }}>
               <span aria-hidden="true">!</span>
@@ -192,15 +224,21 @@ export default function ConnectV2() {
         </div>
       </Panel>
 
+      {/* Pairing, inline. It used to be a phase of its own asking a question with
+          one shape of answer; it is the same panel, one screen earlier. */}
+      {both && <EnvPairing session={session} onChange={onPairChange} />}
+
       <WizardFooter
-        onNext={() => navigate(`/v2/pair-envs?${params.toString()}`)}
-        nextLabel="Continue to environments"
-        blocked={!both}
-        note={both
-          ? 'Both clouds connected'
-          : !state.source.connected && !state.destination.connected
+        onNext={() => navigate(`/v2/map-users?${params.toString()}`)}
+        nextLabel="Continue to users"
+        blocked={!both || paired.done === 0}
+        note={!both
+          ? (!state.source.connected && !state.destination.connected
             ? 'Connect both clouds to continue'
-            : `Connect ${state.source.connected ? 'Google' : 'Microsoft'} to continue`}
+            : `Connect ${state.source.connected ? 'Google' : 'Microsoft'} to continue`)
+          : paired.done === 0
+            ? 'Point at least one environment at a Gemini app to continue'
+            : `${paired.done} of ${paired.total} environments will migrate`}
       />
     </>
   );
@@ -237,7 +275,12 @@ export default function ConnectV2() {
   return (
     <V2Layout
       phase="connect"
-      phaseStatus={{ connect: { state: both ? 'current' : 'needs-you' } }}
+      phaseStatus={{
+        connect: {
+          state: both ? 'current' : 'needs-you',
+          count: paired.total ? `${paired.done}/${paired.total}` : undefined,
+        },
+      }}
       agent={agent}
       manual
       suggestions={[]}

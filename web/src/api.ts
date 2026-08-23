@@ -2,6 +2,7 @@ import type {
   AgentAssessment,
   AgentBrief,
   EnvironmentInfo,
+  MigrationResult,
   MigrationScope,
   PlanPreview,
   SessionSummary,
@@ -76,6 +77,68 @@ export function connectViaPopup(
   });
 }
 export const migrateStreamUrl = (session: string) => `/api/migrate/stream?session=${session}`;
+
+/** Is a run live for this session? `{ run: null }` when nothing is going. */
+export async function fetchRunState(session: string): Promise<{
+  run: null | {
+    phase: 'running' | 'stopping' | 'finished';
+    startedAt?: string;
+    eventCount?: number;
+    truncated?: boolean;
+    stopRequested?: boolean;
+  };
+}> {
+  const res = await fetch(`/api/migrate/run-state?session=${session}`);
+  if (!res.ok) throw new Error('run_state_failed');
+  return (await res.json()) as { run: null };
+}
+
+/** Ask a live run to stop after the agent currently in flight. 409 when none. */
+export async function stopMigration(session: string): Promise<void> {
+  const res = await fetch('/api/migrate/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error || 'stop_failed');
+  }
+}
+
+/**
+ * One finished run. `verifiedCount` counts only verifyStatus === 'verified' — an
+ * unknown is a check nobody has done and is deliberately not folded in, so
+ * agentCount - verifiedCount - failedCount is the number still owed a check.
+ */
+export interface RunSummary {
+  runId: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: string;
+  summary?: string;
+  agentCount: number;
+  verifiedCount: number;
+  failedCount: number;
+}
+
+/** Run history for the signed-in tenant. Scoping is server-side off the
+ *  authenticated session — we never send an appUserId, and could not be trusted
+ *  to. A run in another tenant 404s exactly like one that does not exist. */
+export async function fetchRuns(session: string, limit = 20): Promise<RunSummary[]> {
+  const res = await fetch(`/api/migrate/runs?session=${session}&limit=${limit}`);
+  if (!res.ok) throw new Error('runs_failed');
+  return ((await res.json()) as { runs: RunSummary[] }).runs;
+}
+
+export async function fetchRun(
+  session: string,
+  runId: string,
+): Promise<{ runId: string; results: MigrationResult[] }> {
+  const res = await fetch(`/api/migrate/runs/${encodeURIComponent(runId)}?session=${session}`);
+  if (!res.ok) throw new Error(res.status === 404 ? 'run_not_found' : 'run_failed');
+  return (await res.json()) as { runId: string; results: MigrationResult[] };
+}
 
 export async function fetchEnvironments(session: string): Promise<EnvironmentInfo[]> {
   const res = await fetch(`/api/explore/environments?session=${session}`);
@@ -318,16 +381,58 @@ export async function suggestIdentityMap(
   };
 }
 
+/**
+ * What the server filtered out of a directory listing, and whether it could.
+ *
+ * A filtered list that does not say what it dropped is indistinguishable from a
+ * small org: the admin looking for a colleague who is not there cannot tell
+ * "excluded" from "does not exist". So these counts are part of the contract, not
+ * diagnostics.
+ */
+export interface DirectoryFilter {
+  returned: number;
+  excludedInactive: number;
+  excludedUnlicensed: number;
+  excludedGuest: number;
+  /** No mail AND no UPN — there is nothing to map them BY, so this is a data
+   *  quality fact about the source tenant, not a verdict on anyone's licence.
+   *  With this bucket the counts close: returned + inactive + unlicensed +
+   *  guest + noAddress === the unfiltered total. */
+  excludedNoAddress: number;
+  /** `unavailable` means the licence signal could not be READ, so nothing was
+   *  filtered on it — the list is unfiltered and must not be shown as
+   *  licensed-only. `excludedUnlicensed` is 0 in that case. */
+  licenceCheck: 'applied' | 'unavailable';
+  requiredPlans?: string[];
+}
+
+export interface DirectoryPage<T> {
+  users: T[];
+  /** More users exist than were returned; the grid must say so. */
+  truncated?: boolean;
+  filter?: DirectoryFilter;
+  error?: string;
+}
+
+export interface GoogleUserBrief {
+  email: string;
+  displayName?: string;
+  suspended?: boolean;
+}
+
+/** Google Workspace users. Suspended, archived and pending-deletion accounts are
+ *  dropped server-side; `all` asks for the unfiltered directory instead. */
 export async function fetchGoogleUsers(
   session: string,
-  opts?: { q?: string; max?: number },
-): Promise<{ users: { email: string; displayName?: string; suspended?: boolean }[]; error?: string }> {
+  opts?: { q?: string; max?: number; all?: boolean },
+): Promise<DirectoryPage<GoogleUserBrief>> {
   const qs = new URLSearchParams({ session });
   if (opts?.q) qs.set('q', opts.q);
   if (opts?.max) qs.set('max', String(opts.max));
+  if (opts?.all) qs.set('all', '1');
   const res = await fetch(`/api/identity/google-users?${qs}`);
   if (!res.ok) throw new Error('google_users_failed');
-  return (await res.json()) as { users: { email: string; displayName?: string; suspended?: boolean }[]; error?: string };
+  return (await res.json()) as DirectoryPage<GoogleUserBrief>;
 }
 
 export interface MsUserBrief {
@@ -338,20 +443,33 @@ export interface MsUserBrief {
   accountEnabled?: boolean;
 }
 
-/** Microsoft Graph users for the Map Users grid. */
+/** Microsoft Graph users for the Map Users grid.
+ *
+ *  Disabled accounts and guests are dropped server-side; `all` asks for the
+ *  unfiltered directory. Returns the users only — callers that need the exclusion
+ *  counts use `fetchMsUsersPage`, which is the same request with the envelope
+ *  kept. This wrapper stays so the existing Map Users page is untouched. */
 export async function fetchMsUsers(
   session: string,
-  opts?: { q?: string; max?: number },
+  opts?: { q?: string; max?: number; all?: boolean },
 ): Promise<MsUserBrief[]> {
+  return (await fetchMsUsersPage(session, opts)).users;
+}
+
+export async function fetchMsUsersPage(
+  session: string,
+  opts?: { q?: string; max?: number; all?: boolean },
+): Promise<DirectoryPage<MsUserBrief>> {
   const qs = new URLSearchParams({ session });
   if (opts?.q) qs.set('q', opts.q);
   if (opts?.max) qs.set('max', String(opts.max));
+  if (opts?.all) qs.set('all', '1');
   const res = await fetch(`/api/identity/ms-users?${qs}`);
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
     throw new Error(body.detail || body.error || 'ms_users_failed');
   }
-  return ((await res.json()) as { users: MsUserBrief[] }).users;
+  return (await res.json()) as DirectoryPage<MsUserBrief>;
 }
 
 // ── SharePoint/OneDrive knowledge source: search-and-confirm ────────────────
@@ -434,7 +552,13 @@ export async function planMigration(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session, scope, destination, dryRun, acknowledgeAclLoss, forceRedeploy }),
   });
-  if (!res.ok) throw new Error('plan_failed');
+  if (!res.ok) {
+    // Carry the server's own words. "plan_failed" alone told the operator nothing
+    // and told us nothing either — the reason (a missing environment map, an
+    // unacknowledged ACL loss, an empty scope) is in the body.
+    const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+    throw new Error([body.error ?? 'plan_failed', body.detail].filter(Boolean).join(': '));
+  }
   return (await res.json()) as PlanPreview;
 }
 

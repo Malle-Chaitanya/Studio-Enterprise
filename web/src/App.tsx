@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Outlet, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
-import { fetchSession } from './api.ts';
+import { fetchSession, resumeSession } from './api.ts';
 import { AgentChat } from './components/AgentChat.tsx';
 import { WizardProvider } from './context/WizardContext.tsx';
 import { IcoLogout } from './icons.tsx';
@@ -16,13 +16,10 @@ import { Migrate } from './pages/Migrate.tsx';
 import { SelectData } from './pages/SelectData.tsx';
 import { SelectMap } from './pages/SelectMap.tsx';
 import ConnectV2 from './pages/v2/ConnectV2.tsx';
-import PairEnvsV2 from './pages/v2/PairEnvsV2.tsx';
 import MapUsersV2 from './pages/v2/MapUsersV2.tsx';
 import SelectAgentsV2 from './pages/v2/SelectAgentsV2.tsx';
-import ReviewV2 from './pages/v2/ReviewV2.tsx';
 import ConnectorsV2 from './pages/v2/ConnectorsV2.tsx';
 import MigrateV2 from './pages/v2/MigrateV2.tsx';
-import ReportV2 from './pages/v2/ReportV2.tsx';
 import PhaseSoon from './pages/v2/PhaseSoon.tsx';
 import { SourceProvider, resolveSource } from './v2/data/index.ts';
 
@@ -324,19 +321,90 @@ function AppShell() {
  * two shells run side by side while the v2 slice is proven; the old one stays
  * untouched so nothing that works today can regress.
  */
+/** The session id fixture mode uses when none is given. It names nothing on the
+ *  server — in fixture mode it is only a key for browser-local state. */
+const FIXTURE_SESSION = 'ui';
+
 function V2Shell() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   // The data source is chosen once, here, and handed down: screens never decide
   // where their data comes from. `?fixture=1` is honoured in dev builds only.
   const source = useMemo(() => resolveSource(params), [params]);
+
+  // Fixture mode needs *a* session id because every screen reads one, but asking a
+  // reviewer to invent one is friction for no reason. Fill it in and move on.
+  useEffect(() => {
+    if (source.isFixture && !params.get('session')) {
+      const next = new URLSearchParams(params);
+      next.set('session', FIXTURE_SESSION);
+      setParams(next, { replace: true });
+    }
+  }, [source.isFixture, params, setParams]);
+
+  /**
+   * Adopt the signed-in user's existing session when the URL has none.
+   *
+   * Without this, opening /v2 bare left every screen with session '', which meant
+   * each read early-returned and the Connect cards sat at "not connected" forever
+   * — including after a sign-in that actually succeeded. Nothing failed visibly,
+   * which is the worst shape a failure can take.
+   */
+  const [resume, setResume] = useState<'idle' | 'looking' | 'none'>('idle');
+  const hasSession = Boolean(params.get('session'));
+  useEffect(() => {
+    if (source.isFixture || hasSession) return;
+    let live = true;
+    setResume('looking');
+    void resumeSession().then((id) => {
+      if (!live) return;
+      if (id) {
+        const next = new URLSearchParams(params);
+        next.set('session', id);
+        setParams(next, { replace: true });
+        setResume('idle');
+      } else {
+        setResume('none');
+      }
+    }).catch(() => { if (live) setResume('none'); });
+    return () => { live = false; };
+  }, [source.isFixture, hasSession, params, setParams]);
+
   return (
     <WizardProvider>
       <SourceProvider value={source}>
         {/* Fixture mode has no real session to validate — running the guard would
             bounce a design review straight back to the login screen. */}
-        {!source.isFixture && <SessionGuard />}
+        {!source.isFixture && hasSession && <SessionGuard />}
         <AppHeader />
-        <Outlet />
+        {!source.isFixture && !hasSession ? (
+          // No session, said out loud. A blank "not connected" card is a lie when
+          // the truth is that this page does not know which migration it is on.
+          <div className="v2">
+            <div className="v2-frame">
+              <main className="v2-canvas">
+                <div className="v2-panel">
+                  <div className="v2-panel-h">
+                    <div>
+                      <h2>{resume === 'looking' ? 'Looking for your migration…' : 'No migration session'}</h2>
+                      <div className="sub">
+                        {resume === 'looking'
+                          ? 'Checking whether you already have a connected session.'
+                          : 'This page needs a session id, and you have no connected session yet. Start one from Home — connecting a cloud creates it.'}
+                      </div>
+                    </div>
+                  </div>
+                  {resume === 'none' && (
+                    <div className="v2-row note">
+                      <span className="why">
+                        <a className="v2-btn blue" href="/home">Go to Home</a>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </main>
+            </div>
+          </div>
+        ) : <Outlet />}
       </SourceProvider>
     </WizardProvider>
   );
@@ -348,13 +416,18 @@ export function App() {
       <Route path="/" element={<Login />} />
       <Route element={<V2Shell />}>
         <Route path="/v2/connect" element={<ConnectV2 />} />
-        <Route path="/v2/pair-envs" element={<PairEnvsV2 />} />
+        {/* Merged into Connect. Kept as a redirect so an old link still lands
+            somewhere true instead of on a "phase not built" page. */}
+        <Route path="/v2/pair-envs" element={<Navigate to="/v2/connect" replace />} />
         <Route path="/v2/map-users" element={<MapUsersV2 />} />
         <Route path="/v2/select-agents" element={<SelectAgentsV2 />} />
-        <Route path="/v2/review" element={<ReviewV2 />} />
         <Route path="/v2/connectors" element={<ConnectorsV2 />} />
         <Route path="/v2/migrate" element={<MigrateV2 />} />
-        <Route path="/v2/report" element={<ReportV2 />} />
+        {/* The fidelity report screen was removed on request. Redirected, not
+            404'd, so an existing link lands on the run it belonged to. What a
+            migration cost is still recorded server-side per run and still shows on
+            Migrate while the run is on screen. */}
+        <Route path="/v2/report" element={<Navigate to="/v2/migrate" replace />} />
         {/* Kept as the catch-all: a mistyped phase says so instead of blanking. */}
         <Route path="/v2/:phase" element={<PhaseSoon />} />
         <Route path="/v2" element={<Navigate to="/v2/connect" replace />} />
