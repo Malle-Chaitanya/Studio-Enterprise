@@ -32,6 +32,7 @@ import {
   fetchRun,
   fetchRuns,
   migrateStreamUrl,
+  saveSelectionToServer,
   fetchRunState,
   stopMigration,
   planMigration,
@@ -390,6 +391,11 @@ const agents: AgentsSource = {
     return perEnv.flat();
   },
   saveSelection: async (session, selection) => {
+    // The server first: every per-agent decision on Connectors is keyed to the
+    // recorded selection, and Connectors comes BEFORE the Start button that used to
+    // be the only thing that told the server anything. sessionStorage alone is per
+    // tab and invisible to the server.
+    await saveSelectionToServer(session, selection);
     const key = `csge_data_${session}`;
     const before = sessionStorage.getItem(key) ?? '';
     const after = JSON.stringify(selection);

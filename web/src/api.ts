@@ -909,6 +909,30 @@ export async function fetchSelection(
 }
 
 /**
+ * Record the chosen agents on the SERVER, at the moment the customer chooses them.
+ *
+ * Until this existed the server only learned the selection from POST /plan, which
+ * v2 calls from the Start button — one screen AFTER Connectors. So the per-agent
+ * decisions panel asked which agents to ask about, got an empty list (or the
+ * previous run's), and rendered nothing. It looked like the product had no such
+ * option, which is how a live migration went out without Teams or Drive.
+ */
+export async function saveSelectionToServer(
+  session: string,
+  selection: Array<{ env: string; envName?: string; botIds: string[] }>,
+): Promise<void> {
+  const res = await fetch('/api/migrate/selection', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, selection }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+    throw new Error(body.detail || body.error || 'selection_save_failed');
+  }
+}
+
+/**
  * Read back ONE stored credential value, on demand.
  *
  * Called only when the admin clicks to reveal — never on page load. Every other credential

@@ -102,7 +102,16 @@ export default function SelectAgentsV2() {
       env: p.env,
       botIds: rows.filter((r) => r.env === p.env && chosen.has(r.botId)).map((r) => r.botId),
     })).filter((s) => s.botIds.length > 0);
-    await source.agents.saveSelection(session, selection);
+    // A failed save must SAY so. This write is what the next screen's per-agent
+    // decisions are keyed to, so swallowing it would hand the customer a Connectors
+    // page with no Teams or Drive question on it and no reason why.
+    try {
+      await source.agents.saveSelection(session, selection);
+    } catch (e) {
+      setToast(`Could not record the selection: ${(e as Error).message}`);
+      window.setTimeout(() => setToast(''), 6000);
+      return;
+    }
     setToast(`${selectedRows.length} agents locked in for this run.`);
     window.setTimeout(() => setToast(''), 2600);
   };

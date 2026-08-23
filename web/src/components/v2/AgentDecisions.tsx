@@ -60,6 +60,8 @@ export function AgentDecisions({ session, driveAgentNames, nameById, live = true
   /** Per-row error, keyed by row id: a domain rejection belongs next to the field
    *  that caused it, not in a banner at the top of the screen. */
   const [rowError, setRowError] = useState<Record<string, string>>({});
+  const [surfaceError, setSurfaceError] = useState('');
+  const [driveError, setDriveError] = useState('');
   const [emails, setEmails] = useState<Record<string, string>>({});
   const [picked, setPicked] = useState<Record<string, string>>({});
 
@@ -71,17 +73,27 @@ export function AgentDecisions({ session, driveAgentNames, nameById, live = true
       // tab — the worst way for a decision screen to fail, because nothing errors.
       const sel = await fetchSelection(session);
       setUnits(sel);
+      // Failures are kept, not swallowed. With `.catch(() => [])` on both reads and
+      // a null render on an empty result, a broken endpoint produced EXACTLY the
+      // screen that means "no decisions needed" — the panel was absent, so it read
+      // as "there is no such option" rather than as something failing.
+      let sErr = '';
+      let dErr = '';
       const surf = await Promise.all(sel.map(async (u) => {
-        const rows = await fetchSurfaceEquivalences(session, u.env, u.botIds).catch(() => []);
+        const rows = await fetchSurfaceEquivalences(session, u.env, u.botIds)
+          .catch((e: Error) => { sErr = e.message; return []; });
         return rows.map((r) => ({ ...r, env: u.env }));
       }));
       setSurfaces(surf.flat());
 
       const drv = await Promise.all(sel.map(async (u) => {
-        const rows = await fetchDriveIdentities(session, u.env, u.botIds).catch(() => []);
-        return rows.map((r) => ({ ...r, env: u.env, name: nameById[r.sourceId] ?? r.sourceId }));
+        const rows = await fetchDriveIdentities(session, u.env, u.botIds)
+          .catch((e: Error) => { dErr = e.message; return []; });
+        return rows.map((r) => ({ ...r, env: u.env, name: nameById[r.sourceId] ?? '' }));
       }));
       setDrives(drv.flat());
+      setSurfaceError(sErr);
+      setDriveError(dErr);
     } catch (e) {
       setError((e as Error).message || 'read_failed');
     } finally {
@@ -218,13 +230,24 @@ export function AgentDecisions({ session, driveAgentNames, nameById, live = true
   // use for. An unmatched name simply drops the row: offering one Drive box too few
   // is recoverable from the run's own fidelity note, whereas a screen full of
   // irrelevant account pickers is the wall of noise this rewrite exists to remove.
-  const wantsDrive = new Set(driveAgentNames.filter(Boolean));
-  const driveRows = drives.filter((d) => wantsDrive.has(d.name));
+  // Matching is by display name because that is all the connector scan carries —
+  // it reports agentNames, never botids. Names are compared case- and
+  // space-insensitively, and anything the name map cannot resolve is REPORTED
+  // below rather than quietly vanishing, which is what a silent drop did: an agent
+  // that uses Drive would simply have no row and nobody would know to look.
+  const norm = (n: string): string => n.trim().toLowerCase();
+  const wantsDrive = new Set(driveAgentNames.filter(Boolean).map(norm));
+  const driveRows = drives.filter((d) => d.name && wantsDrive.has(norm(d.name)));
+  const resolved = new Set(drives.map((d) => norm(d.name)).filter(Boolean));
+  const unresolvedDrive = driveAgentNames.filter((n) => n && !resolved.has(norm(n)));
 
   const undecided = surfaces.filter((s) => s.decision === null).length;
   const unwired = driveRows.filter((d) => d.current?.status !== 'confirmed').length;
 
-  if (!loading && !error && surfaces.length === 0 && driveRows.length === 0) return null;
+  // Only truly silent when a successful read found nothing AND nothing failed. Any
+  // other combination has something to say.
+  if (!loading && !error && !surfaceError && !driveError && unresolvedDrive.length === 0
+    && surfaces.length === 0 && driveRows.length === 0) return null;
 
   return (
     <Panel>
@@ -234,6 +257,25 @@ export function AgentDecisions({ session, driveAgentNames, nameById, live = true
       />
       {loading && <SkeletonRows rows={2} controls />}
       {error && <NoteRow tone="bad">Could not read the per-agent decisions: {error}</NoteRow>}
+      {surfaceError && (
+        <NoteRow tone="bad">
+          Could not read which agents use a Microsoft surface ({surfaceError}). That is unknown,
+          not none — an agent needing this decision would migrate without those tools.
+        </NoteRow>
+      )}
+      {driveError && (
+        <NoteRow tone="bad">
+          Could not read the Drive identities ({driveError}). Unknown, not none.
+        </NoteRow>
+      )}
+      {unresolvedDrive.length > 0 && (
+        <NoteRow tone="you">
+          {unresolvedDrive.length} agent{unresolvedDrive.length > 1 ? 's' : ''} use Google Drive
+          ({unresolvedDrive.slice(0, 3).join(', ')}{unresolvedDrive.length > 3 ? ', …' : ''}) but
+          could not be matched to the selected agents, so no account can be set here. They will
+          deploy without the Drive tool.
+        </NoteRow>
+      )}
 
       {!loading && undecided > 0 && (
         <NoteRow tone="you">
