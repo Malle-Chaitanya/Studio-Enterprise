@@ -183,6 +183,13 @@ export interface ConnectorNeeded {
   siteUrl: string;
   kind: 'sharepoint-connector' | 'onedrive-connector';
   agentNames: string[];
+  /**
+   * The same agents by botid. Names are not a key: the Connectors screen matches these
+   * agents against the customer's selection, and an unmatched name silently dropped the
+   * row while two agents sharing a display name collided. The id is already in scope
+   * here, so carrying it costs nothing. Additive — existing consumers ignore it.
+   */
+  agentIds: string[];
 }
 
 /**
@@ -231,15 +238,15 @@ exploreRouter.get('/connectors-needed', async (req, res) => {
         // agent from Dataverse.
         const cached = await getCachedIR(appUserId, env, bot.botid);
         const ir = cached?.ir ?? (await extractAgent(env, token, bot));
-        return { name: bot.name, actions: assessAgent(ir).knowledge?.actions ?? [] };
+        return { name: bot.name, id: bot.botid, actions: assessAgent(ir).knowledge?.actions ?? [] };
       } catch (err) {
         logger.debug({ err, bot: bot.name }, 'connectors-needed: agent extract failed');
-        return { name: bot.name, actions: [] };
+        return { name: bot.name, id: bot.botid, actions: [] };
       }
     });
 
-    const bySite = new Map<string, { siteUrl: string; kind: ConnectorNeeded['kind']; agentNames: Set<string> }>();
-    for (const { name, actions } of perAgent) {
+    const bySite = new Map<string, { siteUrl: string; kind: ConnectorNeeded['kind']; agentNames: Set<string>; agentIds: Set<string> }>();
+    for (const { name, id, actions } of perAgent) {
       for (const a of actions) {
         if (a.target !== 'sharepoint-connector' && a.target !== 'onedrive-connector') continue;
         const siteUrlRaw = a.references?.[0];
@@ -249,8 +256,9 @@ exploreRouter.get('/connectors-needed', async (req, res) => {
             ? normalizeSharePointSiteUrl(siteUrlRaw)
             : siteUrlRaw;
         const key = `${a.target}::${siteUrl}`;
-        if (!bySite.has(key)) bySite.set(key, { siteUrl, kind: a.target, agentNames: new Set() });
+        if (!bySite.has(key)) bySite.set(key, { siteUrl, kind: a.target, agentNames: new Set(), agentIds: new Set() });
         bySite.get(key)!.agentNames.add(name);
+        if (id) bySite.get(key)!.agentIds.add(id);
       }
     }
 
@@ -258,6 +266,7 @@ exploreRouter.get('/connectors-needed', async (req, res) => {
       siteUrl: c.siteUrl,
       kind: c.kind,
       agentNames: [...c.agentNames],
+      agentIds: [...c.agentIds],
     }));
     res.json({ connectors });
   } catch (err) {

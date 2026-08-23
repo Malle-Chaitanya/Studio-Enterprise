@@ -28,6 +28,20 @@ export interface DetectedConnector {
   /** Which selected agents actually use this connector. Empty when unknown. */
   agentNames?: string[];
   /**
+   * The SAME agents, by Copilot botid.
+   *
+   * Carried because names are not a key. The Connectors screen has to line these agents
+   * up against the customer's selection to know who needs a per-agent Drive account, and
+   * with names alone an unresolvable name silently dropped the row — the agent then
+   * deployed without the Drive tool and only the fidelity note said so. Two agents
+   * sharing a display name collide outright.
+   *
+   * Free to provide: the scan already reads `_parentbotid_value` to look the name UP, so
+   * the id was in hand and being discarded. Additive and optional — consumers that only
+   * know about agentNames keep working.
+   */
+  agentIds?: string[];
+  /**
    * 'certain'  — Copilot Studio named the connector structurally (kind enum, shared_*
    *              api name, or a connection reference).
    * 'heuristic'— inferred from user-editable text on a generic

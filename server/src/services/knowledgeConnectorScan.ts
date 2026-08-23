@@ -139,6 +139,7 @@ export async function detectKnowledgeConnectors(
       flowCount: number;
       flowNames: Set<string>;
       agentNames: Set<string>;
+      agentIds: Set<string>;
       certain: boolean;
       operations: Set<string>;
     }
@@ -150,12 +151,16 @@ export async function detectKnowledgeConnectors(
   const record = (connectorId: string, comp: BotKsComponent, certain: boolean, operations: string[] = []): void => {
     if (!connectorId) return; // sources that need no credentials (Dataverse, public site)
     const existing = connectorHits.get(connectorId)
-      ?? { flowCount: 0, flowNames: new Set<string>(), agentNames: new Set<string>(), certain: false, operations: new Set<string>() };
+      ?? { flowCount: 0, flowNames: new Set<string>(), agentNames: new Set<string>(), agentIds: new Set<string>(), certain: false, operations: new Set<string>() };
     existing.flowCount++;
     existing.certain = existing.certain || certain;
     if (comp.name) existing.flowNames.add(comp.name);
     for (const op of operations) existing.operations.add(op);
     const owner = comp._parentbotid_value;
+    // The id is recorded whenever it exists, even when the name cannot be resolved.
+    // A consumer matching on ids should not lose an agent just because its display name
+    // was unavailable — that was exactly the silent drop this field removes.
+    if (owner) existing.agentIds.add(owner);
     if (owner && botNames?.get(owner)) existing.agentNames.add(botNames.get(owner)!);
     connectorHits.set(connectorId, existing);
   };
@@ -240,6 +245,7 @@ export async function detectKnowledgeConnectors(
       flowCount: hit.flowCount,
       flowNames: [...hit.flowNames],
       agentNames: [...hit.agentNames],
+      agentIds: [...hit.agentIds],
       // 'certain' when Copilot Studio itself named the connector; 'heuristic' when we
       // inferred it from editable text on a generic federated source.
       confidence: hit.certain ? 'certain' : 'heuristic',
