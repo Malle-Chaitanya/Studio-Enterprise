@@ -14,7 +14,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 
 export type PhaseId =
   | 'connect' | 'map-users' | 'select-agents'
-  | 'connectors' | 'migrate';
+  | 'connectors' | 'migrate' | 'report';
 
 export type PhaseState = 'done' | 'current' | 'needs-you' | 'blocked' | 'pending' | 'not-built';
 
@@ -49,6 +49,9 @@ export const PHASES: Array<{ id: PhaseId; label: string }> = [
   { id: 'select-agents', label: 'Select agents' },
   { id: 'connectors', label: 'Connectors' },
   { id: 'migrate', label: 'Migrate' },
+  // After Migrate, because it is the thing you read once the run is over. It is a
+  // destination, not a step: /v2/report with no run id resolves the latest one.
+  { id: 'report', label: 'Report' },
 ];
 
 /** Where each phase lives in the CURRENT ui, for the not-built-yet placeholder. */
@@ -58,12 +61,14 @@ export const OLD_ROUTE: Record<PhaseId, string> = {
   'select-agents': '/select-data',
   connectors: '/connector-config',
   migrate: '/migrate',
+  // The old UI has no report screen of its own -- the run page was where results lived.
+  report: '/migrate',
 };
 
 /** Phases with a v2 screen. All seven exist now; the set stays because a mistyped
  *  or future phase must still be able to say "not built" rather than blank. */
 export const BUILT: ReadonlySet<PhaseId> = new Set<PhaseId>([
-  'connect', 'map-users', 'select-agents', 'connectors', 'migrate',
+  'connect', 'map-users', 'select-agents', 'connectors', 'migrate', 'report',
 ]);
 
 const BADGE: Partial<Record<PhaseState, string>> = {

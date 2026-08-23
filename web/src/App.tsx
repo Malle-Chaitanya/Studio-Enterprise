@@ -474,7 +474,9 @@ export function App() {
             a customer is asking what they got rather than what to worry about.
             Bare /v2/report has no run to show, so it still lands on Migrate. */}
         <Route path="/v2/report/:runId" element={<ReportV2 />} />
-        <Route path="/v2/report" element={<Navigate to="/v2/migrate" replace />} />
+        {/* No run id: the rail links here, so the page resolves the latest run itself
+            rather than the rail having to know one. */}
+        <Route path="/v2/report" element={<ReportV2 />} />
         {/* Kept as the catch-all: a mistyped phase says so instead of blanking. */}
         <Route path="/v2/:phase" element={<PhaseSoon />} />
         <Route path="/v2" element={<Navigate to="/v2/connect" replace />} />

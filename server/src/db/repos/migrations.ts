@@ -204,6 +204,48 @@ export async function listRuns(
   }
 }
 
+/**
+ * The run's own header row: who it ran between, when, and how long it took.
+ *
+ * Tenant-scoped like everything else here -- the appUserId is part of the filter, not a
+ * check afterwards, so another customer's run simply is not found.
+ *
+ * Separate from getRunResults because the report needs both and they are different
+ * collections; returning null rather than throwing keeps an unknown run and a Mongo
+ * outage on the same best-effort path as the rest of this module.
+ */
+export async function getRunHeader(
+  appUserId: string,
+  runId: string,
+): Promise<{
+  runId: string;
+  orgName?: string;
+  destination?: unknown;
+  status?: string;
+  startedAt?: Date;
+  finishedAt?: Date;
+} | null> {
+  if (!isDbConnected()) return null;
+  try {
+    const r = await getDb(config.CSGE_DB)
+      .collection(RUNS)
+      .findOne({ appUserId, $or: [{ runId }, { _id: runId }] } as never);
+    if (!r) return null;
+    return {
+      runId,
+      orgName: r.orgName,
+      destination: r.destination,
+      status: r.status,
+      // Same field-name trap as listRuns: the writer uses startTime/endTime.
+      startedAt: r.startTime ?? r.startedAt,
+      finishedAt: r.endTime ?? r.finishedAt,
+    };
+  } catch (e) {
+    logger.warn(`getRunHeader failed: ${(e as Error).message}`);
+    return null;
+  }
+}
+
 /** Every agent result for one run, tenant-scoped. */
 export async function getRunResults(
   appUserId: string,

@@ -58,7 +58,7 @@ import { agentConnectorIds } from '../services/connectorToolBuilder.js';
 import { suggestEnvironmentDriveIdentity } from '../services/driveIdentityResolution.js';
 import { buildOrganizationProfile } from '../services/organizationProfile.js';
 import { getIdentityMap } from '../db/repos/identityMap.js';
-import { listRuns, getRunResults } from '../db/repos/migrations.js';
+import { listRuns, getRunResults, getRunHeader } from '../db/repos/migrations.js';
 import type { DestinationOptions, GeminiDestination, MigrationResult, MigrationScope } from '../types.js';
 
 export const migrateRouter = Router();
@@ -1453,5 +1453,9 @@ migrateRouter.get('/runs/:runId', async (req, res) => {
   // simply "not found for you", which is the only answer that does not confirm the run
   // exists in another tenant.
   if (!results.length) return void res.status(404).json({ error: 'run_not_found' });
-  res.json({ runId: req.params.runId, results });
+  // The header is best-effort on purpose: a run whose results exist but whose header row
+  // is missing still has a report worth showing, and 404ing the whole page over a missing
+  // timestamp would be the tool refusing to tell the customer what it did.
+  const run = await getRunHeader(appUserId, req.params.runId);
+  res.json({ runId: req.params.runId, run, results });
 });

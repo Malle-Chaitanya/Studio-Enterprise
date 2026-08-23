@@ -622,7 +622,13 @@ export interface MigrationResult {
    * Optional: results written before this field existed have none, and the report shows
    * the connector names it can prove rather than a fabricated zero.
    */
-  connectorsWired?: { name: string; toolCount: number }[];
+  connectorsWired?: { name: string; toolCount: number; actsAs?: string }[];
+  /** Topic sub-agents wired into the deployed engine. */
+  subAgents?: number;
+  /** Source capabilities found, and how many were reproduced at full fidelity. Shown as
+   *  the agent's headline because it is the honest version of 'did this migrate' -- a
+   *  created agent that reproduces 4 of 13 capabilities is not a successful migration. */
+  capabilities?: { total: number; exact: number };
   /** Manual permission steps when Gemini cannot apply per-principal sharing. */
   permissionHandoff?: PermissionHandoff;
 }

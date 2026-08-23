@@ -1,4 +1,5 @@
 import type {
+  RunHeader,
   AgentAssessment,
   AgentBrief,
   EnvironmentInfo,
@@ -139,10 +140,10 @@ export async function fetchRuns(session: string, limit = 20): Promise<RunSummary
 export async function fetchRun(
   session: string,
   runId: string,
-): Promise<{ runId: string; results: MigrationResult[] }> {
+): Promise<{ runId: string; run?: RunHeader; results: MigrationResult[] }> {
   const res = await fetch(`/api/migrate/runs/${encodeURIComponent(runId)}?session=${session}`);
   if (!res.ok) throw new Error(res.status === 404 ? 'run_not_found' : 'run_failed');
-  return (await res.json()) as { runId: string; results: MigrationResult[] };
+  return (await res.json()) as { runId: string; run?: RunHeader; results: MigrationResult[] };
 }
 
 export async function fetchEnvironments(session: string): Promise<EnvironmentInfo[]> {

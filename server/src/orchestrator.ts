@@ -630,6 +630,21 @@ export async function* runMigration(
 
 type Emit = (e: ProgressEvent) => void;
 
+/**
+ * Record which identity a connector's tools will run as, onto the result the report reads.
+ *
+ * The orchestrator already logs this; the log is not the record. Which mailbox a migrated
+ * agent acts as is the first thing an admin asks after "did it work", and it was surviving
+ * only as long as the run's own screen stayed open.
+ *
+ * A no-op if the connector was never wired for this agent, so an identity can never invent
+ * a capability the agent does not have.
+ */
+function markActsAs(result: MigrationResult, connectorName: string, identity: string): void {
+  const entry = result.connectorsWired?.find((c) => c.name === connectorName);
+  if (entry) entry.actsAs = identity;
+}
+
 async function execute(
   session: Session,
   plan: ResolvedPlan,
@@ -1261,6 +1276,17 @@ async function execute(
       // Acknowledged permission loss travels with the agent's own report, not just the run
       // log — the report is what someone reads months later.
       fidelity: [...row.fidelity, ...(aclNotesBySourceId.get(row.sourceId) ?? []), ...envMemoryNotes],
+      // Carried from the staged row so the report can lead with what the agent DOES
+      // rather than only that it was created. A created agent reproducing 4 of 13
+      // capabilities is not a successful migration, and only this ratio says so.
+      ...(row.topicsSummary
+        ? {
+            capabilities: {
+              total: row.topicsSummary.capabilities,
+              exact: row.topicsSummary.fullFidelity,
+            },
+          }
+        : {}),
     };
     try {
       if (quotaExhausted) {
@@ -2327,6 +2353,7 @@ async function execute(
                 i === idx ? { ...c, secretIds: { ...entry.secretIds, impersonate_email: agentSecretId } } : c,
               );
               emitLog('info', `    ${row.name}: ${entry.name} will act as ${mailbox}.`);
+              markActsAs(result, entry.name, mailbox);
             }
 
             const driveIndex = scopedConnectors.findIndex((c) => c.id === 'shared_googledrive');
@@ -2348,6 +2375,7 @@ async function execute(
                   i === driveIndex ? { ...c, secretIds: { ...driveEntry.secretIds, impersonate_email: agentSecretId } } : c,
                 );
                 emitLog('info', `    ${row.name}: Google Drive will act as ${identity.impersonateEmail}.`);
+                markActsAs(result, 'Google Drive', identity.impersonateEmail);
               } else {
                 scopedConnectors = scopedConnectors.filter((_, i) => i !== driveIndex);
                 result.fidelity.push({
@@ -2386,6 +2414,7 @@ ${t.aiPrompt}
 If the request is outside "${name}", say so briefly so the main assistant takes over.`,
                 };
               });
+            result.subAgents = topicSubAgents.length;
             if (topicSubAgents.length) {
               emitLog('info', `    ${row.name}: ${topicSubAgents.length} topic(s) → sub-agents in one engine.`);
             }

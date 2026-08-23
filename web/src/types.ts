@@ -70,7 +70,12 @@ export interface MigrationResult {
   /** Connectors wired for THIS agent and how many operations each contributed as tools.
    *  Absent on runs recorded before the field existed — the report shows "—" rather than
    *  a zero, which would be a claim about the agent instead of about our own records. */
-  connectorsWired?: { name: string; toolCount: number }[];
+  connectorsWired?: { name: string; toolCount: number; actsAs?: string }[];
+  /** Topic sub-agents wired into the deployed engine. */
+  subAgents?: number;
+  /** Source capabilities found, and how many reproduced at full fidelity. The honest
+   *  version of 'did this migrate': created but reproducing 4 of 13 is not success. */
+  capabilities?: { total: number; exact: number };
   fidelity: FidelityNote[];
   permissionHandoff?: {
     agentName: string;
@@ -218,3 +223,14 @@ export type ProgressEvent =
   | { type: 'tool_end'; tool: string; target?: string; ok: boolean;
       outcome?: 'ok' | 'failed' | 'unknown'; msg: string }
   | { type: 'awaiting_human'; reason: string; target?: string; msg: string };
+
+/** The run's own header row -- who it ran between, when, how long. Every field is
+ *  optional because the report renders without it: a run whose results exist but whose
+ *  header row does not still has something worth showing. */
+export interface RunHeader {
+  runId: string;
+  orgName?: string;
+  status?: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
