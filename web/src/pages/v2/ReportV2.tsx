@@ -40,6 +40,45 @@ import type { MigrationResult } from '../../types.ts';
 /** Notes worth a customer's attention. `mapped` is the happy path and says nothing new. */
 const NOTEWORTHY = new Set(['lost', 'partial', 'needs-review']);
 
+/**
+ * Notes this SCREEN does not show. They are not dropped: `renderReportExcel` still writes
+ * every one of them, and that file is the record.
+ *
+ * `web-browsing` is here by product decision — an alternative is being chosen, and until
+ * then putting a permanent-sounding loss on the success screen misrepresents where it
+ * stands. It is the only entry, and the list is deliberately explicit rather than a
+ * pattern: a rule broad enough to hide a category is a rule that will one day hide
+ * something nobody chose to hide.
+ */
+const HIDDEN_ON_SCREEN = new Set(['capability:web-browsing']);
+
+/**
+ * Collapse a connector's per-operation notes into one line.
+ *
+ * A run that lacked one credential emitted ELEVEN 'lost' notes for one connector, which
+ * reads as eleven broken things instead of one unconfigured connector. `tool:<Connector> -
+ * <operation>` is the shape the mapper emits, so the connector name is the part before the
+ * first ' - '.
+ */
+function groupKey(component: string): string {
+  // `tool:<Connector> - <operation>` — the display-name shape.
+  if (component.startsWith('tool:')) {
+    const label = component.slice('tool:'.length);
+    const dash = label.indexOf(' - ');
+    return dash === -1 ? label : label.slice(0, dash);
+  }
+  // `connector:<connectorId>:<Operation>` — the id shape, used by the per-operation
+  // `partial` notes. Found only by running this against a real run: it produced 28
+  // ungrouped rows next to the 11 the first shape had just collapsed. Rendered as the
+  // connector id with the `shared_` prefix off, because that is what the customer
+  // recognises and inventing a display name here would be a second source of truth.
+  if (component.startsWith('connector:')) {
+    const id = component.split(':')[1] ?? component;
+    return id.replace(/^shared_/, '');
+  }
+  return component;
+}
+
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
@@ -87,7 +126,18 @@ export default function ReportV2() {
         toolsKnown = true;
       }
     }
-    const notes = rows.flatMap((r) => r.fidelity.filter((f) => NOTEWORTHY.has(f.status)));
+    const notes = rows.flatMap((r) =>
+      r.fidelity.filter((f) => NOTEWORTHY.has(f.status) && !HIDDEN_ON_SCREEN.has(f.component)));
+    // One line per (connector, status), carrying how many operations it covers, so the
+    // customer reads "Google Drive - 11 actions" and not eleven near-identical rows.
+    const grouped = new Map<string, { label: string; status: string; count: number; detail: string }>();
+    for (const n of notes) {
+      const label = groupKey(n.component);
+      const key = `${label}::${n.status}`;
+      const seen = grouped.get(key);
+      if (seen) seen.count += 1;
+      else grouped.set(key, { label, status: n.status, count: 1, detail: n.detail });
+    }
     return {
       agents: rows.length,
       live: rows.filter((r) => r.created && !r.error).length,
@@ -96,7 +146,7 @@ export default function ReportV2() {
       // Runs recorded before connectorsWired existed have no counts. Showing "0 tools"
       // would be a claim about the agent rather than about our own record-keeping.
       toolsKnown,
-      notes,
+      notes: [...grouped.values()],
       lost: notes.filter((n) => n.status === 'lost').length,
       failed: rows.filter((r) => r.error).length,
     };
@@ -201,9 +251,10 @@ export default function ReportV2() {
                       {showNotes ? 'Hide' : 'Show'} what changed ({totals.notes.length})
                     </button>
                   </NoteRow>
-                  {showNotes && totals.notes.map((n, i) => (
-                    <NoteRow key={`${n.component}-${i}`} tone={n.status === 'lost' ? 'bad' : undefined}>
-                      <strong>{n.component}</strong> — {n.detail}
+                  {showNotes && totals.notes.map((n) => (
+                    <NoteRow key={`${n.label}-${n.status}`} tone={n.status === 'lost' ? 'bad' : undefined}>
+                      <strong>{n.label}</strong>
+                      {n.count > 1 ? ` — ${plural(n.count, 'action')}` : ''} · {n.detail}
                     </NoteRow>
                   ))}
                 </>
