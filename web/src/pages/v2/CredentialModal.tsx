@@ -30,14 +30,12 @@ export function CredentialForm({
   session,
   row,
   onSaved,
-  onFocusSecret,
   onCancel,
 }: {
   session: string;
   row: ConnectorRow;
   onSaved: (validation: ConnectorValidation | undefined) => void;
   /** Fired when a secret field takes focus, so the driver can record the handoff. */
-  onFocusSecret?: (fieldKey: string) => void;
   /** Present in a dialog, absent inline — an inline form has nothing to cancel. */
   onCancel?: () => void;
 }) {
@@ -154,10 +152,15 @@ export function CredentialForm({
               value={values[f.key] ?? ''}
               placeholder={f.placeholder ?? ''}
               autoComplete="off"
-              onFocus={() => { if (secret) onFocusSecret?.(f.key); }}
               onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
             />
             {f.hint && <span className="hint">{f.hint}</span>}
+            {/* Said here, on the field, rather than by dimming the page and
+                announcing it: this value is written straight to Secret Manager and
+                is never read back into the browser. */}
+            {secret && !f.supplied && (
+              <span className="hint">Goes straight to Secret Manager — never read back into this page.</span>
+            )}
           </div>
         );
       })}
@@ -216,13 +219,12 @@ export function CredentialForm({
  * the inline step list and the dialog cannot drift apart.
  */
 export function CredentialModal({
-  session, row, onClose, onSaved, onFocusSecret,
+  session, row, onClose, onSaved,
 }: {
   session: string;
   row: ConnectorRow;
   onClose: () => void;
   onSaved: (validation: ConnectorValidation | undefined) => void;
-  onFocusSecret?: (fieldKey: string) => void;
 }) {
   const group = row.req?.group;
   return (
@@ -246,7 +248,6 @@ export function CredentialModal({
             session={session}
             row={row}
             onSaved={onSaved}
-            onFocusSecret={onFocusSecret}
             onCancel={onClose}
           />
         </div>

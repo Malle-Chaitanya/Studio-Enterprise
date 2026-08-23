@@ -5,7 +5,7 @@ import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
   Band, BandCell, BandRule, Btn, Chip, Inspector, InspectorActions, InspectorHead,
-  Fold, InspectorSection, KeyValue, Ledger, Note, NoteRow, Panel, PanelHead, SkeletonRows, WizardFooter,
+  Fold, InspectorSection, KeyValue, Note, NoteRow, Panel, PanelHead, SkeletonRows, WizardFooter,
   type ChipTone,
 } from '../../components/v2/primitives.tsx';
 import { FidelityCard, FidelityDetail, useFidelity } from '../../components/v2/fidelity.tsx';
@@ -307,17 +307,17 @@ export default function ConnectorsV2() {
                       </span>
                     </div>
                   )}
+                  {/* No agent hook on focus. Clicking into a credential field used to
+                      put the whole screen into the agent's "your turn" state — dimmed
+                      page, a YOUR TURN pill and a caption following the cursor — while
+                      someone was trying to paste a client secret. Nothing was driving
+                      anything; it was narration on top of a form. The one true thing it
+                      said (the value goes straight to Secret Manager and is never read
+                      back) is in the form itself, next to the field it applies to. */}
                   <CredentialForm
                     session={session}
                     row={row}
                     onSaved={(v) => { onSaved(v); setExpanded(null); }}
-                    onFocusSecret={(key) =>
-                      dispatch({
-                        kind: 'awaiting_human',
-                        target: `field:${row.connectorId}:${key}`,
-                        note: 'Yours to type. I do not read or store this value — it goes straight to Secret Manager.',
-                      })
-                    }
                   />
                   {row.saved && (
                     <div className="v2-fld-f">
@@ -426,12 +426,6 @@ export default function ConnectorsV2() {
             </InspectorSection>
           )}
 
-          {agent.ledger.length > 0 && (
-            <InspectorSection title="What the agent did">
-              <Ledger lines={agent.ledger} />
-            </InspectorSection>
-          )}
-
           <InspectorActions>
             {selected.state !== 'cannot-migrate' && (
               <Btn wide tone={selected.state === 'needs-you' ? 'amber' : 'plain'}
@@ -468,10 +462,13 @@ export default function ConnectorsV2() {
           migrate: blocked.length ? { state: 'blocked' } : undefined,
         }}
         agent={agent}
-        // The agent is deliberately off on this screen: entering credentials is
-        // work only a person may do, so a dock offering to help is noise. It comes
-        // back when there is something here it can honestly do.
+        // The agent is deliberately off on this screen, all of it: no dock, and no
+        // driving chrome either. Entering credentials is work only a person may do,
+        // so a page that dims itself and announces YOUR TURN over a secret field is
+        // pure interference. `quiet` drops the cursor, the caption and the takeover
+        // state; `manual` drops the dock.
         manual
+        quiet
         suggestions={[]}
         onPrompt={() => undefined}
         onStop={() => dispatch({ kind: 'idle' })}
