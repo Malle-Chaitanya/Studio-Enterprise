@@ -9,7 +9,7 @@ import { listLicensedPrincipals, resolveDestination } from '../services/gemini.j
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { readAgentPermissions, listBots } from '../services/dataverse.js';
-import { buildOrganizationProfile } from '../services/organizationProfile.js';
+import { buildOrganizationProfile, destinationDomainsOf } from '../services/organizationProfile.js';
 import {
   catalogPrincipalsFromPermissions,
   suggestMappings,
@@ -123,7 +123,7 @@ identityRouter.get('/map', async (req, res) => {
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const tenantId = session.tenantId ?? '';
-  const map = await getIdentityMap(appUserId, tenantId);
+  const map = await getIdentityMap(appUserId, tenantId, session.geminiProject ?? '');
   res.json({ tenantId, ...map });
 });
 
@@ -137,7 +137,7 @@ identityRouter.put('/map', async (req, res) => {
     users: (req.body?.users as Record<string, string>) ?? {},
     groups: (req.body?.groups as Record<string, string>) ?? {},
   };
-  const saved = await putIdentityMap(appUserId, tenantId, overrides);
+  const saved = await putIdentityMap(appUserId, tenantId, session.geminiProject ?? '', overrides);
   res.json({ tenantId, ...saved });
 });
 
@@ -153,9 +153,15 @@ identityRouter.post('/suggest', async (req, res) => {
   const tenantId = session.tenantId ?? '';
 
   const profile = await buildOrganizationProfile(session, new Date().toISOString());
-  const existing = await getIdentityMap(appUserId, tenantId);
+  const existing = await getIdentityMap(appUserId, tenantId, session.geminiProject ?? '');
   const principals = (Array.isArray(req.body?.principals) ? req.body.principals : []) as PrincipalRef[];
-  const suggested = suggestMappings(principals, profile.ownedDomains, existing, profile.google.verifiedUserEmails);
+  const suggested = suggestMappings(
+    principals,
+    profile.ownedDomains,
+    existing,
+    profile.google.verifiedUserEmails,
+    destinationDomainsOf(profile),
+  );
   res.json({
     ownedDomains: profile.ownedDomains,
     suggested,
@@ -196,13 +202,27 @@ identityRouter.get('/ms-users', async (req, res) => {
 });
 
 /**
- * GET /api/identity/google-users?session=&q=&max=
+ * GET /api/identity/google-users?session=&q=&max=&project=
  * Destination directory for mapping targets only (not discovery source).
+ *
+ * `project` (comma-separated) is the actual project(s) the customer paired their
+ * environment(s) to on the "Choose project → Choose app" screen — sent by the
+ * client from its saved pairing. Falls back to session.geminiProject (the
+ * project auto-discovered when Google connected) only when nothing has been
+ * paired yet. This distinction matters: a customer can pair different
+ * environments to different Gemini projects, each with its OWN separate
+ * license pool (confirmed live 2026-08-24 — three genuinely different
+ * projects, three disjoint license lists, for one tenant). Filtering against
+ * only the auto-discovered project silently hid every licensed user who
+ * wasn't on that one project, no matter what the customer actually chose.
  */
 identityRouter.get('/google-users', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   if (!session.gEmail) return void res.status(400).json({ error: 'google_not_connected' });
+
+  const projectsParam = (req.query.project as string) || session.geminiProject || '';
+  const projects = [...new Set(projectsParam.split(',').map((p) => p.trim()).filter(Boolean))];
 
   try {
     const max = Number(req.query.max) || 200;
@@ -221,22 +241,35 @@ identityRouter.get('/google-users', async (req, res) => {
     let licenceCheck: 'applied' | 'unavailable' = 'unavailable';
     let out = users;
     const wantLicence = !showAll && config.DIRECTORY_LICENSED_ONLY;
-    if (wantLicence && session.geminiProject) {
+    if (wantLicence && projects.length) {
       try {
-        // Direct IAM first, DWD second — the same order verifySaReachable uses
-        // (routes/auth.ts). Reading only the direct token was wrong for any customer
-        // whose org sets constraints/iam.allowedPolicyMemberDomains: an outside service
-        // account cannot be granted a role there AT ALL, so direct IAM is not a slow
-        // path to fall back from, it is permanently unavailable. Observed live on
-        // 2026-08-23 against project 505103737920 — the bare SA resolved zero engines,
-        // listLicensedPrincipals 403'd, and licence filtering silently switched itself
-        // off for a tenant where DWD was working the whole time.
-        const licensed = await withSaTokens(session.gEmail, async (saToken) => {
-          const dest = await resolveDestination(session.geminiProject!, saToken);
-          return listLicensedPrincipals(dest, saToken);
-        });
-        if (licensed) {
+        // One licence read per paired project, unioned — an environment paired to
+        // project A and another paired to project B means either project's seats
+        // are valid mapping targets. Direct IAM first, DWD second per project —
+        // the same order verifySaReachable uses (routes/auth.ts). Reading only the
+        // direct token was wrong for any customer whose org sets
+        // constraints/iam.allowedPolicyMemberDomains: an outside service account
+        // cannot be granted a role there AT ALL, so direct IAM is not a slow path
+        // to fall back from, it is permanently unavailable. Observed live on
+        // 2026-08-23 against project 505103737920 — the bare SA resolved zero
+        // engines, listLicensedPrincipals 403'd, and licence filtering silently
+        // switched itself off for a tenant where DWD was working the whole time.
+        const perProject = await Promise.all(
+          projects.map((project) =>
+            withSaTokens(session.gEmail, async (saToken) => {
+              const dest = await resolveDestination(project, saToken);
+              return listLicensedPrincipals(dest, saToken);
+            }).catch((e) => {
+              logger.warn(`google-users: licence read failed for project ${project} — ${(e as Error).message}`);
+              return null;
+            }),
+          ),
+        );
+        const readable = perProject.filter((s): s is Set<string> => s !== null);
+        if (readable.length) {
           licenceCheck = 'applied';
+          const licensed = new Set<string>();
+          for (const set of readable) for (const email of set) licensed.add(email);
           const kept = out.filter((u) => licensed.has(u.email));
           excludedUnlicensed = out.length - kept.length;
           out = kept;

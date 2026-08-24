@@ -232,7 +232,7 @@ export interface IdentityMapOverrides {
 export interface ResolvedPrincipal {
   source: PrincipalRef;
   google?: { type: 'user' | 'group'; email: string };
-  via: 'override' | 'email-match' | 'email-match-unverified' | 'group-match' | 'unmatched';
+  via: 'override' | 'email-match' | 'email-match-unverified' | 'username-match' | 'group-match' | 'unmatched';
   reason?: string;
 }
 

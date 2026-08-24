@@ -669,6 +669,12 @@ def main():
     # stores use _make_search_tool (module-level, see its comment above for
     # the full reasoning) instead of combining VertexAiSearchTool instances.
     tools = []
+    # Set when the single-store branch below appends its VertexAiSearchTool, so
+    # built_tool_names (near the end of this function) can report its TRUE
+    # query-time name instead of whatever this raw, pre-wrap object's own
+    # name/__name__ happens to be. See that branch's comment for why the two
+    # are guaranteed to differ.
+    single_grounding_tool = None
     # Reported back to the server so a dropped capability becomes a fidelity note
     # instead of vanishing — a silent drop is the failure mode this project keeps hitting.
     dropped_google_search = False
@@ -689,10 +695,11 @@ def main():
             # collision only happens with 2+ of them, which is why the multi-store
             # branch below hand-rolls distinct tools instead. Live-verified in this
             # combination (indexed grounding + confluence_live_search) 2026-08-06.
-            tools.append(VertexAiSearchTool(
+            single_grounding_tool = VertexAiSearchTool(
                 data_store_id=grounding_data_stores[0]["resourcePath"],
                 bypass_multi_tools_limit=bool(live_connectors),
-            ))
+            )
+            tools.append(single_grounding_tool)
         elif len(grounding_data_stores) > 1:
             seen_names = set()
             for i, entry in enumerate(grounding_data_stores):
@@ -972,8 +979,25 @@ def main():
         # then left the list EMPTY, which skipped the tool check altogether - a vacuous pass,
         # which is worse than a wrong failure. Only this process knows what was really wired,
         # so it is the only honest source for the comparison.
+        #
+        # single_grounding_tool is special-cased to the literal name "discovery_engine_search"
+        # instead of introspecting it like every other tool. Root cause (confirmed live
+        # 2026-08-24 — WorkMate and Migrate Advisor, both single-knowledge-source agents,
+        # both flagged "wrong_agent_tools" while actually working correctly): a lone
+        # VertexAiSearchTool is a raw, un-wrapped object at THIS point in the process, so its
+        # own __name__/name attribute is whatever ADK's class default is — but Gemini's
+        # backend auto-wraps it into a DiscoveryEngineSearchTool at QUERY time, which
+        # hardcodes its function name to "discovery_engine_search" (see the module comment
+        # above _sanitize_tool_name for the upstream source of that hardcoding). Reporting
+        # the pre-wrap name here hands verification a ground truth that the model can never
+        # actually match, so every single-store agent failed verification by definition, not
+        # by chance — this was never a rare race, it fired on every single-knowledge-source
+        # deploy.
         built_tool_names = []
         for _t in tools:
+            if _t is single_grounding_tool:
+                built_tool_names.append("discovery_engine_search")
+                continue
             _n = getattr(_t, "__name__", None) or getattr(_t, "name", None)
             if _n:
                 built_tool_names.append(str(_n))

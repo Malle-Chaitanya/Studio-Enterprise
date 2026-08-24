@@ -335,10 +335,8 @@ let lastRun: ReportRow[] = [];
 
 const connect: ConnectSource = {
   read: async () => wait({
-    source: { platform: 'microsoft' as const, connected: true, account: 'hari.r@contoso.com',
-      detail: 'Tenant contoso.onmicrosoft.com — app-only access to Dataverse' },
-    destination: { platform: 'google' as const, connected: true, account: 'hari.r@contoso-gws.com',
-      detail: 'Service account has Discovery Engine access to contoso-gemini' },
+    source: { platform: 'microsoft' as const, connected: true, account: 'hari.r@contoso.com' },
+    destination: { platform: 'google' as const, connected: true, account: 'hari.r@contoso-gws.com' },
     found: { environments: 4, agents: 9, topics: 164 },
   }),
   disconnect: async (_session, platform) => { await wait(null); return { sessionEnded: platform === 'microsoft' }; },

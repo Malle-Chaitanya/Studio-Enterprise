@@ -5,7 +5,20 @@ import type { IdentityMapOverrides } from '../../types.js';
 
 /**
  * Durable per-customer identity override map (collection: identityMappings).
- * Keyed by appUserId + tenantId — reused across runs; session TTL is wrong here.
+ * Keyed by appUserId + tenantId + geminiProject — reused across runs; session
+ * TTL is wrong here.
+ *
+ * geminiProject is part of the key because the SAME source tenant can be
+ * migrated to more than one destination over time (a pilot into one Workspace,
+ * then a real cutover into another; or two genuinely separate customers who
+ * happen to share a migration operator). A mapping like erik@filefuze.co ->
+ * admin@migrationn.com is only true FOR that destination — reusing it for a
+ * later migration of the same tenant into a different Google org would hand
+ * one person's access to whichever account happened to be typed in last time,
+ * silently. Scoped the same way services/gemini.ts already scopes the
+ * adjacent resolvedPrincipalCache (by dest.engine) — this just uses the
+ * project number, which is already on Session and needs no extra network
+ * call to read.
  */
 
 const COLL = 'identityMappings';
@@ -13,6 +26,8 @@ const COLL = 'identityMappings';
 export interface IdentityMapDoc {
   appUserId: string;
   tenantId: string;
+  /** Destination GCP project — '' when no Google destination is connected yet. */
+  geminiProject: string;
   users: Record<string, string>;
   groups: Record<string, string>;
   updatedAt: Date;
@@ -22,12 +37,13 @@ export interface IdentityMapDoc {
 export async function getIdentityMap(
   appUserId: string,
   tenantId: string,
+  geminiProject: string,
 ): Promise<IdentityMapOverrides> {
   if (!isDbConnected()) return { users: {}, groups: {} };
   try {
     const doc = await getDb(config.CSGE_DB)
       .collection<IdentityMapDoc>(COLL)
-      .findOne({ appUserId, tenantId });
+      .findOne({ appUserId, tenantId, geminiProject });
     return {
       users: doc?.users ?? {},
       groups: doc?.groups ?? {},
@@ -38,10 +54,11 @@ export async function getIdentityMap(
   }
 }
 
-/** Upsert the full override maps for this tenant (replaces users/groups wholesale). */
+/** Upsert the full override maps for this tenant+destination (replaces users/groups wholesale). */
 export async function putIdentityMap(
   appUserId: string,
   tenantId: string,
+  geminiProject: string,
   overrides: IdentityMapOverrides,
 ): Promise<IdentityMapOverrides> {
   const users: Record<string, string> = {};
@@ -62,10 +79,10 @@ export async function putIdentityMap(
     await getDb(config.CSGE_DB)
       .collection<IdentityMapDoc>(COLL)
       .updateOne(
-        { appUserId, tenantId },
+        { appUserId, tenantId, geminiProject },
         {
           $set: { users, groups, updatedAt: now },
-          $setOnInsert: { appUserId, tenantId, createdAt: now },
+          $setOnInsert: { appUserId, tenantId, geminiProject, createdAt: now },
         },
         { upsert: true },
       );

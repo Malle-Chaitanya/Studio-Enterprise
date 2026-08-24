@@ -119,20 +119,6 @@ export function PhaseRail({ current, status }: {
         );
       })}
 
-      <div className="v2-rail-f">
-        <div className="lg">
-          <span className="mk done" aria-hidden="true">✓</span>
-          <span>done — we read something that proves it</span>
-        </div>
-        <div className="lg">
-          <span className="mk" aria-hidden="true">3</span>
-          <span>just the step number — not done yet</span>
-        </div>
-        <div className="lg">
-          <span className="swatch amber" aria-hidden="true" />
-          <span>amber — only you can finish it</span>
-        </div>
-      </div>
     </nav>
   );
 }

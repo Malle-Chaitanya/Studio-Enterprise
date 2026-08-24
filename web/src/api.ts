@@ -195,17 +195,18 @@ export async function fetchProjects(
   return (await res.json()) as { projects: DestProject[]; manualEntry: boolean; defaultProject?: string };
 }
 
-/** List the Gemini Enterprise engines (apps) in a chosen project. */
+/** List the Gemini Enterprise engines (apps) in a chosen project, plus that
+ *  project's licence count (undefined when unreadable, never presented as 0). */
 export async function fetchEngines(
   session: string,
   project: string,
-): Promise<{ engines: DestEngine[]; warning?: string; via?: string }> {
+): Promise<{ engines: DestEngine[]; warning?: string; via?: string; licensedUserCount?: number }> {
   const res = await fetch(`/api/destination/engines?session=${session}&project=${encodeURIComponent(project)}`);
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { detail?: string };
     throw new Error(body.detail || 'engines_failed');
   }
-  return (await res.json()) as { engines: DestEngine[]; warning?: string; via?: string };
+  return (await res.json()) as { engines: DestEngine[]; warning?: string; via?: string; licensedUserCount?: number };
 }
 
 // ── SharePoint connector setup (the customer's own Entra app credentials) ────
@@ -430,15 +431,21 @@ export interface GoogleUserBrief {
 }
 
 /** Google Workspace users. Suspended, archived and pending-deletion accounts are
- *  dropped server-side; `all` asks for the unfiltered directory instead. */
+ *  dropped server-side; `all` asks for the unfiltered directory instead.
+ *  `projects` (the Gemini project(s) actually paired to an environment) scopes
+ *  the licence filter to those specific projects instead of the one
+ *  auto-discovered at connect time — pass every distinct project the customer
+ *  has paired an environment to, since each can have its own separate licence
+ *  pool. */
 export async function fetchGoogleUsers(
   session: string,
-  opts?: { q?: string; max?: number; all?: boolean },
+  opts?: { q?: string; max?: number; all?: boolean; projects?: string[] },
 ): Promise<DirectoryPage<GoogleUserBrief>> {
   const qs = new URLSearchParams({ session });
   if (opts?.q) qs.set('q', opts.q);
   if (opts?.max) qs.set('max', String(opts.max));
   if (opts?.all) qs.set('all', '1');
+  if (opts?.projects?.length) qs.set('project', [...new Set(opts.projects)].join(','));
   const res = await fetch(`/api/identity/google-users?${qs}`);
   if (!res.ok) throw new Error('google_users_failed');
   return (await res.json()) as DirectoryPage<GoogleUserBrief>;

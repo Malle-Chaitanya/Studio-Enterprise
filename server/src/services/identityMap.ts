@@ -30,9 +30,49 @@ function normalizeEmail(email?: string): string | undefined {
   return e || undefined;
 }
 
+/**
+ * Same-username match on a DIFFERENT domain — the normal migration shape
+ * (Microsoft tenant domain almost never equals the Google Workspace domain).
+ * `erik@filefuze.co` → `erik@migrationn.com` should auto-map by default; only
+ * a customer wanting a DIFFERENT person (→ `admin@migrationn.com`) needs an
+ * explicit override.
+ *
+ * Returns a single email on an unambiguous match, the list of candidates when
+ * more than one destination domain has this username (never guess which one —
+ * a wrong guess silently hands one person's access to another), or undefined
+ * when none match. Requires a verified directory listing; there is no
+ * "unverified" cross-domain guess — same-domain guessing is already a stretch
+ * (see email-match-unverified below), and stacking an unverifiable cross-domain
+ * guess on top of that would auto-grant real product access on a coin flip.
+ */
+function matchByUsername(
+  sourceEmail: string,
+  destinationDomains: string[],
+  knownGoogleUsers: Set<string>,
+): string | string[] | undefined {
+  const local = sourceEmail.split('@')[0];
+  if (!local) return undefined;
+  const srcDomain = emailDomain(sourceEmail);
+  const candidates = [...new Set(destinationDomains.map((d) => d.toLowerCase()))]
+    .filter((d) => d !== srcDomain)
+    .map((d) => `${local}@${d}`)
+    .filter((candidate) => knownGoogleUsers.has(candidate));
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length > 1) return candidates;
+  return undefined;
+}
+
 export function resolvePrincipal(
   source: PrincipalRef,
-  ctx: { ownedDomains: string[]; overrides: IdentityMapOverrides; knownGoogleUsers?: string[] },
+  ctx: {
+    ownedDomains: string[];
+    overrides: IdentityMapOverrides;
+    knownGoogleUsers?: string[];
+    /** Google Workspace domain(s) to try a same-username match against. See
+     *  matchByUsername. Omit (or leave empty) to disable cross-domain matching
+     *  and keep the old same-domain-only behavior. */
+    destinationDomains?: string[];
+  },
 ): ResolvedPrincipal {
   const owned = new Set(ctx.ownedDomains.map((d) => d.toLowerCase()));
   // Real Workspace accounts, when we could read the directory. Owning a
@@ -75,21 +115,38 @@ export function resolvePrincipal(
       via: 'override',
     };
   }
-  if (srcEmail && owned.has(emailDomain(srcEmail) ?? '')) {
+  const srcDomain = emailDomain(srcEmail);
+  if (srcEmail && srcDomain && owned.has(srcDomain)) {
     if (known) {
       // Directory was readable — only claim a match if the account is real.
       if (known.has(srcEmail)) {
         return { source, google: { type: 'user', email: srcEmail }, via: 'email-match' };
       }
+      // The literal address isn't real, but the Microsoft tenant domain and the
+      // Google Workspace domain are normally DIFFERENT — try the same username
+      // over on the destination domain(s) before giving up.
+      const match = matchByUsername(srcEmail, ctx.destinationDomains ?? [], known);
+      if (typeof match === 'string') {
+        return { source, google: { type: 'user', email: match }, via: 'username-match' };
+      }
+      if (Array.isArray(match)) {
+        return {
+          source,
+          via: 'unmatched',
+          reason: `username "${srcEmail.split('@')[0]}" matches more than one destination account (${match.join(', ')}) — select the intended one manually`,
+        };
+      }
       return {
         source,
         via: 'unmatched',
-        reason: `domain "${emailDomain(srcEmail)}" is owned, but no Google Workspace account exists at ${srcEmail}`,
+        reason: `domain "${srcDomain}" is owned, but no Google Workspace account exists at ${srcEmail} or under the same username on a destination domain`,
       };
     }
     // Directory unreadable (missing scope/API) — can't verify, so this is
     // still a guess, not a confirmed match. Kept permissive (matches prior
-    // behavior) but labeled honestly for the fidelity report.
+    // behavior) but labeled honestly for the fidelity report. A cross-domain
+    // guess is never attempted here: stacking an unverifiable guess on top of
+    // an already-unverifiable one is how the wrong person gets access.
     return {
       source,
       google: { type: 'user', email: srcEmail },
@@ -100,18 +157,28 @@ export function resolvePrincipal(
     source,
     via: 'unmatched',
     reason: srcEmail
-      ? `user email domain not in owned domains (${emailDomain(srcEmail)}) and no override`
+      ? `user email domain not in owned domains (${srcDomain}) and no override`
       : 'user has no email and no override mapping',
   };
 }
 
 export function resolvePermissions(
   perms: AgentPermissions | undefined,
-  ctx: { ownedDomains: string[]; overrides?: IdentityMapOverrides; knownGoogleUsers?: string[] },
+  ctx: {
+    ownedDomains: string[];
+    overrides?: IdentityMapOverrides;
+    knownGoogleUsers?: string[];
+    destinationDomains?: string[];
+  },
 ): PermissionResolution {
   const overrides = ctx.overrides ?? { users: {}, groups: {} };
   const resolve = (p: PrincipalRef) =>
-    resolvePrincipal(p, { ownedDomains: ctx.ownedDomains, overrides, knownGoogleUsers: ctx.knownGoogleUsers });
+    resolvePrincipal(p, {
+      ownedDomains: ctx.ownedDomains,
+      overrides,
+      knownGoogleUsers: ctx.knownGoogleUsers,
+      destinationDomains: ctx.destinationDomains,
+    });
 
   if (!perms) {
     return { owner: undefined, coauthors: [], viewers: [], chatPrincipals: [], unmatched: [] };
@@ -154,13 +221,19 @@ export function isOrgWideChat(perms?: AgentPermissions): boolean {
 
 /**
  * Suggest override entries for unmatched principals that share an owned domain
- * (email → same email). Does not invent cross-domain mappings.
+ * (email → same email), plus same-username matches on a different destination
+ * domain (see matchByUsername) — pre-filling the Map Users screen so the
+ * customer reviews/edits a proposal instead of typing every mapping by hand,
+ * while still seeing exactly what was guessed before the migration runs.
+ * Ambiguous cross-domain matches are deliberately left OUT of the suggestion
+ * (not auto-picked) — the customer chooses in the UI, we never do.
  */
 export function suggestMappings(
   principals: PrincipalRef[],
   ownedDomains: string[],
   existing: IdentityMapOverrides,
   knownGoogleUsers?: string[],
+  destinationDomains?: string[],
 ): IdentityMapOverrides {
   const owned = new Set(ownedDomains.map((d) => d.toLowerCase()));
   // When the Workspace directory was readable, only suggest a user mapping
@@ -175,7 +248,17 @@ export function suggestMappings(
     if (!email) continue;
     const dom = emailDomain(email);
     if (!dom || !owned.has(dom)) continue;
-    if (p.type === 'user' && !users[email] && (!known || known.has(email))) users[email] = email;
+    if (p.type === 'user' && !users[email]) {
+      if (!known || known.has(email)) {
+        users[email] = email;
+      } else if (destinationDomains?.length) {
+        const match = matchByUsername(email, destinationDomains, known);
+        // A single confident match becomes the suggestion; ambiguous or no
+        // match leaves this principal out of `users` so the UI shows it as
+        // still needing the customer's own pick.
+        if (typeof match === 'string') users[email] = match;
+      }
+    }
     // No verified Workspace GROUP directory read exists yet — groups stay
     // domain-only (unchanged), same limitation as resolvePrincipal above.
     if ((p.type === 'group' || p.type === 'team') && !groups[p.id]) groups[p.id] = email;

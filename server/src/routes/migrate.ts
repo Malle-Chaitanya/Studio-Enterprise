@@ -505,7 +505,7 @@ migrateRouter.get('/drive-identities', async (req, res) => {
         const dvToken = await clientCredsToken(session.tenantId, envUrl);
         const [profile, overrides] = await Promise.all([
           buildOrganizationProfile(session, new Date().toISOString()),
-          getIdentityMap(appUserId, session.tenantId),
+          getIdentityMap(appUserId, session.tenantId, session.geminiProject ?? ''),
         ]);
         suggestion = await suggestEnvironmentDriveIdentity(envUrl, dvToken, profile.ownedDomains, overrides);
       } catch (err) {

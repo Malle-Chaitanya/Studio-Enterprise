@@ -182,11 +182,25 @@ async function ensureCollections(): Promise<void> {
   }
 
   // 14. identityMappings — durable Entra/email → Google Workspace override map
-  //     per (customer, Microsoft tenant). Used for permission handoff / owner
-  //     remap; never stores secrets.
+  //     per (customer, Microsoft tenant, Google destination). Used for
+  //     permission handoff / owner remap; never stores secrets.
+  //
+  //     geminiProject joined the key on 2026-08-24: the old {appUserId,tenantId}
+  //     index forced exactly ONE override doc per source tenant, so migrating the
+  //     same tenant to a second destination silently overwrote the first
+  //     destination's mappings (erik -> admin@migrationn.com from migration A
+  //     would still be "active" and wrong during migration B into
+  //     zara@storefuze.com). Drop the old 2-key unique index before creating the
+  //     3-key one — leaving both would keep the old one enforcing "one doc per
+  //     tenant" underneath the new one and the bug would persist unchanged.
+  //     Any pre-existing doc lacks geminiProject (indexed as null) and keeps
+  //     answering only for callers with an unknown destination; it is not
+  //     deleted or reattributed, since which destination it originally
+  //     belonged to is not something this migration can recover.
   await ensure('identityMappings');
+  try { await db.collection('identityMappings').dropIndex('appUserId_1_tenantId_1'); } catch {}
   await db.collection('identityMappings').createIndex(
-    { appUserId: 1, tenantId: 1 },
+    { appUserId: 1, tenantId: 1, geminiProject: 1 },
     { unique: true },
   );
 

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Btn, Chip, Fold, NoteRow, Panel, PanelHead, Select, SkeletonRows,
+  Chip, Fold, NoteRow, Panel, PanelHead, Select, SkeletonRows,
 } from './primitives.tsx';
-import { invalidateCache, markStale, primeResource, readAgo, useResource } from '../../v2/data/cache.ts';
+import { invalidateCache, markStale, primeResource, useResource } from '../../v2/data/cache.ts';
 import { useSource, type DestOption, type EnvPair, type EnvRow } from '../../v2/data/index.ts';
 
 /**
@@ -24,11 +24,19 @@ export function EnvPairing({ session, onChange }: {
 }) {
   const source = useSource();
 
+  // revalidateOnMount=true on both: this screen has no manual Sync button
+  // anymore, so a cached empty/wrong result (an earlier slow read that hadn't
+  // finished, a project list read before Google was even fully connected, an
+  // engine added since) would otherwise have NO way to ever correct itself —
+  // removing the escape hatch without this would make a bad cache permanent
+  // instead of just annoying. `saved` (the pairing itself) is excluded: it
+  // reads the customer's own in-progress edits from local storage, not a
+  // discovery call — there is nothing external for it to go stale against.
   const envs = useResource<EnvRow[]>(
-    `envs:${session}`, () => source.pair.environments(session), Boolean(session),
+    `envs:${session}`, () => source.pair.environments(session), Boolean(session), true,
   );
   const dests = useResource<DestOption[]>(
-    `dests:${session}`, () => source.pair.destinations(session), Boolean(session),
+    `dests:${session}`, () => source.pair.destinations(session), Boolean(session), true,
   );
   const saved = useResource<EnvPair[]>(
     `pairs:${session}`, () => source.pair.read(session), Boolean(session),
@@ -54,23 +62,38 @@ export function EnvPairing({ session, onChange }: {
 
   // Saved on every edit: this panel has no footer of its own, so a Save button
   // would be a button whose absence loses the pairing on navigation.
+  //
+  // Side effects run HERE, in the event handler, not inside the setEdits
+  // updater below. An updater is only supposed to compute the next state —
+  // React is allowed to invoke it more than once (StrictMode double-invokes
+  // every updater in development specifically to catch impure ones), and a
+  // sessionStorage write + cache invalidation living inside one is exactly
+  // the kind of side effect that rule exists to catch. Confirmed live
+  // 2026-08-24: picking a project, refreshing, and re-picking still left
+  // `csge_dest_<session>` as null — the pairing looked "paired" in the UI
+  // (derived from `pairs`, which already includes the in-flight edit) while
+  // the actual persisted write never reliably landed.
   const set = useCallback((env: string, patch: Partial<EnvPair>): void => {
-    setEdits((prev) => {
-      const base = prev[env] ?? pairs.find((p) => p.env === env) ?? { env };
-      const next = { ...base, ...patch };
-      const all = pairs.map((p) => (p.env === env ? next : p));
-      // Write through the cache, then drop what depends on it. Without this the
-      // agent list keeps answering from the pairing that existed a moment ago.
-      primeResource(`pairs:${session}`, all);
-      invalidateCache(`agents:${session}`);
-      // Stale, not gone: see saveSelection. The rail must not lose a finished
-      // phase because something upstream changed.
-      markStale(session, `conn:${session}`);
-      void source.pair.save(session, all)
-        .then(() => setSaveError(''))
-        .catch(() => setSaveError('Could not save that pairing — it is set here but not stored.'));
-      return { ...prev, [env]: next };
-    });
+    const base = pairs.find((p) => p.env === env) ?? { env };
+    const next = { ...base, ...patch };
+    const all = pairs.map((p) => (p.env === env ? next : p));
+    // Write through the cache, then drop what depends on it. Without this the
+    // agent list keeps answering from the pairing that existed a moment ago.
+    primeResource(`pairs:${session}`, all);
+    invalidateCache(`agents:${session}`);
+    // Map Users' licensed-account list is scoped to whichever project(s) are
+    // actually paired (see pairedProjects/google-users) — a pairing change
+    // changes that scope, so the candidate list must not keep answering from
+    // whatever project was paired (or auto-discovered) a moment ago.
+    invalidateCache(`cands:${session}:all`);
+    invalidateCache(`cands:${session}:filtered`);
+    // Stale, not gone: see saveSelection. The rail must not lose a finished
+    // phase because something upstream changed.
+    markStale(session, `conn:${session}`);
+    void source.pair.save(session, all)
+      .then(() => setSaveError(''))
+      .catch(() => setSaveError('Could not save that pairing — it is set here but not stored.'));
+    setEdits((prev) => ({ ...prev, [env]: next }));
   }, [pairs, session, source]);
 
   // ONLY the environment list decides whether there is a skeleton, because the
@@ -81,8 +104,11 @@ export function EnvPairing({ session, onChange }: {
   const loading = envs.loading;
   // The pickers, not the rows, are what a pending project list actually affects.
   const destsPending = dests.loading || (dests.data === undefined && !dests.error);
-  const syncing = envs.syncing || dests.syncing || saved.syncing;
-  const error = envs.error || dests.error;
+  // Named separately, not folded into one `error` string — a projects-list
+  // failure surfacing as "could not read environments" pointed anyone
+  // debugging it at the wrong half of this screen entirely.
+  const envsError = envs.error;
+  const destsError = dests.error;
 
   const row = (env: EnvRow): JSX.Element => {
     const pair = pairs.find((p) => p.env === env.url);
@@ -91,7 +117,7 @@ export function EnvPairing({ session, onChange }: {
       <div className="v2-row" key={env.url} data-agent-target={`env:${env.url}`}>
         <span className="glyph" aria-hidden="true">{env.name.slice(0, 2).toUpperCase()}</span>
         <span className="nmw">
-          <span className="nm">{env.name}</span>
+          <span className="nm" title={env.name}>{env.name}</span>
           <span className="kind">{env.agents} agents · {env.topics} topics</span>
         </span>
         <span className="why ctl">
@@ -104,12 +130,18 @@ export function EnvPairing({ session, onChange }: {
                 // reason reads as broken.
                 placeholder={destsPending ? 'Reading projects…' : 'Choose project'}
                 disabled={destsPending}
-                options={destList.map((d) => ({
+                // Only projects that actually have a Gemini app are real choices here —
+                // a project with none is not a disabled option worth scrolling past, it
+                // is not a destination at all. Filtering it out of the list (rather than
+                // greying it in) is the difference between "14 things to read before you
+                // find the 3 that matter" and "3 things to read."
+                options={destList.filter((d) => d.engines.length > 0).map((d) => ({
                   id: d.project,
-                  // A project with no Gemini app is a dead end the customer should
-                  // see before picking it, not after.
-                  label: d.engines.length ? (d.name ?? d.project) : `${d.name ?? d.project} — no Gemini app`,
-                  disabled: d.engines.length === 0,
+                  // Seat count is undefined (not 0) when it couldn't be read — that must
+                  // not be said out loud as "no seats" when it just means "couldn't verify".
+                  label: d.licenseCount === undefined
+                    ? (d.name ?? d.project)
+                    : `${d.name ?? d.project} — ${d.licenseCount} seat${d.licenseCount === 1 ? '' : 's'}`,
                 }))}
                 onChange={(id) => set(env.url, { project: id, engine: undefined })}
               />
@@ -124,7 +156,7 @@ export function EnvPairing({ session, onChange }: {
             </>
           ) : (
             <span style={{ fontSize: 12, color: 'var(--v2-ink-3)' }}>
-              No Dataverse access, so nothing can be read from it — pairing it would do nothing.
+              No Dataverse access — nothing to migrate here.
             </span>
           )}
         </span>
@@ -146,34 +178,24 @@ export function EnvPairing({ session, onChange }: {
     <Panel>
       <PanelHead
         title="Point each environment at a Gemini app"
-        sub={loading
-          ? 'Reading environments…'
-          : `Discovered from the connected project — nothing here is hardcoded · ${readAgo(envs.readAt)}`}
-        actions={
-          <>
-            {syncing && <Chip tone="run">syncing</Chip>}
-            <Btn
-              onClick={() => { envs.sync(); dests.sync(); saved.sync(); }}
-              disabled={syncing}
-            >
-              {syncing ? 'Syncing…' : 'Sync'}
-            </Btn>
-          </>
-        }
+        sub={loading ? 'Reading environments…' : undefined}
       />
 
-      {error && (
+      {envsError && (
         <NoteRow tone="bad">
-          {error === 'no_session'
+          {envsError === 'no_session'
             ? 'No connected session — connect both clouds first.'
-            : `Could not read environments: ${error}`}
+            : `Could not read environments: ${envsError}`}
         </NoteRow>
+      )}
+      {destsError && destsError !== 'no_session' && (
+        <NoteRow tone="bad">{`Could not read Google Cloud projects, so "Choose project" has nothing to list: ${destsError}`}</NoteRow>
       )}
       {saveError && <NoteRow tone="bad">{saveError}</NoteRow>}
 
       {loading && <SkeletonRows rows={3} controls />}
 
-      {!loading && !error && envList.length === 0 && (
+      {!loading && !envsError && envList.length === 0 && (
         <NoteRow>No Copilot Studio environments were visible to this admin.</NoteRow>
       )}
 

@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { getSaToken, refreshGoogleToken } from '../auth/google.js';
 import { listEnginesResult, listProjects } from '../services/destination.js';
 import { logger } from '../logger.js';
-import { engineReachable } from '../services/gemini.js';
+import { engineReachable, listLicensedPrincipals, resolveDestination } from '../services/gemini.js';
 import { setUpSharePointConnector, getConnectorOperation, getConnectorDataStores, type SharePointConnectorCreds } from '../services/geminiConnector.js';
 import { putEntraSecret, getEntraSecret } from '../services/secretManager.js';
 import { connectorCollectionId, normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
@@ -64,6 +64,16 @@ destinationRouter.get('/projects', async (req, res) => {
   if (current && !projects.some((p) => p.projectNumber === current || p.projectId === current)) {
     projects.unshift({ projectId: current, projectNumber: current, displayName: `${current} (connected)`, hasGeminiApp: true });
   }
+
+  // Licence counts are NOT read here — this endpoint must return as soon as the
+  // project list itself is known. They used to be fetched here (2026-08-24) and
+  // that made this one call block on N extra SA-impersonation round trips
+  // (confirmed live: ~3s of a ~7s total for 3 Gemini-enabled projects), so the
+  // whole picker sat looking empty/stuck for the entire response. The client
+  // already fires a separate /engines call per project right after this one
+  // resolves — the count is attached there instead (see /engines below), where
+  // it runs ALONGSIDE work that was already happening rather than in front of it.
+  //
   // defaultProject lets the UI pre-select the discovered destination (the common
   // case is "confirm", not "hunt through the list").
   res.json({ projects, manualEntry: projects.length === 0, defaultProject: current ?? '' });
@@ -111,10 +121,29 @@ destinationRouter.get('/engines', async (req, res) => {
       }
     }
 
+    // Licence count for this ONE project, only when it actually has an engine —
+    // moved here from /projects (see that route's comment) so it runs alongside
+    // the per-project calls the client already makes in parallel, instead of
+    // blocking the whole project list on every project's licence read up front.
+    // Best-effort: undefined (not 0) when unreadable — never claims verified
+    // zero seats when the read simply failed.
+    let licensedUserCount: number | undefined;
+    if (engines.length) {
+      try {
+        const saToken = await getSaToken(session.gEmail);
+        const dest = await resolveDestination(project, saToken);
+        const licensed = await listLicensedPrincipals(dest, saToken);
+        if (licensed) licensedUserCount = licensed.size;
+      } catch (err) {
+        logger.debug({ err, project }, 'destination/engines: license count probe failed');
+      }
+    }
+
     res.json({
       project,
       engines,
       via,
+      licensedUserCount,
       ...(engines.length === 0 && lastError ? { warning: lastError } : {}),
     });
   } catch (err) {

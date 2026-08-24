@@ -2,7 +2,7 @@ import { clientCredsToken, discoverEnvironments, graphTokenFromRefresh } from '.
 import { getIdentityMap, putIdentityMap } from '../db/repos/identityMap.js';
 import { logger } from '../logger.js';
 import { listBots } from '../services/dataverse.js';
-import { buildOrganizationProfile } from '../services/organizationProfile.js';
+import { buildOrganizationProfile, destinationDomainsOf } from '../services/organizationProfile.js';
 import { suggestMappings } from '../services/identityMap.js';
 import { DEFAULT_APP_USER_ID, type Session } from '../sessionStore.js';
 import type { PrincipalRef } from '../types.js';
@@ -68,16 +68,18 @@ export async function executeTool(
         }
         const appUserId = ctx.session.appUserId ?? DEFAULT_APP_USER_ID;
         const tenantId = ctx.session.tenantId ?? '';
-        const existing = await getIdentityMap(appUserId, tenantId);
+        const geminiProject = ctx.session.geminiProject ?? '';
+        const existing = await getIdentityMap(appUserId, tenantId, geminiProject);
         const users = { ...(existing.users ?? {}), [sourceEmail]: destEmail };
-        await putIdentityMap(appUserId, tenantId, { users, groups: existing.groups ?? {} });
+        await putIdentityMap(appUserId, tenantId, geminiProject, { users, groups: existing.groups ?? {} });
         ctx.emit({ type: 'set_user_mapping', sourceEmail, destEmail, users, merge: true });
         return { ok: true, message: `Mapped ${sourceEmail} → ${destEmail}.` };
       }
       case 'auto_map_users': {
         const appUserId = ctx.session.appUserId ?? DEFAULT_APP_USER_ID;
         const tenantId = ctx.session.tenantId ?? '';
-        const existing = await getIdentityMap(appUserId, tenantId);
+        const geminiProject = ctx.session.geminiProject ?? '';
+        const existing = await getIdentityMap(appUserId, tenantId, geminiProject);
         const profile = await buildOrganizationProfile(ctx.session, new Date().toISOString());
         const clientMap = (ctx.clientState?.userMap as Record<string, string>) || {};
         const sourceEmails = new Set([
@@ -100,13 +102,19 @@ export async function executeTool(
           id: email,
           email,
         }));
-        const suggested = suggestMappings(principals, profile.ownedDomains, existing, profile.google.verifiedUserEmails);
+        const suggested = suggestMappings(
+          principals,
+          profile.ownedDomains,
+          existing,
+          profile.google.verifiedUserEmails,
+          destinationDomainsOf(profile),
+        );
         const users = { ...(existing.users ?? {}), ...suggested.users };
         for (const [src, dest] of Object.entries(clientMap)) {
           if (dest) users[src.toLowerCase()] = dest.toLowerCase();
         }
         const newly = Object.keys(suggested.users).filter((k) => !existing.users?.[k]).length;
-        await putIdentityMap(appUserId, tenantId, {
+        await putIdentityMap(appUserId, tenantId, geminiProject, {
           users,
           groups: { ...(existing.groups ?? {}), ...suggested.groups },
         });
@@ -120,7 +128,7 @@ export async function executeTool(
       case 'clear_mappings': {
         const appUserId = ctx.session.appUserId ?? DEFAULT_APP_USER_ID;
         const tenantId = ctx.session.tenantId ?? '';
-        await putIdentityMap(appUserId, tenantId, { users: {}, groups: {} });
+        await putIdentityMap(appUserId, tenantId, ctx.session.geminiProject ?? '', { users: {}, groups: {} });
         ctx.emit({ type: 'clear_mappings' });
         return { ok: true, message: 'Cleared all identity mappings.' };
       }

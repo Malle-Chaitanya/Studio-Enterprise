@@ -35,7 +35,6 @@ function CloudCard({ role, title, link, busy, onConnect, onDisconnect }: {
       {link.connected ? (
         <>
           <div className="acct">{link.account ?? 'connected'}</div>
-          {link.detail && <div className="det">{link.detail}</div>}
           {/* A destination we cannot actually write to is worth knowing NOW, not at
               insert time when half the agents are already staged. */}
           {link.problem && <div className="det" style={{ color: 'var(--v2-fail)' }}>{link.problem}</div>}
@@ -171,7 +170,6 @@ export default function ConnectV2() {
       <Panel>
         <PanelHead
           title="Connect both clouds"
-          sub="One admin sign-in per side. Nothing is read until both are connected."
           actions={<Btn onClick={() => void load()} disabled={loading}>{loading ? 'Checking…' : 'Re-check'}</Btn>}
         />
         <div style={{ padding: 16 }}>
@@ -200,14 +198,18 @@ export default function ConnectV2() {
             <div className="v2-dir" data-agent-target="direction">
               <span className="side">
                 <CloudMark platform="microsoft" />
-                Copilot Studio
-                <span className="sub">{state.source.account ?? '—'}</span>
+                <span className="txt">
+                  Copilot Studio
+                  <span className="sub">{state.source.account ?? '—'}</span>
+                </span>
               </span>
               <span className="to" aria-hidden="true">→</span>
               <span className="side">
                 <CloudMark platform="google" />
-                Gemini Enterprise
-                <span className="sub">{state.destination.account ?? '—'}</span>
+                <span className="txt">
+                  Gemini Enterprise
+                  <span className="sub">{state.destination.account ?? '—'}</span>
+                </span>
               </span>
               {state.found && (
                 <span className="found">

@@ -140,17 +140,6 @@
 .v2-phase.not-built { color: var(--v2-ink-4); }
 .v2-phase.not-built .bd { color: var(--v2-ink-4); }
 
-.v2-rail-f {
-  margin-top: 14px; padding: 12px 16px 0; border-top: 1px solid var(--v2-edge);
-  font-size: 11px; color: var(--v2-ink-4);
-  /* Column, not row: as a flex ROW the three legend lines became three squashed
-     vertical columns of one word each, which is unreadable. */
-  display: flex; flex-direction: column; gap: 6px;
-}
-.v2-rail-f .lg { display: flex; align-items: center; gap: 7px; line-height: 1.35; }
-.v2-rail-f .swatch { width: 14px; height: 2px; border-radius: 2px; flex: 0 0 auto; }
-.v2-rail-f .swatch.amber { background: var(--v2-amber); }
-
 /* Dev-only marker for canned data. Bottom-left so it never covers the band. */
 .v2-fixture {
   position: fixed; bottom: 10px; left: 12px; z-index: 99;
@@ -289,8 +278,11 @@
   border: 1px solid var(--v2-edge); display: grid; place-items: center;
   font-size: 11px; font-weight: 600; color: var(--v2-ink-3); flex: 0 0 auto;
 }
-.v2-row .nmw { flex: 0 0 200px; min-width: 0; }
-.v2-row .nm { display: block; font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
+.v2-row .nmw { flex: 0 0 250px; min-width: 0; }
+.v2-row .nm {
+  display: block; font-size: 13px; font-weight: 500; letter-spacing: -.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .v2-row .kind {
   display: block; font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-4);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -617,7 +609,6 @@
 .v2-card h3 { font-size: 17px; font-weight: 600; letter-spacing: -.02em; margin: 0; }
 /* Drawn, not fetched: a broken remote logo makes a working product look dead. */
 .v2-mark { width: 22px; height: 22px; flex: 0 0 auto; display: block; }
-.v2-dir .side .v2-mark { display: inline-block; vertical-align: -4px; margin-right: 7px; }
 .v2-card .acct { font-family: var(--v2-mono); font-size: 12px; color: var(--v2-ink-2); }
 .v2-card .det { font-size: 12px; color: var(--v2-ink-3); margin-top: 6px; line-height: 1.45; }
 .v2-card .foot { margin-top: 14px; display: flex; align-items: center; gap: 8px; }
@@ -629,8 +620,14 @@
   border: 1px solid var(--v2-edge); border-radius: var(--v2-r-l);
   box-shadow: var(--v2-sh-s); flex-wrap: wrap;
 }
-.v2-dir .side { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
-.v2-dir .side .sub { display: block; font-family: var(--v2-mono); font-size: 11px; font-weight: 400; color: var(--v2-ink-4); }
+.v2-dir .side {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 600; letter-spacing: -.01em;
+}
+/* The account email stacks under the title, not under the icon — a separate
+   column from the icon so the two lines share the same left edge. */
+.v2-dir .side .txt { display: flex; flex-direction: column; gap: 1px; }
+.v2-dir .side .sub { font-family: var(--v2-mono); font-size: 11px; font-weight: 400; color: var(--v2-ink-4); }
 .v2-dir .to {
   color: var(--v2-brand); font-size: 18px; padding: 0 4px;
 }
@@ -733,15 +730,6 @@
 }
 .v2-fld-f .sp { margin-left: auto; display: flex; gap: 8px; }
 
-
-/* The rail legend explains its own markers, so a step number is not mistaken for
-   a count and an unticked phase is not mistaken for a broken one. */
-.v2-rail-f .mk {
-  display: inline-grid; place-items: center; width: 17px; height: 17px;
-  border-radius: 999px; font-size: 9.5px; font-family: var(--v2-mono);
-  background: var(--v2-sand); color: var(--v2-ink-3); flex: 0 0 auto;
-}
-.v2-rail-f .mk.done { background: rgba(22,140,90,.12); color: var(--v2-ok); }
 
 /* ── per-agent decisions ─────────────────────────────────────────────────
    Its own row, not `.v2-row`: that row is a single nowrap flex line, so the

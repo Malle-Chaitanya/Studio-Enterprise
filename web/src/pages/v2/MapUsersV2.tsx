@@ -35,30 +35,37 @@ export default function MapUsersV2() {
 
   // Cache-first: walking back here must not re-read the tenant, and must not
   // blank a mapping you were part-way through making.
-  // Two depths, one screen. The directory is one call and lands in about a second;
-  // the full read also discovers which people each agent references, which is one
-  // ACL read per agent and is why this screen used to sit empty for tens of
-  // seconds. Show the fast one, replace it with the full one when it arrives.
-  const fast = useResource<UserRow[]>(
-    `users-dir:${session}`, () => source.users.directory(session), Boolean(session),
+  //
+  // Directory only — no "referenced by your agents" flag. This screen sits
+  // BEFORE Select Agents in the flow, so there is never a real selection to
+  // reference yet; the "referenced" split used to show a "None of your
+  // selected agents name a person" message even when no agents had been
+  // selected at all, which read as broken rather than as a stage of the
+  // wizard. Dropping it also drops the cost that came with it — computing
+  // "referenced" required one ACL read per agent (via source.users.list),
+  // which is why this screen used to sit empty for tens of seconds. Who
+  // actually gets migrated, and who owns what, is decided on Select Agents;
+  // this screen's job is just "map the directory," full stop.
+  //
+  // revalidateOnMount=true: who's licensed and who's mapped can each change
+  // from OUTSIDE this screen (a licence assigned in Google Admin, a pairing
+  // changed on the previous screen, an override saved elsewhere) — a cached
+  // answer here can be silently wrong, not just old. Cached data still
+  // paints instantly; this only adds a quiet background refresh behind it.
+  const dirRes = useResource<UserRow[]>(
+    `users-dir:${session}`, () => source.users.directory(session), Boolean(session), true,
   );
-  const list = useResource<UserRow[]>(`users:${session}`, () => source.users.list(session), Boolean(session));
   const cands = useResource<CandidatePage>(
     `cands:${session}:${showAll ? 'all' : 'filtered'}`,
     () => source.users.candidates(session, '', showAll),
     Boolean(session),
+    true,
   );
-  const rows = list.data ?? fast.data ?? [];
-  /** The slow half is still running, so "referenced by your agents" is not known
-   *  yet. Said out loud, because an empty Referenced count that is merely unread
-   *  looks like an answer. */
-  const readingRefs = list.data === undefined && !list.error;
+  const rows = dirRes.data ?? [];
   const dir: CandidatePage = cands.data ?? { users: [] };
   // A skeleton only while there is genuinely nothing to show.
-  const loading = rows.length === 0 && (fast.loading || list.loading);
-  const syncing = list.syncing || cands.syncing;
-  const error = session ? list.error : 'no_session';
-  const sync = (): void => { list.sync(); cands.sync(); };
+  const loading = rows.length === 0 && dirRes.loading;
+  const error = session ? dirRes.error : 'no_session';
 
 
   /** The row as it stands now: saved value, or the unsaved edit on top of it. */
@@ -69,18 +76,6 @@ export default function MapUsersV2() {
     return { target: undefined, state: r.suggested ? 'suggested' : 'unmapped' };
   };
 
-  // Referenced people are the ones whose mapping changes what the migration
-  // does. The rest of the directory is real and mappable, but listing 300 people
-  // above the four that matter buries them.
-  const hasSelection = ((): boolean => {
-    try {
-      const sel: Array<{ botIds: string[] }> =
-        JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
-      return sel.some((x) => x.botIds.length > 0);
-    } catch {
-      return false;
-    }
-  })();
   /**
    * SYSTEM, application users and deleted accounts.
    *
@@ -93,9 +88,8 @@ export default function MapUsersV2() {
    */
   const isPerson = (r: UserRow): boolean =>
     r.sourceEmail.includes('@') && !/^user:/i.test(r.sourceEmail) && r.sourceName !== 'SYSTEM';
-  const referenced = rows.filter((r) => r.referenced && isPerson(r));
-  const nonHuman = rows.filter((r) => r.referenced && !isPerson(r));
-  const other = rows.filter((r) => !r.referenced && isPerson(r));
+  const people = rows.filter(isPerson);
+  const nonHuman = rows.filter((r) => !isPerson(r));
   const mapped = rows.filter((r) => effective(r).state === 'mapped');
   const suggested = rows.filter((r) => effective(r).state === 'suggested');
   const unmapped = rows.filter((r) => effective(r).state === 'unmapped');
@@ -154,7 +148,7 @@ export default function MapUsersV2() {
     // Re-read so the saved values become the baseline and `draft` can be cleared
     // without the rows appearing to lose their mapping.
     setDraft({});
-    list.sync();
+    dirRes.sync();
   };
 
   const acceptAllSuggestions = (): void => {
@@ -228,8 +222,6 @@ export default function MapUsersV2() {
     <>
       <Panel>
         <Band>
-          <BandCell label="Referenced" value={referenced.length} note="named by your agents"
-            tone={referenced.length ? 'warn' : 'plain'} />
           <BandCell label="In directory" value={rows.length} note="mappable in total" />
           <BandCell label="Mapped" value={mapped.length} note="will carry across" tone="ok" />
           <BandCell label="Suggested" value={suggested.length} note="waiting for you"
@@ -242,13 +234,12 @@ export default function MapUsersV2() {
       <Panel>
         <PanelHead
           title="Map users"
-          sub={`Who owns each agent in Gemini. Unmapped people keep nothing · ${readAgo(list.readAt)}`}
-          actions={
-            <>
-              {syncing && <Chip tone="run">syncing</Chip>}
-              <Btn onClick={sync} disabled={syncing}>{syncing ? 'Syncing…' : 'Sync'}</Btn>
-            </>
-          }
+          // No manual Sync button: directory, mapping and licence state all
+          // refresh automatically in the background on every visit to this
+          // screen (see the revalidateOnMount resources above) — a button whose
+          // only job was "go check if this went stale" is redundant once
+          // staleness itself is handled.
+          sub={`Who owns each agent in Gemini. Unmapped people keep nothing · ${readAgo(dirRes.readAt)}`}
         />
         <SelectBar summary={`${mapped.length} of ${rows.length} mapped`}>
           <Btn onClick={acceptAllSuggestions} disabled={suggested.length === 0}>
@@ -289,39 +280,14 @@ export default function MapUsersV2() {
         )}
         {loading && <SkeletonRows rows={4} controls />}
 
-        {!loading && readingRefs && (
-          <NoteRow tone="you">
-            Everyone in the source directory is listed. Still reading which of them your agents
-            actually reference — that is one permission read per agent, so it takes a few seconds.
-            You can start mapping now; the list does not change underneath you, only the
-            &ldquo;referenced&rdquo; flags fill in.
-          </NoteRow>
-        )}
-
         {!loading && !error && rows.length === 0 && (
           <NoteRow>
             Nobody came back from the source tenant. Check directory read consent on the Microsoft
             app.
           </NoteRow>
         )}
-        {/* Say which set the "referenced" people came from. Without a selection the
-            fallback is every agent in a paired environment, which is a wider claim
-            than "your selected agents" and must not be reported as the same thing. */}
-        {!loading && referenced.length > 0 && !hasSelection && (
-          <NoteRow>
-            No agents selected yet — {rows.some((r) => r.sampled)
-              ? 'showing people referenced by a sample of your agents, because reading every agent’s permissions takes minutes. Select agents for the exact set.'
-              : 'showing everyone referenced across your paired environments.'}
-          </NoteRow>
-        )}
 
-        {!loading && !error && rows.length > 0 && referenced.length === 0 && (
-          <NoteRow>
-            None of your selected agents name a person. The source directory is below.
-          </NoteRow>
-        )}
-
-        {referenced.map(userRow)}
+        {people.map(userRow)}
 
         {nonHuman.length > 0 && (
           <Fold
@@ -329,15 +295,6 @@ export default function MapUsersV2() {
             note="SYSTEM, app users and deleted accounts — nothing to map them to"
           >
             {nonHuman.map(userRow)}
-          </Fold>
-        )}
-
-        {other.length > 0 && (
-          <Fold
-            title={`${other.length} more from the source directory`}
-            note="not referenced by the agents you selected"
-          >
-            {other.map(userRow)}
           </Fold>
         )}
       </Panel>

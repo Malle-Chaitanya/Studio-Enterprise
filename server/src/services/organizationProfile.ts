@@ -92,3 +92,19 @@ export async function buildOrganizationProfile(session: Session, nowIso: string)
     domainSources: sources,
   };
 }
+
+/**
+ * Domains a cross-domain identity match (services/identityMap.ts:
+ * matchByUsername) should try — the customer's actual Google Workspace
+ * domain(s), never a Microsoft tenant domain. Falls back to the connected
+ * admin's own domain when the full Workspace domain listing wasn't readable
+ * (missing admin.directory.domain.readonly), so that narrower scope gap
+ * doesn't also disable matching against the one domain we already know for
+ * certain is real: the admin's own.
+ */
+export function destinationDomainsOf(profile: OrganizationProfile): string[] {
+  const domains = new Set(profile.google.workspaceDomains.map((d) => d.toLowerCase()));
+  const adminDomain = profile.google.adminEmail?.split('@')[1]?.toLowerCase().trim();
+  if (adminDomain) domains.add(adminDomain);
+  return [...domains];
+}

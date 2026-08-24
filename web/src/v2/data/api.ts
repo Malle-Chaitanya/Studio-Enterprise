@@ -180,13 +180,11 @@ const connect: ConnectSource = {
         platform: 'microsoft',
         connected: s.connected.microsoft,
         account: s.msEmail,
-        detail: s.orgName ? `${s.orgName} — app-only access to Dataverse` : undefined,
       },
       destination: {
         platform: 'google',
         connected: s.connected.google,
         account: s.gEmail,
-        detail: s.geminiProject ? `Destination project ${s.geminiProject}` : undefined,
         // The service account failing is the single most common reason a run dies
         // half way, so it is surfaced on the very first screen instead of at insert.
         problem: s.saOk ? undefined : s.saReason ?? 'The service account cannot reach the destination project.',
@@ -203,6 +201,21 @@ const connect: ConnectSource = {
   },
 };
 
+/** Distinct Gemini projects the customer has actually paired an environment to —
+ *  read from the same sessionStorage key EnvPairing writes. Used to scope the
+ *  Map Users licence check to what was really chosen, not the project
+ *  auto-discovered at connect time. Exported so usersCandidates can reuse it. */
+export function pairedProjects(session: string): string[] {
+  const raw = sessionStorage.getItem(`csge_dest_${session}`);
+  if (!raw) return [];
+  try {
+    const map = JSON.parse(raw) as Record<string, { project: string; engine: string }>;
+    return [...new Set(Object.values(map).map((d) => d.project).filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
 const pair: PairSource = {
   environments: async (session) => {
     const envs = await fetchEnvironments(session);
@@ -212,16 +225,21 @@ const pair: PairSource = {
   },
   destinations: async (session) => {
     const { projects } = await fetchProjects(session);
-    // Engines are fetched per project by the caller in the old UI; do the same
-    // here, but tolerate a project we cannot list (permissions) rather than
-    // failing the whole screen.
-    const withEngines = await Promise.all(projects.map(async (p) => ({
-      project: p.projectId,
-      name: p.displayName ?? p.projectId,
-      engines: await fetchEngines(session, p.projectId)
-        .then((r) => r.engines.map((e) => ({ id: e.id, displayName: e.displayName })))
-        .catch(() => []),
-    })));
+    // Engines (and each project's licence count, see fetchEngines) are fetched
+    // per project, in parallel, right after the project list itself resolves —
+    // deliberately NOT blocked on inside /projects (that made the whole list
+    // wait on every project's licence read; see routes/destination.ts's
+    // comment on 2026-08-24's regression). Tolerate a project we cannot list
+    // (permissions) rather than failing the whole screen.
+    const withEngines = await Promise.all(projects.map(async (p) => {
+      const r = await fetchEngines(session, p.projectId).catch(() => null);
+      return {
+        project: p.projectId,
+        name: p.displayName ?? p.projectId,
+        engines: r?.engines.map((e) => ({ id: e.id, displayName: e.displayName })) ?? [],
+        licenseCount: r?.licensedUserCount,
+      };
+    }));
     return withEngines;
   },
   read: async (session) => {
@@ -360,7 +378,11 @@ async function listUsers(
 
 const usersCandidates = {
   candidates: async (session: string, query: string, all?: boolean) => {
-    const res = await fetchGoogleUsers(session, { q: query, max: 200, all })
+    // Scope to whatever project(s) the customer actually paired an environment
+    // to — falls back to the connect-time discovered project (fetchGoogleUsers's
+    // own default) when nothing's been paired yet.
+    const projects = pairedProjects(session);
+    const res = await fetchGoogleUsers(session, { q: query, max: 200, all, projects })
       .catch(() => ({ users: [] } as Awaited<ReturnType<typeof fetchGoogleUsers>>));
     return {
       users: res.users.map((u) => ({ email: u.email, name: u.displayName })),

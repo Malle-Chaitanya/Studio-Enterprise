@@ -117,11 +117,23 @@ interface Entry<T> { value: T; at: number }
  * `key` must include the session id — two tenants must never share an entry.
  * `enabled` is for the screens that cannot read anything until something else
  * exists (no session, no selection).
+ *
+ * `revalidateOnMount` covers the resources whose correctness depends on
+ * something outside this screen's control (a licence assignment made in
+ * Google Admin, a project/app pairing changed on an earlier screen) — for
+ * those, a cached value can be silently WRONG, not just old, and there is no
+ * button on this screen that would ever fix it: the default cache-first
+ * behavior means "read once, then trust it forever until someone clicks
+ * Sync" (see EnvPairing's own doc comment for why that default exists —
+ * avoiding a re-scan flicker when walking back through the wizard). Cached
+ * data still renders INSTANTLY here too — this only adds a quiet background
+ * refresh alongside it, the same as `sync()` but automatic and silent.
  */
 export function useResource<T>(
   key: string,
   loader: () => Promise<T>,
   enabled = true,
+  revalidateOnMount = false,
 ): Resource<T> {
   const cached = readCache<Entry<T>>(key);
   const [data, setData] = useState<T | undefined>(cached?.value);
@@ -156,10 +168,15 @@ export function useResource<T>(
 
   useEffect(() => {
     if (!enabled) { setLoading(false); return; }
-    // Cached data is shown as-is. Nothing is re-read until someone asks.
-    if (readCache<Entry<T>>(key) !== undefined) { setLoading(false); return; }
+    // Cached data is shown as-is immediately either way — this only decides
+    // whether a background refresh follows it.
+    if (readCache<Entry<T>>(key) !== undefined) {
+      setLoading(false);
+      if (revalidateOnMount) void read(true);
+      return;
+    }
     void read(false);
-  }, [key, enabled, read]);
+  }, [key, enabled, read, revalidateOnMount]);
 
   return { data, loading, syncing, error, readAt, sync: () => void read(true) };
 }

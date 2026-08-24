@@ -6,7 +6,7 @@ import { clearAwaitingHuman, emitToolEnd, emitToolStart } from './services/runSi
 import { extractAgent, fetchFileAttachmentBytes, resolveSystemUserEmail } from './services/dataverse.js';
 import { findCandidates } from './services/graphSearch.js';
 import { resolveShareUrlSmart, downloadDriveItemBytes } from './services/graphFiles.js';
-import { buildOrganizationProfile } from './services/organizationProfile.js';
+import { buildOrganizationProfile, destinationDomainsOf } from './services/organizationProfile.js';
 import { createAgent, defaultDestination, resolveDestination, projectReachable, publishAgent, shareAgent, ensureAgentAccess, effectiveGeminiProject, type CreateOutcome } from './services/gemini.js';
 import { preflightConnectors } from './services/connectorPreflight.js';
 import { hasDedicatedToolModule } from './connectors/toolModule.js';
@@ -68,7 +68,7 @@ import {
   permissionFidelityNotes,
   resolvePermissions,
 } from './services/identityMap.js';
-import type { AgentIR, FidelityNote, GeminiDestination, IdentityMapOverrides, KnowledgeSourceIR, MigrationResult, ProgressEvent, ResolvedPlan } from './types.js';
+import type { AgentIR, FidelityNote, GeminiDestination, IdentityMapOverrides, KnowledgeSourceIR, MigrationResult, PermissionResolution, ProgressEvent, ResolvedPlan, ResolvedPrincipal } from './types.js';
 
 /** Strip extension + OneDrive/Windows dedup suffixes (" -1)", " (1)") and lowercase, for name comparison only. */
 function normalizeForNameCompare(name: string): string {
@@ -702,6 +702,46 @@ async function execute(
   };
   const emitProg = (pct: number, msg: string): void => emit({ type: 'progress', pct, msg });
 
+  /**
+   * Per-principal resolution trace for the sharing step — one line per person,
+   * showing exactly how (or whether) they were resolved to a Google identity.
+   * The summary log ("auto-granted N principal(s)") only ever showed a count;
+   * debugging a wrong or missing grant meant reading the final JSON report.
+   * This surfaces the same detail live, in the stream, while the run is
+   * happening.
+   */
+  const logIdentityResolution = (agentName: string, resolution: PermissionResolution): void => {
+    const all: { role: string; r: ResolvedPrincipal }[] = [
+      ...(resolution.owner ? [{ role: 'owner', r: resolution.owner }] : []),
+      ...resolution.coauthors.map((r) => ({ role: 'editor', r })),
+      ...resolution.viewers.map((r) => ({ role: 'viewer', r })),
+      ...resolution.chatPrincipals.map((r) => ({ role: 'chat', r })),
+    ];
+    for (const { role, r } of all) {
+      const label = r.source.email || r.source.displayName || r.source.id;
+      if (r.google) {
+        emitLog('info', `    ${agentName}: [${role}] ${label} -> ${r.google.email} (${r.via})`);
+      } else {
+        emitLog('warn', `    ${agentName}: [${role}] ${label} UNMATCHED — ${r.reason ?? 'no reason recorded'}`);
+      }
+    }
+  };
+
+  /** Per-principal outcome of the actual Google API grant calls — separate from
+   *  resolution above: a principal can resolve to a real Google identity and
+   *  still fail here (no licence, engine role grant denied, etc). */
+  const logGrantResult = (
+    agentName: string,
+    grant: { granted: string[]; failed: { principal: string; error: string; failedAt: string }[] },
+  ): void => {
+    for (const principal of grant.granted) {
+      emitLog('ok', `    ${agentName}: granted ${principal}`);
+    }
+    for (const f of grant.failed) {
+      emitLog('fail', `    ${agentName}: FAILED to grant ${f.principal} at step "${f.failedAt}" — ${f.error}`);
+    }
+  };
+
   await startRun({
     runId,
     appUserId,
@@ -816,12 +856,14 @@ async function execute(
   // Build the organization profile once — kept for future phases (report/
   // reconnect setup) even though nothing currently reads ownedDomains here.
   const orgProfile = await buildOrganizationProfile(session, new Date().toISOString());
+  const destinationDomains = destinationDomainsOf(orgProfile);
   if (orgProfile.ownedDomains.length) {
     emitLog('info', `Org profile: owned domains [${orgProfile.ownedDomains.join(', ')}] via ${orgProfile.domainSources.join(', ') || 'none'}`);
   }
   const identityOverrides: IdentityMapOverrides = await getIdentityMap(
     appUserId,
     session.tenantId ?? '',
+    session.geminiProject ?? '',
   );
   const mappedUserCount = Object.keys(identityOverrides.users).length;
   const mappedGroupCount = Object.keys(identityOverrides.groups).length;
@@ -3175,7 +3217,9 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               ownedDomains: orgProfile.ownedDomains,
               overrides: identityOverrides,
               knownGoogleUsers: orgProfile.google.verifiedUserEmails,
+              destinationDomains,
             });
+            logIdentityResolution(row.name, resolution);
             const handoff = buildPermissionHandoff(
               row.name,
               create.agentId,
@@ -3191,6 +3235,7 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               { users: handoff.grantUsers, groups: handoff.grantGroups },
               { appUserId, tenantId: session.tenantId ?? '' },
             );
+            logGrantResult(row.name, grant);
             result.fidelity.push(...permissionFidelityNotes(perms, false, handoff));
             if (grant.granted.length) {
               result.fidelity.push({
@@ -3267,7 +3312,9 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               ownedDomains: orgProfile.ownedDomains,
               overrides: identityOverrides,
               knownGoogleUsers: orgProfile.google.verifiedUserEmails,
+              destinationDomains,
             });
+            logIdentityResolution(row.name, resolution);
             const handoff = buildPermissionHandoff(
               row.name,
               create.agentId,
@@ -3283,6 +3330,7 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               { users: handoff.grantUsers, groups: handoff.grantGroups },
               { appUserId, tenantId: session.tenantId ?? '' },
             );
+            logGrantResult(row.name, grant);
             result.fidelity.push(...permissionFidelityNotes(perms, false, handoff));
             if (grant.granted.length) {
               result.fidelity.push({

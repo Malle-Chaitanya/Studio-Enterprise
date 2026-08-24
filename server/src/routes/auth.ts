@@ -286,19 +286,25 @@ export async function msCallback(req: Request, res: Response): Promise<void> {
       ms.discoverEnvironments(tenantId),
     ]);
 
-    // Find the first environment that actually has Copilot Studio agents.
+    // dvToken/dvOrgUrl pin to the first environment with agents, for whatever
+    // still needs a single representative org. counts, shown as the tenant-wide
+    // "found" summary on Connect, must total every environment — probing all of
+    // them here (not stopping at the first with bots > 0) is what makes that sum
+    // match what the pairing panel's per-row counts add up to.
     let dvToken = '';
     let dvOrgUrl = '';
-    let counts = { bots: 0, topics: 0, knowledgeSources: 0, flows: 0 };
+    const counts = { bots: 0, topics: 0, knowledgeSources: 0, flows: 0 };
     for (const env of environments) {
       try {
         const t = await ms.clientCredsToken(tenantId, env.url);
         const inv = await inventory(env.url, t);
-        if (inv.bots > 0) {
+        counts.bots += inv.bots;
+        counts.topics += inv.topics;
+        counts.knowledgeSources += inv.knowledgeSources;
+        counts.flows += inv.flows;
+        if (!dvToken && inv.bots > 0) {
           dvToken = t;
           dvOrgUrl = env.url;
-          counts = inv;
-          break;
         }
       } catch (err) {
         logger.debug({ err, env: env.url }, 'env probe failed');
