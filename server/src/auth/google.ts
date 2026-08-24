@@ -1,6 +1,7 @@
+import { createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JWT } from 'google-auth-library';
-import { config, GOOGLE_SCOPES, SA_DIRECTORY_SCOPES, SA_SCOPES } from '../config.js';
+import { ALL_SCOPES, config, GOOGLE_SCOPES, SA_DIRECTORY_SCOPES, SA_SCOPES } from '../config.js';
 import { logger } from '../logger.js';
 import { mapPoolCollect } from '../concurrency.js';
 
@@ -115,6 +116,144 @@ export async function getSaToken(impersonate?: string): Promise<string> {
  */
 export async function getDirectorySaToken(impersonate?: string): Promise<string> {
   return mintSaToken(SA_DIRECTORY_SCOPES, impersonate);
+}
+
+/**
+ * Mint a DWD access token by building and exchanging the JWT assertion OURSELVES,
+ * rather than letting google-auth-library do it.
+ *
+ * `getSaToken(email)` above is the normal path and should stay the normal path — it
+ * caches, refreshes, and retries. This exists for the cases where a raw token string
+ * is the deliverable and the library is in the way:
+ *
+ *   - handing a short-lived impersonated token to the Python deployer, which today
+ *     authenticates as the BARE service account. That is why customers with
+ *     `constraints/iam.allowedPolicyMemberDomains` have to weaken the constraint to
+ *     deploy at all: the SA itself needs a role binding. A DWD token carries the
+ *     admin's authority instead, so nothing has to be granted to our SA.
+ *   - reproducing a specific failure. When the library succeeds and a direct call
+ *     fails, the assertion is the only place left to look.
+ *
+ * Mirrors the JWT-bearer flow in CloudFuze's Java stack (`getGoogleAccessToken`):
+ * sign `{iss, sub, scope, aud, iat, exp}` with the SA private key, POST it as
+ * `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, read `access_token`.
+ *
+ * Two deliberate differences from the Java version:
+ *   - The impersonation allowlist is enforced BEFORE signing. The Java method will
+ *     mint for any address it is handed; ours must not (see `impersonationAllowed`) —
+ *     the SA holds domain-wide power and a raw email parameter is exactly the shape
+ *     of call that turns it on the wrong person.
+ *   - `expiresAt` is returned. The Java version returns a bare string, so callers
+ *     cannot tell a fresh token from one about to expire mid-deploy — which for a
+ *     15-minute Agent Engine build is the difference between a clean run and a
+ *     half-finished orphan.
+ *
+ * Returns null when the exchange fails (matching the Java method's swallow-and-null),
+ * and THROWS when the key or target is unusable — a misconfiguration is not a
+ * transient failure and should not read as one. Never logs the token value.
+ *
+ * @param emailId     the Workspace user to impersonate (server-derived, never client input)
+ * @param clientEmail override the SA client_email; defaults to the configured key's
+ * @param scopes      defaults to SA_SCOPES (the Gemini/migration scopes)
+ */
+export async function getGoogleAccessToken(
+  emailId: string,
+): Promise<{ accessToken: string; expiresAt: Date } | null> {
+  const TOKEN_URL = 'https://www.googleapis.com/oauth2/v4/token';
+
+  const allowlist = parseImpersonationAllowlist(config.GOOGLE_DWD_ALLOWED_IMPERSONATORS);
+  if (!impersonationAllowed(emailId, allowlist)) {
+    logger.warn(
+      { impersonate: emailId, allowlistEnforced: allowlist.length > 0 },
+      'blocked service-account impersonation (fail closed)',
+    );
+    throw new Error(`impersonation refused for target: ${emailId}`);
+  }
+
+  const key = saKey();
+  const iss = key.client_email as string;
+  const privateKey = key.private_key as string;
+  if (!iss || !privateKey) throw new Error('Service account key is missing client_email or private_key');
+
+  const assertion = createJwtAssertion({
+    iss,
+    sub: emailId,
+    scope: ALL_SCOPES.join(' '),
+    aud: TOKEN_URL,
+    privateKey,
+  });
+
+  logger.info({ impersonate: emailId }, 'service account impersonation (DWD, direct JWT assertion)');
+
+  try {
+    const res = await fetch(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion,
+      }),
+    });
+
+    const body = await res.text();
+    if (!res.ok) {
+      // Log the STATUS and Google's error body, which names the actual cause
+      // ("unauthorized_client" = DWD not authorized for these scopes in the Workspace
+      // admin console; "invalid_grant" = clock skew or a sub that does not exist).
+      // The assertion is not logged: it is a bearer credential for 60 minutes.
+      logger.warn({ impersonate: emailId, status: res.status, body }, 'JWT-bearer token exchange failed');
+      return null;
+    }
+
+    const json = JSON.parse(body) as { access_token?: string; expires_in?: number };
+    if (!json.access_token) {
+      logger.warn({ impersonate: emailId }, 'JWT-bearer token exchange returned no access_token');
+      return null;
+    }
+    return {
+      accessToken: json.access_token,
+      expiresAt: new Date(Date.now() + (json.expires_in ?? 3600) * 1000),
+    };
+  } catch (err) {
+    logger.error({ impersonate: emailId, err }, 'JWT-bearer token exchange threw');
+    return null;
+  }
+}
+
+/**
+ * Build and RS256-sign the DWD assertion. Equivalent to the Java
+ * `GsuiteJWTAssertion.createJWT(emailId, clientEmail)`.
+ *
+ * `sub` is what makes this Domain-Wide Delegation rather than a plain service-account
+ * token: it tells Google to issue the token AS that user. Drop `sub` and Google happily
+ * returns a token for the SA's own identity, which is the silent-wrong-identity bug this
+ * whole flow exists to avoid.
+ *
+ * `iat` is backdated 10s because Google rejects an assertion whose `iat` is even
+ * marginally in the future, and container clocks drift.
+ */
+function createJwtAssertion(opts: {
+  iss: string;
+  sub: string;
+  scope: string;
+  aud: string;
+  privateKey: string;
+}): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const claims = {
+    iss: opts.iss,
+    sub: opts.sub,
+    scope: opts.scope,
+    aud: opts.aud,
+    iat: now - 10,
+    // 3600 is Google's maximum for this grant; anything larger is rejected outright.
+    exp: now + 3600,
+  };
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const signingInput = `${b64(header)}.${b64(claims)}`;
+  const signature = createSign('RSA-SHA256').update(signingInput).sign(opts.privateKey, 'base64url');
+  return `${signingInput}.${signature}`;
 }
 
 /**
