@@ -153,6 +153,19 @@ export const SA_DIRECTORY_SCOPES = [
   'https://www.googleapis.com/auth/admin.directory.group.readonly',
 ];
 
+export const ALL_SCOPES = ["https://www.googleapis.com/auth/cloud-platform",
+"https://www.googleapis.com/auth/admin.directory.domain.readonly",
+"https://www.googleapis.com/auth/admin.directory.user.readonly",
+"https://www.googleapis.com/auth/admin.directory.group.readonly",
+"https://www.googleapis.com/auth/drive",
+"https://www.googleapis.com/auth/gmail.readonly",
+"https://www.googleapis.com/auth/drive.readonly",
+"https://www.googleapis.com/auth/calendar",
+"https://www.googleapis.com/auth/contacts",
+"https://www.googleapis.com/auth/chat.spaces",
+"https://www.googleapis.com/auth/chat.messages",
+"https://www.googleapis.com/auth/gmail.modify"]
+
 export const llmEnabled = Boolean(
   config.INSTRUCTION_LLM_PROVIDER && config.INSTRUCTION_LLM_API_KEY,
 );

@@ -499,7 +499,52 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
     res.redirect(web(`/?error=${encodeURIComponent((err as Error).message)}`));
   }
 }
+
+
+authRouter.post("/add/google/:emailId", async(req,res) =>{
+  const token = await google.getGoogleAccessToken(req.params.emailId);
+  const sessionId = req.body.sessionId;
+  let gToken = token?.accessToken || "";
+  let gRefreshToken = req.body.refreshToken;
+  const gEmail = await google.getUserEmail(gToken ?? "");
+  const geminiProject = await google.discoverGeminiProject(gToken);
+
+  const { saOk, saReason } = await verifySaReachable(geminiProject, gEmail);
+
+  await updateSession(sessionId, {
+    step: 'ready',
+    gEmail,
+    gToken,
+    ...(gRefreshToken ? { gRefreshToken } : {}),
+    geminiProject,
+    saOk,
+    saReason,
+  });
+  
+  const linkedSession = await getSession(sessionId);
+  const connectionOwner = req.appUser?.appUserId ?? linkedSession?.appUserId;
+  if (connectionOwner && gEmail) {
+    await upsertAuthSession({
+      appUserId: connectionOwner,
+      provider: 'google',
+      email: gEmail,
+      refreshToken: gRefreshToken,
+    });
+  }
+
+  return res.json({
+    status:"OK"
+  });
+
+})
+
+
 authRouter.get('/google/callback', googleCallback);
+
+authRouter.get("/googleToken/:emailId", async(req, res) =>{
+    const token = await google.getGoogleAccessToken(req.params.emailId);
+    return res.json(token);
+})
 
 // ── Session summary (no secrets) ──────────────────────────────────────────────
 authRouter.get('/session/:id', async (req, res) => {
