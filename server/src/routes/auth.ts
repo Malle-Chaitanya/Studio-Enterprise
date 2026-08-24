@@ -1,8 +1,10 @@
 import { createHmac } from 'node:crypto';
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { config } from '../config.js';
 import * as google from '../auth/google.js';
 import * as ms from '../auth/microsoft.js';
+import { requireAuth } from '../auth/appAuth.js';
+import { enforceSessionOwnership } from '../auth/sessionOwnership.js';
 import { engineReachable, projectReachable, resolveDestination } from '../services/gemini.js';
 import { inventory } from '../services/dataverse.js';
 import {
@@ -20,6 +22,21 @@ import { upsertAuthSession } from '../db/repos/authSessions.js';
 import { logger } from '../logger.js';
 
 export const authRouter = Router();
+
+/**
+ * Mints a real, live bearer credential for whichever Google user the caller names —
+ * DWD impersonation, no OAuth consent from that user. `requireAuth` alone is not
+ * enough (any signed-in customer could impersonate any other customer's admin);
+ * this restricts it to our own staff. Nothing in the web client calls either route
+ * below — this is an internal/ops shortcut, not a customer-facing feature.
+ */
+function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (req.appUser?.role !== 'admin') {
+    res.status(403).json({ error: 'admin_required' });
+    return;
+  }
+  next();
+}
 
 /**
  * Verify CloudFuze's service account can reach the client's Gemini engine.
@@ -501,9 +518,12 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
 }
 
 
-authRouter.post("/add/google/:emailId", async(req,res) =>{
+authRouter.post("/add/google/:emailId", requireAuth, requireAdmin, enforceSessionOwnership, async(req,res) =>{
   const token = await google.getGoogleAccessToken(req.params.emailId);
-  const sessionId = req.body.sessionId;
+  // `session`, not `sessionId` — enforceSessionOwnership (see api-conventions.md)
+  // only ever looks at req.body.session, so a different field name here would
+  // silently skip the ownership check it was just gated behind.
+  const sessionId = req.body.session;
   let gToken = token?.accessToken || "";
   let gRefreshToken = req.body.refreshToken;
   const gEmail = await google.getUserEmail(gToken ?? "");
@@ -541,7 +561,7 @@ authRouter.post("/add/google/:emailId", async(req,res) =>{
 
 authRouter.get('/google/callback', googleCallback);
 
-authRouter.get("/googleToken/:emailId", async(req, res) =>{
+authRouter.get("/googleToken/:emailId", requireAuth, requireAdmin, async(req, res) =>{
     const token = await google.getGoogleAccessToken(req.params.emailId);
     return res.json(token);
 })
