@@ -86,12 +86,33 @@ destinationRouter.get('/projects', async (req, res) => {
  * fall back to the admin OAuth token when SA returns empty/403 — matches how
  * hasGeminiApp is probed on the projects list.
  */
+/**
+ * Per-project engine lookups, cached briefly in memory.
+ *
+ * The client asks about every project the signed-in Google account can see, once per
+ * project, and asks again on each navigation — one session produced 126 calls across 19
+ * projects, 17 of which can only ever answer 403 or "API not enabled". Those answers are
+ * properties of the project's configuration, not of the moment, so re-asking Google on every
+ * mount buys nothing and costs a round trip per project per render.
+ *
+ * Short TTL on purpose: an admin who has just enabled the API or granted a role must see
+ * that within a minute, not after a restart.
+ */
+const ENGINES_TTL_MS = 60_000;
+const enginesCache = new Map<string, { at: number; body: unknown }>();
+
 destinationRouter.get('/engines', async (req, res) => {
   const sessionId = req.query.session as string;
   const session = await getSession(sessionId);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   const project = (req.query.project as string) || session.geminiProject || '';
   if (!project) return void res.status(400).json({ error: 'project_required' });
+
+  // Keyed by the Google identity too: the SA and the signed-in user can see different
+  // engines, so one account's answer must never be served to another.
+  const cacheKey = `${project}|${session.gEmail ?? ''}`;
+  const hit = enginesCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < ENGINES_TTL_MS) return void res.json(hit.body);
 
   try {
     let via: 'sa' | 'oauth' | 'none' = 'none';
@@ -139,13 +160,15 @@ destinationRouter.get('/engines', async (req, res) => {
       }
     }
 
-    res.json({
+    const body = {
       project,
       engines,
       via,
       licensedUserCount,
       ...(engines.length === 0 && lastError ? { warning: lastError } : {}),
-    });
+    };
+    enginesCache.set(cacheKey, { at: Date.now(), body });
+    res.json(body);
   } catch (err) {
     res.status(502).json({ error: 'engines_failed', detail: (err as Error).message });
   }
