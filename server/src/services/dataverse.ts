@@ -1323,10 +1323,33 @@ function parseFileAttachment(c: BotComponent): KnowledgeSourceIR {
  * `enableMemory` matters for the same reason: memory migration cannot warn about memory it
  * does not know is switched on.
  */
+/**
+ * Exported for tests only: the settings pass is where a silently-dropped switch hides, and
+ * asserting it through a full extraction would need a live tenant.
+ */
+export function extractAgentSettingsForReport(configuration?: string): ReturnType<typeof parseAgentSettings> {
+  return parseAgentSettings(configuration);
+}
+
 function parseAgentSettings(configuration?: string): {
   webSearch?: boolean;
   memoryEnabled?: boolean;
   modelSeries?: string;
+  /**
+   * Bot-configuration switches we read but do not reproduce, as `name=value` strings.
+   *
+   * Sales desk carries nine of these — channels (MsTeams, Microsoft365Copilot),
+   * isAgentConnectable, GenerativeActionsEnabled, isFileAnalysisEnabled,
+   * isSemanticSearchEnabled, useModelKnowledge, contentModeration, optInUseLatestModels,
+   * publishOnImport — and every one of them was dropped with `unmapped: []`, so the report
+   * claimed full fidelity over settings nobody had looked at. Lossless means the report says
+   * what was left behind; it does not mean we must map it.
+   *
+   * `channels` is the one that stings: it records that the agent is published to Teams and
+   * M365 Copilot — where people actually use it — while `surface-equivalence` asks that same
+   * question and gets "none" because nothing read this field.
+   */
+  otherSettings?: string[];
 } {
   if (!configuration) return {};
   try {
@@ -1336,13 +1359,41 @@ function parseAgentSettings(configuration?: string): {
         enableMemory?: boolean;
         model?: { series?: string };
       };
+      channels?: Array<{ channelId?: string }>;
+      settings?: { GenerativeActionsEnabled?: boolean };
+      aISettings?: Record<string, unknown>;
+      isAgentConnectable?: boolean;
+      publishOnImport?: boolean;
+      isLightweightBot?: boolean;
     };
     const s = cfg.agentSettings;
-    if (!s) return {};
+
+    const other: string[] = [];
+    const channels = (cfg.channels ?? []).map((c) => c?.channelId).filter(Boolean);
+    if (channels.length) {
+      other.push(`channels=${channels.join(',')} (published surfaces in Copilot; Gemini agents are not published to these)`);
+    }
+    if (cfg.isAgentConnectable === true) {
+      other.push('isAgentConnectable=true (other agents may call this one; no Gemini equivalent wired)');
+    }
+    if (cfg.settings?.GenerativeActionsEnabled === true) {
+      other.push('GenerativeActionsEnabled=true (generative orchestration)');
+    }
+    if (cfg.publishOnImport === true) other.push('publishOnImport=true');
+    if (cfg.isLightweightBot === true) other.push('isLightweightBot=true');
+    // aISettings is a flat bag of runtime toggles — carried whole rather than enumerated, so
+    // a switch Microsoft adds next month still reaches the report instead of vanishing.
+    for (const [k, v] of Object.entries(cfg.aISettings ?? {})) {
+      if (k === '$kind' || v === null || v === undefined) continue;
+      other.push(`aISettings.${k}=${String(v)}`);
+    }
+
+    if (!s) return other.length ? { otherSettings: other } : {};
     return {
       webSearch: typeof s.web?.enableWebSearch === 'boolean' ? s.web.enableWebSearch : undefined,
       memoryEnabled: typeof s.enableMemory === 'boolean' ? s.enableMemory : undefined,
       modelSeries: typeof s.model?.series === 'string' ? s.model.series : undefined,
+      otherSettings: other.length ? other : undefined,
     };
   } catch {
     // A configuration blob we cannot parse is not a reason to fail extraction.
@@ -1683,6 +1734,8 @@ export async function extractAgent(
   if (agentSettings.modelSeries) {
     unmapped.push(`agentSettings.model.series=${agentSettings.modelSeries} (source model choice; Gemini uses its own)`);
   }
+  // Read, not reproduced — named so the report cannot imply they were absent.
+  for (const setting of agentSettings.otherSettings ?? []) unmapped.push(setting);
 
   // Evaluation data (componenttype 19) — the agent's authored TEST questions and
   // evaluation sets. Not runtime behaviour, so nothing is functionally lost by not

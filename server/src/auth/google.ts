@@ -537,16 +537,32 @@ export async function discoverGeminiProject(gToken: string): Promise<string> {
     return forced;
   }
 
+  /**
+   * A project's ID, not its NUMBER.
+   *
+   * This returned `projectNumber`, which was then stored as `session.geminiProject` and read
+   * everywhere else — and logged, and shown — as though it were an id. Google accepts either
+   * in a URL, so nothing failed; the two simply stopped being distinguishable. Live
+   * consequence: a run reported its destination as "studio-enterprise-migration" while
+   * holding 505103737920, which is `agentmigrations` — a DIFFERENT project that happens to
+   * share the display name "CloudFuze Agent Migration Hub". The preflight then demanded a
+   * secret grant for the wrong project's service agent.
+   *
+   * Numbers are kept only as a fallback for the rare project the API returns without an id.
+   */
+  const projectRef = (p: { projectId?: string; projectNumber: string }): string =>
+    p.projectId || p.projectNumber;
+
   try {
     const res = await fetch('https://cloudresourcemanager.googleapis.com/v1/projects', {
       headers: { Authorization: `Bearer ${gToken}` },
     });
     if (!res.ok) return fallback;
     const json = (await res.json()) as {
-      projects?: { projectNumber?: string; lifecycleState?: string }[];
+      projects?: { projectNumber?: string; projectId?: string; lifecycleState?: string }[];
     };
     const active = (json.projects ?? []).filter(
-      (p): p is { projectNumber: string; lifecycleState?: string } =>
+      (p): p is { projectNumber: string; projectId?: string; lifecycleState?: string } =>
         p.lifecycleState === 'ACTIVE' && Boolean(p.projectNumber),
     );
 
@@ -560,23 +576,23 @@ export async function discoverGeminiProject(gToken: string): Promise<string> {
             `/locations/global/collections/default_collection/engines`,
           { headers: { Authorization: `Bearer ${gToken}` } },
         );
-        if (!listRes.ok) return { projectNumber: p.projectNumber, hasChat: false, hasAny: false };
+        if (!listRes.ok) return { ref: projectRef(p), hasChat: false, hasAny: false };
         const engines = ((await listRes.json()) as { engines?: { solutionType?: string }[] }).engines ?? [];
         return {
-          projectNumber: p.projectNumber,
+          ref: projectRef(p),
           hasChat: engines.some((e) => /CHAT|ASSISTANT/i.test(e.solutionType ?? '')),
           hasAny: engines.length > 0,
         };
       } catch {
-        return { projectNumber: p.projectNumber, hasChat: false, hasAny: false };
+        return { ref: projectRef(p), hasChat: false, hasAny: false };
       }
     });
 
     // `find` preserves input order → same deterministic choice as the old loop.
     const chat = probes.find((r) => r.hasChat);
-    if (chat) return chat.projectNumber;
+    if (chat) return chat.ref;
     const any = probes.find((r) => r.hasAny);
-    if (any) return any.projectNumber;
+    if (any) return any.ref;
   } catch (err) {
     logger.warn({ err }, 'Gemini project discovery failed');
   }
