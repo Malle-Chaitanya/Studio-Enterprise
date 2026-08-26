@@ -36,7 +36,9 @@ export type PreflightBlocker =
   | 'no_credential_recorded'
   | 'secret_unreadable'
   | 'engine_cannot_read_secret'
-  | 'credentials_rejected';
+  | 'credentials_rejected'
+  /** We could not READ the IAM policy, so we cannot say whether the grant is there. */
+  | 'grant_unverifiable';
 
 export interface ConnectorPreflight {
   connectorId: string;
@@ -82,11 +84,21 @@ async function secretReadableBy(
 }
 
 /** Is secretAccessor held project-wide? One call, reused across every secret. */
+/**
+ * Is a project-wide `secretAccessor` grant in place for `member`?
+ *
+ * THREE outcomes, not two. This returned a bare boolean and answered `false` when the policy
+ * could not be read at all — so a service account lacking
+ * `resourcemanager.projects.getIamPolicy` produced "the engine cannot read these secrets",
+ * and the customer was sent to grant a role that was very possibly already there. "I could
+ * not check" and "it is not granted" are different facts and only one of them is about the
+ * customer; the caller has to be able to tell them apart.
+ */
 export async function hasProjectWideSecretAccess(
   saToken: string,
   project: string,
   member: string,
-): Promise<boolean> {
+): Promise<'granted' | 'absent' | 'unreadable'> {
   const res = await fetch(
     `https://cloudresourcemanager.googleapis.com/v1/projects/${project}:getIamPolicy`,
     {
@@ -95,11 +107,18 @@ export async function hasProjectWideSecretAccess(
       body: '{}',
     },
   );
-  if (!res.ok) return false;
+  if (!res.ok) {
+    logger.warn(
+      { project, status: res.status },
+      'preflight: project IAM policy unreadable — cannot verify the secret grant either way',
+    );
+    return 'unreadable';
+  }
   const policy = (await res.json()) as { bindings?: Array<{ role: string; members?: string[] }> };
-  return (policy.bindings ?? []).some(
+  const granted = (policy.bindings ?? []).some(
     (b) => b.role === 'roles/secretmanager.secretAccessor' && (b.members ?? []).includes(member),
   );
+  return granted ? 'granted' : 'absent';
 }
 
 export interface PreflightTarget {
@@ -127,7 +146,13 @@ export async function preflightConnectors(
   // Checked once: a project-wide grant makes every per-secret binding unnecessary, and
   // reporting each secret as ungranted when the engine can in fact read them all would send
   // the customer off to fix something that is not broken.
-  const projectWide = await hasProjectWideSecretAccess(saToken, project, member);
+  const projectWideState = await hasProjectWideSecretAccess(saToken, project, member);
+  const projectWide = projectWideState === 'granted';
+  // Name the project AND the number it resolved to, together, in one line. They are one fact
+  // sourced from one lookup, and the only way a mismatch between them ever becomes visible
+  // is if something prints both — two projects can share a display name, so reading the id
+  // alone out of a log proves nothing about which project was actually checked.
+  logger.info({ project, projectNumber, member, projectWide: projectWideState }, 'preflight: secret-grant scope');
 
   const results: ConnectorPreflight[] = [];
   for (const target of targets) {
@@ -161,6 +186,22 @@ export async function preflightConnectors(
         detail:
           `The stored credential for ${target.name} could not be read back (${unreadable}). ` +
           'Re-enter it on the Connectors step.',
+      });
+      continue;
+    }
+
+    if (projectWideState === 'unreadable') {
+      // Deliberately ok:true. We have no evidence the connector is broken, and reporting a
+      // failure we cannot demonstrate would send the customer to fix nothing.
+      results.push({
+        ...base,
+        ok: true,
+        blocker: 'grant_unverifiable',
+        detail:
+          `Could not read the IAM policy on project "${project}", so whether the deployed ` +
+          `agent can access ${target.name}'s credentials is unknown. If its calls fail with ` +
+          `PERMISSION_DENIED, grant roles/secretmanager.secretAccessor to ` +
+          `${reasoningEngineServiceAgent(projectNumber)}.`,
       });
       continue;
     }
