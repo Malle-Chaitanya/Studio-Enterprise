@@ -36,6 +36,39 @@ are inferred from the repo state at scaffold time — 2026-07-28 — and marked 
 1. Add a `vitest` unit suite for `mapper` / `topicCompiler` / `knowledgeClassifier` / `scope`.
 2. Flows/workflows migration (Phase 2 of the product).
 3. Harden multi-tenant operational tooling (per-tenant run history UI).
+4. **Make the pipeline genuinely ELT, not ETL.** Today EXTRACT transforms Dataverse into
+   `AgentIR` and only then LOADs it into `stagedAgents` -- the verbatim source payload is
+   thrown away in the same breath that produces the IR. `rawAgents` captures it, but it is
+   off unless `RAW_RETENTION_DAYS` is set, and it is a debugging aid rather than the
+   pipeline's input.
+
+   Land the raw Dataverse payloads FIRST, then transform out of Mongo:
+
+       EXTRACT -> LOAD raw -> TRANSFORM (raw -> AgentIR) -> INSERT into Gemini
+
+   Why it is worth doing:
+   - **A mapper change becomes replayable.** Every mapper fix today needs a fresh extraction
+     against a live tenant to test, which is why the fidelity work leans on `_test_*` probes
+     against a real environment. With raw stored, the transform re-runs offline over the
+     exact bytes that produced a bad result.
+   - **Fidelity claims become checkable after the fact.** "Nothing was dropped" is currently
+     asserted by the code that does the dropping. With the source retained, a report can be
+     diffed against what actually came out of Dataverse -- the honesty rule gets evidence
+     instead of good intentions.
+   - **Extraction stops being the expensive step to repeat.** Re-running INSERT is already
+     cheap because staging decouples the phases; re-running TRANSFORM is not, and it is the
+     phase that changes most often.
+
+   Constraints this must respect:
+   - Raw payloads are UNREDACTED customer data. They inherit the `rawAgents` rules --
+     `appUserId`-scoped, `expiresAt` TTL enforced by Mongo, retention deliberately bounded,
+     never copied into logs, dumps, or fixtures.
+   - The two-phase boundary stays. This adds a stage inside EXTRACT; it does not let
+     extraction reach Gemini or mapping reach Dataverse.
+   - `AgentIR` remains the contract between the halves. Storing raw does not make raw the
+     interface -- mapping still consumes IR.
+   - Changing where the IR is produced is an architecture decision: Architect sign-off plus
+     a note in `decisions.md` before code.
 
 ## How to verify the current build quickly
 

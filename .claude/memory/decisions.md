@@ -1000,3 +1000,169 @@ scaffold. Format: **date — decision — why — impact**.
   old wizard keeps working unchanged — it still just opens the stream. New web work should
   read `run-state` on mount so a screen can tell "nothing is happening" from "something is
   happening and you missed the start". 13 tests in `runRegistry.test.ts`; suite at 396.
+
+## 2026-08-25 — ELT: raw payloads become the system of record
+
+- **Decision**: Fetch every agent from every environment ONCE when both clouds connect, land
+  the verbatim payload in `rawAgents` BEFORE parsing, derive `AgentIR` into `agentIRCache`,
+  and let everything downstream read Mongo instead of Dataverse. New service
+  `services/eltSweep.ts`; routes `POST /api/explore/elt/sweep`, `GET /elt/status`,
+  `POST /elt/purge`. Fired in the background from the Google callback (`routes/auth.ts`)
+  once `step: 'ready'`, plus a manual refresh for agents created after that moment.
+- **Why**: The pipeline re-read Dataverse at every stage — explore listed agents, selection
+  re-listed them, the run extracted them again — spending the customer's quota on data that
+  had not changed. Landing once removes all of it. The ORDER matters as much as the caching:
+  raw lands before parsing, so a parser fixed next month can be replayed against what the
+  tenant actually sent. Ledger 1.23 is the precedent — a topic-embedded
+  `InvokeConnectorAction` was not the shape the parser expected, five agents bound ZERO
+  operations, 45 -> 71 (+58% coverage) once found, and it was only findable from the raw
+  payload.
+- **What this REVERSES**: `docs/connector-transform-plan.md` D1 made raw landing OFF BY
+  DEFAULT and TTL-expired, and called those constraints "not optional". They were correct
+  while raw was a diagnostic luxury. They are wrong now that raw is the source the transform
+  reads from: a retention flag nobody set would silently empty the input, and a TTL firing
+  mid-engagement would delete it. So:
+    - **Capture** is now unconditional on the sweep path (`saveRawAgent({ always: true })`).
+      The RUN path is unchanged — still gated on `RAW_RETENTION_DAYS > 0`.
+    - **Expiry** is what `RAW_RETENTION_DAYS` now governs, cap raised 30 -> 365, default 90.
+      At 0 the row carries no `expiresAt` and Mongo never deletes it.
+- **The cost, stated plainly**: these are UNREDACTED customer payloads, and at
+  `RAW_RETENTION_DAYS=0` they persist indefinitely. Approved by the customer (hari,
+  2026-08-25) on the basis that the server is decommissioned after a migration. **That
+  reasoning does not hold on its own** and must not be relied on: Mongo's data lives in the
+  named `csge-mongo-data` volume, and `docker compose down` leaves named volumes in place
+  without `-v`, so payloads survive a container rebuild — and any host snapshot keeps its own
+  copy regardless. `purgeRawAgents(appUserId)` exists to be the actual guarantee: run it at
+  the end of an engagement, it returns a deleted count, and unlike everything else in that
+  module it THROWS on failure rather than reporting a deletion that did not happen.
+  Outstanding: the retention window belongs in the engagement terms in writing, not only in
+  a chat log.
+- **Boundaries kept**: the sweep never touches Gemini — this is EXTRACT and LOAD only, and
+  the `stagedAgents` handoff into INSERT is unchanged (architecture-boundaries.md). It writes
+  no `MappedAgent`; `cacheExtractedIR` uses `$setOnInsert` on that field so a sweep re-run
+  cannot blank a mapping a real run produced. Everything is `appUserId`-scoped and
+  best-effort: one unreachable environment is reported on its own row rather than dropped
+  from the list, a failed parse still leaves the raw payload landed, and a Mongo outage
+  cannot fail the connect that triggered the sweep. One sweep per tenant — a concurrent call
+  joins the running promise instead of doubling quota spend.
+- **Also moved**: `requireAdmin` from `routes/auth.ts` (private) to `auth/appAuth.ts` beside
+  `requireAuth`, now that the purge route needs it too. A second copy of an auth guard is how
+  the two quietly stop agreeing.
+- **Tests**: 6 in `eltSweep.test.ts`, all driving failure paths rather than the happy one.
+  Suite 418 -> 424.
+
+### 2026-08-25 — corrections to the ELT sweep, found by reviewing it
+
+Four defects in the implementation above, three of them mine, fixed same day:
+
+- **Unbounded duplication.** `rawAgents` is unique on {appUserId, runId, sourceId}, and the
+  sweep minted a fresh clock-derived id each time — so no sweep ever replaced the previous
+  one, and each added a COMPLETE second copy of every payload. The sweep fires on every
+  Google connect, and at `RAW_RETENTION_DAYS=0` nothing expires, so this grew forever.
+  Fixed with a constant `SWEEP_ROW_KEY = 'elt-sweep'`: a sweep is a snapshot of the source
+  now, so one row per agent is the right shape. The timestamped `sweepId` still labels the
+  RESULT — it just must never be part of the storage key. The original tests missed it
+  because they only ever swept once; the regression test sweeps twice.
+- **Partial purge.** `purgeRawAgents` cleared the payloads and left `agentIRCache`, which
+  holds the same customer content parsed — instructions, topics, knowledge. The route
+  reported a completed deletion regardless. Purge now covers raw + IR + the sweep record,
+  sequentially, and reports each count separately.
+- **Status lied after a restart.** In-flight and last-result were both process-memory, so
+  `GET /elt/status` answered `last: null` for a tenant that had been swept, and answered
+  differently per instance. Last result now persists (`db/repos/eltSweeps.ts`, one doc per
+  tenant). In-flight stays in memory deliberately — it is a property of THIS process, and
+  persisting it would strand `running: true` forever if the process died mid-sweep.
+- **A comment describing code that did not exist.** `cacheExtractedIR` claimed a
+  `$setOnInsert` clause it never had. The behaviour was right (omitting `mapped` from `$set`
+  leaves an existing mapping alone); the comment sent readers looking for something absent.
+- **Also**: `sweepId` could repeat when two sweeps started in the same millisecond. Now
+  carries a monotonic suffix.
+
+**Still open, not fixed**: `dvGet` (services/dataverse.ts:430) has NO retry on Dataverse
+service-protection 429s — it throws on the first one. That predates this work and affects
+every extraction path, but the sweep is what will hit it hardest, being the only thing that
+reads a whole tenant at once (3 environments x 4 agents concurrently). There is also no way
+to stop a sweep once started. Suite 424 -> 425.
+
+### 2026-08-26 — per-user connector credentials (design; not yet built)
+
+**Problem.** Copilot Studio records whose credentials a tool runs under. `invoker` means the
+SIGNED-IN USER's own connection: Erik's mail leaves Erik's mailbox, Erik's HubSpot query
+returns Erik's records. We deploy every tool with ONE stored credential, so an `invoker` tool
+silently becomes shared — one mailbox for everybody, and every user seeing whatever that
+single connection can see. Sales desk (`a521051e…`) has **six** tools and all six are
+`invoker`.
+
+This is the invisible kind. The tool works; it just acts as the wrong person. No test catches
+it, because sending an email succeeds and fetching deals succeeds. The customer finds out when
+a user sees someone else's book.
+
+`connectionAuthMode` has been extracted since the connector work landed (`dataverse.ts:896`)
+and `types.ts:357` already described this exact failure and said it "must be reported". Nothing
+read the field. The report claimed a clean migration over a real access change.
+
+**Shipped today (the honesty half).** `mapper.ts` emits a `needs-review` `toolCredentials`
+note naming every `invoker` tool and stating the consequence. Three tests in
+`mapper.invokerNote.test.ts`, including the two silences that matter: `maker` tools produce no
+note, and an absent `connectionAuthMode` produces no note — missing data must not become a
+finding. Verified against Sales desk's real cached IR, not a fixture.
+
+**Feasibility — settled with live evidence, nothing deployed.**
+
+The open question was whether a deployed ADK reasoning engine can know WHO is calling. It can.
+`_probe_session_userid.ts` lists sessions on the engines already in
+`studio-enterprise-migration`:
+
+```
+WorkMate — userId: "zara@storefuze.com"   <- real end user, passed by Gemini Enterprise
+           userId: "cf-verify"            <- our own probe
+```
+
+Gemini Enterprise passes the end user's **email** as `user_id` on the ADK session contract
+(`create_session` / `stream_query`), which `adk_deploy.py:945` already documents as the
+contract Agentspace uses. So the identity channel is mandatory and already flowing.
+
+**Decision: build per-user credentials on Secret Manager. Do NOT depend on Discovery Engine
+`Authorization`.**
+
+`Agent.authorizationConfig.toolAuthorizations` exists and would have Google hold each user's
+refresh token (probe: `GET .../locations/global/authorizations` returns 200, empty). It was
+rejected: the token would arrive inside `QueryReasoningEngineRequest.input`, a free-form JSON
+object with no declared auth field, so the contract is unverified and outside our control. We
+own whether the migrated agent works; storing the credentials ourselves keeps the whole chain
+ours. Revisit only if per-user secret volume becomes the binding constraint.
+
+**Shape.**
+
+```
+connector/<connectorId>/refresh/<userEmail>   ->  that user's refresh token
+```
+
+Tool call arrives with `user_id` -> container reads that user's secret -> mints a short-lived
+access token -> calls the provider as them. The minting half is NOT new work: `authKind`
+`oauth2-refresh-token` already does exactly this for one shared credential
+(`adkDeployer.ts:120`). Per-user is that path keyed by the email we now know we receive.
+
+**What changes.**
+
+- `connectorToolBuilder.ts` — a new `authKind` (`end-user-token`) that resolves the secret id
+  from the caller instead of baking one id into the spec at deploy time.
+- `scripts/adk_deploy.py` — the tool function reads `user_id` off the ADK `ToolContext`.
+  Standard ADK, unwritten by us: the one remaining implementation risk.
+- Consent flow — each user authorizes each provider once. New UI, and the first place a
+  migrated agent asks something of an end user rather than an admin.
+- Credentials screen — the customer registers an OAuth app per provider (Entra for Outlook, a
+  HubSpot app) and supplies client id + secret + scopes. Copilot hides this because Microsoft
+  brokers its own connectors; Gemini cannot, being a different vendor asking Microsoft for
+  access.
+
+**What this deliberately does NOT cover.** Autonomous agents. No user, no `user_id`, no token
+to borrow — `D365 Sales Agent - Engage Autonomous` and its kind keep one shared credential
+permanently. That is not a gap to close later; it is a property of unattended execution, and
+the `toolCredentials` note is the honest answer for those agents rather than a temporary one.
+
+**Open.** Secret volume is users x connectors — quota and cost unmeasured. Consent revocation
+and re-prompt are unspecified. Neither blocks the design.
+
+Probes kept: `_probe_session_userid.ts`, `_probe_de_authorizations.ts`,
+`_probe_de_auth_schema.ts`, `_probe_agent_authctx.ts`, `_probe_re_query_shape.ts`.
