@@ -82,6 +82,35 @@ export function connectorSecretId(
 }
 
 /**
+ * The same credential, but belonging to ONE end user rather than shared by everyone.
+ *
+ * Copilot's `invoker` tools ran under the signed-in user's own connection: Erik's mail left
+ * Erik's mailbox, Erik's CRM query returned only Erik's records. Reproducing that means one
+ * stored credential per person per connector, so the deployed tool can pick the caller's.
+ *
+ * Deliberately DERIVED from `connectorSecretId` rather than assembled again here. The shared
+ * and per-user ids must agree on tenant scoping, group resolution and character-safing
+ * forever; two independent builders of one name is how a lookup starts silently missing.
+ *
+ * `userKey` is the caller identity Gemini Enterprise passes to the deployed agent
+ * (`user_id`, observed as the end user's email). It is safed like every other segment, so
+ * `erik@filefuze.co` and `ERIK@filefuze.co` collapse to the same secret — which is correct:
+ * they are one person to both clouds.
+ */
+export function connectorUserSecretId(
+  connectorIdOrScope: string,
+  field: string,
+  ownerScope: string,
+  userKey: string,
+): string {
+  const key = secretSafe(userKey.toLowerCase());
+  if (!key) throw new Error('connectorUserSecretId: userKey is required');
+  // `-u-` marks the per-user namespace. Without a marker a user called "prod" would be
+  // indistinguishable from a field called "prod" in the flat id.
+  return `${connectorSecretId(connectorIdOrScope, field, ownerScope)}-u-${key}`;
+}
+
+/**
  * The pre-tenant-scoping id. Kept because secrets written under it still exist and
  * still back deployed agents — this is a READ path for records that predate scoping,
  * never a name to write new credentials under.

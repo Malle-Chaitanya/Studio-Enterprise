@@ -35,6 +35,7 @@ recognizable source name.
 import argparse
 import importlib.metadata
 import json
+import contextvars
 import os
 import re
 import sys
@@ -102,6 +103,66 @@ def emit(obj):
 # roles/secretmanager.secretAccessor on the project — without it every tool call
 # fails with 403 at inference time even though deployment succeeded.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# WHO IS CALLING.
+#
+# Copilot Studio tools can run under the SIGNED-IN USER's own connection (`invoker`)
+# rather than one connection the author configured (`maker`). Reproducing that needs the
+# caller's identity at tool-call time, and Gemini Enterprise supplies it: it drives the ADK
+# session contract (`create_session` / `stream_query`), and the `user_id` it passes is the
+# end user's email -- observed live on deployed engines ("zara@storefuze.com").
+#
+# Captured in a ContextVar from a before-tool callback rather than threaded through every
+# connector module: `_secret` is the ONE place a credential is read, and every connector
+# already goes through it. Adding a parameter to eleven tool modules to carry the same fact
+# would be eleven chances for one of them to forget.
+_CALLER: "contextvars.ContextVar[str]" = contextvars.ContextVar("caller_user_id", default="")
+
+
+def _caller_user_id(tool_context) -> str:  # noqa: ANN001
+    """Best-effort read of the invoking end user from an ADK tool context.
+
+    Tries several shapes on purpose: the attribute path has moved between google-adk
+    releases and the deployed container's version is not pinned by us. Returns "" when
+    nothing is found -- callers MUST treat that as "unknown", never as "shared".
+    """
+    for get in (
+        lambda: tool_context._invocation_context.session.user_id,   # noqa: SLF001
+        lambda: tool_context.invocation_context.session.user_id,
+        lambda: tool_context.session.user_id,
+        lambda: tool_context.state.get("_caller_user_id"),
+    ):
+        try:
+            v = get()
+            if v:
+                return str(v)
+        except Exception:  # noqa: BLE001
+            continue
+    return ""
+
+
+def _capture_caller(tool, args, tool_context):  # noqa: ANN001
+    """before_tool_callback: record the caller so `_secret` can pick their credential."""
+    try:
+        _CALLER.set(_caller_user_id(tool_context))
+    except Exception:  # noqa: BLE001
+        # Never break the tool call. `_secret` fails loudly on an unknown caller anyway,
+        # which is the behaviour we want -- silence here must not become a shared-credential
+        # fallback by accident.
+        pass
+    return None
+
+
+def _secret_safe(part: str) -> str:
+    """Mirror of secretSafe() in services/connectorCredentials.ts.
+
+    The server computes the shared id and the container derives the per-user one from it;
+    if these two safings ever disagree the lookup misses and every call fails at inference.
+    Keep them identical.
+    """
+    return re.sub(r"[^a-zA-Z0-9-]", "-", part).lower()
+
+
 def _build_live_connector_tool(conn: dict, project: str):
     """Return a callable ADK function tool (or list of tools) for one live
     connector. Dispatches to connector_tools/<kind>.py — each module owns its own
@@ -128,6 +189,9 @@ def _build_live_connector_tool(conn: dict, project: str):
 
     kind = (conn.get("kind") or conn.get("id") or "").lower()
     secret_ids = conn.get("secretIds") or {}
+    # See LiveConnectorSpec.perUser (services/adkDeployer.ts): the source tool ran under the
+    # caller's own connection, so this connector must too.
+    per_user = bool(conn.get("perUser"))
 
     def _secret(field: str) -> str:
         """Read one credential field from Secret Manager (latest version).
@@ -149,6 +213,25 @@ def _build_live_connector_tool(conn: dict, project: str):
         if not secret_id:
             raise RuntimeError(f"no secret id configured for field '{field}'")
 
+        # PER-USER CREDENTIALS: the source tool ran as whoever was asking, so this one must
+        # too. The id is the shared one plus the caller -- see connectorUserSecretId() in
+        # services/connectorCredentials.ts, which builds the same name server-side.
+        #
+        # There is NO fallback to the shared credential, deliberately. Falling back would
+        # make an unconfigured user silently act as one shared account: mail from the wrong
+        # mailbox, another person's CRM records -- the exact access collapse per-user exists
+        # to prevent, and invisible because the call succeeds. Failing here surfaces as an
+        # error the user can act on, which is the honest outcome.
+        if per_user:
+            caller = _CALLER.get()
+            if not caller:
+                raise RuntimeError(
+                    f"{conn_name}: this tool runs under each user's own credentials, but the "
+                    "caller could not be identified, so it cannot run. This happens when the "
+                    "agent is invoked without a user session (for example on a schedule)."
+                )
+            secret_id = f"{secret_id}-u-{_secret_safe(caller.lower())}"
+
         creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
         creds.refresh(_AuthRequest())
         url = (
@@ -156,8 +239,19 @@ def _build_live_connector_tool(conn: dict, project: str):
             f"/secrets/{secret_id}/versions/latest:access"
         )
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {creds.token}"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            payload = _json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                payload = _json.loads(resp.read().decode("utf-8"))
+        except Exception as e:  # noqa: BLE001
+            if per_user:
+                # Name the person and the remedy. "404 on secret xyz-u-erik-filefuze-co" is
+                # true and useless to the one who has to act on it.
+                raise RuntimeError(
+                    f"{conn_name}: {_CALLER.get() or 'this user'} has not connected their "
+                    f"{conn_name} account yet, so this tool cannot run for them. Connect it "
+                    "once and the agent will act on their behalf."
+                ) from e
+            raise
         return base64.b64decode(payload["payload"]["data"]).decode("utf-8")
 
     base_url_tpl = conn.get("baseUrlTemplate") or ""
@@ -820,7 +914,11 @@ def main():
             # Same tool-call record as the root. Once the root transfers to a topic, the
             # topic is what calls the tools — without this, every tool call made inside a
             # topic is invisible and the agent looks like it never used its connectors.
-            sub_agents.append(Agent(**sa_kwargs, after_tool_callback=_record_tool_call))
+            sub_agents.append(Agent(
+                **sa_kwargs,
+                after_tool_callback=_record_tool_call,
+                before_tool_callback=_capture_caller,
+            ))
         except TypeError:
             sub_agents.append(Agent(**sa_kwargs))
         except Exception as e:  # noqa: BLE001
@@ -845,6 +943,9 @@ def main():
             tools=tools,
             global_instruction=naming_rule,
             after_tool_callback=_record_tool_call,
+            # Must run BEFORE the tool: `_secret` needs the caller to pick a per-user
+            # credential, and by after_tool_callback the call has already happened.
+            before_tool_callback=_capture_caller,
             **({"sub_agents": sub_agents} if sub_agents else {}),
         )
     except TypeError:
@@ -853,6 +954,12 @@ def main():
         # the agent still works, it is only less observable — but say so, because a
         # silently less-verifiable agent is exactly what this project keeps being bitten by.
         emit({"warn": "adk build does not support global_instruction/after_tool_callback; deploying without them"})
+        # Consequence worth naming: without before_tool_callback the caller is never
+        # captured, so every per-user tool fails closed with "caller could not be
+        # identified". That is the safe direction -- it never falls back to the shared
+        # credential -- but the agent is degraded, not merely less observable.
+        if any(c.get("perUser") for c in (spec.get("liveConnectors") or [])):
+            emit({"warn": "per-user connectors present but this adk build cannot capture the caller; those tools will fail closed"})
         root_agent = Agent(
             name=spec.get("name", "migrated_agent"),
             model=spec.get("model", "gemini-2.5-flash"),

@@ -1005,6 +1005,7 @@ async function execute(
       const ir = await extractAgent(item.envUrl, token, item.bot, (raw) => {
         void saveRawAgent({
           appUserId,
+          tenantId: session.tenantId,
           runId,
           envUrl: raw.envUrl,
           sourceId: raw.sourceId,
@@ -1100,7 +1101,7 @@ async function execute(
           unresolvedInputs: topicsPlan.summary.unresolvedInputs,
         },
       });
-      void cacheAgentIR(appUserId, item.envUrl, ir, mapped);
+      void cacheAgentIR(appUserId, item.envUrl, ir, mapped, session.tenantId);
       // Detailed, per-agent log so you can see exactly what was captured.
       const ksAuto = ir.knowledgeSources.filter((k) => k.classification?.automatable).length;
       const ksTotal = ir.knowledgeSources.length;
@@ -1737,6 +1738,8 @@ async function execute(
       // here, beside the other verify inputs, because the bound-tool build happens in a
       // deeper block that verification cannot see into.
       let adkWiredToolNames: string[] = [];
+      /** True once the ADK worker has told us the tools it really wired. */
+      let workerReportedToolNames = false;
       // True when the agent was created via low-code + dataStoreSpecs (native
       // grounding), bypassing ADK/RE entirely for connector-grounded agents.
       let usedDataStoreSpecs = false;
@@ -2197,6 +2200,26 @@ async function execute(
                 ? { ...withBound, scopeUri: spScopeUri, scopeUris: spScopeUris.length ? spScopeUris : undefined }
                 : withBound;
             });
+            // PER-USER CREDENTIALS. Copilot's `invoker` mode ran the tool under the SIGNED-IN
+            // USER's own connection — Erik's mail from Erik's mailbox, Erik's CRM query
+            // returning only Erik's records. Deploying that on one shared credential does not
+            // fail; it silently makes every user act as one account, which is the kind of
+            // wrong nobody can find by testing.
+            //
+            // Marked per AGENT, not per run: the same connector can be `invoker` for one agent
+            // and `maker` for another, and a run-level flag would impose one agent's access
+            // model on the rest.
+            const invokerConnectorIds = new Set(
+              (row.mapped?.ir.agentTools ?? [])
+                .filter((t) => t.connectionAuthMode === 'invoker' && t.connectorId)
+                .map((t) => t.connectorId!),
+            );
+            if (invokerConnectorIds.size) {
+              scopedConnectors = scopedConnectors.map((c) =>
+                invokerConnectorIds.has(c.id) ? { ...c, perUser: true } : c,
+              );
+            }
+
             // Mailbox chosen per agent, applied as a per-agent secret further down.
             const surfaceMailboxes = new Map<string, string>();
             // CROSS-VENDOR SUBSTITUTION: Outlook -> Gmail, and only when the customer said so.
@@ -2590,7 +2613,13 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               // array from the worker is meaningful (an agent with no function tools) and is
               // NOT overwritten with the planned list — that would resurrect the false
               // expectation this replaced.
-              if (adk.toolNames) adkWiredToolNames = adk.toolNames;
+              // An EMPTY array from the worker is meaningful (an agent with no function
+              // tools), so "did the worker report?" cannot be inferred from length -- it
+              // needs its own flag, or the server-side fallback below silently wins.
+              if (adk.toolNames) {
+                adkWiredToolNames = adk.toolNames;
+                workerReportedToolNames = true;
+              }
               adkGroundedStoreCount = groundingDataStores.length;
               for (const name of groundedFileNames) {
                 result.fidelity.push({
@@ -2640,12 +2669,25 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               // present" while nine Teams read tools were deployed and fine). Filtering those
               // out leaves the list EMPTY for such connectors, and verify.ts skips the check
               // when it is empty — a vacuous pass, which is the worse of the two errors.
-              adkWiredToolNames = [...boundBuild.byConnector]
-                .filter(([connectorId]) => {
-                  const spec = scopedConnectors.find((c) => c.id === connectorId);
-                  return !hasDedicatedToolModule(spec?.kind ?? connectorId);
-                })
-                .flatMap(([, specs]) => specs.map((sp) => sp.toolName));
+              //
+              // GUARDED, because it used to run unconditionally and therefore clobbered the
+              // worker's real list a few lines above -- inverting the precedence this comment
+              // describes. Measured live 2026-08-24 on WorkMate: the worker wired
+              // `discovery_engine_search` (its grounding tool, adk_deploy.py:999), the
+              // overwrite replaced the list with bound CONNECTOR names only, the agent
+              // answered a knowledge question with the grounding tool exactly as designed,
+              // and classifyEvidence saw zero overlap between observed and expected and
+              // returned `wrong_agent_tools` -- "this deployment is serving the wrong
+              // package". A healthy agent got the most alarming verdict the system has, and
+              // the verdict rule was not at fault: its input was.
+              if (!workerReportedToolNames) {
+                adkWiredToolNames = [...boundBuild.byConnector]
+                  .filter(([connectorId]) => {
+                    const spec = scopedConnectors.find((c) => c.id === connectorId);
+                    return !hasDedicatedToolModule(spec?.kind ?? connectorId);
+                  })
+                  .flatMap(([, specs]) => specs.map((sp) => sp.toolName));
+              }
               // Agents in THIS run, so a connected-agent tool can say whether its target
               // is migrating alongside it (reconnect them) or is not in scope at all
               // (migrate it first). "Migrate the other agent" is useless advice when the

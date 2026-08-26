@@ -69,6 +69,30 @@ function synthesizeInstruction(ir: AgentIR): { instruction: string; notes: Fidel
     });
   }
 
+  // WHOSE credentials each tool runs under. Copilot's `invoker` mode means the tool used the
+  // SIGNED-IN USER's own connection — Erik's mail sent as Erik, Erik's CRM query returning
+  // only Erik's records. Every tool we deploy authenticates with ONE stored credential, so an
+  // invoker tool silently becomes shared: mail leaves from one mailbox for everybody, and
+  // every user sees whatever that one connection can see.
+  //
+  // It cannot be caught by testing — the tool works, it just answers for the wrong person —
+  // so the ONLY thing standing between the customer and finding out from their own users is
+  // this note. `connectionAuthMode` has been extracted since the connector work landed and
+  // nothing read it; a report that stayed silent here was claiming a fidelity we do not have.
+  const invokerTools = (ir.agentTools ?? []).filter((t) => t.connectionAuthMode === 'invoker');
+  if (invokerTools.length) {
+    notes.push({
+      component: 'toolCredentials',
+      status: 'needs-review',
+      detail:
+        `${invokerTools.length} tool(s) ran under each END USER's own connection in Copilot ` +
+        `(${invokerTools.map((t) => t.displayName || t.name).join(', ')}). They are deployed with ` +
+        'one shared stored credential, so every user acts as that single account: outbound mail ' +
+        'comes from one mailbox and per-user record visibility becomes tenant-wide. Confirm this ' +
+        'is acceptable, or restrict the credential to what every user of this agent may see.',
+    });
+  }
+
   // Web browsing still maps to the googleSearch tool (tool wiring, not text).
   if (ir.capabilities.webBrowsing) {
     notes.push({ component: 'webBrowsing', status: 'mapped', detail: 'Web browsing → googleSearch tool.' });

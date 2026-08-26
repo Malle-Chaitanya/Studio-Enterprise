@@ -108,6 +108,16 @@ export interface AdkSpec {
     kind: string;
     name?: string;
     secretIds: Record<string, string>;
+    /**
+     * Run this connector under the CALLING user's own credential, not the shared one.
+     *
+     * Set when the source tool was Copilot `invoker`. The container appends the caller's
+     * identity to each secret id (`connectorUserSecretId`) and — critically — FAILS the call
+     * when that user has no credential stored, rather than falling back to the shared one.
+     * A silent fallback would reintroduce the exact access collapse this flag exists to
+     * prevent, while looking like it worked.
+     */
+    perUser?: boolean;
     /** Operations the SOURCE agent invoked on this connector (e.g. `ListIssues`), each
      *  with the description Copilot Studio showed for it. Advisory only — it shapes the
      *  generated tool's description so the model knows what this agent was built to do;
