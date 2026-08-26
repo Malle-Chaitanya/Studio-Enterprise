@@ -518,6 +518,38 @@ const DISCOVERY_CONCURRENCY = 8;
  * chat/assistant-capable engine; otherwise the earliest with any engine; else the
  * configured fallback.
  */
+/**
+ * One canonical name for a project, whichever way the caller has it.
+ *
+ * A project has an id AND a number, Google accepts either, and this codebase has stored
+ * both — `identityMappings` holds rows keyed "studio-enterprise-migration" beside rows keyed
+ * "505103737920". That is fine until something looks a row up by the OTHER representation
+ * and finds nothing: the customer's saved user mappings come back empty and their work looks
+ * lost. Numbers are resolved to ids; anything already an id is returned untouched.
+ *
+ * Cached per process: a project's id never changes, and this sits on the read path of every
+ * identity-map lookup.
+ */
+const projectIdCache = new Map<string, string>();
+
+export async function canonicalProjectId(ref: string, token: string): Promise<string> {
+  if (!ref || !/^[0-9]+$/.test(ref)) return ref;   // already an id (or empty)
+  const hit = projectIdCache.get(ref);
+  if (hit) return hit;
+  try {
+    const res = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${ref}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return ref;   // cannot resolve -> keep the caller's ref, never guess
+    const j = (await res.json()) as { projectId?: string };
+    if (!j.projectId) return ref;
+    projectIdCache.set(ref, j.projectId);
+    return j.projectId;
+  } catch {
+    return ref;
+  }
+}
+
 export async function discoverGeminiProject(gToken: string): Promise<string> {
   const fallback = config.GEMINI_PROJECT_FALLBACK ?? '';
 

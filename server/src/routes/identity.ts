@@ -4,7 +4,7 @@ import {
   graphTokenFromRefresh,
   listGraphUsersFiltered,
 } from '../auth/microsoft.js';
-import { listWorkspaceUsersFilteredAsAdmin, withSaTokens } from '../auth/google.js';
+import { listWorkspaceUsersFilteredAsAdmin, withSaTokens, canonicalProjectId, getSaToken } from '../auth/google.js';
 import { listLicensedPrincipals, resolveDestination } from '../services/gemini.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -119,12 +119,36 @@ identityRouter.post('/principals', async (req, res) => {
 });
 
 /** GET /api/identity/map?session= */
+
+/**
+ * The project key an identity map is stored under.
+ *
+ * Sessions have held BOTH a project number and a project id in `geminiProject` — discovery
+ * used to return the number — so a lookup by one representation misses rows written under
+ * the other, and the customer's saved user mappings come back empty. Canonicalised to the
+ * id on the way in and out, so old rows and new sessions meet at one key.
+ *
+ * Deliberately NOT solved by relaxing the query to ignore the project: identity maps are
+ * per-destination, and a looser filter is the cross-destination leak fixed in 88e0334.
+ */
+async function mapProjectKey(session: { geminiProject?: string; gEmail?: string }): Promise<string> {
+  const ref = session.geminiProject ?? '';
+  if (!ref) return '';
+  try {
+    return await canonicalProjectId(ref, await getSaToken(session.gEmail));
+  } catch {
+    // Unresolvable -> use what the session holds. A wrong-but-stable key still isolates
+    // destinations; guessing would not.
+    return ref;
+  }
+}
+
 identityRouter.get('/map', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const tenantId = session.tenantId ?? '';
-  const map = await getIdentityMap(appUserId, tenantId, session.geminiProject ?? '');
+  const map = await getIdentityMap(appUserId, tenantId, await mapProjectKey(session));
   res.json({ tenantId, ...map });
 });
 
@@ -138,7 +162,7 @@ identityRouter.put('/map', async (req, res) => {
     users: (req.body?.users as Record<string, string>) ?? {},
     groups: (req.body?.groups as Record<string, string>) ?? {},
   };
-  const saved = await putIdentityMap(appUserId, tenantId, session.geminiProject ?? '', overrides);
+  const saved = await putIdentityMap(appUserId, tenantId, await mapProjectKey(session), overrides);
   res.json({ tenantId, ...saved });
 });
 
@@ -189,7 +213,7 @@ identityRouter.post('/suggest', async (req, res) => {
   const tenantId = session.tenantId ?? '';
 
   const profile = await cachedOrganizationProfile(session, req.body?.refresh === true);
-  const existing = await getIdentityMap(appUserId, tenantId, session.geminiProject ?? '');
+  const existing = await getIdentityMap(appUserId, tenantId, await mapProjectKey(session));
   const principals = (Array.isArray(req.body?.principals) ? req.body.principals : []) as PrincipalRef[];
   const suggested = suggestMappings(
     principals,
