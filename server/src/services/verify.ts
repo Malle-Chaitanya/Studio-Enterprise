@@ -1,5 +1,5 @@
 import { logger } from '../logger.js';
-import { fetchTextTransient, isTransientNetworkError } from './httpTransient.js';
+import { isTransientNetworkError } from './httpTransient.js';
 import { assistantBase } from './gemini.js';
 import { chatWithAdkAgent } from './adkAgentChat.js';
 import type { GeminiDestination } from '../types.js';
@@ -326,43 +326,35 @@ export async function verifyAgent(
     );
   }
 
-  // Level 2 (non-ADK): conversational probe over the assist endpoint.
-  try {
-    const assistUrl = `${assistantBase(dest)}:assist`;
-    const res = await fetchTextTransient(
-      assistUrl,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: { text: probe }, agentId }),
-      },
-      { label: 'verify: assist' },
-    );
-    if (!res.ok) {
-      logger.warn({ agentId, err: res.error }, 'verify assist probe failed (network)');
-      return unknown('deployed, but the assist probe errored — behaviour unproven');
-    }
-    if (res.status >= 200 && res.status < 300) {
-      const json = JSON.parse(res.text) as unknown;
-      const sample = extractText(json).slice(0, 240);
-      // A 200 carrying no text is not an answer. The assist endpoint returns 200 for a
-      // turn that produced nothing, and calling that "responded" is how a mute agent
-      // passed verification.
-      if (!sample.trim()) {
-        return unknown('assist probe returned 200 but no answer text — nothing was proven');
-      }
-      return ok('deployed and answered an assist probe', sample);
-    }
-    // The agent RESOURCE exists — the existence check above passed — but nothing here
-    // establishes that it WORKS. This used to return verified:true, which is how an agent
-    // whose probe endpoint 404'd was reported to a customer as verified.
-    return unknown(
-      `deployed, but the assist probe was unavailable (${res.status}) — behaviour unproven`,
-    );
-  } catch (err) {
-    logger.warn({ err, agentId }, 'verify assist probe failed');
-    return unknown('deployed, but the assist probe errored — behaviour unproven');
-  }
+  // Level 2 (non-ADK): there is NO per-agent probe API. Say so, rather than probing.
+  //
+  // This block used to POST to `${assistantBase(dest)}:assist` with `{ query, agentId }`.
+  // Measured against the live engine on 2026-08-24, three things are true:
+  //
+  //   1. `:assist` does not exist on any version — v1alpha, v1beta and v1 all answer
+  //      404 "Method not found." The method IS `:streamAssist`.
+  //   2. With `agentId` in the body the SAME url answers 400 "Unknown name agentId",
+  //      because the payload is parsed before method resolution fails. That 400 is what
+  //      reached the report as "assist probe was unavailable (400)", which reads like a
+  //      transient outage and is actually a call that could never have worked. Every
+  //      low-code agent has therefore been permanently unverifiable.
+  //   3. `:streamAssist` DOES answer 200 — but it cannot be aimed at one agent.
+  //      `agentsConfig.agent` is accepted and then ignored: a deliberately BOGUS agent id
+  //      returns the same reply as sending no agent at all, and that reply is the engine's
+  //      default assistant introducing itself ("I am Gemini Enterprise"), not the agent.
+  //
+  // So switching this call to `:streamAssist` would be worse than the bug it fixes: every
+  // low-code agent would "answer" and be reported verified, when what answered is the
+  // engine. That is the `wrong_agent_tools` failure again — a green check earned by
+  // something other than the thing under test.
+  //
+  // Until Discovery Engine exposes a per-agent probe, the honest answer is `unknown` with
+  // the real reason. The agent RESOURCE was already confirmed to exist by the check above;
+  // nothing here can establish that it WORKS. ADK agents are unaffected — they are probed
+  // through the Reasoning Engine directly, above, which does address one agent.
+  return unknown(
+    'deployed, but Gemini exposes no per-agent probe for low-code agents — behaviour unproven',
+  );
 }
 
 /**
@@ -431,24 +423,3 @@ async function verifyToolInventory(
   return ok('all expected tools present', answer.slice(0, 240), { toolsProven: expected });
 }
 
-/** Pull the first meaningful text string out of an unknown assist response. */
-function extractText(node: unknown): string {
-  if (typeof node === 'string') return node;
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      const t = extractText(item);
-      if (t) return t;
-    }
-    return '';
-  }
-  if (node && typeof node === 'object') {
-    for (const [k, v] of Object.entries(node)) {
-      if ((k === 'text' || k === 'content' || k === 'answer') && typeof v === 'string' && v.trim()) {
-        return v;
-      }
-      const t = extractText(v);
-      if (t) return t;
-    }
-  }
-  return '';
-}
