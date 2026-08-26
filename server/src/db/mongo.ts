@@ -239,6 +239,19 @@ async function ensureCollections(): Promise<void> {
   // written on every row and Mongo deletes it, so unredacted customer data cannot outlive
   // the window because a cleanup job was never wired up. appUserId leads the read index
   // because every read of this collection is tenant-scoped.
+  // eltSweeps — the last ELT sweep per tenant. One doc per appUserId, so it is bounded by
+  // tenant count rather than by how often anyone sweeps.
+  // sourceUsers — the source tenant's mappable directory, snapshotted at connect so Map
+  // users reads Mongo instead of Graph. One doc per tenant, so bounded by tenant count.
+  await ensure('sourceUsers');
+  await db.collection('sourceUsers').createIndex({ appUserId: 1, tenantId: 1 }, { unique: true });
+
+  await ensure('eltSweeps');
+  // Keyed by tenant too — one operator may connect several customer tenants, and a
+  // unique-on-appUserId index made each tenant's sweep record replace the previous one.
+  try { await db.collection('eltSweeps').dropIndex('appUserId_1'); } catch {}
+  await db.collection('eltSweeps').createIndex({ appUserId: 1, tenantId: 1 }, { unique: true });
+
   await ensure('rawAgents');
   await db.collection('rawAgents').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
   await db.collection('rawAgents').createIndex(

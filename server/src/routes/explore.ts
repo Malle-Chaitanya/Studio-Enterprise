@@ -11,6 +11,12 @@ import { normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
 import { assessAgent } from '../services/assess.js';
 import { getCachedIR } from '../db/repos/agentIR.js';
 import { getSession, DEFAULT_APP_USER_ID } from '../sessionStore.js';
+import { requireAdmin } from '../auth/appAuth.js';
+import { lastSweep, runEltSweep, sweepInFlight } from '../services/eltSweep.js';
+import { purgeRawAgents, rawAgentStats, rawRetentionDays } from '../db/repos/rawAgents.js';
+import { purgeCachedIR } from '../db/repos/agentIR.js';
+import { purgeSweepResults } from '../db/repos/eltSweeps.js';
+import { purgeSourceUsers } from '../db/repos/sourceUsers.js';
 import { listCustomConnectors } from '../connectors/customConnectorInventory.js';
 import { mapPoolCollect } from '../concurrency.js';
 import {
@@ -141,8 +147,16 @@ exploreRouter.get('/agent', async (req, res) => {
   if (!env || !botId) return void res.status(400).json({ error: 'env_and_botId_required' });
 
   try {
-    const token = await clientCredsToken(session.tenantId ?? '', env);
-    const ir = await extractAgent(env, token, { botid: botId, name });
+    // Read the IR the connect-time sweep already landed. It was being re-extracted from
+    // Dataverse on every visit while a complete copy sat in `agentIRCache` — the sweep
+    // exists precisely so this page does not have to go back to the customer's tenant.
+    const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+    const cached = await getCachedIR(appUserId, env, botId);
+    let ir = cached?.ir;
+    if (!ir) {
+      const token = await clientCredsToken(session.tenantId ?? '', env);
+      ir = await extractAgent(env, token, { botid: botId, name });
+    }
 
     if ((req.query.format as string) === 'json') {
       res
@@ -301,4 +315,124 @@ exploreRouter.get('/custom-connectors', async (req, res) => {
 
   const connectors = await listCustomConnectors(session.tenantId, envId);
   res.json({ listed: connectors !== undefined, connectors: connectors ?? [] });
+});
+
+/**
+ * POST /api/explore/elt/sweep   body: { session }
+ *
+ * Manual refresh of the connect-time ELT sweep. The sweep itself fires automatically once
+ * both clouds connect (routes/auth.ts); this exists because agents created after that
+ * moment would otherwise never be seen.
+ *
+ * Returns as soon as the sweep is UNDERWAY, not when it finishes — a tenant-wide read can
+ * take minutes and holding the request open would just time out behind nginx. Poll
+ * `GET /elt/status` for the outcome.
+ */
+exploreRouter.post('/elt/sweep', async (req, res) => {
+  const session = await getSession(String(req.body?.session ?? ''));
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!session.tenantId) return void res.status(400).json({ error: 'microsoft_not_connected' });
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+
+  const tenantId = session.tenantId;
+  if (sweepInFlight(appUserId, tenantId)) {
+    return void res.json({
+      started: false,
+      alreadyRunning: true,
+      last: await lastSweep(appUserId, tenantId),
+    });
+  }
+  // Not awaited: see the doc comment. `runEltSweep` de-duplicates per tenant, and its own
+  // rejection is handled here so a background failure cannot take the process down.
+  void runEltSweep(appUserId, tenantId).catch((e) => {
+    logger.warn(`elt sweep (manual) failed: ${(e as Error).message}`);
+  });
+  res.json({ started: true, alreadyRunning: false, last: await lastSweep(appUserId, tenantId) });
+});
+
+/**
+ * GET /api/explore/elt/status?session=
+ *
+ * What the last sweep did, and whether one is running now. `held` is deliberately included
+ * even when no sweep has run this process: these are unredacted customer payloads, and how
+ * many are held must be answerable without having to trigger anything.
+ */
+exploreRouter.get('/elt/status', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  // Status is per connected tenant: the same operator may have several, and answering with
+  // whichever swept last would report another customer's run as this one's.
+  const tenantId = session.tenantId;
+  res.json({
+    running: tenantId ? sweepInFlight(appUserId, tenantId) : false,
+    last: tenantId ? await lastSweep(appUserId, tenantId) : null,
+    retentionDays: rawRetentionDays(),
+    held: await rawAgentStats(appUserId, tenantId),
+  });
+});
+
+/**
+ * POST /api/explore/elt/purge   body: { session, confirm: 'delete' }
+ *
+ * Delete every landed payload for this tenant. This is the deletion guarantee when the TTL
+ * is off (`RAW_RETENTION_DAYS=0`), and it is what should be run at the end of an engagement.
+ *
+ * Admin-only and explicitly confirmed, because it is irreversible and destroys the source
+ * the transform reads from — purging mid-engagement means re-reading the customer's tenant
+ * from scratch. The confirm field is not ceremony: a purge reachable by a single mistyped
+ * URL is one outage away from being an accident.
+ *
+ * Note for whoever runs it: decommissioning the server is NOT equivalent. Mongo's data sits
+ * in the named `csge-mongo-data` volume and survives `docker compose down` without `-v`.
+ */
+exploreRouter.post('/elt/purge', requireAdmin, async (req, res) => {
+  const session = await getSession(String(req.body?.session ?? ''));
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (req.body?.confirm !== 'delete') {
+    return void res.status(400).json({ error: 'confirm_required', detail: "send confirm: 'delete'" });
+  }
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  // Scoped to the CONNECTED tenant, not the operator. One operator can have several customers
+  // connected, and a purge that deleted by operator would take a customer's data as
+  // collateral for a purge someone ran against a different customer entirely.
+  const tenantId = session.tenantId;
+  try {
+    const before = await rawAgentStats(appUserId, tenantId);
+    // Raw AND everything derived from it. The parsed IR holds the same customer content —
+    // instructions, topics, knowledge sources — so deleting only the payloads would report a
+    // deletion that had not happened. Sequential, not Promise.all: if the second throws, the
+    // response must not claim the first succeeded as part of a completed purge.
+    const raw = await purgeRawAgents(appUserId, tenantId);
+    const ir = await purgeCachedIR(appUserId, tenantId);
+    const sweeps = await purgeSweepResults(appUserId, tenantId);
+    // The user snapshot is customer directory data too — leaving it behind would make the
+    // purge report a deletion it had not fully performed.
+    const users = await purgeSourceUsers(appUserId, tenantId);
+    // Rows written before these collections recorded a tenant. They are NOT deleted by a
+    // tenant-scoped purge, because they could belong to any customer this operator connected.
+    // Surfaced rather than swallowed: a purge that quietly left customer data behind while
+    // reporting success is the failure this whole endpoint exists to avoid.
+    const untagged = raw.untagged + ir.untagged + sweeps.untagged + users.untagged;
+    logger.warn(
+      `elt purge: ${raw.deleted} raw payload(s), ${ir.deleted} cached IR, ` +
+        `${sweeps.deleted} sweep record(s), ${users.deleted} user snapshot(s) deleted for ` +
+        `${appUserId}/${tenantId ?? 'all tenants'}` +
+        (untagged ? ` — ${untagged} untagged row(s) left in place` : ''),
+    );
+    res.json({
+      deleted: raw.deleted + ir.deleted + sweeps.deleted + users.deleted,
+      rawDeleted: raw.deleted,
+      irDeleted: ir.deleted,
+      sweepsDeleted: sweeps.deleted,
+      usersDeleted: users.deleted,
+      untagged,
+      scope: tenantId ? 'tenant' : 'all-tenants',
+      heldBefore: before.total,
+    });
+  } catch (e) {
+    // Unlike the rest of this collection's helpers, a failed purge must NOT read as success:
+    // reporting a deletion that did not happen is the worst possible answer here.
+    res.status(500).json({ error: 'purge_failed', detail: (e as Error).message });
+  }
 });

@@ -1,9 +1,9 @@
 import { createHmac } from 'node:crypto';
-import { Router, type Request, type Response, type NextFunction } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { config } from '../config.js';
 import * as google from '../auth/google.js';
 import * as ms from '../auth/microsoft.js';
-import { requireAuth } from '../auth/appAuth.js';
+import { requireAuth, requireAdmin } from '../auth/appAuth.js';
 import { enforceSessionOwnership } from '../auth/sessionOwnership.js';
 import { engineReachable, projectReachable, resolveDestination } from '../services/gemini.js';
 import { inventory } from '../services/dataverse.js';
@@ -20,6 +20,7 @@ import {
 } from '../sessionStore.js';
 import { upsertAuthSession } from '../db/repos/authSessions.js';
 import { logger } from '../logger.js';
+import { startEltSweepInBackground } from '../services/eltSweep.js';
 
 export const authRouter = Router();
 
@@ -30,13 +31,7 @@ export const authRouter = Router();
  * this restricts it to our own staff. Nothing in the web client calls either route
  * below — this is an internal/ops shortcut, not a customer-facing feature.
  */
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (req.appUser?.role !== 'admin') {
-    res.status(403).json({ error: 'admin_required' });
-    return;
-  }
-  next();
-}
+// `requireAdmin` now lives in auth/appAuth.ts beside `requireAuth` — see there for why.
 
 /**
  * Verify CloudFuze's service account can reach the client's Gemini engine.
@@ -505,6 +500,14 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
         email: gEmail,
         refreshToken: gRefreshToken,
       });
+    }
+
+    // Both clouds are now connected, which is the first moment a tenant-wide sweep is even
+    // possible. Fired and forgotten on purpose: the customer is mid-redirect and must not
+    // wait on it, and `startEltSweepInBackground` swallows its own failures so a bad
+    // environment cannot take down the connect that triggered it. See services/eltSweep.ts.
+    if (connectionOwner && linkedSession?.tenantId) {
+      startEltSweepInBackground(connectionOwner, linkedSession.tenantId, linkedSession.refreshToken);
     }
 
     // Back to the platform screen — now showing "2 of 2 clouds connected".

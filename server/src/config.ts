@@ -80,7 +80,20 @@ const schema = z.object({
    * a property of the row rather than a cleanup job someone remembers to run.
    * See db/repos/rawAgents.ts.
    */
-  RAW_RETENTION_DAYS: z.coerce.number().min(0).max(30).default(0),
+  /**
+   * Retention window for verbatim payloads in `rawAgents`, in days.
+   *
+   * CHANGED for the ELT sweep (see .claude/memory/decisions.md, 2026-08-25). This value no
+   * longer governs whether payloads are CAPTURED — the connect-time sweep lands them
+   * unconditionally because raw is now the system of record the transform reads from, and a
+   * flag nobody set must not silently empty the source. It governs only how long they LIVE.
+   *
+   * 0 means the rows carry no `expiresAt` and Mongo will never delete them. That is a
+   * deliberate option for an engagement longer than the window, and it is the reason
+   * `purgeRawAgents` exists: with the TTL off, deletion has to be an action someone can run
+   * and evidence, not a property of the row. Cap raised 30 -> 365 for the same reason.
+   */
+  RAW_RETENTION_DAYS: z.coerce.number().min(0).max(365).default(90),
 
   /**
    * Directory listings show ACTIVE, LICENSED users only.

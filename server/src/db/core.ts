@@ -81,3 +81,17 @@ export async function closeDb(): Promise<void> {
     connections.delete(name);
   }
 }
+
+/**
+ * What a tenant purge actually removed.
+ *
+ * `untagged` exists because a purge must never overclaim. One operator can connect several
+ * customer tenants, so a purge is scoped to ONE of them — but rows written before these
+ * collections carried a `tenantId` cannot be attributed to a tenant, and deleting them
+ * would take another customer's data with them. They are counted and reported instead of
+ * being silently deleted or silently ignored.
+ */
+export interface PurgeCount {
+  deleted: number;
+  untagged: number;
+}

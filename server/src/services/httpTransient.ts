@@ -92,3 +92,64 @@ export async function fetchTextTransient(
     }
   }
 }
+
+/**
+ * How long a throttling response asked us to wait, in ms, or null if it did not say.
+ *
+ * `Retry-After` is either delta-seconds or an HTTP-date. Guessing shorter gets throttled
+ * again immediately; guessing longer burns window the platform already told us was free, so
+ * the header is always preferred over our own backoff curve when present.
+ */
+export function retryAfterMs(res: { headers: { get(name: string): string | null } }): number | null {
+  const raw = res.headers.get('retry-after');
+  if (!raw) return null;
+  const secs = Number(raw);
+  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
+  const when = Date.parse(raw);
+  return Number.isNaN(when) ? null : Math.max(0, when - Date.now());
+}
+
+/**
+ * A fetch that treats THROTTLING as a wait instruction rather than an error.
+ *
+ * `fetchTextTransient` above retries transport failures only — a 429 reaches the caller as
+ * `{ ok: true, status: 429 }`, which every caller then has to handle itself. Two already do,
+ * by hand, in services/gemini.ts. This is that same logic once, so a third copy does not get
+ * written for Dataverse.
+ *
+ * WHY 429 AND 503 ARE NOT ERRORS. Dataverse enforces service protection limits per user, per
+ * environment, over a sliding window, and answers 429 with `Retry-After` when you cross one.
+ * The request is not wrong and would succeed if repeated. Throwing on it — which is what the
+ * Dataverse read path did — turns "wait two seconds" into a failed agent, and in a paged
+ * listing it also discards every page already fetched.
+ *
+ * Any OTHER non-2xx is returned as-is, unretried: a 400 from a bad $select or a 404 from a
+ * wrong id is a definitive answer, and retrying only adds latency to a failure that will
+ * repeat identically.
+ */
+export async function fetchWithThrottleBackoff(
+  url: string,
+  init: RequestInit,
+  {
+    retries = 4,
+    baseMs = 500,
+    maxWaitMs = 60_000,
+    label = 'http',
+  }: { retries?: number; baseMs?: number; maxWaitMs?: number; label?: string } = {},
+): Promise<Response> {
+  let attempt = 0;
+  for (;;) {
+    const res = await fetch(url, init);
+    if (res.status !== 429 && res.status !== 503) return res;
+    if (attempt >= retries) {
+      logger.warn({ label, attempt, status: res.status }, 'throttle-backoff: giving up');
+      return res;
+    }
+    // Capped: a Retry-After of an hour would otherwise hang a migration on a promise nobody
+    // can cancel. Past the cap we would rather surface the throttle than silently stall.
+    const wait = Math.min(retryAfterMs(res) ?? baseMs * 2 ** attempt, maxWaitMs);
+    logger.warn({ label, attempt, status: res.status, wait }, 'throttle-backoff: waiting');
+    await sleep(wait);
+    attempt++;
+  }
+}

@@ -6,6 +6,7 @@ import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClas
 import { resolveConnectorId, connectionAuthModeFrom } from './connectorRef.js';
 import { parseToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef, parseTopicConnectorActions } from './toolPayload.js';
 import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
+import { fetchWithThrottleBackoff } from './httpTransient.js';
 
 /**
  * Copilot Studio extraction: reads an agent's complete definition from the
@@ -428,9 +429,14 @@ export async function readAgentPermissions(
 }
 
 async function dvGet<T>(url: string, token: string, path: string): Promise<T> {
-  const res = await fetch(API(url, path), {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-  });
+  // Throttling is a wait instruction, not a failure — see fetchWithThrottleBackoff. Before
+  // this, a 429 from Dataverse's service protection limits threw exactly like a 400 from a
+  // bad $select, so a burst of reads failed agents that would have succeeded a second later.
+  const res = await fetchWithThrottleBackoff(
+    API(url, path),
+    { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
+    { label: `dataverse GET ${path.split('?')[0]}` },
+  );
   if (!res.ok) {
     // Surface Dataverse's own OData error message (e.g. "Could not find a
     // property named 'description' on type...") instead of a bare status
@@ -585,7 +591,11 @@ async function dvGetAll<T>(url: string, token: string, path: string): Promise<T[
   let next: string | null = API(url, path);
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json', Prefer: 'odata.maxpagesize=500' };
   while (next) {
-    const res = await fetch(next, { headers });
+    const res = await fetchWithThrottleBackoff(next, { headers }, {
+      // Budget is per PAGE, not per listing: a tenant with many pages must not exhaust its
+      // retries on unrelated blips spread across them. Same rule as gemini.ts's licence read.
+      label: `dataverse GET ${path.split('?')[0]} (paged)`,
+    });
     if (!res.ok) {
       // Same reasoning as dvGet: a bare status hides which $select Dataverse rejected.
       let detail = '';
@@ -656,24 +666,69 @@ export function getAiPromptMap(url: string, token: string): Promise<Map<string, 
 }
 
 /** List all active agents (bots) in the environment (includes lightweight owner/access). */
+/**
+ * Resolve many owners in as few requests as possible.
+ *
+ * Replaces a per-owner GET issued sequentially inside the listing loop and capped at 40
+ * distinct owners. Both halves were wrong: past the cap `ownerEmail` came back undefined
+ * with nothing saying so, and below it a tenant with 40 owners paid 40 serial round trips
+ * against the same service-protection budget the listing was already spending.
+ *
+ * Chunked `or` rather than one giant filter — Dataverse rejects an over-long URL, and a
+ * rejected filter would lose every owner in it rather than the one that broke it.
+ */
+const OWNER_CHUNK = 40;
+
+async function resolveOwnersBulk(
+  url: string,
+  token: string,
+  ids: string[],
+): Promise<Map<string, { email?: string; displayName?: string }>> {
+  const out = new Map<string, { email?: string; displayName?: string }>();
+  for (let i = 0; i < ids.length; i += OWNER_CHUNK) {
+    const chunk = ids.slice(i, i + OWNER_CHUNK);
+    const filter = chunk.map((id) => `systemuserid eq ${id}`).join(' or ');
+    try {
+      const rows = await dvGetAll<{
+        systemuserid: string;
+        internalemailaddress?: string;
+        fullname?: string;
+      }>(url, token, `systemusers?$select=systemuserid,internalemailaddress,fullname&$filter=${filter}`);
+      for (const r of rows) {
+        out.set(r.systemuserid.toLowerCase(), {
+          email: r.internalemailaddress ?? undefined,
+          displayName: r.fullname ?? undefined,
+        });
+      }
+    } catch (e) {
+      // An owner we could not resolve keeps the FormattedValue display name the bots listing
+      // already carried, so the row degrades to "named but no email" rather than vanishing.
+      // A team-owned bot lands here too: teams are not in systemusers.
+      logger.warn(`resolveOwnersBulk chunk failed: ${(e as Error).message}`);
+    }
+  }
+  return out;
+}
+
 export async function listBots(url: string, token: string): Promise<BotSummary[]> {
-  const json = await dvGet<{
-    value: {
-      botid: string;
-      name: string;
-      _ownerid_value?: string;
-      accesscontrolpolicy?: number;
-      '_ownerid_value@OData.Community.Display.V1.FormattedValue'?: string;
-    }[];
-  }>(
+  // Paged, not a single GET. Dataverse caps a page and hands back @odata.nextLink; ignoring
+  // it dropped every agent past the cap with no error at all — the listing simply came back
+  // short, and a migration would report success having never seen them. Same failure the
+  // component read already fixed inside extractAgent.
+  const rows = await dvGetAll<{
+    botid: string;
+    name: string;
+    _ownerid_value?: string;
+    accesscontrolpolicy?: number;
+    '_ownerid_value@OData.Community.Display.V1.FormattedValue'?: string;
+  }>(url, token, 'bots?$select=name,botid,_ownerid_value,accesscontrolpolicy&$filter=statecode eq 0');
+  const out: BotSummary[] = [];
+  // One bulk pass over the DISTINCT owners before the loop, instead of a call per row.
+  const ownerCache = await resolveOwnersBulk(
     url,
     token,
-    'bots?$select=name,botid,_ownerid_value,accesscontrolpolicy&$filter=statecode eq 0',
+    [...new Set(rows.map((b) => b._ownerid_value).filter((v): v is string => Boolean(v)))],
   );
-  const rows = json.value ?? [];
-  const out: BotSummary[] = [];
-  // Resolve a small unique set of owners (cap lookups to keep list snappy).
-  const ownerCache = new Map<string, { email?: string; displayName?: string }>();
   for (const b of rows) {
     const policy = decodeChatPolicy(b.accesscontrolpolicy);
     const accessLabel =
@@ -688,17 +743,7 @@ export async function listBots(url: string, token: string): Promise<BotSummary[]
     let ownerDisplayName =
       b['_ownerid_value@OData.Community.Display.V1.FormattedValue'] || undefined;
     if (b._ownerid_value) {
-      let cached = ownerCache.get(b._ownerid_value);
-      if (!cached && ownerCache.size < 40) {
-        try {
-          const resolved = await resolvePrincipalDisplay(url, token, b._ownerid_value, 'systemuser');
-          cached = { email: resolved.email, displayName: resolved.displayName };
-          ownerCache.set(b._ownerid_value, cached);
-        } catch {
-          ownerCache.set(b._ownerid_value, {});
-          cached = {};
-        }
-      }
+      const cached = ownerCache.get(b._ownerid_value.toLowerCase());
       ownerEmail = cached?.email;
       ownerDisplayName = cached?.displayName || ownerDisplayName;
     }
