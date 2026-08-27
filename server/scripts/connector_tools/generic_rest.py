@@ -162,6 +162,17 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
             import urllib.parse
             import urllib.request
 
+            # An aad-token bound operation mints an APP-ONLY token (client_credentials),
+            # which is the same identity no matter who is asking. On a per-user connector
+            # that would quietly run every caller as the application -- the tool would
+            # succeed while ignoring the very thing perUser exists to preserve. Refuse.
+            if conn.get("perUser"):
+                raise RuntimeError(
+                    (conn.get("name") or "this tool")
+                    + ": ran under each user's own credentials in Copilot Studio, but this"
+                    " operation authenticates as the application, which cannot act as the"
+                    " caller. See the migration report's toolCredentials note."
+                )
             resource = op.get("aadResource") or ""
             for c in ctx_required:
                 resource = resource.replace("{" + c + "}", _context(c, ctx_values))
