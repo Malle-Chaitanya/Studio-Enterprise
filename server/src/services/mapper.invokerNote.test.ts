@@ -33,19 +33,48 @@ const base = (tools: AgentIR['agentTools']): AgentIR => ({
 const note = (m: Awaited<ReturnType<typeof mapAgent>>) =>
   m.fidelityNotes.find((n) => n.component === 'toolCredentials');
 
+const notes = (m: Awaited<ReturnType<typeof mapAgent>>) =>
+  m.fidelityNotes.filter((n) => n.component === 'toolCredentials');
+
 describe('per-user tool credentials are reported, not silently shared', () => {
-  it('flags every invoker tool and names them', async () => {
+  it('tells a user with a delegated connector what THEY must do', async () => {
     const m = await mapAgent(base([
-      { name: 'Office 365 Outlook - Send an email (V2)', displayName: 'SendEmail', kind: 'connector', connectionAuthMode: 'invoker' },
-      { name: 'Get CRM objects from Hubspot - Get deals', displayName: 'GetDeals', kind: 'connector', connectionAuthMode: 'invoker' },
+      { name: 'Office 365 Outlook - Send an email (V2)', displayName: 'SendEmail', kind: 'connector', connectorId: 'shared_office365', connectionAuthMode: 'invoker' },
     ] as AgentIR['agentTools']));
-    const n = note(m);
-    expect(n?.status).toBe('needs-review');
+    const n = notes(m).find((x) => x.status === 'needs-review');
     // Naming the tools is the difference between an actionable note and "something changed".
     expect(n?.detail).toContain('SendEmail');
-    expect(n?.detail).toContain('GetDeals');
-    // The consequence has to be stated in terms the customer can act on.
-    expect(n?.detail).toMatch(/one mailbox|tenant-wide/);
+    // The remedy, in terms the customer can act on — and the guarantee that matters:
+    // it refuses rather than quietly using someone else's account.
+    expect(n?.detail).toMatch(/connect their own account/);
+    expect(n?.detail).toMatch(/refuses/);
+  });
+
+  it("reports a connector with no per-user sign-in as LOST, not as review", async () => {
+    const m = await mapAgent(base([
+      { name: 'Microsoft Dataverse - List rows', displayName: 'GetClientProfile', kind: 'connector', connectorId: 'shared_commondataserviceforapps', connectionAuthMode: 'invoker' },
+    ] as AgentIR['agentTools']));
+    const n = notes(m).find((x) => x.component === 'toolCredentials');
+    // 'lost' and 'needs-review' are different promises. This one has no remedy at all, and
+    // filing it as reviewable would imply a setup step that does not exist.
+    expect(n?.status).toBe('lost');
+    expect(n?.detail).toContain('GetClientProfile');
+    expect(n?.detail).toMatch(/no per-user sign-in/);
+  });
+
+  it('separates the two when one agent has both kinds', async () => {
+    const m = await mapAgent(base([
+      { name: 'Office 365 Outlook - Send an email (V2)', displayName: 'SendEmail', kind: 'connector', connectorId: 'shared_office365', connectionAuthMode: 'invoker' },
+      { name: 'Microsoft Dataverse - List rows', displayName: 'GetClientProfile', kind: 'connector', connectorId: 'shared_commondataserviceforapps', connectionAuthMode: 'invoker' },
+    ] as AgentIR['agentTools']));
+    const found = notes(m).filter((x) => x.component === 'toolCredentials');
+    expect(found).toHaveLength(2);
+    // Each tool appears under the verdict that is true FOR IT. Merging them would make the
+    // fixable one look permanent, or the permanent one look like a pending setup step.
+    expect(found.find((x) => x.status === 'needs-review')?.detail).toContain('SendEmail');
+    expect(found.find((x) => x.status === 'needs-review')?.detail).not.toContain('GetClientProfile');
+    expect(found.find((x) => x.status === 'lost')?.detail).toContain('GetClientProfile');
+    expect(found.find((x) => x.status === 'lost')?.detail).not.toContain('SendEmail');
   });
 
   it('says nothing when every tool was already a shared maker connection', async () => {

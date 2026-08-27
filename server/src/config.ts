@@ -19,6 +19,15 @@ const schema = z.object({
    * origin fails, including the one that already worked.
    */
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
+  /**
+   * This server's own public origin — where a provider's OAuth redirect comes BACK to.
+   *
+   * Distinct from WEB_ORIGIN: the per-user connector consent callback must land on the
+   * SERVER, because exchanging the code needs the client secret, which the browser must
+   * never hold. Behind a proxy or a tunnel this is the external URL, not the listen port,
+   * and it must match the redirect URI registered with the provider exactly.
+   */
+  SERVER_ORIGIN: z.string().default('http://localhost:8080'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
   // ── Persistence (MongoDB) ──────────────────────────────────────────────────
