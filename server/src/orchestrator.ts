@@ -897,7 +897,23 @@ async function execute(
   // secret that cannot be copied simply is not found later, which is the same outcome as
   // before minus the silent discard.
   const destProject = effectiveGeminiProject(session.geminiProject);
-  const durableConnectorRecords = await listConnectorCredentials(appUserId).catch(() => []);
+  // ONE record per connector. The same connector can hold a record in several projects —
+  // re-entering a credential while a different project is connected writes a second one —
+  // and the maps built below are keyed by connector id, so without a decision here whichever
+  // row happened to come back last would win silently. Prefer the deploy project's own
+  // record, then the most recently saved: the newest is what the customer last typed.
+  const allConnectorRecords = await listConnectorCredentials(appUserId).catch(() => []);
+  const bestByConnector = new Map<string, (typeof allConnectorRecords)[number]>();
+  for (const rec of allConnectorRecords) {
+    const cur = bestByConnector.get(rec.connectorId);
+    if (!cur) { bestByConnector.set(rec.connectorId, rec); continue; }
+    const recWins =
+      (rec.project === destProject && cur.project !== destProject)
+      || (rec.project === destProject === (cur.project === destProject)
+          && +new Date(rec.updatedAt ?? 0) > +new Date(cur.updatedAt ?? 0));
+    if (recWins) bestByConnector.set(rec.connectorId, rec);
+  }
+  const durableConnectorRecords = [...bestByConnector.values()];
   if (destProject) {
     const strays = durableConnectorRecords.filter((c) => c.project && c.project !== destProject);
     if (strays.length) {
