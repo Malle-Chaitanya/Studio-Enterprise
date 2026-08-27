@@ -116,7 +116,11 @@ def emit(obj):
 # connector module: `_secret` is the ONE place a credential is read, and every connector
 # already goes through it. Adding a parameter to eleven tool modules to carry the same fact
 # would be eleven chances for one of them to forget.
-_CALLER: "contextvars.ContextVar[str]" = contextvars.ContextVar("caller_user_id", default="")
+# NO module-level ContextVar here, deliberately. `_secret` below is closed over by EVERY
+# connector tool, and the tools are what Vertex pickles — so anything `_secret` can reach ends
+# up in the pickle graph whether or not the caller callback is wired. A ContextVar there made
+# every ADK deploy fail with "Failed to serialize agent engine" and silently fall back to
+# low-code create. Reproduced: cloudpickle.dumps -> TypeError: cannot pickle ContextVar.
 
 
 def _caller_user_id(tool_context) -> str:  # noqa: ANN001
@@ -155,11 +159,12 @@ def _capture_caller(tool, args, tool_context):  # noqa: ANN001
     right and only its transport is wrong; re-wiring needs a caller channel that survives
     pickling, verified against a real deploy rather than reasoned about.
 
-    Until then `_CALLER` stays empty, so per-user tools fail closed. That is the same
-    behaviour as today (nothing writes per-user secrets yet) and it is the safe direction.
+    Until a pickle-safe transport exists, `_secret` fails per-user tools closed outright.
+    That is the same behaviour as today (nothing writes per-user secrets yet) and it is the
+    safe direction.
     """
     try:
-        _CALLER.set(_caller_user_id(tool_context))
+        _ = _caller_user_id(tool_context)   # transport TBD — see this function's docstring
     except Exception:  # noqa: BLE001
         # Never break the tool call. `_secret` fails loudly on an unknown caller anyway,
         # which is the behaviour we want -- silence here must not become a shared-credential
@@ -238,14 +243,15 @@ def _build_live_connector_tool(conn: dict, project: str):
         # to prevent, and invisible because the call succeeds. Failing here surfaces as an
         # error the user can act on, which is the honest outcome.
         if per_user:
-            caller = _CALLER.get()
-            if not caller:
-                raise RuntimeError(
-                    f"{conn_name}: this tool runs under each user's own credentials, but the "
-                    "caller could not be identified, so it cannot run. This happens when the "
-                    "agent is invoked without a user session (for example on a schedule)."
-                )
-            secret_id = f"{secret_id}-u-{_secret_safe(caller.lower())}"
+            # Fails closed until a pickle-safe caller channel exists (see _capture_caller).
+            # NOT softened to the shared credential: that would make every user of this tool
+            # act as one account, which is the collapse per-user credentials exist to
+            # prevent, and it would succeed silently while doing it.
+            raise RuntimeError(
+                f"{conn_name}: this tool ran under each user's own credentials in Copilot "
+                "Studio, and per-user credentials are not available yet, so it cannot run "
+                "for anyone. See the migration report's toolCredentials note."
+            )
 
         creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
         creds.refresh(_AuthRequest())
@@ -258,14 +264,6 @@ def _build_live_connector_tool(conn: dict, project: str):
             with urllib.request.urlopen(req, timeout=20) as resp:
                 payload = _json.loads(resp.read().decode("utf-8"))
         except Exception as e:  # noqa: BLE001
-            if per_user:
-                # Name the person and the remedy. "404 on secret xyz-u-erik-filefuze-co" is
-                # true and useless to the one who has to act on it.
-                raise RuntimeError(
-                    f"{conn_name}: {_CALLER.get() or 'this user'} has not connected their "
-                    f"{conn_name} account yet, so this tool cannot run for them. Connect it "
-                    "once and the agent will act on their behalf."
-                ) from e
             raise
         return base64.b64decode(payload["payload"]["data"]).decode("utf-8")
 
