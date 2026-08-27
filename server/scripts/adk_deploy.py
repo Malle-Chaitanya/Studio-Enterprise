@@ -142,7 +142,22 @@ def _caller_user_id(tool_context) -> str:  # noqa: ANN001
 
 
 def _capture_caller(tool, args, tool_context):  # noqa: ANN001
-    """before_tool_callback: record the caller so `_secret` can pick their credential."""
+    """before_tool_callback: record the caller so `_secret` can pick their credential.
+
+    NOT WIRED IN. Attaching this broke deployment: Vertex pickles the agent, `adk_deploy.py`
+    runs as __main__ so cloudpickle serializes callbacks BY VALUE, and the module-level
+    ContextVar this closes over cannot be pickled — every ADK deploy then failed with
+    "Failed to serialize agent engine" and silently fell back to low-code create.
+
+    The obvious workaround is wrong: a plain module-level dict pickles fine and would let
+    concurrent calls in one container read each other's identity, which is precisely the
+    cross-user leak per-user credentials exist to prevent. Kept here because the mechanism is
+    right and only its transport is wrong; re-wiring needs a caller channel that survives
+    pickling, verified against a real deploy rather than reasoned about.
+
+    Until then `_CALLER` stays empty, so per-user tools fail closed. That is the same
+    behaviour as today (nothing writes per-user secrets yet) and it is the safe direction.
+    """
     try:
         _CALLER.set(_caller_user_id(tool_context))
     except Exception:  # noqa: BLE001
@@ -914,11 +929,7 @@ def main():
             # Same tool-call record as the root. Once the root transfers to a topic, the
             # topic is what calls the tools — without this, every tool call made inside a
             # topic is invisible and the agent looks like it never used its connectors.
-            sub_agents.append(Agent(
-                **sa_kwargs,
-                after_tool_callback=_record_tool_call,
-                before_tool_callback=_capture_caller,
-            ))
+            sub_agents.append(Agent(**sa_kwargs, after_tool_callback=_record_tool_call))
         except TypeError:
             sub_agents.append(Agent(**sa_kwargs))
         except Exception as e:  # noqa: BLE001
@@ -943,9 +954,6 @@ def main():
             tools=tools,
             global_instruction=naming_rule,
             after_tool_callback=_record_tool_call,
-            # Must run BEFORE the tool: `_secret` needs the caller to pick a per-user
-            # credential, and by after_tool_callback the call has already happened.
-            before_tool_callback=_capture_caller,
             **({"sub_agents": sub_agents} if sub_agents else {}),
         )
     except TypeError:
