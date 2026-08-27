@@ -1523,7 +1523,7 @@ migrateRouter.post('/connector-consent/start', async (req, res) => {
     // to be built at all. Read only the fields the templates can reference — never the
     // whole record — and never log any of the values.
     const fields: Record<string, string> = {};
-    for (const field of ['client_id', 'tenant_id', 'subdomain', 'base_url']) {
+    for (const field of ['client_id', 'tenant_id', 'subdomain', 'base_url', 'org_url']) {
       const secretId = record.secretIds[field];
       if (!secretId) continue;
       const got = await getEntraSecret(
@@ -1531,6 +1531,25 @@ migrateRouter.post('/connector-consent/start', async (req, res) => {
         { optional: true },
       );
       if (got.ok && got.plaintext) fields[field] = got.plaintext;
+    }
+
+    // {org_url} is Dataverse's delegated RESOURCE, and it is per environment — Entra issues
+    // tokens per resource, so one consent cannot span two environments. It is also not stored
+    // as a secret for shared_commondataserviceforapps (the migration already knows which
+    // environment it extracted from), so it comes from the selection rather than the vault.
+    if (!fields.org_url) {
+      const envUrls = [...new Set((session.agentSelection ?? []).map((a) => a.envUrl).filter(Boolean))];
+      const asked = (body as { orgUrl?: string }).orgUrl?.trim();
+      if (asked) fields.org_url = asked;
+      else if (envUrls.length === 1) fields.org_url = envUrls[0];
+      else if (envUrls.length > 1) {
+        // Guessing would send the user to consent for ONE environment and then fail on the
+        // other with an error that looks like a permissions problem. Ask instead.
+        return void res.status(400).json({
+          error: 'org_url_ambiguous',
+          detail: `This migration covers ${envUrls.length} environments and a per-user Dataverse connection is granted per environment. Name which one to connect.`,
+        });
+      }
     }
 
     const { authorizeUrl } = startUserConsent({

@@ -358,6 +358,15 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     authKind: 'oauth2-client-credentials',
     tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
     scope: '{org_url}/.default',
+    // Same Web API as shared_commondataserviceforapps, so the same delegated scope applies —
+    // see the fuller note there. Omitting it here would report an identical `invoker` tool as
+    // permanently lost on one connector id and fixable on the other, purely by which id the
+    // source agent happened to declare.
+    userAuth: {
+      authorizeUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize',
+      tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+      scope: 'openid email offline_access {org_url}/user_impersonation',
+    },
   },
 
   {
@@ -386,6 +395,26 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     authKind: 'oauth2-client-credentials',
     tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
     scope: '{org_url}/.default',
+    // Delegated equivalent, used when the source tool was Copilot `invoker` — which for
+    // Dataverse is the norm, not the exception (194 of 212 tools in the test tenant).
+    //
+    // `user_impersonation` is Dataverse's ONLY delegated scope: it means "act as this signed-in
+    // user", and the user's own security roles then decide what they can read. That is exactly
+    // what Copilot did, and it is why an app-only token cannot substitute — app-only sees every
+    // record in the environment regardless of who asked.
+    //
+    // The resource is per-ENVIRONMENT ({org_url}), so this scope is a template resolved at
+    // consent time from the environment being migrated. A tenant with two environments needs
+    // two consents; one token cannot span them, because Entra issues tokens per resource.
+    //
+    // NOTE: this is the CUSTOMER's own connector app, not our interactive sign-in. Adding a
+    // delegated Dynamics scope to the sign-in is what triggers AADSTS65001 and is still
+    // forbidden — see .claude/rules/security-rules.md. The two apps must stay separate.
+    userAuth: {
+      authorizeUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize',
+      tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+      scope: 'openid email offline_access {org_url}/user_impersonation',
+    },
   },
 
   {

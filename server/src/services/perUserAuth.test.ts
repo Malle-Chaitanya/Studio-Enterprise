@@ -8,6 +8,26 @@ import { applyPerUserAuth, perUserCredentialFields, supportsUserAuth } from './u
  * sees it, which is why it is pinned here.
  */
 describe('applyPerUserAuth', () => {
+  it('treats Dataverse as delegable — user_impersonation is what invoker meant', () => {
+    // Dataverse is 194 of the 212 invoker tools in the test tenant, so whether it is
+    // delegable decides whether per-user is a feature or a footnote. user_impersonation
+    // means "act as this signed-in user", which is precisely what Copilot's invoker did.
+    const out = applyPerUserAuth({ id: 'shared_commondataserviceforapps', authKind: 'oauth2-client-credentials', scope: '{org_url}/.default' });
+    expect(out.perUserFields).toEqual(['refresh_token']);
+    expect(out.authKind).toBe('oauth2-refresh-token');
+    expect(out.scope).toContain('user_impersonation');
+    // Left as a TEMPLATE: the resource is per environment, resolved at consent/call time.
+    expect(out.scope).toContain('{org_url}');
+  });
+
+  it('reports the two Dataverse connector ids identically', () => {
+    // Same Web API behind two ids. Reporting one as fixable and the other as permanently
+    // lost, purely by which id the source agent declared, would be arbitrary.
+    for (const id of ['shared_commondataserviceforapps', 'shared_dynamicscrmonline']) {
+      expect(perUserCredentialFields(id)).toEqual(['refresh_token']);
+    }
+  });
+
   it('switches a delegable connector from app auth to the caller', () => {
     const out = applyPerUserAuth({
       id: 'shared_office365',
@@ -23,8 +43,10 @@ describe('applyPerUserAuth', () => {
   });
 
   it('marks a connector with no delegated flow per-user with NO fields, so it fails closed', () => {
+    // A Copilot CUSTOM connector: not in the registry at all, which is the common shape for
+    // the ones a customer built themselves (the live Sales desk agent has four).
     const out = applyPerUserAuth({
-      id: 'shared_commondataserviceforapps',
+      id: 'shared_get-20crm-20objects-20from-20hubspot',
       authKind: 'oauth2-client-credentials',
     });
     expect(out.perUser).toBe(true);
@@ -35,7 +57,7 @@ describe('applyPerUserAuth', () => {
   });
 
   it('never leaves a per-user connector silently shared', () => {
-    for (const id of ['shared_office365', 'shared_commondataserviceforapps', 'nonexistent_x']) {
+    for (const id of ['shared_office365', 'shared_get-20crm-20objects-20from-20hubspot', 'nonexistent_x']) {
       expect(applyPerUserAuth({ id }).perUser).toBe(true);
     }
   });
@@ -49,7 +71,7 @@ describe('applyPerUserAuth', () => {
   });
 
   it('reports no delegated fields exactly when there is no user-auth flow', () => {
-    for (const id of ['shared_office365', 'shared_commondataserviceforapps', 'nope']) {
+    for (const id of ['shared_office365', 'shared_commondataserviceforapps', 'shared_pipedrive', 'nope']) {
       expect(perUserCredentialFields(id).length > 0).toBe(supportsUserAuth(id));
     }
   });

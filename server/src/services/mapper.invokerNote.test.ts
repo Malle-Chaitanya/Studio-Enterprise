@@ -52,7 +52,7 @@ describe('per-user tool credentials are reported, not silently shared', () => {
 
   it("reports a connector with no per-user sign-in as LOST, not as review", async () => {
     const m = await mapAgent(base([
-      { name: 'Microsoft Dataverse - List rows', displayName: 'GetClientProfile', kind: 'connector', connectorId: 'shared_commondataserviceforapps', connectionAuthMode: 'invoker' },
+      { name: 'Get CRM objects from Hubspot - Get companies', displayName: 'GetClientProfile', kind: 'connector', connectorId: 'shared_get-20crm-20objects-20from-20hubspot', connectionAuthMode: 'invoker' },
     ] as AgentIR['agentTools']));
     const n = notes(m).find((x) => x.component === 'toolCredentials');
     // 'lost' and 'needs-review' are different promises. This one has no remedy at all, and
@@ -65,7 +65,7 @@ describe('per-user tool credentials are reported, not silently shared', () => {
   it('separates the two when one agent has both kinds', async () => {
     const m = await mapAgent(base([
       { name: 'Office 365 Outlook - Send an email (V2)', displayName: 'SendEmail', kind: 'connector', connectorId: 'shared_office365', connectionAuthMode: 'invoker' },
-      { name: 'Microsoft Dataverse - List rows', displayName: 'GetClientProfile', kind: 'connector', connectorId: 'shared_commondataserviceforapps', connectionAuthMode: 'invoker' },
+      { name: 'Get CRM objects from Hubspot - Get companies', displayName: 'GetClientProfile', kind: 'connector', connectorId: 'shared_get-20crm-20objects-20from-20hubspot', connectionAuthMode: 'invoker' },
     ] as AgentIR['agentTools']));
     const found = notes(m).filter((x) => x.component === 'toolCredentials');
     expect(found).toHaveLength(2);

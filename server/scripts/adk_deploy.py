@@ -477,6 +477,12 @@ def _build_live_connector_tool(conn: dict, project: str):
                 "client_id": _secret("client_id"),
                 "client_secret": _secret("client_secret"),
             }
+            # Entra issues access tokens PER RESOURCE, so a refresh token consented for both
+            # Graph and Dataverse mints only one of them per exchange. Omitting the scope
+            # lets the provider choose, which fails later as a 401 against the other
+            # resource -- indistinguishable from a permissions problem. Name it.
+            if scope:
+                form["scope"] = fill(scope)
         else:
             raise RuntimeError(f"unsupported authKind for token minting: {auth_kind}")
 

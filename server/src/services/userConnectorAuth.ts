@@ -24,6 +24,19 @@ import { logger } from '../logger.js';
  * "convenience" that copied one user's token to another would hand out their mailbox.
  */
 
+/**
+ * Credential fields that are safe to hold in memory between start and callback: they are
+ * addresses and identifiers, not secrets. Anything not on this list — client_secret above
+ * all — is re-read from Secret Manager at callback time instead of being kept around.
+ */
+const TEMPLATE_FIELDS = ['org_url', 'tenant_id', 'subdomain', 'base_url'] as const;
+
+function nonSecret(fields: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of TEMPLATE_FIELDS) if (fields[k]) out[k] = fields[k];
+  return out;
+}
+
 /** Minutes a pending consent may sit unfinished before its state is refused. */
 const STATE_TTL_MS = 10 * 60_000;
 
@@ -38,6 +51,16 @@ interface PendingConsent {
   redirectUri: string;
   /** Google identity to impersonate when reading/writing this user's secret. */
   saSubject?: string;
+  /**
+   * NON-SECRET template values resolved at start time (org url, tenant id, subdomain).
+   *
+   * Carried because the callback must rebuild the SAME scope string the user consented to —
+   * providers reject an exchange whose scope differs — and some of these are not stored as
+   * secrets at all: Dataverse's `{org_url}` comes from the environment being migrated, not
+   * from anything an admin typed. Secrets are deliberately NOT kept here; the callback
+   * re-reads client_id/client_secret from Secret Manager each time.
+   */
+  templateFields?: Record<string, string>;
   at: number;
 }
 
@@ -120,6 +143,9 @@ export function applyPerUserAuth<T extends {
     perUser: true,
     perUserFields: fields,
     authKind: 'oauth2-refresh-token',
+    // Left as a TEMPLATE on purpose: the container resolves {placeholders} against its own
+    // stored credentials at call time (see _fill in adk_deploy.py), so a rotated org url
+    // needs no redeploy.
     scope: def.userAuth.scope,
     tokenUrlTemplate: def.userAuth.tokenUrlTemplate,
   };
@@ -164,6 +190,7 @@ export function startUserConsent(args: StartConsentArgs): StartConsentResult {
     project: args.project,
     redirectUri: args.redirectUri,
     saSubject: args.saSubject,
+    templateFields: nonSecret(args.fields),
     at: now,
   });
 
@@ -171,7 +198,11 @@ export function startUserConsent(args: StartConsentArgs): StartConsentResult {
   url.searchParams.set('client_id', clientId);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('redirect_uri', args.redirectUri);
-  url.searchParams.set('scope', def.userAuth.scope);
+  // The scope is a TEMPLATE too, not just the authorize URL. Dataverse's delegated scope is
+  // `{org_url}/user_impersonation`, and sending it unfilled asks the provider to consent to a
+  // resource literally named "{org_url}" — which fails at the provider with an error nobody
+  // can trace back to here.
+  url.searchParams.set('scope', fill(def.userAuth.scope));
   url.searchParams.set('state', state);
   // Microsoft returns a refresh token only when the consent is explicitly re-prompted for
   // offline access on the first grant; asking for consent is the reliable form across
@@ -213,6 +244,7 @@ function idTokenEmail(idToken?: string): string {
 export function peekUserConsent(state: string): {
   appUserId: string; tenantId: string; userKey: string; connectorId: string;
   ownerScope: string; project: string; saSubject?: string;
+  templateFields: Record<string, string>;
 } | null {
   const p = pending.get(state);
   if (!p || Date.now() - p.at > STATE_TTL_MS) return null;
@@ -220,6 +252,7 @@ export function peekUserConsent(state: string): {
     appUserId: p.appUserId, tenantId: p.tenantId, userKey: p.userKey,
     connectorId: p.connectorId, ownerScope: p.ownerScope, project: p.project,
     saSubject: p.saSubject,
+    templateFields: { ...(p.templateFields ?? {}) },
   };
 }
 
@@ -260,8 +293,12 @@ export async function completeUserConsent(
   const def = REGISTRY_BY_ID.get(p.connectorId);
   if (!def?.userAuth) throw new Error(`${p.connectorId} has no per-user authorization flow`);
 
+  // The values resolved at START time win for template fields: the scope must come out
+  // byte-identical to what the user consented to, and re-deriving it here could differ (a
+  // second environment selected since, say) in a way the provider would simply reject.
+  const merged = { ...fields, ...(p.templateFields ?? {}) };
   const fill = (tpl: string): string =>
-    tpl.replace(/\{(\w+)\}/g, (_m, k: string) => fields[k] ?? `{${k}}`);
+    tpl.replace(/\{(\w+)\}/g, (_m, k: string) => merged[k] ?? `{${k}}`);
 
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
@@ -269,7 +306,9 @@ export async function completeUserConsent(
     redirect_uri: p.redirectUri,
     client_id: fields.client_id ?? '',
     client_secret: fields.client_secret ?? '',
-    scope: def.userAuth.scope,
+    // Filled, for the same reason as the authorize URL — and it must resolve to the SAME
+    // string the user consented to, or the provider rejects the exchange.
+    scope: fill(def.userAuth.scope),
   });
 
   const res = await fetch(fill(def.userAuth.tokenUrlTemplate), {

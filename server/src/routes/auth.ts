@@ -700,6 +700,8 @@ async function connectorConsentCallback(req: Request, res: Response): Promise<vo
     // it is never logged, returned, or put in the popup payload.
     const fields: Record<string, string> = {};
     for (const field of ['client_id', 'client_secret', 'tenant_id', 'subdomain', 'base_url']) {
+      // org_url is deliberately absent: it is carried on the pending consent from start
+      // time (templateFields) so the exchange rebuilds the exact scope the user approved.
       const secretId = record.secretIds[field];
       if (!secretId) continue;
       const got = await getEntraSecret(

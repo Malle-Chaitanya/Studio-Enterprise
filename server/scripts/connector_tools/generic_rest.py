@@ -151,42 +151,77 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
         def _aad_header() -> str:
             """Entra token for a named resource, from the customer's app registration.
 
-            Dataverse is app-only: the resource is the customer's own org URL, which the
-            server passes as context rather than asking an admin to paste a URL we already
-            hold. The registry's generic client_credentials path cannot be reused here
-            because it resolves the scope from a stored `org_url` secret that, by design,
-            does not exist for this connector.
+            The resource is the customer's own org URL, which the server passes as context
+            rather than asking an admin to paste a URL we already hold. The registry's
+            generic path cannot be reused here because it resolves the scope from a stored
+            `org_url` secret that, by design, does not exist for this connector.
+
+            Mints app-only OR as the calling user, depending on `perUser` -- see the note
+            below on why substituting one for the other is not a safe simplification.
             """
             import json as _json
             import time
             import urllib.parse
             import urllib.request
 
-            # An aad-token bound operation mints an APP-ONLY token (client_credentials),
-            # which is the same identity no matter who is asking. On a per-user connector
-            # that would quietly run every caller as the application -- the tool would
-            # succeed while ignoring the very thing perUser exists to preserve. Refuse.
-            if conn.get("perUser"):
-                raise RuntimeError(
-                    (conn.get("name") or "this tool")
-                    + ": ran under each user's own credentials in Copilot Studio, but this"
-                    " operation authenticates as the application, which cannot act as the"
-                    " caller. See the migration report's toolCredentials note."
-                )
+            import hashlib
+
             resource = op.get("aadResource") or ""
             for c in ctx_required:
                 resource = resource.replace("{" + c + "}", _context(c, ctx_values))
             resource = resource.rstrip("/")
-            cache_key = "aad:" + resource
+
+            # PER-USER vs APP-ONLY. client_credentials authenticates the APPLICATION -- the
+            # same identity no matter who asks, and in Dataverse an application user's roles
+            # typically span the whole environment. Copilot's `invoker` mode ran the tool as
+            # the SIGNED-IN user, whose own security roles decide what they can see. Running
+            # a per-user tool app-only would succeed while showing every caller records they
+            # were never able to reach, which is the failure this flag exists to prevent.
+            per_user = bool(conn.get("perUser"))
+            delegable = "refresh_token" in (conn.get("perUserFields") or [])
+            if per_user and not delegable:
+                raise RuntimeError(
+                    (conn.get("name") or "this tool")
+                    + ": ran under each user's own credentials in Copilot Studio, and this"
+                    " connector has no per-user sign-in, so it cannot run for anyone."
+                    " See the migration report's toolCredentials note."
+                )
+
+            if per_user:
+                # secret() already resolves refresh_token to THIS caller's own entry, and
+                # raises a connect-your-account error when they have none.
+                refresh_token = secret("refresh_token")
+                # Key the cache by the token's digest, never by resource alone: this cache
+                # lives for the container's lifetime across every request it serves, so a
+                # resource-only key would hand one person's delegated token to the next
+                # caller -- and it would look like a cache hit, not a bug. The digest is
+                # one-way and changes when the user reconnects, which also retires the
+                # stale entry for free.
+                cache_key = ("aad:" + resource + ":u:"
+                             + hashlib.sha256(refresh_token.encode()).hexdigest()[:16])
+            else:
+                cache_key = "aad:" + resource
+
             cached = token_cache.get(cache_key)
             if cached and cached.get("expires_at", 0) > time.time() + 60:
                 return "Bearer " + cached["token"]
-            form = {
-                "grant_type": "client_credentials",
-                "client_id": secret("client_id"),
-                "client_secret": secret("client_secret"),
-                "scope": resource + "/.default",
-            }
+
+            if per_user:
+                form = {
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": secret("client_id"),
+                    "client_secret": secret("client_secret"),
+                    # .default returns what this USER already consented to for the resource.
+                    "scope": resource + "/.default",
+                }
+            else:
+                form = {
+                    "grant_type": "client_credentials",
+                    "client_id": secret("client_id"),
+                    "client_secret": secret("client_secret"),
+                    "scope": resource + "/.default",
+                }
             url = "https://login.microsoftonline.com/" + secret("tenant_id") + "/oauth2/v2.0/token"
             req = urllib.request.Request(
                 url,
