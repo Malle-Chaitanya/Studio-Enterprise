@@ -153,7 +153,10 @@ export const CREDENTIAL_GROUPS: Record<string, CredentialGroupDef> = {
     setupUrl: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade',
     setupHint:
       'Create ONE app registration for all Microsoft connectors. Add the permissions listed ' +
-      'per connector below as APPLICATION permissions, then click Grant admin consent.',
+      'per connector below as APPLICATION permissions, then click Grant admin consent. ' +
+      'If any tool ran as the SIGNED-IN USER in Copilot, that same app also needs the ' +
+      "DELEGATED permission shown on that connector, plus this tool's redirect URI added " +
+      'under Authentication — application permissions alone cannot act as a person.',
     credentials: [], // filled from MS_GRAPH_FIELDS below
   },
   hubspot: {
@@ -389,7 +392,10 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     permissionsHint:
       'App-only Dataverse access needs the app registration added as an APPLICATION USER in the ' +
       'target environment with a security role — a Graph permission alone is not enough, and the ' +
-      'failure shows up as 401 on the first call, not at save time.',
+      'failure shows up as 401 on the first call, not at save time. For tools that ran as the ' +
+      'signed-in user, add Dynamics CRM > user_impersonation as a DELEGATED permission on the ' +
+      'same app; each person then connects their own account once, and their own security roles ' +
+      'decide what the agent can see for them.',
     baseUrlTemplate: '{org_url}/api/data/v9.2',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',

@@ -1150,6 +1150,25 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
       group: group
         ? { id: group.id, name: group.name, setupUrl: group.setupUrl, setupHint: group.setupHint, siblings }
         : undefined,
+      /**
+       * Per-user sign-in, for connectors whose `invoker` tools can actually be reproduced.
+       *
+       * `redirectUri` is here because it is the one value an admin CANNOT work out: it
+       * depends on where this server is deployed, and an app registration missing it fails
+       * consent with AADSTS50011 — an error that names the URI it wanted but not where to
+       * put it. Handing over the exact string to paste removes the whole class of ticket.
+       *
+       * `supported: false` is meaningful, not merely absent: it means an `invoker` tool on
+       * this connector is permanently shared-or-nothing, which is what the report calls
+       * 'lost'. The UI should say so rather than offering a button that cannot work.
+       */
+      userAuth: {
+        supported: !!def.userAuth,
+        redirectUri: def.userAuth
+          ? `${config.SERVER_ORIGIN}/api/auth/connector-consent/callback`
+          : undefined,
+        delegatedPermission: def.userAuth?.scope,
+      },
       configured: savedIds.has(id),
       credentialAlreadySupplied,
     };
