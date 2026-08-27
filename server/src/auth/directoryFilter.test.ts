@@ -13,6 +13,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  * empty result, which is what makes it worth a test rather than a comment.
  */
 
+/**
+ * These tests re-import `google.js` after `vi.resetModules()`, because that module reads
+ * DIRECTORY_ACTIVE_ONLY at load time and the env has to be stubbed first. That is a COLD
+ * import of a large module (it pulls in google-auth-library), so the work is genuinely
+ * slow — around a second idle, and well past vitest's 5s default when 42 test files are
+ * competing for the same machine.
+ *
+ * This produced an intermittent failure that passed 51 runs out of 52 and cost a full
+ * investigation to identify, because a timeout reads exactly like a flaky assertion. The
+ * timeout is raised rather than the import removed: the module genuinely must be reloaded
+ * per env, and pretending otherwise would trade a visible flake for a silent one.
+ */
+vi.setConfig({ testTimeout: 30_000 });
+
 const ORIGINAL_FETCH = globalThis.fetch;
 
 /** One Graph page, shaped like the real payload. */
