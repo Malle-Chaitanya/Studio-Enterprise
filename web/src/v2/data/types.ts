@@ -198,6 +198,27 @@ export interface UsersSource {
    * screen while the slow half is still being read.
    */
   directory(session: string): Promise<UserRow[]>;
+  /**
+   * Same-person matches for people who have none yet, from the SERVER's matcher.
+   *
+   * Deliberately not reimplemented here. The rule is not "same string before the @":
+   * it checks the source address against the org's owned domains, against the
+   * destination's verified Workspace addresses, and falls back to a username match
+   * across domains only when the literal address is not a real account. A second copy
+   * in the browser would drift from the one the migration actually resolves owners
+   * with, and the drift would show up as an agent shared with the wrong person.
+   */
+  /**
+   * Server-side match for people with no saved mapping.
+   *
+   * `refresh` forces the organization profile to be rebuilt rather than served from the
+   * server's per-session cache — the Rescan button, and nothing else, should pass it.
+   */
+  autoMatch(
+    session: string,
+    people: UserRow[],
+    refresh?: boolean,
+  ): Promise<Record<string, string>>;
 }
 
 // ── agents ──────────────────────────────────────────────────────────────────

@@ -37,6 +37,7 @@ import {
   stopMigration,
   planMigration,
   saveIdentityMap,
+  suggestIdentityMap,
   type DiscoveredIdentityPrincipal,
   type MsUserBrief,
 } from '../../api.ts';
@@ -274,6 +275,20 @@ const users: UsersSource = {
   list: async (session) => listUsers(session, { withPrincipals: true }),
   candidates: (session, query, all) => usersCandidates.candidates(session, query, all),
   save: (session, map) => usersCandidates.save(session, map),
+  autoMatch: async (session, people, refresh) => {
+    if (!people.length) return {};
+    const { suggested } = await suggestIdentityMap(
+      session,
+      people.map((p) => ({
+        type: 'user',
+        id: p.sourceId,
+        email: p.sourceEmail,
+        displayName: p.sourceName,
+      })),
+      refresh,
+    );
+    return suggested.users ?? {};
+  },
 };
 
 /** One implementation, two depths — so the fast pass and the full pass can never
@@ -368,10 +383,13 @@ async function listUsers(
       for (const r of rows.values()) if (r.referenced) r.sampled = true;
     }
 
-    // Referenced people first: they are the ones whose mapping changes what the
-    // migration does.
+    // Mapped first, by request: the auto-matched rows lead so it is immediately visible that
+    // matching ran and what it decided. Referenced people break the tie within each group —
+    // among rows that still need a decision, the ones an agent actually names are the ones
+    // whose mapping changes the migration.
     return [...rows.values()].sort((a, b) =>
-      Number(b.referenced ?? false) - Number(a.referenced ?? false)
+      Number(Boolean(b.mapped)) - Number(Boolean(a.mapped))
+      || Number(b.referenced ?? false) - Number(a.referenced ?? false)
       || a.sourceEmail.localeCompare(b.sourceEmail));
   }
 }

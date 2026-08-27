@@ -154,6 +154,10 @@
   min-height: calc(100vh - var(--header-h));
 }
 .v2-canvas { padding: 18px 20px 150px; min-width: 0; }
+/* A screen with nothing to inspect gets the width back. Without this the 300px
+   track stays reserved and renders as a blank column, which reads as a panel that
+   failed to load rather than one that was never there. */
+.v2-work:not(:has(.v2-insp)) { grid-template-columns: 1fr; }
 /* The inspector scrolls INSIDE itself and sticks below the header. Padding it out
    to clear the dock used to add ~48px of page height, which left the page opening
    half-scrolled with the instrument labels cut off. */
@@ -298,6 +302,11 @@
 }
 /* A NoteRow states a fact in full sentences. Truncating it to one ellipsised line
    would hide exactly the part that matters (what was lost, and why). */
+/* Map users' options read `Name - email`, which 190px cuts mid-address - and the
+   address is the half that disambiguates two people with the same name. That row's
+   only control is this select and the column has the room, so widen it here rather
+   than every select in the app. */
+.v2-row.mapuser .v2-select { max-width: none; width: 100%; }
 .v2-row.note { align-items: flex-start; }
 .v2-row.note .why { overflow: visible; white-space: normal; text-overflow: clip; }
 /* One agent's findings, grouped so the agent name reads as a heading for them. */
