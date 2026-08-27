@@ -59,6 +59,33 @@ export interface ConnectorDef {
   tokenUrlTemplate?: string;
   /** Scope string sent with the token request, when the provider requires one. */
   scope?: string;
+  /**
+   * How ONE END USER authorizes this connector for themselves.
+   *
+   * Separate from `authKind`/`scope` above, which describe the shared app-only credential.
+   * The two are different grants of different scopes to different principals and must not be
+   * conflated: `oauth2-client-credentials` with `.default` gives the agent tenant-wide
+   * access ("Mail.Send lets the agent send email as any mailbox in your organization" —
+   * this file's own hint), while the delegated flow below gives it exactly what the signed-in
+   * person can already do.
+   *
+   * Present only for connectors where per-user access is actually reproducible. Its absence
+   * is meaningful: it means an `invoker` tool on this connector CANNOT be migrated per-user,
+   * and the fidelity note is the final answer rather than a temporary one.
+   */
+  userAuth?: {
+    /** Where the user is sent to consent. May contain {placeholders} from stored credentials. */
+    authorizeUrlTemplate: string;
+    /** Token + refresh endpoint. Usually the same host as authorize. */
+    tokenUrlTemplate: string;
+    /**
+     * DELEGATED scopes — what this person may do, not what the app may do tenant-wide.
+     * Must include whatever the provider requires to issue a refresh token
+     * (`offline_access` on Microsoft), or the grant expires in an hour and the agent
+     * silently stops working for that user.
+     */
+    scope: string;
+  };
   /** For 'basic-userpass': which credential field is the user and which the secret. */
   basicUserField?: string;
   basicSecretField?: string;
@@ -763,6 +790,14 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     authKind: 'oauth2-client-credentials',
     tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
     scope: 'https://graph.microsoft.com/.default',
+    // Delegated equivalent, used when the source tool was Copilot `invoker`. offline_access
+    // is not optional: without it Microsoft issues no refresh token, the access token dies
+    // in an hour, and the tool starts failing for that user with nothing to explain it.
+    userAuth: {
+      authorizeUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize',
+      tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+      scope: 'offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read',
+    },
   },
 
   // ── Marketing ──────────────────────────────────────────────────────────────
@@ -997,6 +1032,16 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     authKind: 'oauth2-client-credentials',
     tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
     scope: 'https://graph.microsoft.com/.default',
+    // Delegated equivalent of the app-only grant above, used when the source tool was
+    // Copilot `invoker`. Same connector, different principal: `.default` above lets the
+    // agent send as ANY mailbox in the tenant, while these scopes give it exactly what the
+    // signed-in person can already do. offline_access is not optional — without it Microsoft
+    // issues no refresh token and the credential dies within the hour.
+    userAuth: {
+      authorizeUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize',
+      tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+      scope: 'offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read',
+    },
   },
 
   {
