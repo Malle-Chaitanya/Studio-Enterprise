@@ -884,12 +884,47 @@ async function execute(
   // credentials sat correctly in Secret Manager (live 2026-08-07, twice). Nothing in
   // the UI suggested the plan had to be rebuilt afterwards.
   //
-  // Only records stored in the project we are deploying INTO count — the container
-  // resolves secrets from its own project, so a record from elsewhere is unusable.
+  // A record stored against ANOTHER project is not unusable — it is un-copied. This used to
+  // filter those records out entirely, which pinned a customer's credentials to whichever
+  // project happened to be connected when they were first saved: point the run at a
+  // different project and every connector silently reported as unconfigured, its tools were
+  // never wired, and the report blamed a missing credential that was sitting in Secret
+  // Manager the whole time. Credentials belong to a CUSTOMER; a project is only where copies
+  // of them live.
+  //
+  // So the records are kept and their secrets are brought across from wherever they actually
+  // are, BEFORE resolveConnectorSecrets reads the deploy project. Best-effort throughout: a
+  // secret that cannot be copied simply is not found later, which is the same outcome as
+  // before minus the silent discard.
   const destProject = effectiveGeminiProject(session.geminiProject);
-  const durableConnectorRecords = (await listConnectorCredentials(appUserId).catch(() => []))
-    .filter((c) => !!destProject && c.project === destProject);
+  const durableConnectorRecords = await listConnectorCredentials(appUserId).catch(() => []);
+  if (destProject) {
+    const strays = durableConnectorRecords.filter((c) => c.project && c.project !== destProject);
+    if (strays.length) {
+      emitLog(
+        'info',
+        `Bringing ${strays.length} connector credential(s) into ${destProject} from `
+        + `${[...new Set(strays.map((c) => c.project))].join(', ')}`,
+      );
+      await Promise.all(strays.flatMap((c) => {
+        // Prefer the ids the credential was ACTUALLY written under; fall back to the
+        // computed name for records saved before secretIds were recorded.
+        const ids = Object.values(c.secretIds ?? {});
+        const names = ids.length
+          ? ids
+          : Object.keys(c.fields ?? {}).map((f) => connectorSecretId(c.connectorId, f, credentialScope(session)));
+        return names.map((secretId) =>
+          ensureSecretInProject(saToken, c.project, destProject, secretId)
+            .catch(() => undefined),
+        );
+      }));
+    }
+  }
   const durableConnectorIds = durableConnectorRecords.map((c) => c.connectorId);
+  /** Where each connector's credential was saved, for later cross-project syncs. */
+  const credentialSourceProject = new Map<string, string>(
+    durableConnectorRecords.filter((c) => c.project).map((c) => [c.connectorId, c.project]),
+  );
   // The id each credential was ACTUALLY written under. Secret ids are tenant-scoped
   // now, but credentials saved before that scoping live under the old name and already
   // back deployed agents — recomputing would point a working agent at a secret that
@@ -2499,13 +2534,21 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
             // confirmed live 2026-08-13 (Google Drive, 404 at inference, invisible
             // until someone actually queried the deployed agent). Best-effort and cheap
             // when already synced: no-ops once the target project already has it.
-            if (session.geminiProject) {
-              const connectorSecretIdsForThisAgent = scopedConnectors
-                .flatMap((c) => Object.values(c.secretIds ?? {}))
-                .filter((secretId) => !destScopedSecretIds.has(secretId));
+            {
+              // Source is the project each credential was SAVED in, not the one currently
+              // connected. Reading `session.geminiProject` here meant the copy could only
+              // ever reach back to wherever the run happened to be pointing, so a credential
+              // saved against a different project was never reachable at all.
+              const pairs = scopedConnectors.flatMap((c) => {
+                const from = credentialSourceProject.get(c.id) ?? session.geminiProject;
+                if (!from) return [];
+                return Object.values(c.secretIds ?? {})
+                  .filter((secretId) => !destScopedSecretIds.has(secretId))
+                  .map((secretId) => ({ from, secretId }));
+              });
               await Promise.all(
-                connectorSecretIdsForThisAgent.map((secretId) =>
-                  ensureSecretInProject(saToken, session.geminiProject!, dest.project, secretId),
+                pairs.map(({ from, secretId }) =>
+                  ensureSecretInProject(saToken, from, dest.project, secretId),
                 ),
               );
             }

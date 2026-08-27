@@ -1232,18 +1232,25 @@ migrateRouter.get('/connector-credentials', async (req, res) => {
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const destProject = effectiveGeminiProject(session.geminiProject);
   const saved = await listConnectorCredentials(appUserId);
-  // Secrets live in the project they were saved against. Migrating into a DIFFERENT
-  // project cannot read them, so a record from another project must NOT read as
-  // configured — live 2026-08-07 credentials saved during a GTM session made the UI
-  // show "✓ Saved" while the studio run skipped every Confluence source as
-  // "needs a connector or manual step".
+  // Secrets live in the project they were saved against, and the RUN now brings them
+  // across (orchestrator: strays are synced from their own project before resolution). So a
+  // record from another project is configured — it is just not copied yet.
+  //
+  // This used to answer false for those, which was correct while the run discarded them:
+  // live 2026-08-07, credentials saved during a GTM session made the UI show "✓ Saved"
+  // while the studio run skipped every Confluence source as "needs a connector or manual
+  // step". The cause was the discard, and the discard is gone; keeping the warning would now
+  // report a blocker that no longer exists. `project` still travels so the screen can say
+  // where a credential came from.
   res.json({
     connectors: saved.map((s) => ({
       connectorId: s.connectorId,
       fields: s.fields,
       project: s.project,
       updatedAt: s.updatedAt,
-      matchesDestination: !!destProject && s.project === destProject,
+      matchesDestination: !!destProject,
+      /** True when the credential lives elsewhere and the run will copy it in. */
+      syncedFromOtherProject: !!destProject && !!s.project && s.project !== destProject,
     })),
   });
 });
