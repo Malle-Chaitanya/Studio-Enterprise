@@ -796,7 +796,10 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     userAuth: {
       authorizeUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize',
       tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
-      scope: 'offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read',
+      // openid+email are not cosmetic: they make the provider return an id_token, which is
+      // how completeUserConsent proves the person who consented is the person the token gets
+      // filed under. Without them the binding is asserted by whoever built the link.
+      scope: 'openid email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read',
     },
   },
 
@@ -1040,7 +1043,10 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     userAuth: {
       authorizeUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize',
       tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
-      scope: 'offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read',
+      // openid+email are not cosmetic: they make the provider return an id_token, which is
+      // how completeUserConsent proves the person who consented is the person the token gets
+      // filed under. Without them the binding is asserted by whoever built the link.
+      scope: 'openid email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read',
     },
   },
 

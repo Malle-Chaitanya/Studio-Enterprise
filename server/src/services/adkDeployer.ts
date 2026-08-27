@@ -118,6 +118,17 @@ export interface AdkSpec {
      * prevent, while looking like it worked.
      */
     perUser?: boolean;
+    /**
+     * Which credential FIELDS belong to the person rather than to the app.
+     *
+     * Only these get the caller appended to their secret id. A connector's `client_id` and
+     * `client_secret` identify the OAuth app registration and are the same for everyone —
+     * per-user-ing them would break the token exchange for every user, including the ones
+     * who had consented. Empty (or absent) means this connector has no delegated sign-in at
+     * all, and the container fails every per-user call closed rather than quietly using the
+     * shared credential.
+     */
+    perUserFields?: string[];
     /** Operations the SOURCE agent invoked on this connector (e.g. `ListIssues`), each
      *  with the description Copilot Studio showed for it. Advisory only — it shapes the
      *  generated tool's description so the model knows what this agent was built to do;

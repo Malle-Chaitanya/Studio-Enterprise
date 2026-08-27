@@ -18,6 +18,16 @@ const {
   startUserConsent, completeUserConsent, supportsUserAuth, pendingConsentCount,
 } = await import('./userConnectorAuth.js');
 
+/** Build an unsigned JWT whose payload carries `email` — the shape a provider returns. */
+function idToken(email: string): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  return `${b64({ alg: 'none' })}.${b64({ email })}.sig`;
+}
+
+function tokenResponse(body: Record<string, unknown>) {
+  return { ok: true, status: 200, json: async () => body } as unknown as Response;
+}
+
 const base = {
   appUserId: 'u1',
   tenantId: 't1',
@@ -118,5 +128,70 @@ describe('completing a consent', () => {
     const { state } = startUserConsent(base);
     await completeUserConsent(state, 'c', 'sa', base.fields).catch(() => undefined);
     expect(pendingConsentCount()).toBe(before);
+  });
+});
+
+
+/**
+ * WHO the provider authenticated, versus who the link SAID it was for.
+ *
+ * A consent URL is just a URL. Forward it, or open it while signed in as someone else, and
+ * the refresh token that comes back belongs to a different human than the one it would be
+ * filed under — after which the migrated tool acts as the wrong person, silently and
+ * forever. This is the same failure per-user credentials exist to prevent, reached from the
+ * opposite direction, so it is checked rather than trusted.
+ */
+describe('consent identity binding', () => {
+  beforeEach(() => { upsertSecret.mockReset(); });
+
+  it('refuses when the provider authenticated a different person', async () => {
+    const { state } = startUserConsent(base);
+    vi.stubGlobal('fetch', vi.fn(async () => tokenResponse({
+      refresh_token: 'rt', id_token: idToken('someone.else@filefuze.co'),
+    })));
+    await expect(completeUserConsent(state, 'code', 'sa', base.fields))
+      .rejects.toThrow('consent_identity_mismatch');
+    // The decisive assertion: nothing was written. A refusal that still stored the token
+    // would be worse than no check at all.
+    expect(upsertSecret).not.toHaveBeenCalled();
+  });
+
+  it('accepts when the provider confirms the expected person, case-insensitively', async () => {
+    const { state } = startUserConsent(base);
+    vi.stubGlobal('fetch', vi.fn(async () => tokenResponse({
+      refresh_token: 'rt', id_token: idToken('ERIK@FileFuze.co'),
+    })));
+    const out = await completeUserConsent(state, 'code', 'sa', base.fields);
+    expect(out.identityVerified).toBe(true);
+    expect(upsertSecret).toHaveBeenCalledTimes(1);
+  });
+
+  it('stores but reports UNVERIFIED when the provider returns no id_token', async () => {
+    const { state } = startUserConsent(base);
+    vi.stubGlobal('fetch', vi.fn(async () => tokenResponse({ refresh_token: 'rt' })));
+    const out = await completeUserConsent(state, 'code', 'sa', base.fields);
+    // Not a failure — some providers issue none. But it must not be reported as verified;
+    // the UI needs to be able to tell the two apart.
+    expect(out.identityVerified).toBe(false);
+    expect(upsertSecret).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats an unreadable id_token as unverified, never as a match', async () => {
+    const { state } = startUserConsent(base);
+    vi.stubGlobal('fetch', vi.fn(async () => tokenResponse({
+      refresh_token: 'rt', id_token: 'not.a.jwt',
+    })));
+    const out = await completeUserConsent(state, 'code', 'sa', base.fields);
+    expect(out.identityVerified).toBe(false);
+  });
+
+  it('a mismatched consent still consumes its state, so it cannot be retried', async () => {
+    const { state } = startUserConsent(base);
+    vi.stubGlobal('fetch', vi.fn(async () => tokenResponse({
+      refresh_token: 'rt', id_token: idToken('wrong@filefuze.co'),
+    })));
+    await expect(completeUserConsent(state, 'code', 'sa', base.fields)).rejects.toThrow();
+    await expect(completeUserConsent(state, 'code', 'sa', base.fields))
+      .rejects.toThrow('consent_state_unknown');
   });
 });

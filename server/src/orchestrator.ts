@@ -16,6 +16,7 @@ import { resolveProjectNumber } from './services/adkDeployer.js';
 import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
+import { applyPerUserAuth } from './services/userConnectorAuth.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
 import { resolveSurfaceTarget, SURFACE_EQUIVALENTS } from './db/repos/agentSurfaceChoice.js';
 import { connectorsSharingCredentials, connectorSecretId } from './services/connectorCredentials.js';
@@ -2267,7 +2268,7 @@ async function execute(
             );
             if (invokerConnectorIds.size) {
               scopedConnectors = scopedConnectors.map((c) =>
-                invokerConnectorIds.has(c.id) ? { ...c, perUser: true } : c,
+                invokerConnectorIds.has(c.id) ? applyPerUserAuth(c) : c,
               );
             }
 
