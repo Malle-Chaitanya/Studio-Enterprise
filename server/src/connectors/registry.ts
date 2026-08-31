@@ -112,7 +112,7 @@ export interface ConnectorDef {
      * caller up in the target environment's `systemusers` by email — the id is per
      * environment, so it cannot be resolved once at deploy time and cached forever.
      */
-    resolve: 'dataverse-systemuser';
+    resolve: 'dataverse-systemuser' | 'graph-user-path';
   };
   /** For 'basic-userpass': which credential field is the user and which the secret. */
   basicUserField?: string;
@@ -870,6 +870,15 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
       // filed under. Without them the binding is asserted by whoever built the link.
       scope: 'openid email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read',
     },
+    // PREFERRED over the consent block above. A mailbox belongs to exactly one person, so
+    // addressing app-only Graph at `/users/{caller}` IS the permission model — there is
+    // nothing a delegated token would additionally confine. And unlike consent it stores
+    // nothing per person, so a new joiner works immediately and the agent keeps working once
+    // this tool is decommissioned.
+    //
+    // 'graph-user-path' rather than a header: Graph has no act-as header, it scopes by the
+    // path segment. Same intent, different transport.
+    impersonation: { header: '', resolve: 'graph-user-path' },
   },
 
   // ── Marketing ──────────────────────────────────────────────────────────────
@@ -1117,6 +1126,15 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
       // filed under. Without them the binding is asserted by whoever built the link.
       scope: 'openid email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read',
     },
+    // PREFERRED over the consent block above. A mailbox belongs to exactly one person, so
+    // addressing app-only Graph at `/users/{caller}` IS the permission model — there is
+    // nothing a delegated token would additionally confine. And unlike consent it stores
+    // nothing per person, so a new joiner works immediately and the agent keeps working once
+    // this tool is decommissioned.
+    //
+    // 'graph-user-path' rather than a header: Graph has no act-as header, it scopes by the
+    // path segment. Same intent, different transport.
+    impersonation: { header: '', resolve: 'graph-user-path' },
   },
 
   {

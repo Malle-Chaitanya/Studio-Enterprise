@@ -144,7 +144,7 @@ export interface AdkSpec {
     /** Request header carrying the impersonated principal, e.g. MSCRMCallerID. */
     impersonationHeader?: string;
     /** How the container turns the caller into the id that header wants. */
-    impersonationResolve?: 'dataverse-systemuser';
+    impersonationResolve?: 'dataverse-systemuser' | 'graph-user-path';
     /** Operations the SOURCE agent invoked on this connector (e.g. `ListIssues`), each
      *  with the description Copilot Studio showed for it. Advisory only — it shapes the
      *  generated tool's description so the model knows what this agent was built to do;

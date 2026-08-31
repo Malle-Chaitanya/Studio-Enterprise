@@ -40,7 +40,7 @@ DEFAULT_RESULTS = 10
 MAX_BODY_CHARS = 20000
 
 
-def build_tools(conn, secret, mint_token, auth_header, fill):
+def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
     # Helpers are nested, NOT module level. cloudpickle serialises these closures by value
     # into the Reasoning Engine pickle; a module-level helper is pickled by REFERENCE as
     # `connector_tools.outlook._x`, which the container cannot resolve at unpickle time and
@@ -49,7 +49,29 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
     # the wrong way round first. Module-level CONSTANTS are fine.
 
     def _mailbox() -> str:
-        """Whose mailbox these tools read. Reported on every response."""
+        """Whose mailbox these tools read. Reported on every response.
+
+        PER-USER (Copilot `invoker`): the CALLER's own mailbox. App-only Graph reaches every
+        mailbox in the tenant, so naming the caller in the path is what confines the tool to
+        the one person asking — for a mailbox, addressing IS the permission model, because a
+        mailbox belongs to exactly one person. Nothing is stored per user and nothing expires,
+        so a new joiner works immediately and this keeps working after CS_GE is removed.
+
+        Raises when per-user and the caller is unknown. Falling back to the configured mailbox
+        would answer Alex's "what is in my inbox" with somebody else's mail, and the response
+        would look entirely normal.
+
+        SHARED (`maker`): the mailbox named on the connector, as before.
+        """
+        if conn.get("perUser") and conn.get("perUserMode") == "impersonate":
+            who = (caller() if caller else "") or ""
+            if not who:
+                raise RuntimeError(
+                    (conn.get("name") or "this tool")
+                    + ": reads the mailbox of whoever is asking, but the caller could not be "
+                    "identified, so it will not read anyone's mail."
+                )
+            return who
         try:
             return secret("impersonate_email") or "(unknown)"
         except Exception:  # noqa: BLE001 — identity is informational, never fatal

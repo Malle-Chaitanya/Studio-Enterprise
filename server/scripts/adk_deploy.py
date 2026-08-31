@@ -583,7 +583,8 @@ def _build_live_connector_tool(conn: dict, project: str):
     # permissions with admin consent.
     if kind == "outlook":
         from connector_tools.outlook import build_tools as _build
-        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+        # `caller` so a per-user mailbox is the ASKER's own, not one pinned per agent.
+        return _build(conn, _secret, _mint_token, _auth_header, _fill, caller=_caller)
 
     # CROSS-VENDOR, second of two: Copilot's Teams connector -> Google Chat. Chat is FLAT,
     # so the Team -> Channel hierarchy has no equivalent; see connector_tools/chat.py.

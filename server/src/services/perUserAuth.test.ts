@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { applyPerUserAuth, perUserCredentialFields, supportsUserAuth } from './userConnectorAuth.js';
+import { CONNECTOR_REGISTRY } from '../connectors/registry.js';
 
 /**
  * These assert the ONE thing that cannot be caught downstream: a connector marked per-user
@@ -50,18 +51,29 @@ describe('applyPerUserAuth', () => {
     }
   });
 
-  it('switches a delegable connector from app auth to the caller', () => {
+  it('impersonates for Outlook too — a mailbox has exactly one owner', () => {
+    // Graph has no act-as header; it scopes by the path segment (/users/{caller}/...). Same
+    // intent as MSCRMCallerID, different transport — and for a mailbox, addressing IS the
+    // permission model, so a delegated token would confine nothing further.
     const out = applyPerUserAuth({
       id: 'shared_office365',
       authKind: 'oauth2-client-credentials',
       scope: 'https://graph.microsoft.com/.default',
-    });
-    expect(out.perUser).toBe(true);
-    expect(out.perUserFields).toEqual(['refresh_token']);
-    // The whole point: client_credentials authenticates the APP, identically for everyone.
-    expect(out.authKind).toBe('oauth2-refresh-token');
-    expect(out.scope).not.toBe('https://graph.microsoft.com/.default');
-    expect(out.scope).toContain('offline_access');
+    }) as Record<string, unknown>;
+    expect(out.perUserMode).toBe('impersonate');
+    expect(out.impersonationResolve).toBe('graph-user-path');
+    // The app credential is NOT swapped for a refresh-token grant.
+    expect(out.authKind).toBe('oauth2-client-credentials');
+    expect(out.perUserFields).toEqual([]);
+  });
+
+  it('no connector currently takes the delegated path — say so out loud', () => {
+    // Every connector that has userAuth also has impersonation, so the consent branch is
+    // unreachable today. That is the intended outcome (consent expires and dies with this
+    // tool), but it means the branch is untested by the suite. If someone adds a
+    // consent-only connector, this fails and they will know to cover it.
+    const delegatedOnly = CONNECTOR_REGISTRY.filter((c) => c.userAuth && !c.impersonation).map((c) => c.id);
+    expect(delegatedOnly).toEqual([]);
   });
 
   it('marks a connector with no delegated flow per-user with NO fields, so it fails closed', () => {

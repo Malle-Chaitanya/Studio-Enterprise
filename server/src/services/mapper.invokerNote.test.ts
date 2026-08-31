@@ -37,17 +37,16 @@ const notes = (m: Awaited<ReturnType<typeof mapAgent>>) =>
   m.fidelityNotes.filter((n) => n.component === 'toolCredentials');
 
 describe('per-user tool credentials are reported, not silently shared', () => {
-  it('tells a user with a delegated connector what THEY must do', async () => {
+  it('tells the user there is NOTHING to do when the connector impersonates', async () => {
     const m = await mapAgent(base([
       { name: 'Office 365 Outlook - Send an email (V2)', displayName: 'SendEmail', kind: 'connector', connectorId: 'shared_office365', connectionAuthMode: 'invoker' },
     ] as AgentIR['agentTools']));
-    const n = notes(m).find((x) => x.status === 'needs-review');
+    const n = notes(m).find((x) => x.status === 'mapped');
     // Naming the tools is the difference between an actionable note and "something changed".
     expect(n?.detail).toContain('SendEmail');
-    // The remedy, in terms the customer can act on — and the guarantee that matters:
-    // it refuses rather than quietly using someone else's account.
-    expect(n?.detail).toMatch(/connect their own account/);
-    expect(n?.detail).toMatch(/refuses/);
+    // Reproduced, not merely reported: no setup step, and nothing that expires later.
+    expect(n?.detail).toMatch(/Nobody has to connect an account/);
+    expect(n?.detail).toMatch(/nothing expires/);
   });
 
   it("reports a connector with no per-user sign-in as LOST, not as review", async () => {
@@ -62,7 +61,7 @@ describe('per-user tool credentials are reported, not silently shared', () => {
     expect(n?.detail).toMatch(/no per-user sign-in/);
   });
 
-  it('separates the two when one agent has both kinds', async () => {
+  it('separates reproduced from lost when one agent has both', async () => {
     const m = await mapAgent(base([
       { name: 'Office 365 Outlook - Send an email (V2)', displayName: 'SendEmail', kind: 'connector', connectorId: 'shared_office365', connectionAuthMode: 'invoker' },
       { name: 'Get CRM objects from Hubspot - Get companies', displayName: 'GetClientProfile', kind: 'connector', connectorId: 'shared_get-20crm-20objects-20from-20hubspot', connectionAuthMode: 'invoker' },
@@ -71,8 +70,8 @@ describe('per-user tool credentials are reported, not silently shared', () => {
     expect(found).toHaveLength(2);
     // Each tool appears under the verdict that is true FOR IT. Merging them would make the
     // fixable one look permanent, or the permanent one look like a pending setup step.
-    expect(found.find((x) => x.status === 'needs-review')?.detail).toContain('SendEmail');
-    expect(found.find((x) => x.status === 'needs-review')?.detail).not.toContain('GetClientProfile');
+    expect(found.find((x) => x.status === 'mapped')?.detail).toContain('SendEmail');
+    expect(found.find((x) => x.status === 'mapped')?.detail).not.toContain('GetClientProfile');
     expect(found.find((x) => x.status === 'lost')?.detail).toContain('GetClientProfile');
     expect(found.find((x) => x.status === 'lost')?.detail).not.toContain('SendEmail');
   });
