@@ -129,6 +129,22 @@ export interface AdkSpec {
      * shared credential.
      */
     perUserFields?: string[];
+    /**
+     * HOW this connector runs as the caller.
+     *
+     * 'impersonate' — the shared app credential is used and the call names who it acts for;
+     * the platform applies that person's permissions. Nothing is stored per user.
+     * 'delegated'   — the caller's own OAuth refresh token, which they must grant first.
+     *
+     * They are not interchangeable: an 'impersonate' connector has NO per-user secrets, so
+     * treating it as delegated makes the container look for one that never exists and refuse
+     * for everyone.
+     */
+    perUserMode?: 'impersonate' | 'delegated';
+    /** Request header carrying the impersonated principal, e.g. MSCRMCallerID. */
+    impersonationHeader?: string;
+    /** How the container turns the caller into the id that header wants. */
+    impersonationResolve?: 'dataverse-systemuser';
     /** Operations the SOURCE agent invoked on this connector (e.g. `ListIssues`), each
      *  with the description Copilot Studio showed for it. Advisory only — it shapes the
      *  generated tool's description so the model knows what this agent was built to do;

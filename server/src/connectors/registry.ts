@@ -86,6 +86,34 @@ export interface ConnectorDef {
      */
     scope: string;
   };
+  /**
+   * Run as the caller WITHOUT asking them to sign in — the app credential carries a header
+   * naming who it is acting for, and the platform applies THAT person's permissions.
+   *
+   * Strictly better than `userAuth` where it exists, and for a different reason than it
+   * looks: consent produces a refresh token that lives in our Secret Manager, expires on its
+   * own (~90 days), dies on a password change, and cannot be obtained at all by someone who
+   * joins after this tool is decommissioned. Impersonation stores nothing per person, so a
+   * migrated agent keeps working for everyone, indefinitely, after we are gone.
+   *
+   * Verified live 2026-08-31 against Dataverse: an app-only call carrying MSCRMCallerID was
+   * refused with "The user with id … has not been assigned any roles. They need a role with
+   * the prvReadUser privilege" — the app can read 50 users, acting as that person it cannot.
+   * The permissions applied are the IMPERSONATED user's, which is the whole claim.
+   *
+   * Requires the application user to hold `prvActOnBehalfOfAnotherUser`; without it the call
+   * is refused outright rather than silently running as the app.
+   */
+  impersonation?: {
+    /** Request header carrying the impersonated principal. */
+    header: string;
+    /**
+     * How to turn a person into the id that header wants. 'dataverse-systemuser' looks the
+     * caller up in the target environment's `systemusers` by email — the id is per
+     * environment, so it cannot be resolved once at deploy time and cached forever.
+     */
+    resolve: 'dataverse-systemuser';
+  };
   /** For 'basic-userpass': which credential field is the user and which the secret. */
   basicUserField?: string;
   basicSecretField?: string;
@@ -370,6 +398,9 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
       tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
       scope: 'openid email offline_access {org_url}/user_impersonation',
     },
+    // PREFERRED over the userAuth block above — see ConnectorDef.impersonation. Consent is
+    // kept as the fallback for tenants that have not granted the app prvActOnBehalfOfAnotherUser.
+    impersonation: { header: 'MSCRMCallerID', resolve: 'dataverse-systemuser' },
   },
 
   {
@@ -421,6 +452,9 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
       tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
       scope: 'openid email offline_access {org_url}/user_impersonation',
     },
+    // PREFERRED over the userAuth block above — see ConnectorDef.impersonation. Consent is
+    // kept as the fallback for tenants that have not granted the app prvActOnBehalfOfAnotherUser.
+    impersonation: { header: 'MSCRMCallerID', resolve: 'dataverse-systemuser' },
   },
 
   {

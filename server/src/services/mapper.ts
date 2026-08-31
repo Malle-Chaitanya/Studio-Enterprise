@@ -90,10 +90,28 @@ function synthesizeInstruction(ir: AgentIR): { instruction: string; notes: Fidel
   const invokerTools = (ir.agentTools ?? []).filter((t) => t.connectionAuthMode === 'invoker');
   if (invokerTools.length) {
     const label = (t: { displayName?: string; name?: string }) => t.displayName || t.name;
-    const delegable = invokerTools.filter(
-      (t) => t.connectorId && REGISTRY_BY_ID.get(t.connectorId)?.userAuth,
+    // Three outcomes, three different things to tell the customer: nothing to do, one setup
+    // step per person, or a permanent limit. Collapsing them would either invent work that
+    // is not needed or imply a fix that does not exist.
+    const impersonated = invokerTools.filter(
+      (t) => t.connectorId && REGISTRY_BY_ID.get(t.connectorId)?.impersonation,
     );
-    const blocked = invokerTools.filter((t) => !delegable.includes(t));
+    const delegable = invokerTools.filter(
+      (t) => !impersonated.includes(t) && t.connectorId && REGISTRY_BY_ID.get(t.connectorId)?.userAuth,
+    );
+    const blocked = invokerTools.filter((t) => !impersonated.includes(t) && !delegable.includes(t));
+
+    if (impersonated.length) {
+      notes.push({
+        component: 'toolCredentials',
+        status: 'mapped',
+        detail:
+          `${impersonated.length} tool(s) ran under each END USER's own connection in Copilot `
+          + `(${impersonated.map(label).join(', ')}) and still do: each call names the person `
+          + 'asking and the platform applies their own permissions. Nobody has to connect an '
+          + 'account, and nothing expires.',
+      });
+    }
 
     if (delegable.length) {
       notes.push({

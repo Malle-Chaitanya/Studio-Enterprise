@@ -131,6 +131,26 @@ export function applyPerUserAuth<T extends {
   id: string; authKind?: string; scope?: string; tokenUrlTemplate?: string;
 }>(conn: T): T & { perUser: true; perUserFields: string[] } {
   const def = REGISTRY_BY_ID.get(conn.id);
+
+  // IMPERSONATION FIRST, where the platform supports it. The app credential is kept exactly
+  // as it is and the tool names who it is acting for on each call; the platform applies that
+  // person's permissions. Nothing is stored per user, so there is nothing to expire, nothing
+  // for a new joiner to do, and nothing that stops working once this tool is decommissioned —
+  // which is the failure mode the consent path cannot escape.
+  if (def?.impersonation) {
+    return {
+      ...conn,
+      perUser: true,
+      // No per-user SECRETS: the credential is still the shared app one. Saying otherwise
+      // would make the container hunt for a per-user secret that by design never exists,
+      // and fail closed for everybody.
+      perUserFields: [],
+      perUserMode: 'impersonate',
+      impersonationHeader: def.impersonation.header,
+      impersonationResolve: def.impersonation.resolve,
+    } as T & { perUser: true; perUserFields: string[] };
+  }
+
   const fields = perUserCredentialFields(conn.id);
   if (!def?.userAuth || !fields.length) {
     // No delegated flow exists for this connector. Mark it per-user anyway: the container
@@ -142,6 +162,7 @@ export function applyPerUserAuth<T extends {
     ...conn,
     perUser: true,
     perUserFields: fields,
+    perUserMode: 'delegated',
     authKind: 'oauth2-refresh-token',
     // Left as a TEMPLATE on purpose: the container resolves {placeholders} against its own
     // stored credentials at call time (see _fill in adk_deploy.py), so a rotated org url

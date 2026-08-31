@@ -8,7 +8,29 @@ import { applyPerUserAuth, perUserCredentialFields, supportsUserAuth } from './u
  * sees it, which is why it is pinned here.
  */
 describe('applyPerUserAuth', () => {
-  it('treats Dataverse as delegable — user_impersonation is what invoker meant', () => {
+  it('prefers IMPERSONATION over consent where the platform supports it', () => {
+    // Verified live 2026-08-31: an app-only Dataverse call carrying MSCRMCallerID is refused
+    // per the IMPERSONATED user's roles, not the app's. That makes consent unnecessary here —
+    // and consent is the path that dies when this tool is decommissioned.
+    const out = applyPerUserAuth({ id: 'shared_commondataserviceforapps', authKind: 'oauth2-client-credentials' }) as Record<string, unknown>;
+    expect(out.perUser).toBe(true);
+    expect(out.perUserMode).toBe('impersonate');
+    expect(out.impersonationHeader).toBe('MSCRMCallerID');
+    // No per-user SECRETS: the credential stays the shared app one. Claiming otherwise would
+    // send the container hunting for a secret that by design never exists, and it would then
+    // fail closed for everybody.
+    expect(out.perUserFields).toEqual([]);
+    // And the app credential must NOT be swapped for a refresh-token grant.
+    expect(out.authKind).toBe('oauth2-client-credentials');
+  });
+
+  it('still marks an impersonating connector per-user', () => {
+    // The flag is what makes the container name the caller on every call. Dropping it
+    // because "there are no per-user secrets" would silently run everyone as the app.
+    expect(applyPerUserAuth({ id: 'shared_dynamicscrmonline' }).perUser).toBe(true);
+  });
+
+  it.skip('treats Dataverse as delegable — superseded by impersonation', () => {
     // Dataverse is 194 of the 212 invoker tools in the test tenant, so whether it is
     // delegable decides whether per-user is a feature or a footnote. user_impersonation
     // means "act as this signed-in user", which is precisely what Copilot's invoker did.

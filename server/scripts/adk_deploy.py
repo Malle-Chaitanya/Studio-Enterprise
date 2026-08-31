@@ -545,6 +545,15 @@ def _build_live_connector_tool(conn: dict, project: str):
             header = f"Bearer {header.strip()}"
         return header
 
+    def _caller() -> str:
+        """Who is asking, for connectors that impersonate rather than hold a per-user token.
+
+        Empty when the caller could not be identified. Callers MUST treat that as unknown and
+        refuse -- running the shared app identity instead would return one person's records to
+        everybody, which is the exact failure per-user exists to prevent.
+        """
+        return _caller_var().get("")
+
     def _fill(tpl: str) -> str:
         """Resolve {placeholders} in a template from the stored credentials."""
         import re as _re
@@ -613,7 +622,9 @@ def _build_live_connector_tool(conn: dict, project: str):
     # captured the source agent's actual swagger operations, else a single generic
     # call_external_api tool. See connector_tools/generic_rest.py.
     from connector_tools.generic_rest import build_tools as _build
-    return _build(conn, _secret, _mint_token, _auth_header, _fill)
+    # `caller` only here: generic_rest owns the bound-operation path, which is where an
+    # impersonating connector (Dataverse) actually makes its call.
+    return _build(conn, _secret, _mint_token, _auth_header, _fill, caller=_caller)
 
 
 # ---------------------------------------------------------------------------

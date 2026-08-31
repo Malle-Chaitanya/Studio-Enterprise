@@ -9,7 +9,7 @@ import re  # module-level: used both inside call_external_api and after it's def
            # in build_tools' own scope when naming the tool by connector.
 
 
-def build_tools(conn, secret, mint_token, auth_header, fill):
+def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
     kind = (conn.get("kind") or conn.get("id") or "").lower()
     base_url_tpl = conn.get("baseUrlTemplate") or ""
     conn_name = conn.get("name") or kind or "connector"
@@ -178,8 +178,15 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
             # a per-user tool app-only would succeed while showing every caller records they
             # were never able to reach, which is the failure this flag exists to prevent.
             per_user = bool(conn.get("perUser"))
-            delegable = "refresh_token" in (conn.get("perUserFields") or [])
-            if per_user and not delegable:
+            # IMPERSONATION: the app credential is correct here, unchanged. The caller is named
+            # on the request itself (see _caller_header below) and the platform applies THAT
+            # person's permissions -- so an app-only token is not a leak, it is the mechanism.
+            impersonating = per_user and conn.get("perUserMode") == "impersonate"
+            # Only the DELEGATED path swaps the credential. Impersonation keeps the app token
+            # and names the caller on the request instead, so everything below must treat it
+            # as app-only or it will hunt for a per-user secret that by design never exists.
+            delegated = per_user and not impersonating
+            if delegated and "refresh_token" not in (conn.get("perUserFields") or []):
                 raise RuntimeError(
                     (conn.get("name") or "this tool")
                     + ": ran under each user's own credentials in Copilot Studio, and this"
@@ -187,7 +194,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
                     " See the migration report's toolCredentials note."
                 )
 
-            if per_user:
+            if delegated:
                 # secret() already resolves refresh_token to THIS caller's own entry, and
                 # raises a connect-your-account error when they have none.
                 refresh_token = secret("refresh_token")
@@ -206,7 +213,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
             if cached and cached.get("expires_at", 0) > time.time() + 60:
                 return "Bearer " + cached["token"]
 
-            if per_user:
+            if delegated:
                 form = {
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
@@ -236,6 +243,79 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
                 raise RuntimeError("no access_token for " + resource)
             token_cache[cache_key] = {"token": token, "expires_at": time.time() + int(payload.get("expires_in") or 3600)}
             return "Bearer " + token
+
+    # ── Impersonation: act as the person asking, using the shared app credential ──────
+    #
+    # Copilot `invoker` tools ran as the signed-in user. Dataverse can reproduce that exactly:
+    # an app-only call carrying MSCRMCallerID is evaluated against the NAMED user's security
+    # roles, not the application's. Verified live 2026-08-31 -- the app reads 50 rows, the same
+    # call as a role-less user is refused with "They need a role with the prvReadUser privilege".
+    #
+    # Preferred over a per-user OAuth token because nothing is stored per person: nothing
+    # expires, a new joiner works immediately, and the agent keeps working after the migration
+    # tool that created it is gone.
+    caller_cache: dict = {}
+
+    def _impersonation_headers(base_url: str, auth: str) -> dict:
+        """{MSCRMCallerID: <systemuserid>} for the caller, or raise.
+
+        RAISES rather than returning {} when the caller is unknown or has no account in this
+        environment. An empty dict would silently fall through to the application identity,
+        which sees every record in the environment -- one person's question answered with
+        everybody's data, and no error to notice.
+        """
+        if not conn.get("perUser") or conn.get("perUserMode") != "impersonate":
+            return {}
+        header = conn.get("impersonationHeader") or "MSCRMCallerID"
+        who = (caller() if caller else "") or ""
+        if not who:
+            raise RuntimeError(
+                (conn.get("name") or "this tool")
+                + ": runs as whoever is asking, but the caller could not be identified."
+            )
+        if who in caller_cache:
+            return {header: caller_cache[who]}
+
+        import json as _json
+        import urllib.parse
+        import urllib.request
+
+        # The id is per ENVIRONMENT, so it is resolved here rather than baked in at deploy:
+        # a systemuserid from one org is meaningless in another, and someone who joins after
+        # the migration would not be in a deploy-time map at all.
+        #
+        # Matched on the caller's own address first, then on the local part, because the
+        # destination directory and the source Dataverse are usually different domains
+        # (alex@newco.com and alex@oldco.co being one person is the normal case, not the odd one).
+        local = who.split("@")[0].replace("'", "''")
+        safe = who.replace("'", "''")
+        flt = (
+            "internalemailaddress eq '" + safe + "'"
+            " or domainname eq '" + safe + "'"
+            " or startswith(internalemailaddress,'" + local + "@')"
+        )
+        url = (base_url + "/systemusers?$select=systemuserid,internalemailaddress&$top=2&$filter="
+               + urllib.parse.quote(flt, safe=""))
+        req = urllib.request.Request(url, headers={
+            "Authorization": auth, "Accept": "application/json",
+            "OData-MaxVersion": "4.0", "OData-Version": "4.0",
+        })
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            rows = (_json.loads(resp.read().decode("utf-8")) or {}).get("value") or []
+        if not rows:
+            raise RuntimeError(
+                (conn.get("name") or "this tool") + ": no account for " + who
+                + " exists in this environment, so it cannot run as them."
+            )
+        if len(rows) > 1:
+            # Two matches means the local-part fallback was ambiguous. Picking one would act
+            # as a person chosen by sort order.
+            raise RuntimeError(
+                (conn.get("name") or "this tool") + ": " + who
+                + " matches more than one account in this environment; cannot choose."
+            )
+        caller_cache[who] = rows[0]["systemuserid"]
+        return {header: caller_cache[who]}
 
         def _invoke(**kwargs) -> dict:
             try:
@@ -288,6 +368,18 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
             req_headers.update(headers)
             if header:
                 req_headers["Authorization"] = header
+
+            # Resolved here, not earlier: the environment's API root is only known once the
+            # operation's own URL has had its context substituted, and the systemusers lookup
+            # has to run against the SAME environment this call is about.
+            try:
+                api_root = url.split("/api/data/")[0] + "/api/data/v9.2"
+                req_headers.update(_impersonation_headers(api_root, header))
+            except Exception as e:  # noqa: BLE001
+                # Fail the CALL, never fall back to the app identity. An unresolvable caller
+                # served the application's view would answer one person's question with
+                # everybody's data, and nothing on screen would say so.
+                return {"error": str(e)}
             data = None
             if body_val is not None and method in ("POST", "PUT", "PATCH"):
                 payload = body_val if isinstance(body_val, str) else _json.dumps(body_val)
