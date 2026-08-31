@@ -1246,9 +1246,39 @@ async function execute(
   // tenant `ben@` matches three different domains and `alex@` three more, so a guess reads
   // a stranger's mail. The operator already stated the pairing on the Map users screen, so
   // use that: it is the authoritative answer to exactly this question, reversed.
+  //
+  // The map is many-to-one in the direction the operator fills it in: alex@filefuze.co and
+  // alex@qatestagent.com both legitimately map to alex@migrationn.com, because one person can
+  // own accounts in several source domains. Reversing that is therefore NOT a bijection, and
+  // a plain overwrite would silently resolve the caller to whichever source address happened
+  // to be iterated last — the wrong mailbox, read with total confidence, which is the exact
+  // failure this whole path exists to prevent.
+  //
+  // So a destination that claims more than one source address is DROPPED. The tool then says
+  // it cannot tell which account is theirs, and the operator resolves it by mapping one of
+  // them elsewhere. Refusing is recoverable; reading a colleague's mail is not.
   const callerIdentityMap: Record<string, string> = {};
+  const ambiguousCallers = new Set<string>();
   for (const [ms, google] of Object.entries(identityOverrides.users)) {
-    if (google) callerIdentityMap[String(google).toLowerCase()] = ms;
+    if (!google) continue;
+    const dest = String(google).toLowerCase();
+    const existing = callerIdentityMap[dest];
+    if (existing) {
+      // Same account restated (often just different casing) is not a conflict — keep the
+      // first and move on. Overwriting would make the resolved address depend on key order
+      // for no reason.
+      if (existing.toLowerCase() !== ms.toLowerCase()) ambiguousCallers.add(dest);
+      continue;
+    }
+    callerIdentityMap[dest] = ms;
+  }
+  for (const dest of ambiguousCallers) delete callerIdentityMap[dest];
+  if (ambiguousCallers.size) {
+    // Named, not counted: the operator can only fix what they can identify.
+    logger.warn(
+      { callers: [...ambiguousCallers] },
+      'per-user tools: these destination users map to more than one source account, so tools that run as the caller cannot tell which is theirs',
+    );
   }
 
   // Memory that belongs to no migrating agent still has to reach the report — it is the
