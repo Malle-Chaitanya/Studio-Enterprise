@@ -301,6 +301,12 @@ def _build_live_connector_tool(conn: dict, project: str):
     # from the registry's userAuth block; empty means this connector has no delegated
     # sign-in, and every per-user call must fail closed.
     per_user_fields = set(conn.get("perUserFields") or [])
+    # IMPERSONATION keeps the SHARED app credential and names the caller on the request
+    # instead (MSCRMCallerID, or /users/{caller} on Graph). So none of the per-user secret
+    # logic below applies to it: there are deliberately no per-user secrets, and treating
+    # its empty `perUserFields` as "no per-user sign-in" makes every call fail closed for
+    # everyone -- which is exactly what a live two-caller test caught.
+    impersonating = bool(conn.get("perUser")) and conn.get("perUserMode") == "impersonate"
 
     def _secret(field: str) -> str:
         """Read one credential field from Secret Manager (latest version).
@@ -331,7 +337,7 @@ def _build_live_connector_tool(conn: dict, project: str):
         # mailbox, another person's CRM records -- the exact access collapse per-user exists
         # to prevent, and invisible because the call succeeds. Failing here surfaces as an
         # error the user can act on, which is the honest outcome.
-        if per_user and field in per_user_fields:
+        if per_user and not impersonating and field in per_user_fields:
             # Only the DELEGATED fields are personal. A connector's client_id and
             # client_secret identify the OAuth app, are the same for everyone, and must
             # keep resolving to the shared secret -- per-user-ing them would break the
@@ -344,7 +350,7 @@ def _build_live_connector_tool(conn: dict, project: str):
                     "(The ADK build in this container may not support tool_context.)"
                 )
             secret_id = f"{secret_id}-u-{_secret_safe(caller.lower())}"
-        elif per_user:
+        elif per_user and not impersonating:
             # perUser with no delegated fields means the server found no per-user flow for
             # this connector (see supportsUserAuth / ConnectorDef.userAuth). Fail closed.
             #
@@ -374,7 +380,7 @@ def _build_live_connector_tool(conn: dict, project: str):
             # their account yet -- by far the most common way this call fails. Saying so
             # turns a raw 404 in the model's context into an instruction it can relay.
             status = getattr(e, "code", None)
-            if per_user and field in per_user_fields and status in (403, 404):
+            if per_user and not impersonating and field in per_user_fields and status in (403, 404):
                 raise RuntimeError(
                     f"{conn_name}: this tool uses each person's own account, and there is "
                     "no stored connection for you yet. Connect your account in CloudFuze "

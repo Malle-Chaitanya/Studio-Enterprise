@@ -2365,6 +2365,21 @@ async function execute(
                 surfaceMailboxes.set(target.targetConnectorId, target.impersonateEmail);
               }
               scopedConnectors = [...scopedConnectors, ...built.specs];
+              // CARRY THE INVOKER FLAG ACROSS THE SUBSTITUTION.
+              //
+              // The per-user marking above keys on the SOURCE connector id and runs before
+              // this block exists. The connector actually wired is the TARGET, added here —
+              // so without this the flag is lost precisely when a surface is substituted, and
+              // Outlook is the common case. The tool then reads ONE pinned mailbox for every
+              // caller while reporting success, which is what a live two-caller test caught:
+              // both people were served the same person's mail.
+              if (invokerConnectorIds.has(msConnectorId)) {
+                scopedConnectors = scopedConnectors.map((c) =>
+                  c.id === target.targetConnectorId
+                    ? { ...applyPerUserAuth(c), callerIdentityMap }
+                    : c,
+                );
+              }
               if (!built.specs.length && !already) {
                 result.fidelity.push({
                   component: `surface:${msConnectorId}`,
@@ -2522,7 +2537,15 @@ async function execute(
               scopedConnectors = scopedConnectors.map((c, i) =>
                 i === idx ? { ...c, secretIds: { ...entry.secretIds, impersonate_email: agentSecretId } } : c,
               );
-              emitLog('info', `    ${row.name}: ${entry.name} will act as ${mailbox}.`);
+              // Say which identity actually applies. A per-user connector ignores this
+              // mailbox and runs as the caller; claiming otherwise sends a reader looking for
+              // a bug in the wrong place — and would hide the substitution bug above.
+              emitLog(
+                'info',
+                (entry as { perUser?: boolean }).perUser
+                  ? `    ${row.name}: ${entry.name} will act as whoever is asking (${mailbox} is the fallback for shared tools).`
+                  : `    ${row.name}: ${entry.name} will act as ${mailbox}.`,
+              );
               markActsAs(result, entry.name, mailbox);
             }
 
