@@ -36,7 +36,10 @@ def make(conn):
     )
 
 
-PER_USER = {"name": "Outlook", "kind": "outlook", "perUser": True, "perUserMode": "impersonate"}
+PER_USER = {"name": "Outlook", "kind": "outlook", "perUser": True, "perUserMode": "impersonate",
+            # The operator's mapping. Without it the container would have to guess from the
+            # local part, and in the live tenant `ben@` matches three domains.
+            "callerIdentityMap": {"ben@migrationn.com": "ben@filefuze.co"}}
 SHARED = {"name": "Outlook", "kind": "outlook"}
 
 # The tools close over _mailbox; reach it through the module's own closure cells rather than
@@ -51,19 +54,20 @@ def mailbox_of(tools, caller_value):
     raise AssertionError("could not reach _mailbox")
 
 
-# 1. Per-user: the caller's own mailbox, never the configured one.
+# 1. The DESTINATION identity Gemini gives us resolves to the SOURCE mailbox, via the
+#    operator's own mapping -- no network, no guessing.
 try:
-    got = mailbox_of(make(PER_USER), "alex@filefuze.co")
-    check("per-user reads the caller's mailbox", got == "alex@filefuze.co", got)
+    got = mailbox_of(make(PER_USER), "ben@migrationn.com")
+    check("destination caller maps to the source mailbox", got == "ben@filefuze.co", got)
 except Exception as e:  # noqa: BLE001
-    check("per-user reads the caller's mailbox", False, f"{type(e).__name__}: {e}")
+    check("destination caller maps to the source mailbox", False, f"{type(e).__name__}: {e}")
 
-# 2. A different caller gets a different mailbox -- no stale identity between calls.
+# 2. Case is not identity. Gemini's casing is not guaranteed to match what the operator typed.
 try:
-    got = mailbox_of(make(PER_USER), "erik@filefuze.co")
-    check("second caller is not the first", got == "erik@filefuze.co", got)
+    got = mailbox_of(make(PER_USER), "Ben@Migrationn.com")
+    check("mapping is case-insensitive", got == "ben@filefuze.co", got)
 except Exception as e:  # noqa: BLE001
-    check("second caller is not the first", False, f"{type(e).__name__}: {e}")
+    check("mapping is case-insensitive", False, f"{type(e).__name__}: {e}")
 
 # 3. THE ONE THAT MATTERS: unknown caller must refuse, never fall back to the shared mailbox.
 try:

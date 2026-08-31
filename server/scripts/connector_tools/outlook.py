@@ -48,6 +48,79 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
     # 'connector_tools'`. Confirmed live 2026-08-19 on the Gmail module, which was written
     # the wrong way round first. Module-level CONSTANTS are fine.
 
+    # The caller arrives as a DESTINATION identity (ben@newco.com, from the Gemini session)
+    # while the mailbox lives in the SOURCE Microsoft tenant (ben@oldco.co). Using the address
+    # verbatim 404s for every real migration, because the whole point of a migration is that
+    # the two directories are different. So: exact address first, then the local part within
+    # this tenant — which is how the same person is normally recognisable across the two.
+    mailbox_cache: dict = {}
+
+    def _resolve_mailbox(who: str) -> str:
+        """The mailbox in THIS tenant belonging to the person asking.
+
+        Raises rather than guessing. An ambiguous local part means two people share it, and
+        picking one would read a stranger's mail on their behalf; no match means the caller
+        has no mailbox here, which is a different problem with a different fix. Both are more
+        useful said out loud than papered over with the configured mailbox.
+        """
+        if who in mailbox_cache:
+            return mailbox_cache[who]
+
+        # 0. The operator's own mapping, stated on the Map users screen. Authoritative, and
+        #    checked BEFORE any guess: `ben@` matches three different domains in the live test
+        #    tenant, so a local-part guess would read a stranger's mail with full confidence.
+        mapped = (conn.get("callerIdentityMap") or {}).get(who.lower())
+        if mapped:
+            mailbox_cache[who] = mapped
+            return mapped
+
+        import json as _json
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+
+        token = mint_token(fill)
+
+        def _api(path: str, advanced: bool = False):
+            headers = {"Authorization": f"Bearer {token}"}
+            if advanced:
+                # startswith() on mail is an "advanced query"; Graph 400s without this.
+                headers["ConsistencyLevel"] = "eventual"
+            req = urllib.request.Request(f"{GRAPH}{path}", headers=headers)
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                raw = resp.read().decode("utf-8")
+                return _json.loads(raw) if raw else {}
+
+        # 1. The address as given — right whenever both directories use the same domain.
+        try:
+            got = _api("/users/" + urllib.parse.quote(who) + "?$select=mail,userPrincipalName")
+            addr = got.get("mail") or got.get("userPrincipalName")
+            if addr:
+                mailbox_cache[who] = addr
+                return addr
+        except urllib.error.HTTPError as e:
+            if e.code not in (400, 404):
+                raise
+
+        # 2. Same local part in this tenant — alex@newco.com -> alex@oldco.co.
+        local = who.split("@")[0].replace("'", "''")
+        flt = urllib.parse.quote("startswith(mail,'" + local + "@')", safe="")
+        rows = (_api("/users?$select=mail&$top=3&$count=true&$filter=" + flt, advanced=True)
+                or {}).get("value") or []
+        rows = [r for r in rows if r.get("mail")]
+        if len(rows) == 1:
+            mailbox_cache[who] = rows[0]["mail"]
+            return rows[0]["mail"]
+        if len(rows) > 1:
+            raise RuntimeError(
+                (conn.get("name") or "this tool") + ": " + who
+                + " matches more than one mailbox here, so it cannot tell which is theirs."
+            )
+        raise RuntimeError(
+            (conn.get("name") or "this tool") + ": no mailbox for " + who
+            + " exists in this Microsoft tenant, so it cannot read their mail."
+        )
+
     def _mailbox() -> str:
         """Whose mailbox these tools read. Reported on every response.
 
@@ -71,7 +144,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                     + ": reads the mailbox of whoever is asking, but the caller could not be "
                     "identified, so it will not read anyone's mail."
                 )
-            return who
+            return _resolve_mailbox(who)
         try:
             return secret("impersonate_email") or "(unknown)"
         except Exception:  # noqa: BLE001 — identity is informational, never fatal

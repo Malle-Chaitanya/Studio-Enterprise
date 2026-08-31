@@ -276,6 +276,11 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         if who in caller_cache:
             return {header: caller_cache[who]}
 
+        # The operator's own mapping first — see outlook.py for why a local-part guess is
+        # not safe here either. This turns the destination identity Gemini gives us into the
+        # source address the systemusers lookup below can actually match on.
+        who = (conn.get("callerIdentityMap") or {}).get(who.lower(), who)
+
         import json as _json
         import urllib.parse
         import urllib.request

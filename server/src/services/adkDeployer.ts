@@ -145,6 +145,15 @@ export interface AdkSpec {
     impersonationHeader?: string;
     /** How the container turns the caller into the id that header wants. */
     impersonationResolve?: 'dataverse-systemuser' | 'graph-user-path';
+    /**
+     * DESTINATION email (lowercased) → SOURCE email, from the operator's own user mapping.
+     *
+     * Gemini hands the agent a destination identity; the mailbox and the Dataverse account
+     * live in the source tenant. Deriving one from the other by local part is unsafe — in the
+     * live test tenant `ben@` matches three domains — so the pairing the operator already
+     * stated on the Map users screen is used instead of a guess.
+     */
+    callerIdentityMap?: Record<string, string>;
     /** Operations the SOURCE agent invoked on this connector (e.g. `ListIssues`), each
      *  with the description Copilot Studio showed for it. Advisory only — it shapes the
      *  generated tool's description so the model knows what this agent was built to do;

@@ -1240,6 +1240,17 @@ async function execute(
     Object.entries(identityOverrides.users).map(([ms, google]) => [ms.toLowerCase(), String(google)]),
   );
 
+  // WHO IS ASKING, in SOURCE terms. Gemini hands the deployed agent a destination identity
+  // (ben@newco.com); the mailbox and the Dataverse account live in the source tenant
+  // (ben@oldco.co). Guessing the link from the local part is not safe — in the live test
+  // tenant `ben@` matches three different domains and `alex@` three more, so a guess reads
+  // a stranger's mail. The operator already stated the pairing on the Map users screen, so
+  // use that: it is the authoritative answer to exactly this question, reversed.
+  const callerIdentityMap: Record<string, string> = {};
+  for (const [ms, google] of Object.entries(identityOverrides.users)) {
+    if (google) callerIdentityMap[String(google).toLowerCase()] = ms;
+  }
+
   // Memory that belongs to no migrating agent still has to reach the report — it is the
   // difference between "this agent kept its personalization" and "the personalization
   // stayed in Copilot". Carried onto every agent in the run because the report is
@@ -2268,7 +2279,12 @@ async function execute(
             );
             if (invokerConnectorIds.size) {
               scopedConnectors = scopedConnectors.map((c) =>
-                invokerConnectorIds.has(c.id) ? applyPerUserAuth(c) : c,
+                invokerConnectorIds.has(c.id)
+                  // The caller map rides on the connector because that is what the container
+                  // sees; without it a per-user tool cannot turn "who asked" into an account
+                  // in the source tenant, and refuses for everyone.
+                  ? { ...applyPerUserAuth(c), callerIdentityMap }
+                  : c,
               );
             }
 
