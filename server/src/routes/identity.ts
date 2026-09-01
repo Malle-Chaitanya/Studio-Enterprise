@@ -162,7 +162,19 @@ identityRouter.put('/map', async (req, res) => {
     users: (req.body?.users as Record<string, string>) ?? {},
     groups: (req.body?.groups as Record<string, string>) ?? {},
   };
+  // WHY. This PUT is a full replace, but the v2 Map-users screen saves only the subset it is
+  // holding (auto-matched pairs, or the pending draft). A partial save therefore DESTROYS every
+  // mapping not on screen, and the loss is silent - the run afterwards just reports fewer
+  // overrides. Log what arrived against what was stored so a shrinking map is visible here
+  // instead of being rediscovered from an empty callerIdentityMap three migrations later.
+  const before = await getIdentityMap(appUserId, tenantId, await mapProjectKey(session));
+  const beforeN = Object.keys(before.users ?? {}).length;
+  const afterN = Object.keys(overrides.users).length;
+  if (afterN < beforeN) {
+    logger.warn({ beforeN, afterN, appUserId }, 'identity map PUT shrinks the stored map');
+  }
   const saved = await putIdentityMap(appUserId, tenantId, await mapProjectKey(session), overrides);
+  logger.info({ users: Object.keys(saved.users ?? {}).length }, 'identity map saved');
   res.json({ tenantId, ...saved });
 });
 
