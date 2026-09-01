@@ -1279,6 +1279,23 @@ async function execute(
       { callers: [...ambiguousCallers] },
       'per-user tools: these destination users map to more than one source account, so tools that run as the caller cannot tell which is theirs',
     );
+    // And say it where the operator is actually looking. This used to reach the server
+    // console only, so the person running the migration saw a healthy green run and then a
+    // tool that refused every request from these people, with nothing connecting the two.
+    // The auto-matcher pairs on local part, so one Google account collecting the same name
+    // from several source domains is the ordinary case, not an exotic one.
+    for (const dest of ambiguousCallers) {
+      const sources = Object.entries(identityOverrides.users)
+        .filter(([, g]) => String(g ?? '').toLowerCase() === dest)
+        .map(([ms]) => ms)
+        .sort();
+      emitLog(
+        'warn',
+        `    ${dest} is mapped from ${sources.length} source accounts (${sources.join(', ')}) — ` +
+          'tools that run as the caller will refuse this person rather than guess which mailbox ' +
+          'is theirs. Map all but one of those source accounts to a different Google user to fix it.',
+      );
+    }
   }
 
   // Memory that belongs to no migrating agent still has to reach the report — it is the
