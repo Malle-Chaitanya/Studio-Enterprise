@@ -111,8 +111,15 @@ export interface ConnectorDef {
      * How to turn a person into the id that header wants. 'dataverse-systemuser' looks the
      * caller up in the target environment's `systemusers` by email — the id is per
      * environment, so it cannot be resolved once at deploy time and cached forever.
+     *
+     * 'google-dwd-subject' carries no header at all: domain-wide delegation names the person
+     * when the TOKEN is minted (`with_subject`), so the caller is applied once in
+     * `_mint_token` and every Google tool inherits it — reads and writes alike. It also needs
+     * no identity map: the ADK session's user_id already IS a Google address, which is what
+     * DWD wants as a subject. (Outlook is the opposite case — the caller arrives as a Google
+     * address and has to be mapped back to a Microsoft one first.)
      */
-    resolve: 'dataverse-systemuser' | 'graph-user-path';
+    resolve: 'dataverse-systemuser' | 'graph-user-path' | 'google-dwd-subject';
   };
   /** For 'basic-userpass': which credential field is the user and which the secret. */
   basicUserField?: string;
@@ -713,6 +720,12 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     // separate 'drive.readonly' scope string (exact-match, not hierarchical), so a
     // customer who only grants the broad scope still needs this to be the same one.
     scope: 'https://www.googleapis.com/auth/drive',
+    // Applied only when the SOURCE Copilot connector ran in invoker mode. `impersonate_email`
+    // above pins one person per agent, which is right for a maker connector; an invoker one
+    // ran as whoever was asking, so the subject has to follow the caller instead. Every Drive
+    // tool inherits it from the token, including create/update/delete — a file the agent
+    // writes then lands in the asker's Drive rather than one shared account's.
+    impersonation: { header: '', resolve: 'google-dwd-subject' },
   },
 
   {
@@ -747,6 +760,10 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     // Deliberately NOT mail.google.com: that scope also permits PERMANENT deletion, which no
     // tool here does or should.
     scope: 'https://www.googleapis.com/auth/gmail.modify',
+    // See the Drive note above. This matters more here than anywhere else: `gmail.modify`
+    // includes SEND, so without the caller as subject a migrated invoker agent would send
+    // mail FROM the one impersonated account no matter who asked it to.
+    impersonation: { header: '', resolve: 'google-dwd-subject' },
   },
 
   {

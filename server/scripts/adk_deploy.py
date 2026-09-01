@@ -455,13 +455,29 @@ def _build_live_connector_tool(conn: dict, project: str):
             creds = service_account.Credentials.from_service_account_info(
                 info, scopes=[scope or "https://www.googleapis.com/auth/cloud-platform"]
             )
-            # Domain-wide delegation, when the customer named a user to impersonate.
-            try:
-                subject = _secret("impersonate_email")
-                if subject:
-                    creds = creds.with_subject(subject)
-            except Exception:  # noqa: BLE001 — optional field
-                pass
+            # Domain-wide delegation names the person AT MINT TIME, so this is the single
+            # place a Google connector becomes per-user: every tool built on the resulting
+            # token -- Drive create/update/delete, Gmail send -- acts as that subject without
+            # knowing the caller exists. No identity map is involved, unlike Outlook: the ADK
+            # session's user_id is already a Google address, which is what DWD wants.
+            if impersonating and conn.get("impersonationResolve") == "google-dwd-subject":
+                subject = _caller_var().get("")
+                if not subject:
+                    # Fail closed. Falling back to `impersonate_email` here would quietly run
+                    # an invoker connector as one pinned person and, for Gmail, SEND AS THEM.
+                    raise RuntimeError(
+                        f"{conn_name}: this tool ran under each user's own credentials in "
+                        f"Copilot Studio, but the caller could not be identified, so it will "
+                        f"not act as anyone."
+                    )
+                creds = creds.with_subject(subject)
+            else:
+                try:
+                    subject = _secret("impersonate_email")
+                    if subject:
+                        creds = creds.with_subject(subject)
+                except Exception:  # noqa: BLE001 — optional field
+                    pass
             creds.refresh(google.auth.transport.requests.Request())
             token_cache[cache_key] = creds.token
             token_cache[exp_key] = time.time() + 3000
