@@ -37,12 +37,22 @@ export const destinationRouter = Router();
  * the (possibly stale) session.gToken unchanged — those need one reconnect to
  * pick up a refresh token; every session after keeps refreshing silently.
  */
-async function freshGoogleUserToken(sessionId: string, session: Session): Promise<string | undefined> {
-  if (!session.gRefreshToken) return session.gToken;
-  const fresh = await refreshGoogleToken(session.gRefreshToken);
-  if (!fresh) return session.gToken;
-  if (fresh !== session.gToken) await updateSession(sessionId, { gToken: fresh });
-  return fresh;
+async function freshGoogleUserToken(
+  sessionId: string,
+  session: Session,
+): Promise<{ token?: string; reauthRequired: boolean }> {
+  if (!session.gRefreshToken) return { token: session.gToken, reauthRequired: false };
+  const { accessToken, reauthRequired } = await refreshGoogleToken(session.gRefreshToken);
+  if (reauthRequired) {
+    // Drop the dead credentials rather than keep presenting them. Leaving them in place
+    // meant every later call re-attempted a grant Google had already killed, and each one
+    // surfaced as its own unrelated-looking 401 downstream.
+    await updateSession(sessionId, { gToken: undefined, gRefreshToken: undefined });
+    return { reauthRequired: true };
+  }
+  if (!accessToken) return { token: session.gToken, reauthRequired: false };
+  if (accessToken !== session.gToken) await updateSession(sessionId, { gToken: accessToken });
+  return { token: accessToken, reauthRequired: false };
 }
 
 /**
@@ -56,7 +66,10 @@ destinationRouter.get('/projects', async (req, res) => {
   const session = await getSession(sessionId);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
 
-  const userToken = await freshGoogleUserToken(sessionId, session);
+  const { token: userToken, reauthRequired } = await freshGoogleUserToken(sessionId, session);
+  // Say so plainly. The alternative - an empty list plus "falling back to manual entry" -
+  // told the admin their permissions were wrong when in fact their sign-in had expired.
+  if (reauthRequired) return void res.status(401).json({ error: 'google_reauth_required' });
   const projects = await listProjects(userToken);
   // Always surface the currently-connected/discovered project so the customer has
   // at least one selectable destination even without OAuth project enumeration.
@@ -130,7 +143,9 @@ destinationRouter.get('/engines', async (req, res) => {
       logger.warn(`engines: SA token failed for ${project}: ${lastError}`);
     }
 
-    const userToken = await freshGoogleUserToken(sessionId, session);
+    // Engines have a service-account path too, so a dead OAuth grant is not fatal here -
+    // it just removes the fallback. Don't 401 a call the SA already answered.
+    const { token: userToken } = await freshGoogleUserToken(sessionId, session);
     if (!engines.length && userToken) {
       const oauthResult = await listEnginesResult(project, userToken);
       if (oauthResult.engines.length) {

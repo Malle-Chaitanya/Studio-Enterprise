@@ -445,10 +445,31 @@ export async function exchangeCode(code: string): Promise<{ accessToken: string;
   return { accessToken: json.access_token, refreshToken: json.refresh_token };
 }
 
+/**
+ * The outcome of trying to refresh. `reauthRequired` separates a refresh token Google has
+ * PERMANENTLY rejected from a refresh that merely failed this time.
+ *
+ * WHY THE DISTINCTION. Both used to collapse into `null`, and the only caller answered a
+ * null by handing back the dead access token it already had. Discovery then 401'd and the
+ * route reported "falling back to manual entry" - so a revoked Google grant looked like a
+ * missing IAM permission, three layers away from the truth. Observed 2026-08-31: an admin
+ * whose Cloud session control forced reauth spent a morning on it.
+ *
+ * `invalid_grant` is the unambiguous one: revoked consent, changed password, an admin
+ * clearing sessions, or a reauth policy invalidating outstanding grants. The token will
+ * never work again and only a fresh sign-in fixes it. Anything else (5xx, a network blip)
+ * is transient and must NOT push the customer through a needless reconnect.
+ */
+export interface GoogleRefreshResult {
+  accessToken: string | null;
+  /** Google rejected the grant itself — the stored refresh token is dead for good. */
+  reauthRequired: boolean;
+}
+
 /** Exchange a stored Google refresh token for a fresh ~1hr access token. Google
  *  only returns a NEW refresh_token on rare rotation — the caller's existing one
  *  keeps working otherwise, so we don't overwrite it unless a new one comes back. */
-export async function refreshGoogleToken(refreshToken: string): Promise<string | null> {
+export async function refreshGoogleToken(refreshToken: string): Promise<GoogleRefreshResult> {
   try {
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -462,13 +483,20 @@ export async function refreshGoogleToken(refreshToken: string): Promise<string |
     });
     const json = (await res.json()) as { access_token?: string; error?: string };
     if (!res.ok || !json.access_token) {
-      logger.warn(`Google token refresh failed (${res.status}): ${json.error ?? 'unknown'}`);
-      return null;
+      // Never log the token itself - the error code and status are the whole diagnosis.
+      const reauthRequired = json.error === 'invalid_grant';
+      logger.warn(
+        `Google token refresh failed (${res.status}): ${json.error ?? 'unknown'}` +
+          (reauthRequired ? ' — the stored grant is dead, the admin must reconnect Google' : ''),
+      );
+      return { accessToken: null, reauthRequired };
     }
-    return json.access_token;
+    return { accessToken: json.access_token, reauthRequired: false };
   } catch (err) {
+    // A thrown fetch is transient by definition — we never heard back, so we know nothing
+    // about the grant. Treating it as dead would sign the customer out over a network blip.
     logger.warn({ err }, 'Google token refresh errored');
-    return null;
+    return { accessToken: null, reauthRequired: false };
   }
 }
 
