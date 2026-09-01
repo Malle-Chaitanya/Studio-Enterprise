@@ -152,29 +152,44 @@ identityRouter.get('/map', async (req, res) => {
   res.json({ tenantId, ...map });
 });
 
-/** PUT /api/identity/map  body: { session, users?, groups? } */
+/**
+ * PUT /api/identity/map  body: { session, users?, groups? }
+ *
+ * MERGES by default. The screens save only the subset they are holding - the v2 Map-users page
+ * posts the freshly auto-matched pairs, or the pending draft, not the whole map - so replacing
+ * wholesale silently deleted every mapping that happened to be off screen. That loss was
+ * invisible until a migration later reported zero identity overrides and every per-caller
+ * connector fail-closed for want of a caller mapping.
+ *
+ * An explicitly EMPTY `users` object still means clear-all, which is what the Map-users
+ * "clear mappings" action sends. Unmapping one person is a key with an empty value.
+ */
 identityRouter.put('/map', async (req, res) => {
   const session = await getSession(String(req.body?.session ?? ''));
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const tenantId = session.tenantId ?? '';
-  const overrides: IdentityMapOverrides = {
-    users: (req.body?.users as Record<string, string>) ?? {},
-    groups: (req.body?.groups as Record<string, string>) ?? {},
-  };
-  // WHY. This PUT is a full replace, but the v2 Map-users screen saves only the subset it is
-  // holding (auto-matched pairs, or the pending draft). A partial save therefore DESTROYS every
-  // mapping not on screen, and the loss is silent - the run afterwards just reports fewer
-  // overrides. Log what arrived against what was stored so a shrinking map is visible here
-  // instead of being rediscovered from an empty callerIdentityMap three migrations later.
-  const before = await getIdentityMap(appUserId, tenantId, await mapProjectKey(session));
+  const bodyUsers = req.body?.users as Record<string, string> | undefined;
+  const bodyGroups = req.body?.groups as Record<string, string> | undefined;
+  const overrides: IdentityMapOverrides = { users: bodyUsers ?? {}, groups: bodyGroups ?? {} };
+  // A body that sends users:{} is asking to clear; anything else is a partial save to merge.
+  const clearing = !!bodyUsers && Object.keys(bodyUsers).length === 0;
+  const projectKey = await mapProjectKey(session);
+  const before = await getIdentityMap(appUserId, tenantId, projectKey);
+  const saved = await putIdentityMap(
+    appUserId,
+    tenantId,
+    projectKey,
+    overrides,
+    clearing ? 'replace' : 'merge',
+  );
   const beforeN = Object.keys(before.users ?? {}).length;
-  const afterN = Object.keys(overrides.users).length;
+  const afterN = Object.keys(saved.users ?? {}).length;
   if (afterN < beforeN) {
-    logger.warn({ beforeN, afterN, appUserId }, 'identity map PUT shrinks the stored map');
+    logger.warn({ beforeN, afterN, clearing }, 'identity map shrank on save');
+  } else {
+    logger.info({ users: afterN }, 'identity map saved');
   }
-  const saved = await putIdentityMap(appUserId, tenantId, await mapProjectKey(session), overrides);
-  logger.info({ users: Object.keys(saved.users ?? {}).length }, 'identity map saved');
   res.json({ tenantId, ...saved });
 });
 
