@@ -191,7 +191,16 @@ export async function fetchProjects(
   session: string,
 ): Promise<{ projects: DestProject[]; manualEntry: boolean; defaultProject?: string }> {
   const res = await fetch(`/api/destination/projects?session=${session}`);
-  if (!res.ok) throw new Error('projects_failed');
+  if (!res.ok) {
+    // Pass the server's own code through when it has one. A dead Google grant comes back as
+    // `google_reauth_required`, and flattening that to `projects_failed` is what made an
+    // expired sign-in read as a permissions problem.
+    const code = await res
+      .json()
+      .then((b: { error?: string }) => b?.error)
+      .catch(() => undefined);
+    throw new Error(code || 'projects_failed');
+  }
   return (await res.json()) as { projects: DestProject[]; manualEntry: boolean; defaultProject?: string };
 }
 
