@@ -392,19 +392,26 @@ export const MCP_SERVERS: Equivalence[] = [
     surface: 'outlook',
     operationId: 'mcp_MeetingManagement',
     label: 'Calendar MCP (Meeting Management MCP Server)',
-    target: null,
-    fidelity: 'lost',
+    target: { service: 'gemini', capability: 'calendar.py tools (re-implementation)' },
+    fidelity: 'narrowed',
     reason:
-      'Same server-binding problem as Mail MCP, and there is no calendar equivalent built at ' +
-      'all — Google Calendar tools do not exist in this product yet.',
+      'Same server-binding problem as Mail MCP: an MCP server is not an enumerable list of ' +
+      'operations, so per-operation fidelity cannot be stated for it directly. UPDATED ' +
+      '2026-08-31: unlike when this row was first written, Google Calendar tools now exist ' +
+      '(connector_tools/calendar.py) for the individual connector actions a real agent uses — ' +
+      'the migrated agent gets those instead of the MCP server itself, which does not migrate.',
   },
   {
     surface: 'outlook',
     operationId: 'mcp_ContactsManagement',
     label: 'Contact Management MCP Server',
-    target: null,
-    fidelity: 'lost',
-    reason: 'No Google Contacts tools exist in this product yet.',
+    target: { service: 'gemini', capability: 'contacts.py tools (re-implementation)' },
+    fidelity: 'narrowed',
+    reason:
+      'Same server-binding problem as Mail MCP. UPDATED 2026-09-01: unlike when this row was ' +
+      'first written, Google Contacts tools now exist (connector_tools/contacts.py) for the ' +
+      'individual connector actions a real agent uses — the migrated agent gets those instead ' +
+      'of the MCP server itself, which does not migrate.',
   },
 ];
 
@@ -442,22 +449,31 @@ export const OTHER_SURFACES: Equivalence[] = [
     // Measured on staged agents 2026-08-20; while it sat inside "(35 calendar operations)"
     // the lookup resolved it to nothing, because no agent declares a bucket's name — so the
     // report said "unmapped" for an operation the table had an opinion about.
+    //
+    // UPDATED 2026-08-31: connector_tools/calendar.py now exists (Google Calendar's
+    // events.insert/events.list/freebusy.query, officially confirmed to require nothing
+    // beyond a standard OAuth scope — no platform blocker, this was purely an unbuilt
+    // module). Reclassified from "NOT BUILT" to a real, code-backed mapping. `verified`
+    // stays false: the module is written but has not yet had a live call made and its
+    // result recorded — see the honesty-gate rule on the `Equivalence.verified` field.
     operationId: 'GetEventsCalendarViewV3',
-    covers: ['GetEventsCalendarView', 'GetEventsV3', 'GetEvents'],
+    // 'V3CalendarGetItems'/'V4CalendarGetItems' added 2026-09-01: the REAL operationIds for
+    // "Get events (V3)"/"Get events (V4)" (plural, list) pulled from the captured swagger —
+    // the earlier 'GetEventsV3'/'GetEvents' guesses in this array did not match anything in
+    // the actual fixture and were never measured against it. Functionally the same list
+    // shape as calendarView (a date-scoped list of events), so they resolve to the same
+    // built tool rather than needing their own.
+    covers: ['GetEventsCalendarView', 'GetEventsV3', 'GetEvents', 'V3CalendarGetItems', 'V4CalendarGetItems'],
     label: 'Get calendar events in a date range',
     target: { service: 'gemini', capability: 'Google Calendar API events.list' },
     fidelity: 'narrowed',
     reason:
-      'NOT BUILT on the Google path: there is no calendar tool in connector_tools/gmail.py ' +
-      'and the delegation scope this connector requests is gmail.readonly, so a migrated ' +
-      'agent whose mail moved to Google has no calendar access at all. On the KEEP-MICROSOFT ' +
-      'path the operation is reproduced exactly by outlook_list_calendar_events (a Graph ' +
-      'calendarView, which expands recurring series into occurrences — plain /events would ' +
-      'return the series master once and undercount a weekly meeting). That tool is written ' +
-      'and PROVEN live on 2026-08-21, once Calendars.Read (application) was consented — a ' +
-      'separate grant from the Mail.* ones, which is why it answered ErrorAccessDenied the ' +
-      'day before. Ten real events came back for a mailbox that has them, including expanded ' +
-      'occurrences of a recurring series.',
+      'Google Calendar has no direct "calendarView" equivalent, but events.list with ' +
+      'singleEvents=true achieves the same expansion of recurring series into real ' +
+      'occurrences — the same reason connector_tools/calendar.py always sets that flag, ' +
+      'mirroring why the KEEP-MICROSOFT tool below uses calendarView instead of plain ' +
+      '/events (which returns a series master once and undercounts a weekly meeting).',
+    tool: 'calendar_list_events',
     graph: {
       capability: 'GET /users/{id}/calendarView?startDateTime=&endDateTime=',
       tool: 'outlook_list_calendar_events',
@@ -474,16 +490,198 @@ export const OTHER_SURFACES: Equivalence[] = [
   },
   {
     surface: 'outlook',
-    // 34, not 35: GetEventsCalendarViewV3 now has its own row above. The count is decremented
-    // rather than left alone, because the whole value of a bucket row is that its number is
-    // the honest size of the unexamined remainder.
-    operationId: '(34 remaining calendar operations)',
-    label: 'Calendar — rooms, availability, invitations, recurrence editing',
+    // Measured live 2026-08-31 against a real child agent ("Meeting Scheduler Agent",
+    // built on WorkMate this session) — the exact operationId Copilot Studio generated,
+    // not a guessed name. Previously sat unexamined inside the "remaining calendar
+    // operations" bucket below.
+    operationId: 'CalendarGetTables_V2',
+    label: 'Get calendars (V2)',
+    target: { service: 'gemini', capability: 'Google Calendar API calendarList.list' },
+    fidelity: 'narrowed',
+    reason:
+      'Outlook lists mailbox calendars (Calendar, shared, room calendars an account has ' +
+      'access to). Google\'s calendarList.list returns the equivalent for the impersonated ' +
+      'account, but there is no cross-account "which calendars can I see" concept — a ' +
+      'migrated agent only ever sees the ONE impersonated account\'s calendar list.',
+    tool: 'calendar_list_calendars',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    operationId: 'FindMeetingTimes_V2',
+    label: 'Find meeting times (V2)',
+    target: { service: 'gemini', capability: 'Google Calendar API freebusy.query' },
+    fidelity: 'narrowed',
+    reason:
+      'Outlook suggests specific candidate times ranked by attendee availability. Google\'s ' +
+      'freebusy.query returns raw busy/free ranges per calendar and leaves picking a slot to ' +
+      'the caller — the migrated tool (calendar_check_availability) reports busy ranges for ' +
+      'review rather than a ranked suggestion list. An attendee whose calendar cannot be ' +
+      'read comes back as unresolvable, not silently treated as free.',
+    tool: 'calendar_check_availability',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    operationId: 'V4CalendarPostItem',
+    label: 'Create event (V4)',
+    target: { service: 'gemini', capability: 'Google Calendar API events.insert' },
+    fidelity: 'narrowed',
+    reason:
+      'Outlook\'s "Show As" (Free/Busy/Tentative/OOF, four states) maps to Google\'s ' +
+      '`transparency` (opaque/transparent) plus `status` — collapses to roughly two-three ' +
+      'states, not translated one-to-one. Booking always targets the impersonated account\'s ' +
+      '`primary` calendar; there is no equivalent of targeting an arbitrary other calendar ' +
+      'the way a source agent might have. Real invites ARE sent to attendees ' +
+      '(sendUpdates=all), matching Outlook\'s own attendee-notification behavior.',
+    tool: 'calendar_create_event',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    // Real operationId pulled 2026-09-01 from the captured swagger (Copilot's "Get event
+    // (V3)" label maps to this id, not a guess — see the covers note on
+    // GetEventsCalendarViewV3 above for why plural vs singular matters here).
+    operationId: 'V3CalendarGetItem',
+    label: 'Get event (V3)',
+    target: { service: 'gemini', capability: 'Google Calendar API events.get' },
+    fidelity: 'exact',
+    reason: 'A single event lookup by id translates directly — no Outlook-specific shape to lose.',
+    tool: 'calendar_get_event',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    operationId: 'V4CalendarPatchItem',
+    label: 'Update event (V4)',
+    target: { service: 'gemini', capability: 'Google Calendar API events.patch' },
+    fidelity: 'narrowed',
+    reason:
+      'Same collapse as event creation: Outlook\'s four-state "Show As" has no direct Google ' +
+      'field on a partial update, and only fields the caller passes are changed — an Outlook ' +
+      'update that touches other fields (recurrence, location) has no equivalent here yet.',
+    tool: 'calendar_update_event',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    operationId: 'RespondToEvent_V2',
+    label: 'Respond to an event invite (V2)',
+    target: { service: 'gemini', capability: 'Google Calendar API events.patch (attendee responseStatus)' },
+    fidelity: 'narrowed',
+    reason:
+      'Google Calendar has no dedicated RSVP endpoint the way Outlook does — responding means ' +
+      'patching the event\'s attendee list to set the impersonated account\'s OWN entry. If ' +
+      'that account is not already listed as an attendee, there is nothing to respond to and ' +
+      'the tool reports that rather than silently no-op-ing.',
+    tool: 'calendar_respond_to_event',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    operationId: 'GetRooms_V2',
+    covers: ['GetRoomLists_V2', 'GetRoomsInRoomList_V2'],
+    label: 'Get rooms (V2)',
+    target: null,
+    fidelity: 'lost',
+    reason:
+      'Room resources live in Google Workspace\'s Admin Directory API ' +
+      '(resources.calendars.list), a DIFFERENT API and a DIFFERENT scope ' +
+      '(admin.directory.resource.calendar.readonly) from the regular Calendar scope every ' +
+      'other tool in this table uses — and it requires Workspace Admin privileges the ' +
+      'impersonated end-user account does not have. Not built: this is a real platform ' +
+      'boundary (a different credential grant entirely), not an unwritten function.',
+  },
+  {
+    surface: 'outlook',
+    // 28, not 31: three more real operations (V3CalendarGetItem, V4CalendarPatchItem,
+    // RespondToEvent_V2) now have their own rows above, each pulled from the captured
+    // swagger rather than guessed. Room count separately down to 5 from 6 (GetRoomLists,
+    // GetRooms, GetRoomsInRoomList's deprecated V1s plus the two V2 companions already
+    // folded into the GetRooms_V2 row's `covers`) — GetRoomLists (deprecated) is the one
+    // room operation still genuinely unexamined. The count is decremented rather than left
+    // alone, because the whole value of a bucket row is that its number is the honest size
+    // of the unexamined remainder.
+    operationId: '(28 remaining calendar operations)',
+    label: 'Calendar — recurrence editing, attachments, categories',
     target: { service: 'gemini', capability: 'Google Calendar API' },
     fidelity: 'narrowed',
     reason:
       'Not yet mapped or built, and not referenced by any staged agent. Counted from the same ' +
-      'swagger: 34 further calendar, 15 contacts and 6 room operations remain unexamined.',
+      'swagger: 28 further calendar and 1 room (deprecated) operation remain unexamined.',
+  },
+  {
+    surface: 'outlook',
+    // Real operationIds pulled 2026-09-01 from the captured swagger
+    // (fixtures/shared_office365.ops.json) — the V2 variants only; the non-V2 originals
+    // (ContactPostItem, ContactGetItem, ContactGetTables, ContactGetItems, ContactPatchItem)
+    // are all `deprecated: true` in that same fixture and Copilot Studio's "Add a tool" menu
+    // does not surface them, matching the same deprecated/live split OUTLOOK_MAIL's header
+    // comment already documents for mail. Built alongside connector_tools/contacts.py, the
+    // first Google Contacts module in this codebase — see that module's docstring for the
+    // fidelity divergences (folders vs groups, non-portable resourceName ids).
+    operationId: 'ContactPostItem_V2',
+    label: 'Create contact (V2)',
+    target: { service: 'gemini', capability: 'Google People API people.createContact' },
+    fidelity: 'exact',
+    tool: 'contacts_create_contact',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    operationId: 'ContactGetItem_V2',
+    label: 'Get contact (V2)',
+    target: { service: 'gemini', capability: 'Google People API people.get' },
+    fidelity: 'exact',
+    tool: 'contacts_get_contact',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    operationId: 'ContactGetTablesV2',
+    label: 'Get contact folders (V2)',
+    target: { service: 'gemini', capability: 'Google People API contactGroups.list' },
+    fidelity: 'narrowed',
+    reason:
+      'An Outlook contact lives in exactly ONE folder; a Google contact can belong to several ' +
+      'groups, or none — the same shape of gap MoveV2/GetMailboxFolders documents for mail ' +
+      'folders vs labels.',
+    tool: 'contacts_list_contact_groups',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    operationId: 'ContactGetItems_V2',
+    label: 'Get contacts (V2)',
+    target: { service: 'gemini', capability: 'Google People API people.connections.list' },
+    fidelity: 'exact',
+    tool: 'contacts_list_contacts',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    operationId: 'ContactPatchItem_V2',
+    label: 'Update contact (V2)',
+    target: { service: 'gemini', capability: 'Google People API people.updateContact' },
+    fidelity: 'narrowed',
+    reason:
+      'The People API replaces a field\'s whole value list rather than appending to it (a ' +
+      'contact with two emails, updated with one, ends up with just that one) — Outlook\'s ' +
+      'update has no such replace-vs-append distinction.',
+    tool: 'contacts_update_contact',
+    verified: false,
+  },
+  {
+    surface: 'outlook',
+    // 10, not 15: the 5 live (non-deprecated) contact operations now have their own rows
+    // above. The remaining 10 are Delete contact (V2), contact photo get/update/delete, and
+    // the deprecated V1 contact operations Copilot Studio's menu does not surface.
+    operationId: '(10 remaining contacts operations)',
+    label: 'Contacts — delete, photo management',
+    target: { service: 'gemini', capability: 'Google People API' },
+    fidelity: 'narrowed',
+    reason:
+      'Not yet mapped or built, and not referenced by any staged agent.',
   },
   {
     surface: 'sharepoint',

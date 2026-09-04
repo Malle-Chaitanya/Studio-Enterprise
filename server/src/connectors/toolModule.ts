@@ -38,6 +38,11 @@ const KIND_ALIASES: Record<string, string> = {
   onedrive: 'sharepoint',
   googlechat: 'chat',
   chat: 'chat',
+  // Both kinds dispatch to calendar.py in adk_deploy.py ("googlecalendar" is the one an
+  // AdkSpec.liveConnectors entry actually uses; "calendar" is accepted as a synonym).
+  googlecalendar: 'calendar',
+  // Same pattern as googlecalendar above, for contacts.py.
+  googlecontacts: 'contacts',
   // The file name is not always the kind: `googledrive` is served by google_drive.py. A
   // <kind>.py check missed it, and the drift test caught it immediately — which is the
   // reason that test reads the Python instead of trusting this table.

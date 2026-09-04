@@ -18,7 +18,8 @@ import { resolveShareUrlSmart } from '../services/graphFiles.js';
 import { migrateSharePointDriveItem } from '../services/knowledgeDataStoreExecutor.js';
 import { detectThirdPartyConnectors } from '../services/thirdPartyConnectorScan.js';
 import { detectKnowledgeConnectors } from '../services/knowledgeConnectorScan.js';
-import { listBots } from '../services/dataverse.js';
+import { listBots, extractAgent } from '../services/dataverse.js';
+import { mapAgent } from '../services/mapper.js';
 import { upsertSecretIfChanged, preflightSecretAccess, deleteSecret, getSecretOwnership, getEntraSecret } from '../services/secretManager.js';
 import { validateConnectorCredentials } from '../services/connectorValidator.js';
 import { logger } from '../logger.js';
@@ -52,9 +53,9 @@ import {
   listAgentSurfaceChoices,
   saveAgentSurfaceChoice,
   SURFACE_EQUIVALENTS,
+  agentUsesSurface,
 } from '../db/repos/agentSurfaceChoice.js';
-import { getCachedIR } from '../db/repos/agentIR.js';
-import { agentConnectorIds } from '../services/connectorToolBuilder.js';
+import { getCachedIR, cacheAgentIR } from '../db/repos/agentIR.js';
 import { suggestEnvironmentDriveIdentity } from '../services/driveIdentityResolution.js';
 import { buildOrganizationProfile } from '../services/organizationProfile.js';
 import { getIdentityMap } from '../db/repos/identityMap.js';
@@ -569,6 +570,68 @@ migrateRouter.post('/drive-identities', async (req, res) => {
 });
 
 /**
+ * POST /api/migrate/refresh-agents  body: { session, envUrl, sourceIds: string[] }
+ *
+ * Re-extracts + re-maps the named agents straight from Copilot Studio/Dataverse and
+ * refreshes agentIRCache — the SAME work Phase 1 of a real migration run does, without
+ * deploying anything to Gemini.
+ *
+ * WHY THIS EXISTS: agentIRCache is ONLY otherwise written by an actual migration run
+ * (orchestrator.ts's Phase 1, inside /api/migrate/stream). POST /plan never calls
+ * extraction — it only builds a scope preview — so a customer who edits an agent in
+ * Copilot Studio (adds a topic, a tool, a child agent) and comes straight to the
+ * Connectors screen sees STALE data with no way to fix it short of running — and living
+ * with — an incomplete real migration first. Confirmed live 2026-08-31: a real child
+ * agent added to WorkMate was invisible on the Connectors screen for exactly this reason,
+ * and the only fix at the time was a throwaway diagnostic script — this route is that
+ * fixed properly, as a real, callable product feature instead of a one-off workaround.
+ *
+ * Read-only against Dataverse; the only write is refreshing OUR OWN cache. Never touches
+ * Gemini, never deploys anything — safe to call as often as the customer wants a resync.
+ */
+migrateRouter.post('/refresh-agents', async (req, res) => {
+  const { session: sessionId, envUrl, sourceIds } = req.body as {
+    session?: string;
+    envUrl?: string;
+    sourceIds?: string[];
+  };
+  const session = await getSession(sessionId ?? '');
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!envUrl) return void res.status(400).json({ error: 'env_url_required' });
+  if (!sourceIds?.length) return void res.status(400).json({ error: 'source_ids_required' });
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  try {
+    const token = await clientCredsToken(session.tenantId ?? '', envUrl);
+    const bots = await listBots(envUrl, token);
+    const refreshed: string[] = [];
+    const failed: { sourceId: string; error: string }[] = [];
+    for (const sourceId of sourceIds) {
+      const bot = bots.find((b) => b.botid === sourceId);
+      if (!bot) {
+        failed.push({ sourceId, error: 'not found in this environment — it may have been deleted or renamed' });
+        continue;
+      }
+      try {
+        const ir = await extractAgent(envUrl, token, bot);
+        const mapped = await mapAgent(ir);
+        await cacheAgentIR(appUserId, envUrl, ir, mapped);
+        refreshed.push(sourceId);
+      } catch (e) {
+        failed.push({ sourceId, error: (e as Error).message });
+      }
+    }
+    logger.info(
+      `refresh-agents: ${refreshed.length} refreshed, ${failed.length} failed ` +
+        `[${sourceIds.join(', ')}]`,
+    );
+    res.json({ refreshed, failed });
+  } catch (err) {
+    res.status(502).json({ error: 'refresh_agents_failed', detail: (err as Error).message });
+  }
+});
+
+/**
  * GET /api/migrate/surface-equivalence?session=&sourceIds=id1,id2
  *
  * For each agent that uses a Microsoft surface with a Google equivalent (today: Outlook ->
@@ -690,9 +753,11 @@ migrateRouter.get('/surface-equivalence', async (req, res) => {
     const surfaces = [];
     for (const [sourceId, entry] of cached) {
       if (!entry) continue;
-      const connectorIds = agentConnectorIds(entry.ir);
       for (const [sourceConnectorId, eq] of Object.entries(SURFACE_EQUIVALENTS)) {
-        if (!connectorIds.has(sourceConnectorId)) continue;
+        // Capability-aware, not just connector-id presence: shared_office365 carries BOTH
+        // mail and calendar operations, and they are independent decisions — see
+        // agentUsesSurface's own doc comment for why agentConnectorIds() alone can't tell.
+        if (!agentUsesSurface(entry.ir, sourceConnectorId)) continue;
         const decided = byAgent.get(`${sourceId}:${sourceConnectorId}`);
         surfaces.push({
           sourceId,

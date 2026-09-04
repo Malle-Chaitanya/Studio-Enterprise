@@ -170,16 +170,21 @@ action:
     expect(mcp.tools).toEqual(['GetCurrentUser', 'ListIssues', 'ListProjects']);
   });
 
-  // Migrating an MCP server without its allow-list would give the agent MORE tools than the
-  // source had. So an absent list must never widen to "all".
-  it('reports an absent selection as unknown, never as all', () => {
+  // Live-verified 2026-09-01 against a real "CRM Hubspot" MCP tool (Meeting Intelligence
+  // Agent, tenant test): an author who never turns "Allow all" off gets NO
+  // UseSpecificTools/UseAllTools block at all in the payload — confirmed against the same
+  // agent's Tools tab, which showed all ~20 tools the server exposes, not zero. Reporting
+  // this as `unknown` (which the mapper conservatively treats as empty) undersold a
+  // fully-capable tool as having none — the opposite failure from the over-granting risk
+  // `unknown` was meant to guard against.
+  it('reports an absent selection as all, not unknown — Allow all was never turned off', () => {
     const mcp = parseMcpBinding(`action:
   kind: InvokeExternalAgentTaskAction
   operationDetails:
     kind: ModelContextProtocolMetadata
     operationId: mcp_Thing
 `)!;
-    expect(mcp.toolSelection).toBe('unknown');
+    expect(mcp.toolSelection).toBe('all');
     expect(mcp.tools).toBeUndefined();
   });
 

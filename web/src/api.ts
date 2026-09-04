@@ -989,6 +989,30 @@ export async function fetchSurfaceEquivalences(
   return ((await res.json()) as { surfaces: SurfaceEquivalence[] }).surfaces;
 }
 
+/**
+ * Re-extract the named agents straight from Copilot Studio and refresh their cached IR —
+ * the same data the Connectors screen (and everywhere else that reads a cached agent) uses.
+ * Never deploys anything; safe to call whenever the source may have changed (a new topic,
+ * a new tool, a new child agent) since the last real migration run, which is otherwise the
+ * only thing that refreshes this cache.
+ */
+export async function refreshAgents(
+  session: string,
+  envUrl: string,
+  sourceIds: string[],
+): Promise<{ refreshed: string[]; failed: { sourceId: string; error: string }[] }> {
+  const res = await fetch('/api/migrate/refresh-agents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, envUrl, sourceIds }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+    throw new Error(body.detail || body.error || `refresh_agents_failed (${res.status})`);
+  }
+  return res.json();
+}
+
 /** Record whether ONE agent's Microsoft surface migrates to its Google equivalent. */
 export async function saveSurfaceDecision(
   session: string,

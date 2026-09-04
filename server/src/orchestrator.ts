@@ -13,11 +13,12 @@ import { hasDedicatedToolModule } from './connectors/toolModule.js';
 import { findCoverage } from './connectors/coverage.js';
 import { findEquivalence, surfaceForConnector } from './connectors/equivalence.js';
 import { resolveProjectNumber } from './services/adkDeployer.js';
-import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
+import { listConnectorCredentials, upsertConnectorCredential } from './db/repos/connectorCredentials.js';
+import type { ConnectorCredentialRecord } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
-import { resolveSurfaceTarget, SURFACE_EQUIVALENTS } from './db/repos/agentSurfaceChoice.js';
+import { resolveSurfaceTarget, SURFACE_EQUIVALENTS, agentUsesSurface, CALENDAR_OPERATION_IDS, CONTACTS_OPERATION_IDS } from './db/repos/agentSurfaceChoice.js';
 import { connectorsSharingCredentials, connectorSecretId } from './services/connectorCredentials.js';
 import { getAgentConnectorIdentity } from './db/repos/agentConnectorIdentity.js';
 import { readinessFor } from './connectors/readiness.js';
@@ -68,7 +69,7 @@ import {
   permissionFidelityNotes,
   resolvePermissions,
 } from './services/identityMap.js';
-import type { AgentIR, FidelityNote, GeminiDestination, IdentityMapOverrides, KnowledgeSourceIR, MigrationResult, PermissionResolution, ProgressEvent, ResolvedPlan, ResolvedPrincipal } from './types.js';
+import type { AgentIR, AgentToolIR, FidelityNote, GeminiDestination, IdentityMapOverrides, KnowledgeSourceIR, MigrationResult, PermissionResolution, ProgressEvent, ResolvedPlan, ResolvedPrincipal } from './types.js';
 
 /** Strip extension + OneDrive/Windows dedup suffixes (" -1)", " (1)") and lowercase, for name comparison only. */
 function normalizeForNameCompare(name: string): string {
@@ -884,11 +885,37 @@ async function execute(
   // credentials sat correctly in Secret Manager (live 2026-08-07, twice). Nothing in
   // the UI suggested the plan had to be rebuilt afterwards.
   //
-  // Only records stored in the project we are deploying INTO count — the container
-  // resolves secrets from its own project, so a record from elsewhere is unusable.
+  // A record stored under a DIFFERENT project than the one we are deploying into now is
+  // not unusable — it is stranded. The deployed container can only read secrets from its
+  // OWN project, but the secret VALUE can be copied there first via the same
+  // ensureSecretInProject mechanism already used below for per-agent SelectMap drift.
+  // Without this, a connector saved while a customer's session was connected to an OLDER
+  // project becomes permanently invisible to every future migration targeting a new one
+  // — fully configured, credentials valid, silently excluded with no fidelity note at all
+  // (live gap found 2026-08-25: a HubSpot custom connector's credentials, saved under an
+  // earlier project, were dropped this way; Teams/Drive/Jira/Confluence only kept working
+  // because that run's plan.savedConnectors happened to list them independently).
   const destProject = effectiveGeminiProject(session.geminiProject);
-  const durableConnectorRecords = (await listConnectorCredentials(appUserId).catch(() => []))
-    .filter((c) => !!destProject && c.project === destProject);
+  const allConnectorRecords = await listConnectorCredentials(appUserId).catch(() => []);
+  const durableConnectorRecords: ConnectorCredentialRecord[] = [];
+  if (destProject) {
+    for (const record of allConnectorRecords) {
+      if (record.project === destProject) {
+        durableConnectorRecords.push(record);
+        continue;
+      }
+      const secretIds = Object.values(record.secretIds ?? {});
+      if (!secretIds.length) continue;
+      // Best-effort and silent on failure, matching ensureSecretInProject's own contract —
+      // a secret it could not move is still caught honestly by preflightConnectors further
+      // down, the same safety net an already-matching record relies on. Update the stored
+      // project regardless of per-secret outcome so a working sync stops being redone (and
+      // reported as "just configured") on every subsequent run.
+      await Promise.all(secretIds.map((id) => ensureSecretInProject(saToken, record.project, destProject, id)));
+      await upsertConnectorCredential(appUserId, { ...record, project: destProject }).catch(() => {});
+      durableConnectorRecords.push({ ...record, project: destProject });
+    }
+  }
   const durableConnectorIds = durableConnectorRecords.map((c) => c.connectorId);
   // The id each credential was ACTUALLY written under. Secret ids are tenant-scoped
   // now, but credentials saved before that scoping live under the old name and already
@@ -1002,18 +1029,29 @@ async function execute(
       // Land the verbatim payload before parsing, when the operator has opted in. The sink
       // is fire-and-forget: `saveRawAgent` never throws and never blocks, so a diagnostic
       // capture cannot slow or fail the extraction it exists to explain.
-      const ir = await extractAgent(item.envUrl, token, item.bot, (raw) => {
-        void saveRawAgent({
-          appUserId,
-          runId,
-          envUrl: raw.envUrl,
-          sourceId: raw.sourceId,
-          sourceName: raw.sourceName,
-          components: raw.components,
-          botRecord: raw.botRecord,
-          disabledComponentNames: raw.disabledComponentNames,
-        });
-      });
+      const ir = await extractAgent(
+        item.envUrl,
+        token,
+        item.bot,
+        (raw) => {
+          void saveRawAgent({
+            appUserId,
+            runId,
+            envUrl: raw.envUrl,
+            sourceId: raw.sourceId,
+            sourceName: raw.sourceName,
+            components: raw.components,
+            botRecord: raw.botRecord,
+            disabledComponentNames: raw.disabledComponentNames,
+          });
+        },
+        // Reuses the same session.environments lookup captureCtxFor already does for
+        // connector op-index resolution — an mcp-server tool's serverUrl comes from the
+        // identical custom-connector listing, just joined by connectorId instead of by
+        // operation. Undefined (extraction still succeeds, just without a serverUrl) when
+        // this environment isn't in session.environments — best-effort, never blocking.
+        captureCtxFor(item.envUrl),
+      );
       // Compile topics ONCE (Topic → Capability → Connected-Agent plan) so a
       // flat, queryable copy of the capabilities can be staged. Topics are not
       // migrated in this phase, so the plan is not surfaced in the fidelity
@@ -2045,7 +2083,25 @@ async function execute(
             // The agent's own tools name their connectors, and a knowledge source that
             // needs a crawler names one implicitly. Anything else is dropped and
             // reported, never silently.
-            const usedConnectorIds = agentConnectorIds(row.mapped!.ir);
+            const usedConnectorIdsRaw = agentConnectorIds(row.mapped!.ir);
+            // A connector id that has a SURFACE_EQUIVALENTS entry (shared_office365 today,
+            // covering both mail and calendar) must NEVER be wired directly through the
+            // default per-connector path below — it exists ONLY to be resolved into a real
+            // target (shared_outlook, shared_gmail, shared_googlecalendar) by the
+            // substitution loop further down. Confirmed live 2026-08-31: shared_office365
+            // has its OWN real, bindable registry entry (Graph credentials, ms_graph
+            // credential group) despite the intent documented on that entry
+            // ("stays proxy-only and unbindable") — so once a customer had that credential
+            // group connected for an unrelated reason (Teams/Dataverse), the raw connector
+            // silently qualified for default wiring, fell through to the generic REST
+            // fallback (no dedicated Python module for it), and produced a broken
+            // `call_office365_api` tool ALONGSIDE whatever the customer's actual surface
+            // choice (e.g. "Use Google Calendar") added — the wrong tool got called, not the
+            // right one, even though the right one was ALSO present.
+            const surfaceBaseConnectorIds = new Set(
+              Object.keys(SURFACE_EQUIVALENTS).map((k) => (k.includes(':') ? k.slice(0, k.indexOf(':')) : k)),
+            );
+            const usedConnectorIds = new Set([...usedConnectorIdsRaw].filter((id) => !surfaceBaseConnectorIds.has(id)));
 
             // Connectors this agent genuinely uses that we have no registry entry for.
             // These cannot become tools, and used to vanish with only a server-log
@@ -2209,8 +2265,20 @@ async function execute(
             //
             // The substitution ADDS a spec rather than replacing one: shared_office365 is
             // proxy-only and never produced a live tool, so there is nothing to replace.
+            //
+            // Recorded per surface key (e.g. "shared_office365:calendar" -> "shared_googlecalendar")
+            // so the child-agent tool-ownership scoping below can point at what the tool
+            // ACTUALLY resolved to, not the raw shared_office365 id every calendar/mail tool
+            // still carries on its own AgentToolIR.connectorId — that raw id is now
+            // deliberately excluded from ever getting its own live spec (see
+            // surfaceBaseConnectorIds above), so scoping by it directly would find nothing.
+            const resolvedSurfaceConnectorId = new Map<string, string>();
             for (const msConnectorId of Object.keys(SURFACE_EQUIVALENTS)) {
-              if (!usedConnectorIds.has(msConnectorId)) continue;
+              // Capability-aware, not just connector-id presence: shared_office365 carries
+              // BOTH mail and calendar operations under one connector id, and whether each
+              // moves to Google is an independent decision — see agentUsesSurface's own doc
+              // comment. usedConnectorIds alone can't distinguish them.
+              if (!agentUsesSurface(row.mapped!.ir, msConnectorId)) continue;
               const target = await resolveSurfaceTarget(appUserId, row.sourceId, msConnectorId);
               const eq = SURFACE_EQUIVALENTS[msConnectorId];
               const chosen = target && eq.targets.find((t) => t.connectorId === target.targetConnectorId);
@@ -2226,6 +2294,7 @@ async function execute(
                 emitLog('warn', `  ${row.name}: uses ${eq.sourceName}; no decision recorded — no ${eq.noun} tools wired.`);
                 continue;
               }
+              resolvedSurfaceConnectorId.set(msConnectorId, target.targetConnectorId);
               // Build through the SAME builder every other connector uses, so the Gmail spec
               // gets its secret ids, auth kind and scope from the registry rather than a
               // hand-rolled copy that can drift.
@@ -2439,6 +2508,53 @@ async function execute(
               }
             }
 
+            // Real Copilot Studio child agents (TopicIR.isChildAgent) carry their OWN
+            // private tools — extraction already resolved exactly which agentTools belong
+            // to which child-agent topic via AgentToolIR.childAgentTopicId (see
+            // services/dataverse.ts, live-confirmed 2026-08-31 against a real child agent's
+            // Office 365 Outlook Calendar tools). Group connector ids by owning topic here
+            // so each child agent's sub-agent entry gets ONLY its own connectors — not the
+            // root's, and not another child agent's — instead of the previous inherit-all
+            // default. A connector id NOT tied to any child-agent tool is left alone; it
+            // stays on the root exactly as before.
+            const childOwnedConnectorIds = new Map<string, Set<string>>(); // topicId -> connectorIds
+            const connectorIdsUsedOutsideChildAgents = new Set<string>();
+            // A tool's OWN AgentToolIR.connectorId is the raw source id (shared_office365 for
+            // BOTH mail and calendar) — but shared_office365 itself never gets its own live
+            // spec (see surfaceBaseConnectorIds above), only its resolved target does. So
+            // ownership must be recorded against the RESOLVED id, or scoping below finds
+            // nothing in scopedConnectors and the child agent silently gets zero tools.
+            // Live-confirmed 2026-08-31: without this resolution, a real child agent got
+            // wired to the raw, never-built shared_office365 spec, which fell through to a
+            // broken generic REST tool instead of the real (working) Google Calendar one.
+            const effectiveConnectorId = (tool: AgentToolIR): string | undefined => {
+              if (!tool.connectorId) return undefined;
+              if (!surfaceBaseConnectorIds.has(tool.connectorId)) return tool.connectorId;
+              const isCalendar = tool.operationId != null && CALENDAR_OPERATION_IDS.has(tool.operationId);
+              const isContacts = tool.operationId != null && CONTACTS_OPERATION_IDS.has(tool.operationId);
+              const surfaceKey = isCalendar
+                ? `${tool.connectorId}:calendar`
+                : isContacts
+                  ? `${tool.connectorId}:contacts`
+                  : tool.connectorId;
+              // undefined when undecided/not configured — correctly means "not wired
+              // anywhere", matching the fail-closed note the substitution loop already
+              // pushed for this surface.
+              return resolvedSurfaceConnectorId.get(surfaceKey);
+            };
+            for (const tool of row.mapped!.ir.agentTools ?? []) {
+              const connectorId = effectiveConnectorId(tool);
+              if (!connectorId) continue;
+              if (tool.childAgentTopicId) {
+                if (!childOwnedConnectorIds.has(tool.childAgentTopicId)) {
+                  childOwnedConnectorIds.set(tool.childAgentTopicId, new Set());
+                }
+                childOwnedConnectorIds.get(tool.childAgentTopicId)!.add(connectorId);
+              } else {
+                connectorIdsUsedOutsideChildAgents.add(connectorId);
+              }
+            }
+
             // Copilot topics become ADK sub-agents INSIDE this deployment. Not one
             // Reasoning Engine per topic: that would multiply cost and burn the ~7/day
             // agent-creation quota on a single migrated agent.
@@ -2446,24 +2562,65 @@ async function execute(
               .filter((t) => !t.isSystem && t.name?.trim())
               .map((t) => {
                 const name = t.name.trim();
+                const ownedConnectorIds = t.isChildAgent ? childOwnedConnectorIds.get(t.id) : undefined;
+                // Only the child agent's OWN connectors — scopedConnectors already holds
+                // every connector the whole agent (root + every child agent) uses, so this
+                // is a filter, not a rebuild.
+                const childLiveConnectors = ownedConnectorIds
+                  ? scopedConnectors.filter((c) => ownedConnectorIds.has(c.id))
+                  : undefined;
                 return {
                   id: name,
                   displayName: name,
                   // The root agent routes on this text, so it must say WHEN to hand
                   // over — a description that only restates the name routes nothing.
-                  description: `Handles "${name}" requests — the migrated Copilot topic of the same name.`,
+                  // A real child agent already authored its own routing description at
+                  // the source — reuse it verbatim rather than the generic topic phrasing,
+                  // since it is what the maker actually wrote for this exact purpose.
+                  description:
+                    t.isChildAgent && t.modelDescription
+                      ? t.modelDescription
+                      : `Handles "${name}" requests — the migrated Copilot topic of the same name.`,
+                  // A real child agent's own authored instructions (settings.instructions on
+                  // its `kind: AgentDialog` row) are its actual behavior rules — e.g. "always
+                  // collect the title, date, attendees, and duration before booking; never
+                  // guess." Falling back to the generic per-topic template here (meant for
+                  // flattening an ordinary migrated TOPIC into a sub-agent, which never has
+                  // its own authored instructions) silently dropped those rules — live-
+                  // confirmed 2026-09-01: the migrated sub-agent booked a meeting without ever
+                  // asking for a title or duration, a real behavior regression from the
+                  // source agent, not a difference in how the two platforms' models behave.
                   instruction:
-                    `You handle the "${name}" topic, migrated from Microsoft Copilot Studio.
+                    t.isChildAgent && t.childAgentInstructions
+                      ? t.childAgentInstructions
+                      : `You handle the "${name}" topic, migrated from Microsoft Copilot Studio.
 ` +
-                    (t.aiPrompt ? `
+                        (t.aiPrompt ? `
 Original AI Builder prompt:
 ${t.aiPrompt}
 ` : '') +
-                    `
+                        `
 If the request is outside "${name}", say so briefly so the main assistant takes over.`,
+                  liveConnectors: childLiveConnectors?.length ? childLiveConnectors : undefined,
                 };
               });
             result.subAgents = topicSubAgents.length;
+
+            // A connector used EXCLUSIVELY by a child agent must not also stay on the
+            // root's own tool list — otherwise the root silently inherits capabilities that
+            // belong only to its child agent (the exact "sub-agent tools flatten into the
+            // shared pile" gap this design closes). A connector shared between the root and
+            // a child agent (or used by more than one child agent) is left on the root,
+            // since removing it would break the root's own, independent use of it.
+            const connectorIdsToRemoveFromRoot = new Set<string>();
+            for (const ownedIds of childOwnedConnectorIds.values()) {
+              for (const id of ownedIds) {
+                if (!connectorIdsUsedOutsideChildAgents.has(id)) connectorIdsToRemoveFromRoot.add(id);
+              }
+            }
+            if (connectorIdsToRemoveFromRoot.size) {
+              scopedConnectors = scopedConnectors.filter((c) => !connectorIdsToRemoveFromRoot.has(c.id));
+            }
             if (topicSubAgents.length) {
               emitLog('info', `    ${row.name}: ${topicSubAgents.length} topic(s) → sub-agents in one engine.`);
             }
@@ -2554,6 +2711,24 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               }
             }
 
+            // MCP-server tools need no credential pre-flight of their own (unlike
+            // scopedConnectors above) — Track C ships with `secretIds` empty for every
+            // entry (see AdkSpec.mcpTools's own doc comment on why that's an honest gap,
+            // not an oversight) until the same buildLiveConnectorSpecsDetailed-style
+            // credential resolution this connector path already has is extended to cover
+            // MCP auth too. `tools` is only carried for `specific` selections — an `all`
+            // selection means "grant the destination's full sanctioned set," which
+            // adk_deploy.py resolves at deploy time against the registry, not here.
+            const scopedMcpTools = (row.mapped!.ir.agentTools ?? [])
+              .filter((t) => t.kind === 'mcp-server' && t.mcp)
+              .map((t) => ({
+                id: t.connectorId || t.name,
+                name: t.displayName || t.name,
+                description: t.description,
+                serverUrl: t.mcp!.serverUrl,
+                tools: t.mcp!.toolSelection === 'specific' ? t.mcp!.tools : undefined,
+              }));
+
             const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, {
               // Turn the deployer's transport-agnostic step callback into run events. The
               // deploy is 3-5 minutes of total silence otherwise, and a run that looks hung
@@ -2566,6 +2741,7 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               groundingDataStores,
               liveConnectors: scopedConnectors,
               subAgents: topicSubAgents,
+              mcpTools: scopedMcpTools.length ? scopedMcpTools : undefined,
               // Redeploying an agent we already migrated: repoint the EXISTING agent at
               // the new Reasoning Engine rather than creating a second one. Creation is
               // capped by an undocumented daily quota and re-runs used to burn one every

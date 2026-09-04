@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
  * The regressions these tests exist to prevent are all the same shape: verification
@@ -180,6 +180,49 @@ describe('tool inventory', () => {
     const r = await verifyAgent(dest, 'tok', 'a1', undefined, { reasoningEngineId: 're1', expectsTools: [] });
     expect(r.status).toBe('verified');
     expect(mocks.chat).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('wrong_agent_tools retry (transient serving-route race after a fresh deploy)', () => {
+  beforeEach(() => {
+    mocks.fetch.mockResolvedValue(existsOk);
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('does not fail when a retried probe shows the agent\'s own tools after all', async () => {
+    mocks.chat
+      .mockResolvedValueOnce({
+        ok: true, answer: 'via discovery_engine_search',
+        toolCalled: true, toolSucceeded: true, toolNames: ['discovery_engine_search'],
+      })
+      .mockResolvedValueOnce({
+        ok: true, answer: 'Done via jira_list_issues.',
+        toolCalled: true, toolSucceeded: true, toolNames: ['jira_list_issues'],
+      })
+      .mockResolvedValueOnce({ ok: true, answer: '- jira_list_issues' });
+    const p = verifyAgent(dest, 'tok', 'a1', undefined, {
+      reasoningEngineId: 're1', expectsTools: ['jira_list_issues'],
+    });
+    await vi.advanceTimersByTimeAsync(20_000);
+    const r = await p;
+    expect(r.status).toBe('verified');
+    expect(mocks.chat).toHaveBeenCalledTimes(3);
+  });
+
+  it('fails only once the retry ALSO shows another agent\'s tools', async () => {
+    mocks.chat.mockResolvedValue({
+      ok: true, answer: 'via discovery_engine_search',
+      toolCalled: true, toolSucceeded: true, toolNames: ['discovery_engine_search'],
+    });
+    const p = verifyAgent(dest, 'tok', 'a1', undefined, {
+      reasoningEngineId: 're1', expectsTools: ['jira_list_issues'],
+    });
+    await vi.advanceTimersByTimeAsync(20_000);
+    const r = await p;
+    expect(r.status).toBe('failed');
+    expect(r.note).toContain('confirmed on a retried probe');
+    expect(mocks.chat).toHaveBeenCalledTimes(2);
   });
 });
 

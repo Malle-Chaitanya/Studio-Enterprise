@@ -332,6 +332,26 @@ def _build_live_connector_tool(conn: dict, project: str):
         from connector_tools.gmail import build_tools as _build
         return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
+    # CROSS-VENDOR, third of three (after gmail, googlechat): Copilot's Office 365 Outlook
+    # Calendar operations -> Google Calendar. Requires calendar scope + an
+    # `impersonate_email` secret, same DWD pattern as gmail. See connector_tools/calendar.py
+    # for the fidelity divergences (Show As -> transparency, single primary calendar only)
+    # this mapping cannot avoid.
+    if kind in ("googlecalendar", "calendar"):
+        from connector_tools.calendar import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
+    # CROSS-VENDOR, fourth: Copilot's Office 365 Outlook Contacts operations -> Google
+    # Contacts (People API). Requires the `contacts` scope + an `impersonate_email`
+    # secret, same DWD pattern as gmail/calendar. See connector_tools/contacts.py for
+    # the fidelity divergences (folders vs groups, non-portable resourceName ids) this
+    # mapping cannot avoid. No Keep-Microsoft equivalent exists yet — see
+    # connectors/equivalence.ts's mcp_ContactsManagement row and
+    # db/repos/agentSurfaceChoice.ts's 'shared_office365:contacts' entry.
+    if kind in ("googlecontacts", "contacts"):
+        from connector_tools.contacts import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
     # Mail that STAYS in Microsoft: the agent moves to Gemini, Graph still serves its mail.
     # Requires app-only ms_graph credentials plus Mail.ReadWrite / Mail.Send APPLICATION
     # permissions with admin consent.
@@ -377,6 +397,118 @@ def _build_live_connector_tool(conn: dict, project: str):
     # call_external_api tool. See connector_tools/generic_rest.py.
     from connector_tools.generic_rest import build_tools as _build
     return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
+
+# ---------------------------------------------------------------------------
+# MCP-server tools (Track C).
+#
+# Two paths here, NOT equally proven:
+#
+#   (a) Agent-Registry path (mcp["registryServerName"] set) — go through the
+#       DESTINATION project's own Agent Registry to connect/discover/call a
+#       server. This is the one path actually run end to end against a live
+#       agent: live-verified 2026-09-01 via AgentRegistry.get_mcp_toolset()
+#       against Discovery Engine's own MCP server (discoveryengine.googleapis.com)
+#       — connect, discover, and call all worked for a registry-sanctioned tool.
+#       The exact constructor/method shape below is written from that one proven
+#       call; if it raises ImportError/TypeError, re-check it against whatever
+#       google-adk version _pinned() reports for this deploy before assuming the
+#       whole approach is wrong — this SDK's internal module layout moved more
+#       than once in the same week this was built (see McpHttpClientFactory in
+#       the module docstring history).
+#   (b) Raw-URL path (mcp["serverUrl"] only, no registryServerName) — required
+#       for every CUSTOM/third-party connector (HubSpot etc.), since those
+#       servers are never in Google's Agent Registry. Built the way ADK's own
+#       McpToolset + StreamableHTTPConnectionParams are documented to work, but
+#       NOT live-tested end to end against a real third-party server as of this
+#       change. Treat a deploy that used this path as unverified — surface that
+#       in the report — until it has been.
+#
+# Root cause a full day was spent on (2026-08-31/09-01), load-bearing for BOTH
+# paths: an MCP server can ADVERTISE a tool over the raw protocol (`tools/list`)
+# that the calling platform never actually sanctions for execution — ADK's own
+# runtime error listed `list_engines` as "available" and it still 403'd on every
+# call, while `search`/`conversational_search` (the only two tools Discovery
+# Engine's Agent Registry entry lists on its own "Tools" tab) worked cleanly.
+# `tool_filter` below is therefore NOT simply "pass through mcp['tools'] from the
+# source agent" — that would let a migrated agent claim a tool it can never
+# actually call. It narrows what's already offered; it cannot widen it.
+# ---------------------------------------------------------------------------
+def _build_mcp_toolset(mcp: dict, project: str):
+    """Return a real ADK MCP toolset for one migrated mcp-server tool entry.
+
+    `mcp` is one entry of spec["mcpTools"] — see AdkSpec.mcpTools in
+    adkDeployer.ts for the exact shape and its own load-bearing caveats
+    (secretIds is honestly empty for most tools today; tools is the intersection
+    the SOURCE allowed, not a guarantee the destination will honor all of it).
+
+    Raises on failure — the caller wraps every entry in the same
+    fail-the-whole-deploy try/except every other tool kind in this file already
+    uses, so a broken MCP tool is reported, not silently dropped.
+    """
+    from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
+
+    tool_filter = mcp.get("tools") or None  # None == whatever the destination already sanctions ("all")
+
+    registry_name = mcp.get("registryServerName")
+    if registry_name:
+        from google.adk.tools.mcp_tool.agent_registry import AgentRegistry
+
+        registry = AgentRegistry(project=project)
+        return registry.get_mcp_toolset(registry_name, tool_filter=tool_filter)
+
+    server_url = mcp.get("serverUrl")
+    if not server_url:
+        raise RuntimeError(
+            f"mcp tool '{mcp.get('id')}' has neither registryServerName nor serverUrl — nothing to connect to"
+        )
+
+    from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+
+    auth_kind = mcp.get("authKind")
+    secret_ids = mcp.get("secretIds") or {}
+    headers: dict = {}
+    if auth_kind and secret_ids:
+        # Mirrors _build_live_connector_tool's own _secret() one-for-one — the same
+        # REST-not-client reasoning applies identically here (see that function's
+        # docstring: the google-cloud-secret-manager client shadows the google.cloud
+        # namespace package and silently breaks VertexAiSearchTool).
+        import base64
+        import json as _json
+        import urllib.request
+
+        import google.auth
+        from google.auth.transport.requests import Request as _AuthRequest
+
+        def _secret(field: str) -> str:
+            secret_id = secret_ids.get(field)
+            if not secret_id:
+                raise RuntimeError(f"mcp tool '{mcp.get('id')}': no secret id configured for field '{field}'")
+            creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            creds.refresh(_AuthRequest())
+            url = (
+                f"https://secretmanager.googleapis.com/v1/projects/{project}"
+                f"/secrets/{secret_id}/versions/latest:access"
+            )
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {creds.token}"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                payload = _json.loads(resp.read().decode("utf-8"))
+            return base64.b64decode(payload["payload"]["data"]).decode("utf-8")
+
+        if auth_kind == "bearer":
+            token = _secret("token")
+            headers["Authorization"] = token if " " in token.strip() else f"Bearer {token.strip()}"
+        else:
+            # oauth2-*/basic-* raw-URL MCP auth is not built yet — every credential kind
+            # actually proven so far (Secret Manager fetch, header shape) is the bearer
+            # one, since that is what the live-tested registry path also uses under the
+            # hood. Fail loud rather than silently connecting with no auth at all.
+            raise RuntimeError(f"mcp tool '{mcp.get('id')}': unsupported authKind '{auth_kind}' for a raw-URL MCP server")
+
+    return McpToolset(
+        connection_params=StreamableHTTPConnectionParams(url=server_url, headers=headers or None),
+        tool_filter=tool_filter,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -765,6 +897,23 @@ def main():
                         pass
                 used_tool_names.add(getattr(fn, "__name__", original))
                 tools.append(fn)
+
+        # MCP-server tools (Track C) — see _build_mcp_toolset's own module comment
+        # for the two paths and which one is actually proven. Same fail-the-whole-
+        # deploy semantics as live_connectors above and everything else in this
+        # try block: a broken tool must be reported, not silently dropped from an
+        # agent whose source genuinely had it.
+        #
+        # No name-collision handling here unlike live_connectors: a McpToolset
+        # exposes however many tools the server advertises, discovered at deploy
+        # time, not one renameable Python function — there is no single __name__ to
+        # dedupe against used_tool_names. If a name genuinely collides with a live
+        # connector's function, ADK's own deploy-time "Duplicate function
+        # declaration" error is what surfaces it, the same signal
+        # _make_search_tool's module comment already relies on elsewhere in this
+        # file — not a silent failure.
+        for mcp in (spec.get("mcpTools") or []):
+            tools.append(_build_mcp_toolset(mcp, args.project))
     except Exception as e:  # noqa: BLE001
         emit({"error": f"tool wiring failed: {e}"}); return
 
@@ -807,14 +956,49 @@ def main():
     sub_agent_specs = spec.get("subAgents") or []
     sub_agents = []
     for sa in sub_agent_specs:
+        # A REAL Copilot Studio child agent (AgentIR.TopicIR.isChildAgent) carries its own
+        # liveConnectors — the tools extraction found scoped exclusively to it via
+        # AgentToolIR.childAgentTopicId (see services/dataverse.ts and orchestrator.ts's
+        # topicSubAgents construction). When present, build THIS sub-agent's own tools from
+        # its own connector list — reusing the exact same _build_live_connector_tool dispatch
+        # the root uses — instead of the root's tools wholesale. An ordinary migrated TOPIC
+        # (not a real child agent) has no liveConnectors entry and keeps the previous
+        # inherit-all/inherit-none behavior unchanged, so this is purely additive.
+        sub_live_connectors = sa.get("liveConnectors") or []
+        if sub_live_connectors:
+            sub_tools = []
+            sub_used_tool_names = set()
+            for conn in sub_live_connectors:
+                try:
+                    built = _build_live_connector_tool(conn, args.project)
+                except Exception as e:  # noqa: BLE001
+                    emit({"warn": f"sub-agent {sa.get('id')}: connector tool build failed for {conn.get('kind')}: {e}"})
+                    continue
+                for fn in (built if isinstance(built, (list, tuple)) else [built]):
+                    original = getattr(fn, "__name__", "tool")
+                    if original in sub_used_tool_names:
+                        i = 2
+                        candidate = f"{original}_{i}"
+                        while candidate in sub_used_tool_names:
+                            i += 1
+                            candidate = f"{original}_{i}"
+                        try:
+                            fn.__name__ = candidate[:60]
+                        except (AttributeError, TypeError):
+                            pass
+                    sub_used_tool_names.add(getattr(fn, "__name__", original))
+                    sub_tools.append(fn)
+            resolved_tools = sub_tools
+        else:
+            # Sub-agents inherit nothing implicitly: give them the same tools as the
+            # root so a topic that needs SharePoint or a connector can still act.
+            resolved_tools = tools if sa.get("inheritTools", True) else []
         sa_kwargs = dict(
             name=_safe_agent_name(sa.get("id") or sa.get("name") or "topic"),
             model=sa.get("model") or spec.get("model", "gemini-2.5-flash"),
             description=sa.get("description") or f"Handles {sa.get('displayName') or sa.get('id')} requests.",
             instruction=sa.get("instruction") or "",
-            # Sub-agents inherit nothing implicitly: give them the same tools as the
-            # root so a topic that needs SharePoint or a connector can still act.
-            tools=tools if sa.get("inheritTools", True) else [],
+            tools=resolved_tools,
         )
         try:
             # Same tool-call record as the root. Once the root transfers to a topic, the

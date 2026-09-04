@@ -5,6 +5,7 @@ import { parseTopicGraph } from './topicGraph.js';
 import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClassifier.js';
 import { resolveConnectorId, connectionAuthModeFrom } from './connectorRef.js';
 import { parseToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef, parseTopicConnectorActions } from './toolPayload.js';
+import { resolveMcpServerUrls } from '../connectors/customConnectorInventory.js';
 import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
 
 /**
@@ -75,6 +76,14 @@ interface BotComponent {
   /** Dataverse schemaname for the botcomponent — used to extract the concatenated
    *  space-name key for Confluence sources (strip dotted prefix + random suffix). */
   schemaname?: string | null;
+  /**
+   * Lookup to the OWNING botcomponent, distinct from `_parentbotid_value` (which always
+   * points at the root bot). Live-confirmed 2026-08-31: a child agent's own tool
+   * components have this populated with the child-agent topic's own `botcomponentid`;
+   * the root agent's own top-level tools were observed null. This is what actually
+   * resolves child-agent tool ownership — see AgentToolIR.childAgentTopicId.
+   */
+  _parentbotcomponentid_value?: string | null;
 }
 
 /** Build the provenance metadata block for a knowledge component. */
@@ -799,6 +808,22 @@ function isInlineSkillComponent(c: BotComponent): boolean {
   return /^\s*kind:\s*InlineAgentSkill\s*$/m.test(c.data || c.content || '');
 }
 
+/**
+ * A componenttype-9 row that is a real Copilot Studio "child agent" (the GA
+ * multi-agent construct), not an ordinary topic.
+ *
+ * Live-confirmed 2026-08-31 against a real child agent built for this session's
+ * migration testing ("Meeting Scheduler Agent" on the "WorkMate" test agent): its
+ * raw YAML top-level `kind` is `AgentDialog` (with `beginDialog.kind:
+ * OnToolSelected`), never `AdaptiveDialog` — the kind every ordinary topic uses.
+ * This is a DIFFERENT signal from `isInlineSkillComponent` above: that pattern is
+ * real but was measured to be an older, unrelated construct, not the GA child-agent
+ * feature this checks for.
+ */
+function isChildAgentComponent(c: BotComponent): boolean {
+  return /^\s*kind:\s*AgentDialog\s*$/m.test(c.data || c.content || '');
+}
+
 // connectorIdFromConnectionReference / connectionAuthModeFrom moved to
 // services/connectorRef.ts — they are pure, this module is not (it pulls in the fail-fast
 // config), and that was the only thing stopping them from being unit-tested.
@@ -883,10 +908,17 @@ function parseAgentTool(c: BotComponent): AgentToolIR {
     flowId,
     aiPlugin,
     schemaName: c.schemaname ?? undefined,
+    // Populated whenever Dataverse's own ParentBotComponentId lookup says a child-agent
+    // topic owns this tool row, rather than it being one of the root agent's own tools —
+    // the caller (extractAgent) is responsible for confirming the parent really IS a
+    // child-agent topic before this is trusted downstream; see its own comment for why
+    // that check can't happen inside this function (parseAgentTool sees one row at a
+    // time, not the full component list needed to look the parent up).
+    childAgentTopicId: c._parentbotcomponentid_value ?? undefined,
   };
 }
 
-function parseTopic(c: BotComponent): TopicIR {
+function parseTopic(c: BotComponent, isChildAgent?: boolean): TopicIR {
   const raw = c.data ?? '';
   const doc = tryParseYaml(raw);
 
@@ -926,6 +958,18 @@ function parseTopic(c: BotComponent): TopicIR {
   const instr: string[] = [];
   if (doc) collectStrings(doc, (k) => k === 'additionalInstructions', instr);
   let summary = '';
+
+  // A child agent's REAL authored behavior rules live under `settings.instructions` —
+  // a completely different field from `modelDescription` (the short routing blurb) and
+  // from `additionalInstructions` above (an ordinary topic's own field, never populated
+  // on a `kind: AgentDialog` row). Only collected for child agents: an ordinary topic
+  // has no `settings.instructions` field, so this is a no-op cost-free check for them.
+  let childAgentInstructions: string | undefined;
+  if (isChildAgent && doc) {
+    const settingsInstr: string[] = [];
+    collectStrings(doc, (k) => k === 'instructions', settingsInstr);
+    if (settingsInstr.length) childAgentInstructions = settingsInstr[0].trim();
+  }
   if (modelDescription) summary = modelDescription.slice(0, 400);
   else if (instr.length) summary = stripBindings(instr[0]).slice(0, 400);
   else if (messages.length) summary = stripBindings(messages[0]).slice(0, 200);
@@ -948,6 +992,8 @@ function parseTopic(c: BotComponent): TopicIR {
     usesAdaptiveCards,
     isSystem: SYSTEM_TOPIC_NAMES.has(c.name),
     graph,
+    isChildAgent: isChildAgent || undefined,
+    childAgentInstructions,
   };
 }
 
@@ -1337,12 +1383,19 @@ export interface RawAgentPayload {
  * caller lands raw data for blind-spot analysis (see db/repos/rawAgents.ts) without this
  * module knowing that a database exists. It is called for its side effect only; anything
  * it throws is swallowed, because a diagnostic sink must never fail an extraction.
+ *
+ * `mcpContext`, when supplied, lets any `mcp-server` tool's `serverUrl` be resolved from
+ * the custom connector's own backend host (see `customConnectorInventory.ts`) — optional
+ * because the tenant/environment id pair isn't always in scope for every caller (several
+ * `_diag_*` spikes call this with only `url`/`token`), and a missing URL must degrade the
+ * binding, never fail the extraction.
  */
 export async function extractAgent(
   url: string,
   token: string,
   bot: BotSummary,
   onRaw?: (raw: RawAgentPayload) => void,
+  mcpContext?: { tenantId: string; environmentId: string },
 ): Promise<AgentIR> {
   // Paged, not $top=1000: an agent with more components than the cap would have had the
   // remainder dropped without any error, and every downstream count (topics, tools,
@@ -1350,7 +1403,7 @@ export async function extractAgent(
   const components = await dvGetAll<BotComponent>(
     url,
     token,
-    'botcomponents?$select=name,data,content,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode,description,_modifiedby_value,schemaname' +
+    'botcomponents?$select=name,data,content,componenttype,_parentbotid_value,filedata_name,createdon,modifiedon,ismanaged,statuscode,description,_modifiedby_value,schemaname,_parentbotcomponentid_value' +
       `&$filter=statecode eq 0 and _parentbotid_value eq ${bot.botid}`,
   );
 
@@ -1556,7 +1609,10 @@ export async function extractAgent(
 
   // Inline skills ride alongside topics: both become sub-agents downstream, and keeping
   // them in one list means every consumer that already handles topics handles these too.
-  const topics = [...topicComps.map(parseTopic), ...skillComps.map(parseInlineSkill)];
+  const topics = [
+    ...topicComps.map((c) => parseTopic(c, isChildAgentComponent(c))),
+    ...skillComps.map(parseInlineSkill),
+  ];
   // Knowledge = configured sources (type 16) + author-uploaded files (type 14).
   // A minority of type-14 rows are actually embedded structured configs, not
   // files (see isEmbeddedConfigSource) — route those through the
@@ -1690,6 +1746,14 @@ export async function extractAgent(
     unmapped.push(
       'No authored instructions or readable topic content found — likely a Microsoft prebuilt/AI-Builder agent whose behavior is template-defined and not stored in Dataverse. Needs manual authoring in Gemini.',
     );
+  }
+
+  // Best-effort: fills mcp.serverUrl from the custom connector's own backend host. Runs
+  // last, after every push to agentTools (including topic-embedded calls), so nothing
+  // added later in this function is missed. Swallows its own errors — see the function's
+  // own comment for why a failed lookup must degrade the binding, not the extraction.
+  if (mcpContext && agentTools.length) {
+    await resolveMcpServerUrls(agentTools, mcpContext.tenantId, mcpContext.environmentId).catch(() => {});
   }
 
   logger.info(

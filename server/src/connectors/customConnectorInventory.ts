@@ -20,6 +20,7 @@
 import { logger } from '../logger.js';
 import { clientCredsToken } from '../auth/microsoft.js';
 import { POWERAPPS_AUDIENCE, SAFE_CONNECTOR_ID, distilOriginalSwagger } from './captureOpIndex.js';
+import type { AgentToolIR } from '../types.js';
 
 /** One custom connector, described well enough to decide what to do about it. */
 export interface CustomConnectorInfo {
@@ -158,4 +159,34 @@ export async function listCustomConnectors(
     'custom connector inventory',
   );
   return out;
+}
+
+/**
+ * Fill in `mcp.serverUrl` on every `mcp-server` tool, from the custom connector's own
+ * backend host — the one piece of an MCP binding never present in the TaskDialog payload
+ * itself (proven live 2026-08-07 through 2026-09-01: calendarmcp, cloudtrace, and a real
+ * HubSpot binding all extract with no URL). `backendHost` is a HOST, not the connector's
+ * exact `/mcp` route (that varies per vendor and the swagger doesn't carry it) — so this
+ * turns "no lead at all" into "here is who to ask for the real endpoint," not a
+ * plug-and-call URL. Mutates `tools` in place; never throws — a failed lookup leaves
+ * `serverUrl` unset, exactly like today, rather than failing the whole extraction over one
+ * connector this customer's admin scope can't see.
+ */
+export async function resolveMcpServerUrls(
+  tools: AgentToolIR[],
+  tenantId: string,
+  environmentId: string,
+): Promise<void> {
+  const mcpTools = tools.filter((t) => t.kind === 'mcp-server' && t.connectorId && !t.mcp?.serverUrl);
+  if (!mcpTools.length) return;
+  const connectors = await listCustomConnectors(tenantId, environmentId).catch((err) => {
+    logger.warn({ environmentId, err: (err as Error).message }, 'mcp server URL resolution: connector listing failed');
+    return undefined;
+  });
+  if (!connectors) return;
+  const hostByConnectorId = new Map(connectors.filter((c) => c.backendHost).map((c) => [c.connectorId, c.backendHost!]));
+  for (const tool of mcpTools) {
+    const host = hostByConnectorId.get(tool.connectorId!);
+    if (host && tool.mcp) tool.mcp.serverUrl = `https://${host}`;
+  }
 }

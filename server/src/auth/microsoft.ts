@@ -23,7 +23,16 @@ async function tokenRequest(tenant: string, body: Record<string, string>): Promi
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(body),
   });
-  const json = (await res.json()) as TokenResponse & { error?: string; error_description?: string };
+  // Read as text first — a failed request (proxy error, empty body, HTML error page)
+  // isn't valid JSON, and res.json() throws an opaque SyntaxError that hides the
+  // actual HTTP status and whatever Microsoft actually sent back.
+  const raw = await res.text();
+  let json: TokenResponse & { error?: string; error_description?: string };
+  try {
+    json = raw ? JSON.parse(raw) : {};
+  } catch {
+    throw new Error(`MS token error (${res.status}): non-JSON response: ${raw.slice(0, 300)}`);
+  }
   if (!res.ok) {
     throw new Error(`MS token error (${res.status}): ${json.error_description ?? json.error ?? 'unknown'}`);
   }

@@ -6,6 +6,120 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
+## 2026-08-31 — RESOLVED: the blocking signal from the entry below, extraction now implemented
+
+- **Decision**: The Phase-0 spike the design below marked as blocking has run against the real
+  tenant and found a reliable, confirmed signal — extraction code is now written, live-tested, and
+  merged (not just designed). Two corrections to the design below, both load-bearing:
+  1. **The child-agent topic's `kind` is `AgentDialog`, not `AdaptiveDialog`.** (`beginDialog.kind:
+     OnToolSelected` alongside it.) The design below assumed `AdaptiveDialog`, the ordinary-topic
+     kind — that assumption was wrong; `AgentDialog` is the real, clean discriminator.
+     `isChildAgentComponent()` in `services/dataverse.ts` implements this.
+  2. **Tool ownership IS a real, native Dataverse field** — `_parentbotcomponentid_value` on the
+     `botcomponent` entity (surfaced via OData as `ParentBotComponentId`), distinct from
+     `_parentbotid_value` (which always points at the root bot). Live-confirmed by querying all 4 of
+     the real child agent's own tool components directly: every one had
+     `_parentbotcomponentid_value` set to the owning child-agent topic's own `botcomponentid`; the
+     root agent's other 31 tools do not carry this value. This was NOT one of the three candidates
+     the design below listed to check (`schemaname` prefix, `AdaptiveDialog` body field, or a
+     `botcomponent_botcomponent` relationship entity — that entity does not exist, confirmed 404) —
+     it is a fourth, simpler answer: a plain lookup column that was already being selected in queries
+     elsewhere in this codebase's history but never wired into extraction.
+- **What shipped**: `TopicIR.isChildAgent` and `AgentToolIR.childAgentTopicId` (types.ts), both
+  populated in `services/dataverse.ts::extractAgent` — `_parentbotcomponentid_value` added to the
+  component `$select`, `isChildAgentComponent()` added, `parseTopic()` takes an `isChildAgent` flag,
+  `parseAgentTool()` copies the raw parent-component value through. Verified end-to-end against the
+  real WorkMate/"Meeting Scheduler Agent" tenant (`_diag_fetch_workmate_live_current.ts`): the topic
+  correctly reports `isChildAgent: true`, all 4 of its own Outlook Calendar tools correctly report
+  `childAgentTopicId` pointing at it, and none of WorkMate's other 31 tools do. `npm run typecheck`
+  and `npm test` (421/421) both clean.
+- **Still NOT done** (this entry is extraction only — see the design below for the full sequence):
+  Phase 2 (`orchestrator.ts`'s `topicSubAgents` construction, `AdkSpec.subAgents[]` gaining
+  per-entry `liveConnectors`, `scripts/adk_deploy.py`'s sub-agent loop building each sub-agent's own
+  tools instead of inherit-all/none) has not been implemented yet. `AgentToolIR.childAgentTopicId`
+  is populated but nothing downstream reads it yet.
+- **Impact**: none beyond what the design below already scoped — this entry only resolves the open
+  question, it does not change the shape or the plan.
+
+---
+
+## 2026-08-31 — Design: child-agent tool ownership on `AgentIR` (Architect sign-off, design-only)
+
+- **Decision**: Approved design (implementation not yet started) for two additive `AgentIR`/type
+  extensions closing a proven fidelity gap in child-agent extraction: `TopicIR.isChildAgent?:
+  boolean` (marks a topic as a Copilot Studio "child agent" boundary, not just an ordinary
+  conversational topic) and `AgentToolIR.childAgentTopicId?: string` (a back-reference from a tool
+  to the `TopicIR.id` that owns it exclusively, when determinable) — deliberately distinct from the
+  existing `AgentToolIR.sourceTopic` (a topic NAME, meaning "this call was embedded inline in a
+  topic's own dialog steps", a different provenance story that must not be conflated with child-
+  agent ownership). Ownership stays a reference FROM tool TO topic; `agentTools` remains the single
+  flat source of truth — no duplicated tool lists on `TopicIR`. Mapping (`orchestrator.ts`'s
+  `topicSubAgents` construction + `AdkSpec.subAgents[]`) then filters `agentTools` by
+  `childAgentTopicId` to scope each child-agent sub-agent's own `liveConnectors`/tools, replacing
+  today's binary `inheritTools` all-or-none *for child-agent topics specifically* — ordinary topic
+  sub-agents (every non-child-agent topic already becomes a sub-agent today, per the 2026-08-?? ADK
+  sub-agent mechanism) keep their current behavior unchanged.
+- **Why**: live-confirmed 2026-08-31 (WorkMate + a real "Meeting Scheduler Agent" child agent, real
+  Dataverse extraction, `_diag_fetch_workmate_live_current.ts`) that a real child agent extracts as
+  an ordinary custom Topic (`componenttype: 9`, `kind: AdaptiveDialog`, the normal `parseTopic()`
+  path) whose 4 Office 365 Outlook tool operations land in the flat `AgentIR.agentTools` list with
+  **zero ownership signal today** — the same two-instrument-disagreement failure mode this codebase
+  hit before (2026-08-07 entry below, "componenttype 9 carries TOOLS as well as topics"): the agent
+  provably "has" these tools, but nothing says which conversational/agent boundary they belong to,
+  so a migrated child agent's capabilities would either silently bleed onto the root agent's tool
+  set or (once ADK sub-agent tool-scoping is built) have nowhere correct to attach.
+- **What's NOT yet confirmed — blocking before extraction code lands**: the actual raw-Dataverse
+  signal that lets `isChildAgent`/`childAgentTopicId` be SET reliably, as opposed to just existing
+  as unused fields. The earlier working hypothesis this session started with (`kind:
+  InlineAgentSkill`, the existing `isInlineSkillComponent`/`parseInlineSkill` mechanism used for a
+  different, older HubSpot-agent pattern) is **falsified** by this session's live test — the real
+  child agent's topic component did not match it. No formal parent-child relationship field was
+  found this session either (`_parentbotid_value` only points at the parent BOT, not at an owning
+  topic). A `_diag_*` spike is required before extraction logic is written: dump raw fields
+  (`schemaname`, `name`, `createdon`, first ~500 chars of `data`) for a real child-agent topic
+  component and its associated tool components (TaskDialog/ConnectorTool rows) side by side, and
+  check for (a) any additional discriminator field on the child agent's `AdaptiveDialog` body the
+  current regex checks don't look for, (b) a `schemaname`/namespace-prefix convention shared between
+  a child agent and its own tools but not the root agent's other tools, (c) a formal Dataverse
+  solution-component-dependency relationship reachable via `$expand` on `botcomponents`. **If no
+  reliable signal is found, both new fields must ship UNSET everywhere** (a safe no-op, identical to
+  today's behavior) and extraction must emit a `needs-review` `FidelityNote` recording the gap
+  honestly — this project does not guess at an ownership edge it cannot support.
+- **Impact**: Purely additive to `AgentIR`/`TopicIR`/`AgentToolIR` — **no DB migration** (Mongo is
+  schemaless; `stagedAgents` documents extracted before this ships simply lack the two new fields
+  and behave exactly as they do today — forward- and backward-compatible by construction).
+  `AdkSpec.subAgents[]` (`services/adkDeployer.ts`) gains an optional `liveConnectors`/
+  `groundingDataStores` per entry (mirroring the root agent's own fields of the same name), and
+  `scripts/adk_deploy.py`'s sub-agent build loop needs to build each sub-agent's own tool list from
+  its own entry when present (falling back to today's `tools if sa.get("inheritTools", True) else
+  []` when absent, so ordinary topic sub-agents are unaffected). This whole feature is **inert in
+  production** until `needsAdkDeployment()` is separately re-enabled (still hardcoded to return
+  `false` — deliberate Business-edition-only testing-phase gate per its own header comment; re-
+  enabling it, even scoped to "only when the agent has child agents," is explicitly called out as a
+  **separate decision** requiring its own sign-off, not bundled into this one) — but it is fully
+  implementable and testable now via the existing `_diag_*` harness pattern that already bypasses
+  that gate directly (proven this session: `_diag_adk_subagent_sanity.ts` deployed a real sub-agent
+  against a real copy of WorkMate's IR; a separate local `InMemoryRunner` probe,
+  `_diag_subagent_distinct_tools_local.py`, proved a sub-agent's own distinct `FunctionTool` is
+  genuinely invoked, not just narrated). Also scoped for this design pass, recorded here for
+  traceability, with their own follow-up decisions expected once built: a new
+  `scripts/connector_tools/calendar.py` module (Google Calendar API v3 — `events.insert`,
+  `events.list`, `freebusy.query` — DWD-impersonation pattern mirroring `gmail.py`, new `kind:
+  "googlecalendar"` in `_build_live_connector_tool`'s dispatch), new create/book-event functions
+  appended to the EXISTING `outlook.py` module (keep-Microsoft path, `kind: "outlook"`, which
+  already carries `outlook_list_calendar_events`), and new per-operation rows in
+  `connectors/equivalence.ts` for the 4 confirmed Meeting-Scheduler-Agent operations (Create event
+  V4, Get calendar view of events V3, Get calendars V2, Find meeting times V2) — **fidelity grades
+  for those rows are Researcher's job, not invented in this design pass.** Out of scope for this
+  decision entirely: connected agents (separate published Copilot agents, a distinct and harder
+  name→botid resolution problem) and the pre-existing, unrelated naming collision in
+  `topicGraph.ts` (`dependencyType: 'child-agent'` means "topic A calls topic B via
+  BeginDialog/ReplaceDialog in the same bot" — nothing to do with real Copilot child agents;
+  recommended rename to avoid two unrelated concepts sharing the string "child-agent" in this
+  codebase, a mechanical cleanup, not a design question).
+
+---
+
 ## 2026-08-22 — Removed `guardAgainstRestrictedSharingOnAdk`: a scope decision, not a reversal of the underlying safety concern
 
 - **Decision:** Deleted `services/permissionMapping.ts` and its call site in

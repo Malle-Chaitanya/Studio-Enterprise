@@ -43,6 +43,55 @@ Application permissions needed for what this file DOES offer:
 Identity: `impersonate_email` names the user whose chats the agent reads. App-only Graph
 reaches every mailbox and chat in the tenant, so WHICH user is a per-agent decision and is
 never inferred from the caller.
+
+ADDITIONAL PERMISSIONS — for the read/write tools added below (2026-08-24). Cross-checked
+against Microsoft Graph's own reference docs and the swagger capture in
+connectors/fixtures/shared_teams.ops.json.
+
+The three READ operations below are MEASURED, not inferred, same as the block above
+(_diag_teams_new_reads_probe.ts, 2026-08-24, tenant 807d6772, app ConnectorsTest): all three
+returned real data on the first try.
+
+    READ  a team by id            Team.ReadBasic.All (already requested above) — PASS,
+                                   returned "22nov_public-channel", visibility=public
+    READ  a channel by id         Channel.ReadBasic.All (already requested above) — PASS,
+                                   returned "General", membershipType=standard
+    READ  associated teams        Team.ReadBasic.All (already requested above) — PASS, 22
+                                   associated teams returned for erik@filefuze.co. Graph
+                                   rejects the `/me` alias app-only, so this calls
+                                   `/users/{id}/teamwork/associatedTeams`, not the path the
+                                   Copilot swagger uses — the corrected path is what was tested.
+
+The four WRITE operations below are NOT yet measured — each would create or mutate real
+state in the tenant (a renamed/archived channel, a new chat, a whole new Microsoft 365
+group), so probing them was deliberately deferred rather than done as a side effect of
+writing this docstring. Probe deliberately, not incidentally, before this report calls them
+verified:
+
+    WRITE update channel          Channel.ReadWrite.All — same "grantable, 403 until granted"
+    WRITE archive channel         Channel.ReadWrite.All    shape as teams_create_channel's
+                                                            Channel.Create, below
+    WRITE create a team           Team.Create — provisions a whole Microsoft 365 group, not
+                                   a channel inside one; heavier than create-channel and
+                                   requires >=1 owner in the request body
+    WRITE create a chat           Chat.Create — creates the chat object only. It does NOT
+                                   unblock sending a message into it: that is still the same
+                                   Teamwork.Migrate.All wall documented above.
+
+Two more operations from the same swagger stay UNBUILT, because Microsoft has no app-only
+route for either:
+
+    Post a message to myself      the identical chatMessage-POST wall as every other Teams
+                                   message — "myself" changes who reads it, not which
+                                   permission exists.
+    Post a feed notification      the swagger's PostFeedNotification/PostUserNotification is
+                                   the legacy Power Automate flow-bot proxy this file does not
+                                   talk to (it calls graph.microsoft.com directly). Graph's own
+                                   activity-feed API (POST /users/{id}/teamwork/
+                                   sendActivityNotification) exists, but requires the activity
+                                   type to be declared in a REGISTERED Teams app manifest —
+                                   infrastructure this product has not set up. Do not add a
+                                   tool for either without a new mechanism, not just a permission.
 """
 
 GRAPH = "https://graph.microsoft.com/v1.0"
@@ -238,6 +287,67 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
         except Exception as e:  # noqa: BLE001
             return _err(f"Channel list for team {team_id}", e)
 
+    def teams_get_team(team_id: str = "") -> dict:
+        """Get one Team's details by id.
+
+        Args:
+            team_id: the team's id. Call teams_list_joined_teams first.
+        """
+        if not (team_id or "").strip():
+            return {"error": "team_id is required. Call teams_list_joined_teams first."}
+        try:
+            t = _call("GET", f"/teams/{team_id}")
+            return {
+                "id": t.get("id", ""),
+                "name": t.get("displayName", ""),
+                "description": t.get("description", ""),
+                "visibility": t.get("visibility", ""),
+            }
+        except Exception as e:  # noqa: BLE001
+            return _err(f"Team read for {team_id}", e)
+
+    def teams_get_channel(team_id: str = "", channel_id: str = "") -> dict:
+        """Get one channel's details by id.
+
+        Args:
+            team_id: the team the channel belongs to.
+            channel_id: the channel.
+        """
+        if not (team_id or "").strip() or not (channel_id or "").strip():
+            return {"error": "team_id and channel_id are both required."}
+        try:
+            c = _call("GET", f"/teams/{team_id}/channels/{channel_id}")
+            return {
+                "id": c.get("id", ""),
+                "name": c.get("displayName", ""),
+                "description": c.get("description", ""),
+                "membershipType": c.get("membershipType", ""),
+            }
+        except Exception as e:  # noqa: BLE001
+            return _err(f"Channel read for {channel_id}", e)
+
+    def teams_list_associated_teams(max_results: int = DEFAULT_RESULTS) -> dict:
+        """List Teams associated with a shared channel this agent's user belongs to.
+
+        Args:
+            max_results: how many teams to return (max 50).
+        """
+        user = _user()
+        if not user:
+            return {"error": "No user is configured for this agent."}
+        try:
+            # The Copilot swagger calls /me/teamwork/associatedTeams — Graph rejects the /me
+            # alias app-only, so this calls the /users/{id} equivalent instead (measured
+            # against Graph's own permissions reference, not yet against a live tenant).
+            out = _call("GET", f"/users/{urllib.parse.quote(user)}/teamwork/associatedTeams")
+            teams = [
+                {"id": t.get("id", ""), "name": t.get("displayName", ""), "tenantId": t.get("tenantId", "")}
+                for t in (out.get("value") or [])
+            ][: _n(max_results)]
+            return {"count": len(teams), "teams": teams, "actingAs": user}
+        except Exception as e:  # noqa: BLE001
+            return _err(f"Associated teams for {user}", e)
+
     def teams_list_chats(max_results: int = DEFAULT_RESULTS) -> dict:
         """List this agent's user's 1:1 and group chats (not channels).
 
@@ -430,11 +540,130 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
         except Exception as e:  # noqa: BLE001
             return _err(f"Channel creation in team {team_id}", e)
 
-    # Read tools plus one create. No send/reply: app-only Graph cannot post Teams messages
-    # at all (measured — see the module docstring). Do not "restore" them without re-probing.
+    def teams_update_channel(team_id: str = "", channel_id: str = "", name: str = "", description: str = "") -> dict:
+        """Rename or re-describe a channel.
+
+        Args:
+            team_id: the team the channel belongs to.
+            channel_id: the channel to update.
+            name: new display name. Leave blank to keep the current one.
+            description: new description. Leave blank to keep the current one.
+        """
+        if not (team_id or "").strip() or not (channel_id or "").strip():
+            return {"error": "team_id and channel_id are both required."}
+        body = {}
+        if (name or "").strip():
+            body["displayName"] = name
+        if (description or "").strip():
+            body["description"] = description
+        if not body:
+            return {"error": "Supply a new name or description — nothing to update."}
+        try:
+            _call("PATCH", f"/teams/{team_id}/channels/{channel_id}", body=body)
+            return {"updated": True, "team": team_id, "channel": channel_id, **body}
+        except Exception as e:  # noqa: BLE001
+            return _err(f"Channel update for {channel_id}", e)
+
+    def teams_archive_channel(team_id: str = "", channel_id: str = "") -> dict:
+        """Archive a channel. Members can still see it but cannot post. Unarchiving is not
+        exposed by this tool — it has to be done from the Teams client.
+
+        Args:
+            team_id: the team the channel belongs to.
+            channel_id: the channel to archive.
+        """
+        if not (team_id or "").strip() or not (channel_id or "").strip():
+            return {"error": "team_id and channel_id are both required."}
+        try:
+            # Graph runs this asynchronously (202, empty body) — there is no id to hand back,
+            # only the fact that the request was accepted.
+            _call("POST", f"/teams/{team_id}/channels/{channel_id}/archive", body={})
+            return {"archiveRequested": True, "team": team_id, "channel": channel_id}
+        except Exception as e:  # noqa: BLE001
+            return _err(f"Channel archive for {channel_id}", e)
+
+    def teams_create_chat(member_emails: str = "", topic: str = "") -> dict:
+        """Start a new 1:1 or group chat with one or more people.
+
+        This creates the chat object only — it does not send a first message. Sending into a
+        Teams chat has no app-only Graph route (see the module docstring): the chat is
+        created empty, and someone has to send the first message from the Teams client.
+
+        Args:
+            member_emails: comma-separated email addresses of the other participant(s). One
+                person makes a 1:1 chat; more than one makes a group chat.
+            topic: group chat name. Ignored for a 1:1 chat — Teams does not support naming those.
+        """
+        user = _user()
+        if not user:
+            return {"error": "No user is configured for this agent."}
+        emails = [e.strip() for e in (member_emails or "").split(",") if e.strip()]
+        if not emails:
+            return {"error": "member_emails must name at least one other person."}
+        is_group = len(emails) > 1 or bool((topic or "").strip())
+
+        def _member(email):
+            return {
+                "@odata.type": "#microsoft.graph.aadUserConversationMember",
+                "roles": ["owner"] if is_group else [],
+                "user@odata.bind": f"https://graph.microsoft.com/v1.0/users('{urllib.parse.quote(email)}')",
+            }
+
+        body = {
+            "chatType": "group" if is_group else "oneOnOne",
+            "members": [_member(user)] + [_member(e) for e in emails],
+        }
+        if is_group and (topic or "").strip():
+            body["topic"] = topic
+        try:
+            out = _call("POST", "/chats", body=body)
+            return {"created": True, "id": out.get("id", ""), "chatType": body["chatType"], "with": emails}
+        except Exception as e:  # noqa: BLE001
+            return _err("Chat creation", e)
+
+    def teams_create_team(display_name: str = "", description: str = "", owner_email: str = "") -> dict:
+        """Create a new Team. Heavier than teams_create_channel: this provisions a whole new
+        Microsoft 365 group, not a channel inside an existing one.
+
+        Args:
+            display_name: the Team's name.
+            description: optional description.
+            owner_email: the Team's owner. Defaults to this agent's configured user.
+        """
+        if not (display_name or "").strip():
+            return {"error": "display_name is required."}
+        owner = (owner_email or "").strip() or _user()
+        if not owner:
+            return {"error": "owner_email is required — no user is configured for this agent."}
+        body = {
+            "template@odata.bind": "https://graph.microsoft.com/v1.0/teamsTemplates('standard')",
+            "displayName": display_name,
+            "description": description or "",
+            "members": [{
+                "@odata.type": "#microsoft.graph.aadUserConversationMember",
+                "roles": ["owner"],
+                "user@odata.bind": f"https://graph.microsoft.com/v1.0/users('{urllib.parse.quote(owner)}')",
+            }],
+        }
+        try:
+            # Team creation is asynchronous: Graph returns 202 with no body, and the real
+            # result lands on a teamsAsyncOperation the caller would have to poll separately.
+            # Reporting "requested", not "created", is the same honesty rule as everywhere
+            # else in this file — claiming success we have not observed is the thing refused.
+            _call("POST", "/teams", body=body)
+            return {"creationRequested": True, "name": display_name, "owner": owner}
+        except Exception as e:  # noqa: BLE001
+            return _err(f"Team creation for {display_name}", e)
+
+    # Read tools, then writes. No send/reply/post-to-self/feed-notification: app-only Graph
+    # cannot post Teams messages at all, by any route (measured — see the module docstring).
+    # Do not "restore" them without re-probing.
     return [
         teams_list_joined_teams,
+        teams_get_team,
         teams_list_channels,
+        teams_get_channel,
+        teams_list_associated_teams,
         teams_list_chats,
         teams_list_members,
         teams_list_channel_messages,
@@ -442,4 +671,8 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
         teams_get_message,
         teams_list_replies,
         teams_create_channel,
+        teams_update_channel,
+        teams_archive_channel,
+        teams_create_chat,
+        teams_create_team,
     ]

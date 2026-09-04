@@ -1,6 +1,7 @@
 import { config } from '../../config.js';
 import { logger } from '../../logger.js';
 import { getDb, isDbConnected } from '../core.js';
+import type { AgentIR } from '../../types.js';
 
 /**
  * Where does this agent's Microsoft surface point after migration?
@@ -111,6 +112,166 @@ export const SURFACE_EQUIVALENTS: Record<
         prerequisite:
           'Your Workspace admin must authorise the service account for gmail.modify in ' +
           'domain-wide delegation. Scope strings are matched exactly.',
+      },
+    ],
+  },
+  // Composite key, not a real connector id: Copilot's Office 365 Outlook Calendar
+  // operations share the SAME source connector (shared_office365) as mail, but which
+  // Google service they should point at is a genuinely separate decision — a customer
+  // may keep mail on Microsoft while moving calendar to Google, or the reverse. Real
+  // operationIds confirmed live 2026-08-31 against an actual child agent ("Meeting
+  // Scheduler Agent"): Create event (V4), Get calendar view of events (V3), Get
+  // calendars (V2), Find meeting times (V2) — see CALENDAR_OPERATION_IDS below, which is
+  // what `agentUsesSurface` uses to tell a calendar operation apart from a mail one on
+  // the same connector id.
+  'shared_office365:calendar': {
+    sourceName: 'Outlook Calendar',
+    noun: 'calendar',
+    targets: [
+      {
+        connectorId: 'shared_outlook',
+        name: 'Keep Outlook Calendar',
+        summary:
+          'The agent moves to Gemini but its calendar stays in Microsoft 365 — it reads and ' +
+          'creates events through Microsoft Graph. Only the calendar-view read operation is ' +
+          'proven live so far; event creation on this path is new. NOTE: this uses the SAME ' +
+          'connector module as "Keep Outlook" mail — if this agent\'s mail was routed to ' +
+          'Gmail separately, choosing this brings its Outlook MAIL tools back too, bundled ' +
+          'alongside the calendar ones, since today the two are not independently wired.',
+        prerequisite:
+          'Your Entra app registration needs the APPLICATION permission Calendars.Read (and ' +
+          'Calendars.ReadWrite for booking), with admin consent — a SEPARATE grant from the ' +
+          'Mail.* permissions, confirmed live: a missing Calendars.Read grant answers ' +
+          'ErrorAccessDenied even when Mail.* is fully consented.',
+      },
+      {
+        connectorId: 'shared_googlecalendar',
+        name: 'Use Google Calendar',
+        summary:
+          'The agent reads and books Google Calendar events instead. Checking availability ' +
+          'and creating events both carry over. Outlook\'s four-state "Show As" (Free/Busy/' +
+          'Tentative/OOF) collapses to Google\'s two-state transparency (busy/free) plus a ' +
+          'status field — not a one-to-one translation. Booking always targets the ' +
+          'impersonated account\'s own primary calendar; there is no equivalent of targeting ' +
+          'an arbitrary other calendar.',
+        prerequisite:
+          'Your Workspace admin must authorise the service account for the scope ' +
+          'https://www.googleapis.com/auth/calendar in domain-wide delegation — a SEPARATE ' +
+          'grant from gmail.modify, even if this agent also uses Gmail. Scope strings are ' +
+          'matched exactly.',
+      },
+    ],
+  },
+  // Composite key, same shape as 'shared_office365:calendar' above: Copilot's Office 365
+  // Outlook Contacts operations share the SAME source connector (shared_office365) as
+  // mail and calendar, and whether they move to Google is its own independent decision.
+  // Real operationIds confirmed 2026-09-01 from the captured swagger
+  // (fixtures/shared_office365.ops.json): Create contact (V2), Get contact (V2), Get
+  // contact folders (V2), Get contacts (V2), Update contact (V2) — see
+  // CONTACTS_OPERATION_IDS below.
+  //
+  // Only ONE target is offered, deliberately: connector_tools/outlook.py has no contact
+  // functions today, so a "Keep Outlook Contacts" option would be selectable with
+  // nothing behind it — the exact kind of overclaim this table exists to prevent. If a
+  // Graph-side contacts module is ever built, add it here as a second target.
+  'shared_office365:contacts': {
+    sourceName: 'Outlook Contacts',
+    noun: 'contacts',
+    targets: [
+      {
+        connectorId: 'shared_googlecontacts',
+        name: 'Use Google Contacts',
+        summary:
+          'The agent reads and writes the impersonated account\'s Google Contacts instead. ' +
+          'Listing, looking up, creating and updating contacts all carry over. Outlook ' +
+          'contact folders (a contact lives in exactly one) become Google contact groups ' +
+          '(a contact can belong to several, or none) — the same class of gap MoveV2/' +
+          'GetMailboxFolders already documents for mail. Contact ids are NOT portable: a ' +
+          'migrated agent must look a contact up by name first, never by its old Outlook id.',
+        prerequisite:
+          'Your Workspace admin must authorise the service account for the scope ' +
+          'https://www.googleapis.com/auth/contacts in domain-wide delegation — a SEPARATE ' +
+          'grant from gmail.modify and calendar, even if this agent also uses those. Scope ' +
+          'strings are matched exactly.',
+      },
+    ],
+  },
+  // Microsoft's own "Work IQ" MCP servers (Preview) — a DIFFERENT source connector id
+  // from shared_office365, confirmed live 2026-09-02 against the real Meeting
+  // Intelligence Agent: Mail (Preview) binds as connectorId shared_a365outlookmailmcp,
+  // Calendar (Preview) as shared_a365outlookcalendarmcp, each already its own connector
+  // id (unlike shared_office365's one-id-three-capabilities overload), so no composite
+  // ":calendar" key is needed here — agentUsesSurface's plain-key path already tells
+  // them apart correctly.
+  //
+  // These carry a DIFFERENT, more specific tool list than shared_office365's mail/
+  // calendar operations, declared via AgentToolIR.mcp.tools rather than a swagger
+  // operationId — see connectors/boundToolSpec.ts's own comment on why an MCP tool built
+  // on a source with no real bindable operation index (this one; Microsoft never exposes
+  // a365outlookmailmcp/a365outlookcalendarmcp as a callable Power Platform connector)
+  // cannot be expanded the way the Jira-MCP case is. The re-implementation targets below
+  // are the only real path — same modules shared_office365's mail/calendar targets use.
+  shared_a365outlookmailmcp: {
+    sourceName: 'Outlook Mail (Work IQ MCP, Preview)',
+    noun: 'mail',
+    targets: [
+      {
+        connectorId: 'shared_outlook',
+        name: 'Keep Outlook',
+        summary:
+          'Same vendor, different Microsoft API (Graph instead of the Work IQ MCP server), ' +
+          'so this is the higher-fidelity choice. outlook_search_messages/outlook_get_attachment ' +
+          'cover SearchMessages, GetMessage, GetAttachments and DownloadAttachment. ' +
+          'SearchMessagesQueryParameters is not a distinct action on either target — it reads ' +
+          'as a parameter-schema helper for SearchMessages, not something with its own behavior ' +
+          'to reproduce.',
+        prerequisite:
+          'Your Entra app registration needs the APPLICATION permissions Mail.ReadWrite and ' +
+          'Mail.Send, with admin consent granted.',
+      },
+      {
+        connectorId: 'shared_gmail',
+        name: 'Use Gmail',
+        summary:
+          'Cross-vendor: gmail_search_messages and gmail_get_attachment cover SearchMessages, ' +
+          'GetMessage, GetAttachments and DownloadAttachment, with the same folder-vs-label ' +
+          'divergence already documented for shared_office365 mail. ' +
+          'SearchMessagesQueryParameters is not a distinct action on either target (see Keep ' +
+          'Outlook\'s summary).',
+        prerequisite:
+          'Your Workspace admin must authorise the service account for gmail.modify in ' +
+          'domain-wide delegation. Scope strings are matched exactly.',
+      },
+    ],
+  },
+  shared_a365outlookcalendarmcp: {
+    sourceName: 'Outlook Calendar (Work IQ MCP, Preview)',
+    noun: 'calendar',
+    // Only ONE target, deliberately — same reasoning as shared_office365:contacts above.
+    // A "Keep Outlook Calendar" option pointed at shared_outlook would be selectable with
+    // no Graph-side calendar module behind it (outlook.py is mail-only), AND it would
+    // silently collide with mail's OWN "Keep Outlook" choice (same connectorId, so
+    // orchestrator.ts's `already` check skips building anything a second time) — the
+    // customer picks "calendar" and gets nothing, or unknowingly gets mail tools they
+    // already had. Add a real target here only once a Graph calendar module exists.
+    targets: [
+      {
+        connectorId: 'shared_googlecalendar',
+        name: 'Use Google Calendar',
+        summary:
+          'calendar_list_events covers ListEvents and ListCalendarView (collapsed into one — ' +
+          'Graph\'s calendarView expansion of recurring instances vs plain events is a real ' +
+          'semantic difference this single tool may not fully replicate). ' +
+          'calendar_get_current_datetime covers GetUserDateAndTimeZoneSettings. ' +
+          'GetOnlineMeetingTranscripts and GetOnlineMeetingAiInsights are Teams/Copilot meeting-' +
+          'AI features with NO Google Calendar equivalent — confirmed 2026-09-02, not built on ' +
+          'any target this codebase offers. For an agent whose purpose centers on meeting ' +
+          'intelligence, this is likely the loss that matters most — review before relying on ' +
+          'this migration.',
+        prerequisite:
+          'Your Workspace admin must authorise the service account for the scope ' +
+          'https://www.googleapis.com/auth/calendar in domain-wide delegation. Scope strings ' +
+          'are matched exactly.',
       },
     ],
   },
@@ -239,4 +400,67 @@ export async function resolveSurfaceTarget(
   // something nobody chose.
   if (!equivalent.targets.some((t) => t.connectorId === target)) return null;
   return { targetConnectorId: target, impersonateEmail: choice.impersonateEmail };
+}
+
+/**
+ * The exact 4 Office 365 Outlook Calendar operationIds this codebase currently recognizes —
+ * measured live 2026-08-31 against a real child agent's actual declared operations (see
+ * connectors/equivalence.ts's OTHER_SURFACES rows for the same 4 ids). Used to tell a
+ * calendar operation on the shared_office365 connector apart from a mail one, since Copilot
+ * gives both the SAME connector id.
+ */
+export const CALENDAR_OPERATION_IDS = new Set([
+  'GetEventsCalendarViewV3',
+  'CalendarGetTables_V2',
+  'FindMeetingTimes_V2',
+  'V4CalendarPostItem',
+]);
+
+/**
+ * The exact 5 Office 365 Outlook Contacts operationIds this codebase currently
+ * recognizes — pulled 2026-09-01 from the captured swagger
+ * (fixtures/shared_office365.ops.json), the same source used to confirm the calendar
+ * ids above, rather than guessed from the Copilot Studio label text (labels and
+ * operationIds do not always correspond 1:1 — see equivalence.ts's `covers` field).
+ * Used to tell a contacts operation on the shared_office365 connector apart from a
+ * mail or calendar one, since Copilot gives all three the SAME connector id.
+ */
+export const CONTACTS_OPERATION_IDS = new Set([
+  'ContactPostItem_V2',
+  'ContactGetItem_V2',
+  'ContactGetTablesV2',
+  'ContactGetItems_V2',
+  'ContactPatchItem_V2',
+]);
+
+/**
+ * Does this agent actually use the given surface — either a plain connector id (any
+ * operation on it that isn't carved out into its own capability) or a composite
+ * `"<connectorId>:calendar"` / `"<connectorId>:contacts"` key (only that capability's
+ * operations)?
+ *
+ * Needed because `agentConnectorIds(ir)` (services/connectorToolBuilder.ts) only knows
+ * connector ids, not operations — it cannot tell "this agent's shared_office365 usage is
+ * mail" from "...is calendar" from "...is contacts", and all three must be offered as
+ * INDEPENDENT decisions (a customer may keep mail on Microsoft while moving calendar and
+ * contacts to Google, or any other combination).
+ */
+export function agentUsesSurface(ir: AgentIR, surfaceKey: string): boolean {
+  const sepIdx = surfaceKey.indexOf(':');
+  const connectorId = sepIdx === -1 ? surfaceKey : surfaceKey.slice(0, sepIdx);
+  const capability = sepIdx === -1 ? undefined : surfaceKey.slice(sepIdx + 1);
+  const toolsOnConnector = (ir.agentTools ?? []).filter((t) => t.connectorId === connectorId);
+  if (capability === 'calendar') {
+    return toolsOnConnector.some((t) => t.operationId && CALENDAR_OPERATION_IDS.has(t.operationId));
+  }
+  if (capability === 'contacts') {
+    return toolsOnConnector.some((t) => t.operationId && CONTACTS_OPERATION_IDS.has(t.operationId));
+  }
+  // Plain key (mail, Teams, or any future non-suffixed surface): any operation that is NOT
+  // one of the carved-out calendar/contacts ones counts. For every surface except
+  // shared_office365 this is identical to "the connector is used at all" — neither set
+  // ever matches a Teams/Jira/etc. operationId.
+  return toolsOnConnector.some(
+    (t) => !(t.operationId && (CALENDAR_OPERATION_IDS.has(t.operationId) || CONTACTS_OPERATION_IDS.has(t.operationId))),
+  );
 }

@@ -56,6 +56,37 @@ export interface TopicIR {
   isSystem: boolean;
   /** Structured behavior graph (AgentIR v2 §4) — the real conversation logic. */
   graph?: TopicGraph;
+  /**
+   * True when this topic is actually a Copilot Studio "child agent" (the GA
+   * multi-agent construct — a nested agent with its own instructions and, often,
+   * its own private tools), not an ordinary conversational topic.
+   *
+   * Live-confirmed 2026-08-31 against a real child agent ("Meeting Scheduler
+   * Agent" on the "WorkMate" test agent): a child agent extracts as a
+   * `componenttype: 9` row exactly like any topic, but its raw YAML top-level
+   * `kind` is `AgentDialog` (with `beginDialog.kind: OnToolSelected`) — never
+   * `AdaptiveDialog`, the kind an ordinary topic uses. See
+   * `isChildAgentComponent` in `services/dataverse.ts`.
+   *
+   * Earlier session hypothesis (`kind: InlineAgentSkill`, `isInlineSkillComponent`)
+   * was FALSIFIED by this live data — that pattern is real but is a different,
+   * older construct, not the GA child-agent feature.
+   */
+  isChildAgent?: boolean;
+  /**
+   * The child agent's own REAL authored instructions (`settings.instructions` in its
+   * `kind: AgentDialog` YAML) — a completely different field from `modelDescription`
+   * above, which is only the short routing description shown to the parent's router.
+   *
+   * Live-confirmed 2026-08-31/09-01: without this, a real child agent's actual behavior
+   * rules (e.g. "always collect the meeting title, date, attendees, and duration before
+   * booking — never guess") were silently dropped. Mapping fell back to a generic
+   * placeholder instruction meant for flattening an ordinary migrated TOPIC into an ADK
+   * sub-agent, and the migrated sub-agent booked meetings without asking for a title or
+   * duration — a real, user-visible behavior regression from the source agent, not a
+   * model-behavior difference between Copilot Studio and Gemini.
+   */
+  childAgentInstructions?: string;
 }
 
 export interface KnowledgeSourceIR {
@@ -392,6 +423,24 @@ export interface AgentToolIR {
   sourceTopic?: string;
   /** Dataverse schema name of the component. */
   schemaName?: string;
+  /**
+   * Set when this tool is privately owned by a child-agent topic (`TopicIR.isChildAgent
+   * === true`) rather than belonging to the root agent — the id of that owning `TopicIR`.
+   *
+   * NOT the same fact as `sourceTopic` above, which means "this call was embedded inline
+   * inside a topic's own dialog graph." This field means "this tool's `botcomponent` row
+   * is a genuine standalone TaskDialog, but Dataverse's own `ParentBotComponentId` lookup
+   * says a child-agent topic — not the root bot — owns it."
+   *
+   * Live-confirmed 2026-08-31: Dataverse's `botcomponents` entity has a real
+   * `_parentbotcomponentid_value` lookup field (distinct from `_parentbotid_value`, which
+   * always points at the root bot). For a standalone child agent's own tool components,
+   * this field is populated with the owning child-agent topic's `botcomponentid`; for the
+   * root agent's own tools it was observed null. See `services/dataverse.ts`'s
+   * `extractAgent` — this is where the "which tools belong to WorkMate vs. which belong to
+   * Meeting Scheduler Agent" ambiguity found earlier this session actually gets resolved.
+   */
+  childAgentTopicId?: string;
 }
 
 /**

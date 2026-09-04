@@ -29,7 +29,12 @@ describe('Teams equivalence honesty', () => {
     // joinedTeams returned it WITH its name and /channels returned three channels including
     // General. That last assertion is what distinguishes "the call worked" from "the call
     // addressed the team we asked about".
-    const PROVEN_GRAPH = new Set(['ListChats', 'ListChannels', 'ListJoinedTeams']);
+    // GetTeam, ListAssociatedTeams and GetChannelDetails added 2026-08-24
+    // (_diag_teams_new_reads_probe.ts): all three returned real data against tenant 807d6772.
+    const PROVEN_GRAPH = new Set([
+      'ListChats', 'ListChannels', 'ListJoinedTeams',
+      'GetTeam', 'ListAssociatedTeams', 'GetChannelDetails',
+    ]);
     for (const r of TEAMS_MESSAGING) {
       expect(Boolean(r.verified), `${r.operationId} verified flag`).toBe(PROVEN_CHAT.has(r.operationId));
       expect(Boolean(r.graph?.verified), `${r.operationId} graph verified flag`).toBe(
@@ -42,7 +47,10 @@ describe('Teams equivalence honesty', () => {
     // Chat writes need a Chat app (404 until configured); Teams writes are impossible
     // app-only. Neither has been proven, and both are the flags most tempting to flip.
     for (const op of ['PostMessageToConversation', 'ReplyWithMessageInChannel',
-                      'PostCardInChatOrChannel', 'PostMessageToSelf', 'CreateChannel']) {
+                      'PostCardInChatOrChannel', 'PostMessageToSelf', 'CreateChannel',
+                      // Added 2026-08-24 with the new keep-Microsoft write tools — same
+                      // discipline applies before any of them has been run against a tenant.
+                      'ArchiveChannel', 'UpdateChannel', 'CreateChat', 'CreateATeam']) {
       const r = TEAMS_MESSAGING.find((x) => x.operationId === op);
       expect(Boolean(r?.verified), `${op} write claims verified`).toBe(false);
       expect(Boolean(r?.graph?.verified), `${op} write claims Graph verified`).toBe(false);
@@ -75,6 +83,10 @@ describe('Teams equivalence honesty', () => {
       'teams_list_joined_teams', 'teams_list_channels', 'teams_list_chats', 'teams_list_members',
       'teams_list_channel_messages', 'teams_list_chat_messages', 'teams_get_message',
       'teams_list_replies', 'teams_create_channel',
+      // Added 2026-08-24, alongside teams.py's ADDITIONAL PERMISSIONS block — buildable per
+      // Microsoft Graph's docs, not yet measured against a live tenant.
+      'teams_get_team', 'teams_get_channel', 'teams_list_associated_teams',
+      'teams_update_channel', 'teams_archive_channel', 'teams_create_chat', 'teams_create_team',
     ]);
     for (const r of TEAMS_MESSAGING) {
       if (r.tool) expect(chatTools, `${r.operationId} names unknown Chat tool ${r.tool}`).toContain(r.tool);
