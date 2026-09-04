@@ -13,10 +13,10 @@ import { hasDedicatedToolModule } from './connectors/toolModule.js';
 import { findCoverage } from './connectors/coverage.js';
 import { findEquivalence, surfaceForConnector } from './connectors/equivalence.js';
 import { resolveProjectNumber } from './services/adkDeployer.js';
-import { listConnectorCredentials, upsertConnectorCredential } from './db/repos/connectorCredentials.js';
-import type { ConnectorCredentialRecord } from './db/repos/connectorCredentials.js';
+import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
+import { applyPerUserAuth } from './services/userConnectorAuth.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
 import { resolveSurfaceTarget, SURFACE_EQUIVALENTS, agentUsesSurface, CALENDAR_OPERATION_IDS, CONTACTS_OPERATION_IDS } from './db/repos/agentSurfaceChoice.js';
 import { connectorsSharingCredentials, connectorSecretId } from './services/connectorCredentials.js';
@@ -885,38 +885,63 @@ async function execute(
   // credentials sat correctly in Secret Manager (live 2026-08-07, twice). Nothing in
   // the UI suggested the plan had to be rebuilt afterwards.
   //
-  // A record stored under a DIFFERENT project than the one we are deploying into now is
-  // not unusable — it is stranded. The deployed container can only read secrets from its
-  // OWN project, but the secret VALUE can be copied there first via the same
-  // ensureSecretInProject mechanism already used below for per-agent SelectMap drift.
-  // Without this, a connector saved while a customer's session was connected to an OLDER
-  // project becomes permanently invisible to every future migration targeting a new one
-  // — fully configured, credentials valid, silently excluded with no fidelity note at all
-  // (live gap found 2026-08-25: a HubSpot custom connector's credentials, saved under an
-  // earlier project, were dropped this way; Teams/Drive/Jira/Confluence only kept working
-  // because that run's plan.savedConnectors happened to list them independently).
+  // A record stored against ANOTHER project is not unusable — it is un-copied. This used to
+  // filter those records out entirely, which pinned a customer's credentials to whichever
+  // project happened to be connected when they were first saved: point the run at a
+  // different project and every connector silently reported as unconfigured, its tools were
+  // never wired, and the report blamed a missing credential that was sitting in Secret
+  // Manager the whole time. Credentials belong to a CUSTOMER; a project is only where copies
+  // of them live.
+  //
+  // So the records are kept and their secrets are brought across from wherever they actually
+  // are, BEFORE resolveConnectorSecrets reads the deploy project. Best-effort throughout: a
+  // secret that cannot be copied simply is not found later, which is the same outcome as
+  // before minus the silent discard.
   const destProject = effectiveGeminiProject(session.geminiProject);
+  // ONE record per connector. The same connector can hold a record in several projects —
+  // re-entering a credential while a different project is connected writes a second one —
+  // and the maps built below are keyed by connector id, so without a decision here whichever
+  // row happened to come back last would win silently. Prefer the deploy project's own
+  // record, then the most recently saved: the newest is what the customer last typed.
   const allConnectorRecords = await listConnectorCredentials(appUserId).catch(() => []);
-  const durableConnectorRecords: ConnectorCredentialRecord[] = [];
+  const bestByConnector = new Map<string, (typeof allConnectorRecords)[number]>();
+  for (const rec of allConnectorRecords) {
+    const cur = bestByConnector.get(rec.connectorId);
+    if (!cur) { bestByConnector.set(rec.connectorId, rec); continue; }
+    const recWins =
+      (rec.project === destProject && cur.project !== destProject)
+      || (rec.project === destProject === (cur.project === destProject)
+          && +new Date(rec.updatedAt ?? 0) > +new Date(cur.updatedAt ?? 0));
+    if (recWins) bestByConnector.set(rec.connectorId, rec);
+  }
+  const durableConnectorRecords = [...bestByConnector.values()];
   if (destProject) {
-    for (const record of allConnectorRecords) {
-      if (record.project === destProject) {
-        durableConnectorRecords.push(record);
-        continue;
-      }
-      const secretIds = Object.values(record.secretIds ?? {});
-      if (!secretIds.length) continue;
-      // Best-effort and silent on failure, matching ensureSecretInProject's own contract —
-      // a secret it could not move is still caught honestly by preflightConnectors further
-      // down, the same safety net an already-matching record relies on. Update the stored
-      // project regardless of per-secret outcome so a working sync stops being redone (and
-      // reported as "just configured") on every subsequent run.
-      await Promise.all(secretIds.map((id) => ensureSecretInProject(saToken, record.project, destProject, id)));
-      await upsertConnectorCredential(appUserId, { ...record, project: destProject }).catch(() => {});
-      durableConnectorRecords.push({ ...record, project: destProject });
+    const strays = durableConnectorRecords.filter((c) => c.project && c.project !== destProject);
+    if (strays.length) {
+      emitLog(
+        'info',
+        `Bringing ${strays.length} connector credential(s) into ${destProject} from `
+        + `${[...new Set(strays.map((c) => c.project))].join(', ')}`,
+      );
+      await Promise.all(strays.flatMap((c) => {
+        // Prefer the ids the credential was ACTUALLY written under; fall back to the
+        // computed name for records saved before secretIds were recorded.
+        const ids = Object.values(c.secretIds ?? {});
+        const names = ids.length
+          ? ids
+          : Object.keys(c.fields ?? {}).map((f) => connectorSecretId(c.connectorId, f, credentialScope(session)));
+        return names.map((secretId) =>
+          ensureSecretInProject(saToken, c.project, destProject, secretId)
+            .catch(() => undefined),
+        );
+      }));
     }
   }
   const durableConnectorIds = durableConnectorRecords.map((c) => c.connectorId);
+  /** Where each connector's credential was saved, for later cross-project syncs. */
+  const credentialSourceProject = new Map<string, string>(
+    durableConnectorRecords.filter((c) => c.project).map((c) => [c.connectorId, c.project]),
+  );
   // The id each credential was ACTUALLY written under. Secret ids are tenant-scoped
   // now, but credentials saved before that scoping live under the old name and already
   // back deployed agents — recomputing would point a working agent at a secret that
@@ -1036,6 +1061,7 @@ async function execute(
         (raw) => {
           void saveRawAgent({
             appUserId,
+            tenantId: session.tenantId,
             runId,
             envUrl: raw.envUrl,
             sourceId: raw.sourceId,
@@ -1138,7 +1164,7 @@ async function execute(
           unresolvedInputs: topicsPlan.summary.unresolvedInputs,
         },
       });
-      void cacheAgentIR(appUserId, item.envUrl, ir, mapped);
+      void cacheAgentIR(appUserId, item.envUrl, ir, mapped, session.tenantId);
       // Detailed, per-agent log so you can see exactly what was captured.
       const ksAuto = ir.knowledgeSources.filter((k) => k.classification?.automatable).length;
       const ksTotal = ir.knowledgeSources.length;
@@ -1224,6 +1250,64 @@ async function execute(
   const memoryIdentityMap = new Map(
     Object.entries(identityOverrides.users).map(([ms, google]) => [ms.toLowerCase(), String(google)]),
   );
+
+  // WHO IS ASKING, in SOURCE terms. Gemini hands the deployed agent a destination identity
+  // (ben@newco.com); the mailbox and the Dataverse account live in the source tenant
+  // (ben@oldco.co). Guessing the link from the local part is not safe — in the live test
+  // tenant `ben@` matches three different domains and `alex@` three more, so a guess reads
+  // a stranger's mail. The operator already stated the pairing on the Map users screen, so
+  // use that: it is the authoritative answer to exactly this question, reversed.
+  //
+  // The map is many-to-one in the direction the operator fills it in: alex@filefuze.co and
+  // alex@qatestagent.com both legitimately map to alex@migrationn.com, because one person can
+  // own accounts in several source domains. Reversing that is therefore NOT a bijection, and
+  // a plain overwrite would silently resolve the caller to whichever source address happened
+  // to be iterated last — the wrong mailbox, read with total confidence, which is the exact
+  // failure this whole path exists to prevent.
+  //
+  // So a destination that claims more than one source address is DROPPED. The tool then says
+  // it cannot tell which account is theirs, and the operator resolves it by mapping one of
+  // them elsewhere. Refusing is recoverable; reading a colleague's mail is not.
+  const callerIdentityMap: Record<string, string> = {};
+  const ambiguousCallers = new Set<string>();
+  for (const [ms, google] of Object.entries(identityOverrides.users)) {
+    if (!google) continue;
+    const dest = String(google).toLowerCase();
+    const existing = callerIdentityMap[dest];
+    if (existing) {
+      // Same account restated (often just different casing) is not a conflict — keep the
+      // first and move on. Overwriting would make the resolved address depend on key order
+      // for no reason.
+      if (existing.toLowerCase() !== ms.toLowerCase()) ambiguousCallers.add(dest);
+      continue;
+    }
+    callerIdentityMap[dest] = ms;
+  }
+  for (const dest of ambiguousCallers) delete callerIdentityMap[dest];
+  if (ambiguousCallers.size) {
+    // Named, not counted: the operator can only fix what they can identify.
+    logger.warn(
+      { callers: [...ambiguousCallers] },
+      'per-user tools: these destination users map to more than one source account, so tools that run as the caller cannot tell which is theirs',
+    );
+    // And say it where the operator is actually looking. This used to reach the server
+    // console only, so the person running the migration saw a healthy green run and then a
+    // tool that refused every request from these people, with nothing connecting the two.
+    // The auto-matcher pairs on local part, so one Google account collecting the same name
+    // from several source domains is the ordinary case, not an exotic one.
+    for (const dest of ambiguousCallers) {
+      const sources = Object.entries(identityOverrides.users)
+        .filter(([, g]) => String(g ?? '').toLowerCase() === dest)
+        .map(([ms]) => ms)
+        .sort();
+      emitLog(
+        'warn',
+        `    ${dest} is mapped from ${sources.length} source accounts (${sources.join(', ')}) — ` +
+          'tools that run as the caller will refuse this person rather than guess which mailbox ' +
+          'is theirs. Map all but one of those source accounts to a different Google user to fix it.',
+      );
+    }
+  }
 
   // Memory that belongs to no migrating agent still has to reach the report — it is the
   // difference between "this agent kept its personalization" and "the personalization
@@ -1775,6 +1859,8 @@ async function execute(
       // here, beside the other verify inputs, because the bound-tool build happens in a
       // deeper block that verification cannot see into.
       let adkWiredToolNames: string[] = [];
+      /** True once the ADK worker has told us the tools it really wired. */
+      let workerReportedToolNames = false;
       // True when the agent was created via low-code + dataStoreSpecs (native
       // grounding), bypassing ADK/RE entirely for connector-grounded agents.
       let usedDataStoreSpecs = false;
@@ -2253,6 +2339,31 @@ async function execute(
                 ? { ...withBound, scopeUri: spScopeUri, scopeUris: spScopeUris.length ? spScopeUris : undefined }
                 : withBound;
             });
+            // PER-USER CREDENTIALS. Copilot's `invoker` mode ran the tool under the SIGNED-IN
+            // USER's own connection — Erik's mail from Erik's mailbox, Erik's CRM query
+            // returning only Erik's records. Deploying that on one shared credential does not
+            // fail; it silently makes every user act as one account, which is the kind of
+            // wrong nobody can find by testing.
+            //
+            // Marked per AGENT, not per run: the same connector can be `invoker` for one agent
+            // and `maker` for another, and a run-level flag would impose one agent's access
+            // model on the rest.
+            const invokerConnectorIds = new Set(
+              (row.mapped?.ir.agentTools ?? [])
+                .filter((t) => t.connectionAuthMode === 'invoker' && t.connectorId)
+                .map((t) => t.connectorId!),
+            );
+            if (invokerConnectorIds.size) {
+              scopedConnectors = scopedConnectors.map((c) =>
+                invokerConnectorIds.has(c.id)
+                  // The caller map rides on the connector because that is what the container
+                  // sees; without it a per-user tool cannot turn "who asked" into an account
+                  // in the source tenant, and refuses for everyone.
+                  ? { ...applyPerUserAuth(c), callerIdentityMap }
+                  : c,
+              );
+            }
+
             // Mailbox chosen per agent, applied as a per-agent secret further down.
             const surfaceMailboxes = new Map<string, string>();
             // CROSS-VENDOR SUBSTITUTION: Outlook -> Gmail, and only when the customer said so.
@@ -2313,6 +2424,21 @@ async function execute(
                 surfaceMailboxes.set(target.targetConnectorId, target.impersonateEmail);
               }
               scopedConnectors = [...scopedConnectors, ...built.specs];
+              // CARRY THE INVOKER FLAG ACROSS THE SUBSTITUTION.
+              //
+              // The per-user marking above keys on the SOURCE connector id and runs before
+              // this block exists. The connector actually wired is the TARGET, added here —
+              // so without this the flag is lost precisely when a surface is substituted, and
+              // Outlook is the common case. The tool then reads ONE pinned mailbox for every
+              // caller while reporting success, which is what a live two-caller test caught:
+              // both people were served the same person's mail.
+              if (invokerConnectorIds.has(msConnectorId)) {
+                scopedConnectors = scopedConnectors.map((c) =>
+                  c.id === target.targetConnectorId
+                    ? { ...applyPerUserAuth(c), callerIdentityMap }
+                    : c,
+                );
+              }
               if (!built.specs.length && !already) {
                 result.fidelity.push({
                   component: `surface:${msConnectorId}`,
@@ -2470,7 +2596,15 @@ async function execute(
               scopedConnectors = scopedConnectors.map((c, i) =>
                 i === idx ? { ...c, secretIds: { ...entry.secretIds, impersonate_email: agentSecretId } } : c,
               );
-              emitLog('info', `    ${row.name}: ${entry.name} will act as ${mailbox}.`);
+              // Say which identity actually applies. A per-user connector ignores this
+              // mailbox and runs as the caller; claiming otherwise sends a reader looking for
+              // a bug in the wrong place — and would hide the substitution bug above.
+              emitLog(
+                'info',
+                (entry as { perUser?: boolean }).perUser
+                  ? `    ${row.name}: ${entry.name} will act as whoever is asking (${mailbox} is the fallback for shared tools).`
+                  : `    ${row.name}: ${entry.name} will act as ${mailbox}.`,
+              );
               markActsAs(result, entry.name, mailbox);
             }
 
@@ -2633,13 +2767,21 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
             // confirmed live 2026-08-13 (Google Drive, 404 at inference, invisible
             // until someone actually queried the deployed agent). Best-effort and cheap
             // when already synced: no-ops once the target project already has it.
-            if (session.geminiProject) {
-              const connectorSecretIdsForThisAgent = scopedConnectors
-                .flatMap((c) => Object.values(c.secretIds ?? {}))
-                .filter((secretId) => !destScopedSecretIds.has(secretId));
+            {
+              // Source is the project each credential was SAVED in, not the one currently
+              // connected. Reading `session.geminiProject` here meant the copy could only
+              // ever reach back to wherever the run happened to be pointing, so a credential
+              // saved against a different project was never reachable at all.
+              const pairs = scopedConnectors.flatMap((c) => {
+                const from = credentialSourceProject.get(c.id) ?? session.geminiProject;
+                if (!from) return [];
+                return Object.values(c.secretIds ?? {})
+                  .filter((secretId) => !destScopedSecretIds.has(secretId))
+                  .map((secretId) => ({ from, secretId }));
+              });
               await Promise.all(
-                connectorSecretIdsForThisAgent.map((secretId) =>
-                  ensureSecretInProject(saToken, session.geminiProject!, dest.project, secretId),
+                pairs.map(({ from, secretId }) =>
+                  ensureSecretInProject(saToken, from, dest.project, secretId),
                 ),
               );
             }
@@ -2766,7 +2908,13 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               // array from the worker is meaningful (an agent with no function tools) and is
               // NOT overwritten with the planned list — that would resurrect the false
               // expectation this replaced.
-              if (adk.toolNames) adkWiredToolNames = adk.toolNames;
+              // An EMPTY array from the worker is meaningful (an agent with no function
+              // tools), so "did the worker report?" cannot be inferred from length -- it
+              // needs its own flag, or the server-side fallback below silently wins.
+              if (adk.toolNames) {
+                adkWiredToolNames = adk.toolNames;
+                workerReportedToolNames = true;
+              }
               adkGroundedStoreCount = groundingDataStores.length;
               for (const name of groundedFileNames) {
                 result.fidelity.push({
@@ -2816,12 +2964,25 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               // present" while nine Teams read tools were deployed and fine). Filtering those
               // out leaves the list EMPTY for such connectors, and verify.ts skips the check
               // when it is empty — a vacuous pass, which is the worse of the two errors.
-              adkWiredToolNames = [...boundBuild.byConnector]
-                .filter(([connectorId]) => {
-                  const spec = scopedConnectors.find((c) => c.id === connectorId);
-                  return !hasDedicatedToolModule(spec?.kind ?? connectorId);
-                })
-                .flatMap(([, specs]) => specs.map((sp) => sp.toolName));
+              //
+              // GUARDED, because it used to run unconditionally and therefore clobbered the
+              // worker's real list a few lines above -- inverting the precedence this comment
+              // describes. Measured live 2026-08-24 on WorkMate: the worker wired
+              // `discovery_engine_search` (its grounding tool, adk_deploy.py:999), the
+              // overwrite replaced the list with bound CONNECTOR names only, the agent
+              // answered a knowledge question with the grounding tool exactly as designed,
+              // and classifyEvidence saw zero overlap between observed and expected and
+              // returned `wrong_agent_tools` -- "this deployment is serving the wrong
+              // package". A healthy agent got the most alarming verdict the system has, and
+              // the verdict rule was not at fault: its input was.
+              if (!workerReportedToolNames) {
+                adkWiredToolNames = [...boundBuild.byConnector]
+                  .filter(([connectorId]) => {
+                    const spec = scopedConnectors.find((c) => c.id === connectorId);
+                    return !hasDedicatedToolModule(spec?.kind ?? connectorId);
+                  })
+                  .flatMap(([, specs]) => specs.map((sp) => sp.toolName));
+              }
               // Agents in THIS run, so a connected-agent tool can say whether its target
               // is migrating alongside it (reconnect them) or is not in scope at all
               // (migrate it first). "Migrate the other agent" is useless advice when the

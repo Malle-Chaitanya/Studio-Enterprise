@@ -445,10 +445,31 @@ export async function exchangeCode(code: string): Promise<{ accessToken: string;
   return { accessToken: json.access_token, refreshToken: json.refresh_token };
 }
 
+/**
+ * The outcome of trying to refresh. `reauthRequired` separates a refresh token Google has
+ * PERMANENTLY rejected from a refresh that merely failed this time.
+ *
+ * WHY THE DISTINCTION. Both used to collapse into `null`, and the only caller answered a
+ * null by handing back the dead access token it already had. Discovery then 401'd and the
+ * route reported "falling back to manual entry" - so a revoked Google grant looked like a
+ * missing IAM permission, three layers away from the truth. Observed 2026-08-31: an admin
+ * whose Cloud session control forced reauth spent a morning on it.
+ *
+ * `invalid_grant` is the unambiguous one: revoked consent, changed password, an admin
+ * clearing sessions, or a reauth policy invalidating outstanding grants. The token will
+ * never work again and only a fresh sign-in fixes it. Anything else (5xx, a network blip)
+ * is transient and must NOT push the customer through a needless reconnect.
+ */
+export interface GoogleRefreshResult {
+  accessToken: string | null;
+  /** Google rejected the grant itself — the stored refresh token is dead for good. */
+  reauthRequired: boolean;
+}
+
 /** Exchange a stored Google refresh token for a fresh ~1hr access token. Google
  *  only returns a NEW refresh_token on rare rotation — the caller's existing one
  *  keeps working otherwise, so we don't overwrite it unless a new one comes back. */
-export async function refreshGoogleToken(refreshToken: string): Promise<string | null> {
+export async function refreshGoogleToken(refreshToken: string): Promise<GoogleRefreshResult> {
   try {
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -462,13 +483,20 @@ export async function refreshGoogleToken(refreshToken: string): Promise<string |
     });
     const json = (await res.json()) as { access_token?: string; error?: string };
     if (!res.ok || !json.access_token) {
-      logger.warn(`Google token refresh failed (${res.status}): ${json.error ?? 'unknown'}`);
-      return null;
+      // Never log the token itself - the error code and status are the whole diagnosis.
+      const reauthRequired = json.error === 'invalid_grant';
+      logger.warn(
+        `Google token refresh failed (${res.status}): ${json.error ?? 'unknown'}` +
+          (reauthRequired ? ' — the stored grant is dead, the admin must reconnect Google' : ''),
+      );
+      return { accessToken: null, reauthRequired };
     }
-    return json.access_token;
+    return { accessToken: json.access_token, reauthRequired: false };
   } catch (err) {
+    // A thrown fetch is transient by definition — we never heard back, so we know nothing
+    // about the grant. Treating it as dead would sign the customer out over a network blip.
     logger.warn({ err }, 'Google token refresh errored');
-    return null;
+    return { accessToken: null, reauthRequired: false };
   }
 }
 
@@ -518,6 +546,38 @@ const DISCOVERY_CONCURRENCY = 8;
  * chat/assistant-capable engine; otherwise the earliest with any engine; else the
  * configured fallback.
  */
+/**
+ * One canonical name for a project, whichever way the caller has it.
+ *
+ * A project has an id AND a number, Google accepts either, and this codebase has stored
+ * both — `identityMappings` holds rows keyed "studio-enterprise-migration" beside rows keyed
+ * "505103737920". That is fine until something looks a row up by the OTHER representation
+ * and finds nothing: the customer's saved user mappings come back empty and their work looks
+ * lost. Numbers are resolved to ids; anything already an id is returned untouched.
+ *
+ * Cached per process: a project's id never changes, and this sits on the read path of every
+ * identity-map lookup.
+ */
+const projectIdCache = new Map<string, string>();
+
+export async function canonicalProjectId(ref: string, token: string): Promise<string> {
+  if (!ref || !/^[0-9]+$/.test(ref)) return ref;   // already an id (or empty)
+  const hit = projectIdCache.get(ref);
+  if (hit) return hit;
+  try {
+    const res = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${ref}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return ref;   // cannot resolve -> keep the caller's ref, never guess
+    const j = (await res.json()) as { projectId?: string };
+    if (!j.projectId) return ref;
+    projectIdCache.set(ref, j.projectId);
+    return j.projectId;
+  } catch {
+    return ref;
+  }
+}
+
 export async function discoverGeminiProject(gToken: string): Promise<string> {
   const fallback = config.GEMINI_PROJECT_FALLBACK ?? '';
 
@@ -537,16 +597,32 @@ export async function discoverGeminiProject(gToken: string): Promise<string> {
     return forced;
   }
 
+  /**
+   * A project's ID, not its NUMBER.
+   *
+   * This returned `projectNumber`, which was then stored as `session.geminiProject` and read
+   * everywhere else — and logged, and shown — as though it were an id. Google accepts either
+   * in a URL, so nothing failed; the two simply stopped being distinguishable. Live
+   * consequence: a run reported its destination as "studio-enterprise-migration" while
+   * holding 505103737920, which is `agentmigrations` — a DIFFERENT project that happens to
+   * share the display name "CloudFuze Agent Migration Hub". The preflight then demanded a
+   * secret grant for the wrong project's service agent.
+   *
+   * Numbers are kept only as a fallback for the rare project the API returns without an id.
+   */
+  const projectRef = (p: { projectId?: string; projectNumber: string }): string =>
+    p.projectId || p.projectNumber;
+
   try {
     const res = await fetch('https://cloudresourcemanager.googleapis.com/v1/projects', {
       headers: { Authorization: `Bearer ${gToken}` },
     });
     if (!res.ok) return fallback;
     const json = (await res.json()) as {
-      projects?: { projectNumber?: string; lifecycleState?: string }[];
+      projects?: { projectNumber?: string; projectId?: string; lifecycleState?: string }[];
     };
     const active = (json.projects ?? []).filter(
-      (p): p is { projectNumber: string; lifecycleState?: string } =>
+      (p): p is { projectNumber: string; projectId?: string; lifecycleState?: string } =>
         p.lifecycleState === 'ACTIVE' && Boolean(p.projectNumber),
     );
 
@@ -560,23 +636,23 @@ export async function discoverGeminiProject(gToken: string): Promise<string> {
             `/locations/global/collections/default_collection/engines`,
           { headers: { Authorization: `Bearer ${gToken}` } },
         );
-        if (!listRes.ok) return { projectNumber: p.projectNumber, hasChat: false, hasAny: false };
+        if (!listRes.ok) return { ref: projectRef(p), hasChat: false, hasAny: false };
         const engines = ((await listRes.json()) as { engines?: { solutionType?: string }[] }).engines ?? [];
         return {
-          projectNumber: p.projectNumber,
+          ref: projectRef(p),
           hasChat: engines.some((e) => /CHAT|ASSISTANT/i.test(e.solutionType ?? '')),
           hasAny: engines.length > 0,
         };
       } catch {
-        return { projectNumber: p.projectNumber, hasChat: false, hasAny: false };
+        return { ref: projectRef(p), hasChat: false, hasAny: false };
       }
     });
 
     // `find` preserves input order → same deterministic choice as the old loop.
     const chat = probes.find((r) => r.hasChat);
-    if (chat) return chat.projectNumber;
+    if (chat) return chat.ref;
     const any = probes.find((r) => r.hasAny);
-    if (any) return any.projectNumber;
+    if (any) return any.ref;
   } catch (err) {
     logger.warn({ err }, 'Gemini project discovery failed');
   }

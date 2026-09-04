@@ -191,7 +191,16 @@ export async function fetchProjects(
   session: string,
 ): Promise<{ projects: DestProject[]; manualEntry: boolean; defaultProject?: string }> {
   const res = await fetch(`/api/destination/projects?session=${session}`);
-  if (!res.ok) throw new Error('projects_failed');
+  if (!res.ok) {
+    // Pass the server's own code through when it has one. A dead Google grant comes back as
+    // `google_reauth_required`, and flattening that to `projects_failed` is what made an
+    // expired sign-in read as a permissions problem.
+    const code = await res
+      .json()
+      .then((b: { error?: string }) => b?.error)
+      .catch(() => undefined);
+    throw new Error(code || 'projects_failed');
+  }
   return (await res.json()) as { projects: DestProject[]; manualEntry: boolean; defaultProject?: string };
 }
 
@@ -378,11 +387,13 @@ export async function saveIdentityMap(
 export async function suggestIdentityMap(
   session: string,
   principals: { type: string; id: string; email?: string; displayName?: string }[],
+  /** Rebuild the org profile server-side instead of using its per-session cache. */
+  refresh = false,
 ): Promise<{ ownedDomains: string[]; suggested: { users: Record<string, string>; groups: Record<string, string> } }> {
   const res = await fetch('/api/identity/suggest', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session, principals }),
+    body: JSON.stringify({ session, principals, refresh }),
   });
   if (!res.ok) throw new Error('identity_suggest_failed');
   return (await res.json()) as {
@@ -474,10 +485,12 @@ export async function fetchMsUsers(
 
 export async function fetchMsUsersPage(
   session: string,
-  opts?: { q?: string; max?: number; all?: boolean },
+  /** `live` bypasses the connect-time snapshot and re-reads Graph — Rescan, and nothing else. */
+  opts?: { q?: string; max?: number; all?: boolean; live?: boolean },
 ): Promise<DirectoryPage<MsUserBrief>> {
   const qs = new URLSearchParams({ session });
   if (opts?.q) qs.set('q', opts.q);
+  if (opts?.live) qs.set('live', '1');
   if (opts?.max) qs.set('max', String(opts.max));
   if (opts?.all) qs.set('all', '1');
   const res = await fetch(`/api/identity/ms-users?${qs}`);

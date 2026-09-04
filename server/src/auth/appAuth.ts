@@ -207,3 +207,19 @@ export function safeEqual(a: string, b: string): boolean {
   if (ab.length !== bb.length) return false;
   return timingSafeEqual(ab, bb);
 }
+
+/**
+ * Restrict a route to our own staff.
+ *
+ * `requireAuth` alone is not enough for anything that reaches across tenants or destroys
+ * data: any signed-in customer would pass it. Lives here, next to `requireAuth`, because it
+ * is now used by more than one router and a second copy of an auth guard is how the two
+ * quietly stop agreeing.
+ */
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (req.appUser?.role !== 'admin') {
+    res.status(403).json({ error: 'admin_required' });
+    return;
+  }
+  next();
+}

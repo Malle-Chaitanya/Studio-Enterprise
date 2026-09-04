@@ -6,8 +6,8 @@ the browser flow.
 
 ## Current reality
 
-- **`npm test` runs vitest** (`vitest run`, config in `server/vitest.config.ts`). 10 suites,
-  118 tests as of 2026-08-13 — `operationBinding`, `aclDisclosure`, `sharePointUrlRecovery`,
+- **`npm test` runs vitest** (`vitest run`, config in `server/vitest.config.ts`). 41 suites,
+  461 tests as of 2026-08-26 — `operationBinding`, `aclDisclosure`, `sharePointUrlRecovery`,
   `connectorValidator`, `connectorCredentials`, `confluenceRouting`, `explore` and others.
   Co-locate new ones as `*.test.ts` next to the module. This rule previously said no runner
   existed; that was stale and cost a review cycle rediscovering it.

@@ -7,6 +7,7 @@ import { resolveConnectorId, connectionAuthModeFrom } from './connectorRef.js';
 import { parseToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef, parseTopicConnectorActions } from './toolPayload.js';
 import { resolveMcpServerUrls } from '../connectors/customConnectorInventory.js';
 import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
+import { fetchWithThrottleBackoff } from './httpTransient.js';
 
 /**
  * Copilot Studio extraction: reads an agent's complete definition from the
@@ -437,9 +438,14 @@ export async function readAgentPermissions(
 }
 
 async function dvGet<T>(url: string, token: string, path: string): Promise<T> {
-  const res = await fetch(API(url, path), {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-  });
+  // Throttling is a wait instruction, not a failure — see fetchWithThrottleBackoff. Before
+  // this, a 429 from Dataverse's service protection limits threw exactly like a 400 from a
+  // bad $select, so a burst of reads failed agents that would have succeeded a second later.
+  const res = await fetchWithThrottleBackoff(
+    API(url, path),
+    { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
+    { label: `dataverse GET ${path.split('?')[0]}` },
+  );
   if (!res.ok) {
     // Surface Dataverse's own OData error message (e.g. "Could not find a
     // property named 'description' on type...") instead of a bare status
@@ -594,7 +600,11 @@ async function dvGetAll<T>(url: string, token: string, path: string): Promise<T[
   let next: string | null = API(url, path);
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json', Prefer: 'odata.maxpagesize=500' };
   while (next) {
-    const res = await fetch(next, { headers });
+    const res = await fetchWithThrottleBackoff(next, { headers }, {
+      // Budget is per PAGE, not per listing: a tenant with many pages must not exhaust its
+      // retries on unrelated blips spread across them. Same rule as gemini.ts's licence read.
+      label: `dataverse GET ${path.split('?')[0]} (paged)`,
+    });
     if (!res.ok) {
       // Same reasoning as dvGet: a bare status hides which $select Dataverse rejected.
       let detail = '';
@@ -665,24 +675,69 @@ export function getAiPromptMap(url: string, token: string): Promise<Map<string, 
 }
 
 /** List all active agents (bots) in the environment (includes lightweight owner/access). */
+/**
+ * Resolve many owners in as few requests as possible.
+ *
+ * Replaces a per-owner GET issued sequentially inside the listing loop and capped at 40
+ * distinct owners. Both halves were wrong: past the cap `ownerEmail` came back undefined
+ * with nothing saying so, and below it a tenant with 40 owners paid 40 serial round trips
+ * against the same service-protection budget the listing was already spending.
+ *
+ * Chunked `or` rather than one giant filter — Dataverse rejects an over-long URL, and a
+ * rejected filter would lose every owner in it rather than the one that broke it.
+ */
+const OWNER_CHUNK = 40;
+
+async function resolveOwnersBulk(
+  url: string,
+  token: string,
+  ids: string[],
+): Promise<Map<string, { email?: string; displayName?: string }>> {
+  const out = new Map<string, { email?: string; displayName?: string }>();
+  for (let i = 0; i < ids.length; i += OWNER_CHUNK) {
+    const chunk = ids.slice(i, i + OWNER_CHUNK);
+    const filter = chunk.map((id) => `systemuserid eq ${id}`).join(' or ');
+    try {
+      const rows = await dvGetAll<{
+        systemuserid: string;
+        internalemailaddress?: string;
+        fullname?: string;
+      }>(url, token, `systemusers?$select=systemuserid,internalemailaddress,fullname&$filter=${filter}`);
+      for (const r of rows) {
+        out.set(r.systemuserid.toLowerCase(), {
+          email: r.internalemailaddress ?? undefined,
+          displayName: r.fullname ?? undefined,
+        });
+      }
+    } catch (e) {
+      // An owner we could not resolve keeps the FormattedValue display name the bots listing
+      // already carried, so the row degrades to "named but no email" rather than vanishing.
+      // A team-owned bot lands here too: teams are not in systemusers.
+      logger.warn(`resolveOwnersBulk chunk failed: ${(e as Error).message}`);
+    }
+  }
+  return out;
+}
+
 export async function listBots(url: string, token: string): Promise<BotSummary[]> {
-  const json = await dvGet<{
-    value: {
-      botid: string;
-      name: string;
-      _ownerid_value?: string;
-      accesscontrolpolicy?: number;
-      '_ownerid_value@OData.Community.Display.V1.FormattedValue'?: string;
-    }[];
-  }>(
+  // Paged, not a single GET. Dataverse caps a page and hands back @odata.nextLink; ignoring
+  // it dropped every agent past the cap with no error at all — the listing simply came back
+  // short, and a migration would report success having never seen them. Same failure the
+  // component read already fixed inside extractAgent.
+  const rows = await dvGetAll<{
+    botid: string;
+    name: string;
+    _ownerid_value?: string;
+    accesscontrolpolicy?: number;
+    '_ownerid_value@OData.Community.Display.V1.FormattedValue'?: string;
+  }>(url, token, 'bots?$select=name,botid,_ownerid_value,accesscontrolpolicy&$filter=statecode eq 0');
+  const out: BotSummary[] = [];
+  // One bulk pass over the DISTINCT owners before the loop, instead of a call per row.
+  const ownerCache = await resolveOwnersBulk(
     url,
     token,
-    'bots?$select=name,botid,_ownerid_value,accesscontrolpolicy&$filter=statecode eq 0',
+    [...new Set(rows.map((b) => b._ownerid_value).filter((v): v is string => Boolean(v)))],
   );
-  const rows = json.value ?? [];
-  const out: BotSummary[] = [];
-  // Resolve a small unique set of owners (cap lookups to keep list snappy).
-  const ownerCache = new Map<string, { email?: string; displayName?: string }>();
   for (const b of rows) {
     const policy = decodeChatPolicy(b.accesscontrolpolicy);
     const accessLabel =
@@ -697,17 +752,7 @@ export async function listBots(url: string, token: string): Promise<BotSummary[]
     let ownerDisplayName =
       b['_ownerid_value@OData.Community.Display.V1.FormattedValue'] || undefined;
     if (b._ownerid_value) {
-      let cached = ownerCache.get(b._ownerid_value);
-      if (!cached && ownerCache.size < 40) {
-        try {
-          const resolved = await resolvePrincipalDisplay(url, token, b._ownerid_value, 'systemuser');
-          cached = { email: resolved.email, displayName: resolved.displayName };
-          ownerCache.set(b._ownerid_value, cached);
-        } catch {
-          ownerCache.set(b._ownerid_value, {});
-          cached = {};
-        }
-      }
+      const cached = ownerCache.get(b._ownerid_value.toLowerCase());
       ownerEmail = cached?.email;
       ownerDisplayName = cached?.displayName || ownerDisplayName;
     }
@@ -1324,10 +1369,33 @@ function parseFileAttachment(c: BotComponent): KnowledgeSourceIR {
  * `enableMemory` matters for the same reason: memory migration cannot warn about memory it
  * does not know is switched on.
  */
+/**
+ * Exported for tests only: the settings pass is where a silently-dropped switch hides, and
+ * asserting it through a full extraction would need a live tenant.
+ */
+export function extractAgentSettingsForReport(configuration?: string): ReturnType<typeof parseAgentSettings> {
+  return parseAgentSettings(configuration);
+}
+
 function parseAgentSettings(configuration?: string): {
   webSearch?: boolean;
   memoryEnabled?: boolean;
   modelSeries?: string;
+  /**
+   * Bot-configuration switches we read but do not reproduce, as `name=value` strings.
+   *
+   * Sales desk carries nine of these — channels (MsTeams, Microsoft365Copilot),
+   * isAgentConnectable, GenerativeActionsEnabled, isFileAnalysisEnabled,
+   * isSemanticSearchEnabled, useModelKnowledge, contentModeration, optInUseLatestModels,
+   * publishOnImport — and every one of them was dropped with `unmapped: []`, so the report
+   * claimed full fidelity over settings nobody had looked at. Lossless means the report says
+   * what was left behind; it does not mean we must map it.
+   *
+   * `channels` is the one that stings: it records that the agent is published to Teams and
+   * M365 Copilot — where people actually use it — while `surface-equivalence` asks that same
+   * question and gets "none" because nothing read this field.
+   */
+  otherSettings?: string[];
 } {
   if (!configuration) return {};
   try {
@@ -1337,13 +1405,41 @@ function parseAgentSettings(configuration?: string): {
         enableMemory?: boolean;
         model?: { series?: string };
       };
+      channels?: Array<{ channelId?: string }>;
+      settings?: { GenerativeActionsEnabled?: boolean };
+      aISettings?: Record<string, unknown>;
+      isAgentConnectable?: boolean;
+      publishOnImport?: boolean;
+      isLightweightBot?: boolean;
     };
     const s = cfg.agentSettings;
-    if (!s) return {};
+
+    const other: string[] = [];
+    const channels = (cfg.channels ?? []).map((c) => c?.channelId).filter(Boolean);
+    if (channels.length) {
+      other.push(`channels=${channels.join(',')} (published surfaces in Copilot; Gemini agents are not published to these)`);
+    }
+    if (cfg.isAgentConnectable === true) {
+      other.push('isAgentConnectable=true (other agents may call this one; no Gemini equivalent wired)');
+    }
+    if (cfg.settings?.GenerativeActionsEnabled === true) {
+      other.push('GenerativeActionsEnabled=true (generative orchestration)');
+    }
+    if (cfg.publishOnImport === true) other.push('publishOnImport=true');
+    if (cfg.isLightweightBot === true) other.push('isLightweightBot=true');
+    // aISettings is a flat bag of runtime toggles — carried whole rather than enumerated, so
+    // a switch Microsoft adds next month still reaches the report instead of vanishing.
+    for (const [k, v] of Object.entries(cfg.aISettings ?? {})) {
+      if (k === '$kind' || v === null || v === undefined) continue;
+      other.push(`aISettings.${k}=${String(v)}`);
+    }
+
+    if (!s) return other.length ? { otherSettings: other } : {};
     return {
       webSearch: typeof s.web?.enableWebSearch === 'boolean' ? s.web.enableWebSearch : undefined,
       memoryEnabled: typeof s.enableMemory === 'boolean' ? s.enableMemory : undefined,
       modelSeries: typeof s.model?.series === 'string' ? s.model.series : undefined,
+      otherSettings: other.length ? other : undefined,
     };
   } catch {
     // A configuration blob we cannot parse is not a reason to fail extraction.
@@ -1694,6 +1790,8 @@ export async function extractAgent(
   if (agentSettings.modelSeries) {
     unmapped.push(`agentSettings.model.series=${agentSettings.modelSeries} (source model choice; Gemini uses its own)`);
   }
+  // Read, not reproduced — named so the report cannot imply they were absent.
+  for (const setting of agentSettings.otherSettings ?? []) unmapped.push(setting);
 
   // Evaluation data (componenttype 19) — the agent's authored TEST questions and
   // evaluation sets. Not runtime behaviour, so nothing is functionally lost by not

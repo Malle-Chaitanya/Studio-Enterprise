@@ -108,6 +108,52 @@ export interface AdkSpec {
     kind: string;
     name?: string;
     secretIds: Record<string, string>;
+    /**
+     * Run this connector under the CALLING user's own credential, not the shared one.
+     *
+     * Set when the source tool was Copilot `invoker`. The container appends the caller's
+     * identity to each secret id (`connectorUserSecretId`) and — critically — FAILS the call
+     * when that user has no credential stored, rather than falling back to the shared one.
+     * A silent fallback would reintroduce the exact access collapse this flag exists to
+     * prevent, while looking like it worked.
+     */
+    perUser?: boolean;
+    /**
+     * Which credential FIELDS belong to the person rather than to the app.
+     *
+     * Only these get the caller appended to their secret id. A connector's `client_id` and
+     * `client_secret` identify the OAuth app registration and are the same for everyone —
+     * per-user-ing them would break the token exchange for every user, including the ones
+     * who had consented. Empty (or absent) means this connector has no delegated sign-in at
+     * all, and the container fails every per-user call closed rather than quietly using the
+     * shared credential.
+     */
+    perUserFields?: string[];
+    /**
+     * HOW this connector runs as the caller.
+     *
+     * 'impersonate' — the shared app credential is used and the call names who it acts for;
+     * the platform applies that person's permissions. Nothing is stored per user.
+     * 'delegated'   — the caller's own OAuth refresh token, which they must grant first.
+     *
+     * They are not interchangeable: an 'impersonate' connector has NO per-user secrets, so
+     * treating it as delegated makes the container look for one that never exists and refuse
+     * for everyone.
+     */
+    perUserMode?: 'impersonate' | 'delegated';
+    /** Request header carrying the impersonated principal, e.g. MSCRMCallerID. */
+    impersonationHeader?: string;
+    /** How the container turns the caller into the id that header wants. */
+    impersonationResolve?: 'dataverse-systemuser' | 'graph-user-path';
+    /**
+     * DESTINATION email (lowercased) → SOURCE email, from the operator's own user mapping.
+     *
+     * Gemini hands the agent a destination identity; the mailbox and the Dataverse account
+     * live in the source tenant. Deriving one from the other by local part is unsafe — in the
+     * live test tenant `ben@` matches three domains — so the pairing the operator already
+     * stated on the Map users screen is used instead of a guess.
+     */
+    callerIdentityMap?: Record<string, string>;
     /** Operations the SOURCE agent invoked on this connector (e.g. `ListIssues`), each
      *  with the description Copilot Studio showed for it. Advisory only — it shapes the
      *  generated tool's description so the model knows what this agent was built to do;

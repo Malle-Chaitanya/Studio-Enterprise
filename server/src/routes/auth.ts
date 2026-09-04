@@ -1,9 +1,9 @@
 import { createHmac } from 'node:crypto';
-import { Router, type Request, type Response, type NextFunction } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { config } from '../config.js';
 import * as google from '../auth/google.js';
 import * as ms from '../auth/microsoft.js';
-import { requireAuth } from '../auth/appAuth.js';
+import { requireAuth, requireAdmin } from '../auth/appAuth.js';
 import { enforceSessionOwnership } from '../auth/sessionOwnership.js';
 import { engineReachable, projectReachable, resolveDestination } from '../services/gemini.js';
 import { inventory } from '../services/dataverse.js';
@@ -20,6 +20,10 @@ import {
 } from '../sessionStore.js';
 import { upsertAuthSession } from '../db/repos/authSessions.js';
 import { logger } from '../logger.js';
+import { startEltSweepInBackground } from '../services/eltSweep.js';
+import { completeUserConsent, peekUserConsent } from '../services/userConnectorAuth.js';
+import { getConnectorCredential } from '../db/repos/connectorCredentials.js';
+import { getEntraSecret } from '../services/secretManager.js';
 
 export const authRouter = Router();
 
@@ -30,13 +34,7 @@ export const authRouter = Router();
  * this restricts it to our own staff. Nothing in the web client calls either route
  * below — this is an internal/ops shortcut, not a customer-facing feature.
  */
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (req.appUser?.role !== 'admin') {
-    res.status(403).json({ error: 'admin_required' });
-    return;
-  }
-  next();
-}
+// `requireAdmin` now lives in auth/appAuth.ts beside `requireAuth` — see there for why.
 
 /**
  * Verify CloudFuze's service account can reach the client's Gemini engine.
@@ -507,6 +505,14 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
       });
     }
 
+    // Both clouds are now connected, which is the first moment a tenant-wide sweep is even
+    // possible. Fired and forgotten on purpose: the customer is mid-redirect and must not
+    // wait on it, and `startEltSweepInBackground` swallows its own failures so a bad
+    // environment cannot take down the connect that triggered it. See services/eltSweep.ts.
+    if (connectionOwner && linkedSession?.tenantId) {
+      startEltSweepInBackground(connectionOwner, linkedSession.tenantId, linkedSession.refreshToken);
+    }
+
     // Back to the platform screen — now showing "2 of 2 clouds connected".
     if (popup) return void popupResult(req, res, 'google-auth-success', { session: st.msSessionId });
     res.redirect(web(`/home?session=${st.msSessionId}`));
@@ -652,6 +658,76 @@ authRouter.post('/disconnect', async (req, res) => {
  * (/callback/microsoft, /callback/google) so existing OAuth app registrations
  * work without portal changes. Mounted at the app root.
  */
+/**
+ * GET /api/auth/connector-consent/callback?code=&state=
+ *
+ * Where a provider returns ONE end user's authorization for ONE connector. Open, like the
+ * Microsoft and Google callbacks above and for the same reason: it is a redirect arriving
+ * from the provider, a 401 here would break the flow rather than protect anything, and the
+ * one-time `state` is what actually authorises it.
+ *
+ * The code is exchanged HERE and not in the browser because the exchange needs the OAuth
+ * app's client secret. Sending that to the page to save a round trip would publish it to
+ * every user who ever connected an account.
+ */
+async function connectorConsentCallback(req: Request, res: Response): Promise<void> {
+  const state = String(req.query.state ?? '');
+  const code = String(req.query.code ?? '');
+  if (req.query.error) {
+    // The user declined, or the provider refused. Their own words are more useful than ours.
+    return void popupResult(req, res, 'connector-consent-error', {
+      error: String(req.query.error), detail: String(req.query.error_description ?? ''),
+    });
+  }
+  if (!state || !code) {
+    return void popupResult(req, res, 'connector-consent-error', { error: 'missing_code_or_state' });
+  }
+
+  const pending = peekUserConsent(state);
+  if (!pending) {
+    return void popupResult(req, res, 'connector-consent-error', {
+      error: 'consent_state_unknown',
+      detail: 'This authorization link has expired or was already used. Start again.',
+    });
+  }
+
+  try {
+    const saToken = await google.getSaToken(pending.saSubject);
+    const record = await getConnectorCredential(pending.appUserId, pending.connectorId);
+    if (!record) throw new Error('connector_not_configured');
+
+    // Only what the exchange itself needs. The client secret is read, used, and dropped —
+    // it is never logged, returned, or put in the popup payload.
+    const fields: Record<string, string> = {};
+    for (const field of ['client_id', 'client_secret', 'tenant_id', 'subdomain', 'base_url']) {
+      // org_url is deliberately absent: it is carried on the pending consent from start
+      // time (templateFields) so the exchange rebuilds the exact scope the user approved.
+      const secretId = record.secretIds[field];
+      if (!secretId) continue;
+      const got = await getEntraSecret(
+        saToken, `projects/${record.project}/secrets/${secretId}/versions/latest`,
+        { optional: true },
+      );
+      if (got.ok && got.plaintext) fields[field] = got.plaintext;
+    }
+
+    const result = await completeUserConsent(state, code, saToken, fields);
+    popupResult(req, res, 'connector-consent-ok', {
+      connectorId: result.connectorId,
+      userKey: result.userKey,
+      // Surfaced, not rounded up: false means the token was filed under the requested
+      // identity without the provider confirming who it authenticated.
+      identityVerified: result.identityVerified,
+    });
+  } catch (err) {
+    const message = (err as Error).message;
+    logger.warn({ connectorId: pending.connectorId, error: message }, 'user consent: callback failed');
+    popupResult(req, res, 'connector-consent-error', { error: message });
+  }
+}
+
+authRouter.get('/connector-consent/callback', connectorConsentCallback);
+
 export const legacyAuthRouter = Router();
 legacyAuthRouter.get('/callback/microsoft', msCallback);
 legacyAuthRouter.get('/callback/google', googleCallback);

@@ -52,42 +52,47 @@ describe('existence check', () => {
   });
 });
 
-describe('the assist path must not pass on silence', () => {
-  it('returns unknown when the probe endpoint is unavailable', async () => {
-    // Shipped as `verified: true, note: "deployed (assist probe unavailable: 404)"`.
-    mocks.fetch.mockResolvedValueOnce(existsOk).mockResolvedValueOnce({ ok: false, status: 404 });
+describe('the low-code path must never claim a pass', () => {
+  // These used to mock a 200 from `${assistantBase}:assist` and assert `verified`.
+  // Measured against the live engine on 2026-08-24, that endpoint does not exist on any
+  // API version -- v1alpha, v1beta and v1 all return 404 "Method not found" -- so the
+  // mock was making an impossible call succeed and the suite was green over a path
+  // production could never take. The real method is `:streamAssist`, and it CANNOT be
+  // aimed at one agent: `agentsConfig.agent` is accepted and ignored, and a deliberately
+  // bogus agent id returns the same answer as sending none (the engine's default
+  // assistant introducing itself). So there is no per-agent probe to mock.
+  it('returns unknown for a low-code agent, whatever the network does', async () => {
+    mocks.fetch.mockResolvedValueOnce(existsOk);
     const r = await verifyAgent(dest, 'tok', 'a1');
     expect(r.status).toBe('unknown');
     expect(r.verified).toBe(false);
     expect(r.note).toContain('unproven');
   });
 
-  it('returns unknown when the probe throws', async () => {
-    // Shipped as `verified: true, note: "deployed (assist probe errored)"`.
-    mocks.fetch.mockResolvedValueOnce(existsOk).mockRejectedValueOnce(new Error('boom'));
+  it('names the real reason, not a transient failure', async () => {
+    // "assist probe was unavailable (400)" read as an outage and was actually a call that
+    // could never have worked. A reader must be able to tell "we could not reach it" from
+    // "no such capability exists".
+    mocks.fetch.mockResolvedValueOnce(existsOk);
     const r = await verifyAgent(dest, 'tok', 'a1');
-    expect(r.status).toBe('unknown');
+    expect(r.note).toContain('no per-agent probe');
+  });
+
+  it('never probes after the existence check', async () => {
+    // One call -- the existence GET. A second would mean something is still being asked
+    // of an endpoint that cannot answer for this agent.
+    mocks.fetch.mockResolvedValueOnce(existsOk);
+    await verifyAgent(dest, 'tok', 'a1');
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('still fails -- not unknown -- when the agent resource is gone', async () => {
+    // The existence check is the one thing that CAN still fail definitively, and a
+    // missing agent must not be softened into "unproven".
+    mocks.fetch.mockResolvedValueOnce({ ok: false, status: 404 });
+    const r = await verifyAgent(dest, 'tok', 'a1');
+    expect(r.status).toBe('failed');
     expect(r.verified).toBe(false);
-  });
-
-  it('returns unknown on a 200 that carries no answer text', async () => {
-    // The assist endpoint returns 200 for a turn that produced nothing. Calling that
-    // "responded" is how a mute agent passed.
-    mocks.fetch
-      .mockResolvedValueOnce(existsOk)
-      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ answer: '   ' }) });
-    const r = await verifyAgent(dest, 'tok', 'a1');
-    expect(r.status).toBe('unknown');
-  });
-
-  it('verifies only when the probe actually returned text', async () => {
-    mocks.fetch
-      .mockResolvedValueOnce(existsOk)
-      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ answer: 'I can help with migrations.' }) });
-    const r = await verifyAgent(dest, 'tok', 'a1');
-    expect(r.status).toBe('verified');
-    expect(r.verified).toBe(true);
-    expect(r.sample).toContain('migrations');
   });
 });
 

@@ -369,6 +369,15 @@ const users: UsersSource = {
       ? { ...u, referenced, mapped, state: 'mapped' as const }
       : { ...u, referenced, mapped: undefined, state: u.suggested ? ('suggested' as const) : ('unmapped' as const) };
   })),
+  // Mirrors the real matcher's SHAPE, not its rule: the fixture already carries a
+  // `suggested` value per user, so auto-match just returns those. Inventing a
+  // username-matching rule here would put a second matcher in the codebase whose
+  // only job is to disagree with the server's.
+  autoMatch: async (_s, people) => wait(
+    Object.fromEntries(
+      people.filter((p) => !p.mapped && p.suggested).map((p) => [p.sourceEmail, p.suggested as string]),
+    ),
+  ),
   candidates: async (_s, q, all) => {
     const hit = CANDIDATES.filter((c) => !q
       || c.email.includes(q.toLowerCase())

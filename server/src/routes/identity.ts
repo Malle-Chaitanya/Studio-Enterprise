@@ -4,7 +4,7 @@ import {
   graphTokenFromRefresh,
   listGraphUsersFiltered,
 } from '../auth/microsoft.js';
-import { listWorkspaceUsersFilteredAsAdmin, withSaTokens } from '../auth/google.js';
+import { listWorkspaceUsersFilteredAsAdmin, withSaTokens, canonicalProjectId, getSaToken } from '../auth/google.js';
 import { listLicensedPrincipals, resolveDestination } from '../services/gemini.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -16,8 +16,9 @@ import {
   type DiscoveredPrincipal,
 } from '../services/identityMap.js';
 import { getIdentityMap, putIdentityMap } from '../db/repos/identityMap.js';
-import { DEFAULT_APP_USER_ID, getSession } from '../sessionStore.js';
-import type { IdentityMapOverrides, PrincipalRef } from '../types.js';
+import { getSourceUsers } from '../db/repos/sourceUsers.js';
+import { DEFAULT_APP_USER_ID, getSession, type Session } from '../sessionStore.js';
+import type { IdentityMapOverrides, OrganizationProfile, PrincipalRef } from '../types.js';
 
 export const identityRouter = Router();
 
@@ -118,28 +119,114 @@ identityRouter.post('/principals', async (req, res) => {
 });
 
 /** GET /api/identity/map?session= */
+
+/**
+ * The project key an identity map is stored under.
+ *
+ * Sessions have held BOTH a project number and a project id in `geminiProject` — discovery
+ * used to return the number — so a lookup by one representation misses rows written under
+ * the other, and the customer's saved user mappings come back empty. Canonicalised to the
+ * id on the way in and out, so old rows and new sessions meet at one key.
+ *
+ * Deliberately NOT solved by relaxing the query to ignore the project: identity maps are
+ * per-destination, and a looser filter is the cross-destination leak fixed in 88e0334.
+ */
+async function mapProjectKey(session: { geminiProject?: string; gEmail?: string }): Promise<string> {
+  const ref = session.geminiProject ?? '';
+  if (!ref) return '';
+  try {
+    return await canonicalProjectId(ref, await getSaToken(session.gEmail));
+  } catch {
+    // Unresolvable -> use what the session holds. A wrong-but-stable key still isolates
+    // destinations; guessing would not.
+    return ref;
+  }
+}
+
 identityRouter.get('/map', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const tenantId = session.tenantId ?? '';
-  const map = await getIdentityMap(appUserId, tenantId, session.geminiProject ?? '');
+  const map = await getIdentityMap(appUserId, tenantId, await mapProjectKey(session));
   res.json({ tenantId, ...map });
 });
 
-/** PUT /api/identity/map  body: { session, users?, groups? } */
+/**
+ * PUT /api/identity/map  body: { session, users?, groups? }
+ *
+ * MERGES by default. The screens save only the subset they are holding - the v2 Map-users page
+ * posts the freshly auto-matched pairs, or the pending draft, not the whole map - so replacing
+ * wholesale silently deleted every mapping that happened to be off screen. That loss was
+ * invisible until a migration later reported zero identity overrides and every per-caller
+ * connector fail-closed for want of a caller mapping.
+ *
+ * An explicitly EMPTY `users` object still means clear-all, which is what the Map-users
+ * "clear mappings" action sends. Unmapping one person is a key with an empty value.
+ */
 identityRouter.put('/map', async (req, res) => {
   const session = await getSession(String(req.body?.session ?? ''));
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const tenantId = session.tenantId ?? '';
-  const overrides: IdentityMapOverrides = {
-    users: (req.body?.users as Record<string, string>) ?? {},
-    groups: (req.body?.groups as Record<string, string>) ?? {},
-  };
-  const saved = await putIdentityMap(appUserId, tenantId, session.geminiProject ?? '', overrides);
+  const bodyUsers = req.body?.users as Record<string, string> | undefined;
+  const bodyGroups = req.body?.groups as Record<string, string> | undefined;
+  const overrides: IdentityMapOverrides = { users: bodyUsers ?? {}, groups: bodyGroups ?? {} };
+  // A body that sends users:{} is asking to clear; anything else is a partial save to merge.
+  const clearing = !!bodyUsers && Object.keys(bodyUsers).length === 0;
+  const projectKey = await mapProjectKey(session);
+  const before = await getIdentityMap(appUserId, tenantId, projectKey);
+  const saved = await putIdentityMap(
+    appUserId,
+    tenantId,
+    projectKey,
+    overrides,
+    clearing ? 'replace' : 'merge',
+  );
+  const beforeN = Object.keys(before.users ?? {}).length;
+  const afterN = Object.keys(saved.users ?? {}).length;
+  if (afterN < beforeN) {
+    logger.warn({ beforeN, afterN, clearing }, 'identity map shrank on save');
+  } else {
+    logger.info({ users: afterN }, 'identity map saved');
+  }
   res.json({ tenantId, ...saved });
 });
+
+/**
+ * The organization profile, cached per session.
+ *
+ * WHY. `buildOrganizationProfile` costs four outbound calls — a Graph token, Graph verified
+ * domains, Workspace domains, and a 500-user Workspace directory read — and `/suggest` is now
+ * called on every mount of the Map users screen. Going forward and back through the wizard
+ * rebuilt it each time, including a SECOND full Workspace directory read on the same page
+ * load that `/google-users` had just done.
+ *
+ * What it holds is verified tenant domains and the set of real Google accounts. Domains
+ * change essentially never, so caching this is not a freshness trade in any meaningful sense
+ * — unlike the user LISTS, which stay live because an offboarded account offered as a mapping
+ * target is a real error.
+ *
+ * In-memory and per process: it is cheap to rebuild, so a restart losing it costs one rebuild
+ * rather than correctness. `refresh: true` (the Rescan button) bypasses it.
+ */
+const PROFILE_TTL_MS = 10 * 60_000;
+const profileCache = new Map<string, { at: number; profile: OrganizationProfile }>();
+
+async function cachedOrganizationProfile(
+  session: Session,
+  refresh: boolean,
+): Promise<OrganizationProfile> {
+  const key = session.id;
+  // No id means no safe cache key. Rebuilding is correct here — sharing one slot across
+  // every id-less session would serve one tenant's verified domains to another.
+  if (!key) return buildOrganizationProfile(session, new Date().toISOString());
+  const hit = profileCache.get(key);
+  if (!refresh && hit && Date.now() - hit.at < PROFILE_TTL_MS) return hit.profile;
+  const profile = await buildOrganizationProfile(session, new Date().toISOString());
+  profileCache.set(key, { at: Date.now(), profile });
+  return profile;
+}
 
 /**
  * POST /api/identity/suggest
@@ -152,8 +239,8 @@ identityRouter.post('/suggest', async (req, res) => {
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const tenantId = session.tenantId ?? '';
 
-  const profile = await buildOrganizationProfile(session, new Date().toISOString());
-  const existing = await getIdentityMap(appUserId, tenantId, session.geminiProject ?? '');
+  const profile = await cachedOrganizationProfile(session, req.body?.refresh === true);
+  const existing = await getIdentityMap(appUserId, tenantId, await mapProjectKey(session));
   const principals = (Array.isArray(req.body?.principals) ? req.body.principals : []) as PrincipalRef[];
   const suggested = suggestMappings(
     principals,
@@ -173,11 +260,39 @@ identityRouter.post('/suggest', async (req, res) => {
  * Microsoft Graph users for the early Map Users grid (not a full dump claim —
  * paginated/searchable directory listing for mapping).
  */
+/**
+ * GET /api/identity/ms-users?session=&q=&max=&all=1&live=1
+ *
+ * Serves the snapshot the ELT sweep took when the clouds connected, and only calls Graph when
+ * there isn't one — or when the caller explicitly asks (`all=1` needs the unfiltered
+ * directory, which the snapshot deliberately is not; `live=1` is Rescan).
+ *
+ * `source` and `capturedAt` are on the response so the screen can say where the list came
+ * from and how old it is. A cached list that cannot admit to being cached is how an
+ * offboarded account gets offered as a mapping target with nothing to explain it.
+ */
 identityRouter.get('/ms-users', async (req, res) => {
   const session = await getSession(req.query.session as string);
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   if (!session.refreshToken || !session.tenantId) {
     return void res.status(400).json({ error: 'microsoft_not_connected' });
+  }
+
+  const wantsLive = req.query.live === '1' || req.query.all === '1' || Boolean(req.query.q);
+  if (!wantsLive) {
+    const snap = await getSourceUsers(
+      session.appUserId ?? DEFAULT_APP_USER_ID,
+      session.tenantId,
+    );
+    if (snap?.users?.length) {
+      return void res.json({
+        users: snap.users,
+        truncated: snap.truncated ?? false,
+        filter: snap.filter,
+        source: 'snapshot',
+        capturedAt: snap.capturedAt,
+      });
+    }
   }
 
   try {
@@ -194,7 +309,7 @@ identityRouter.get('/ms-users', async (req, res) => {
       activeOnly: showAll ? false : undefined,
       licensedOnly: showAll ? false : undefined,
     });
-    res.json({ users, truncated: users.length >= max, filter: stats });
+    res.json({ users, truncated: users.length >= max, filter: stats, source: 'live' });
   } catch (e) {
     logger.warn(`listGraphUsers failed: ${(e as Error).message}`);
     res.status(502).json({ error: 'ms_users_failed', detail: (e as Error).message });

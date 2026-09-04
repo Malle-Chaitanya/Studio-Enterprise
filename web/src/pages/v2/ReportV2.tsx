@@ -147,6 +147,14 @@ export default function ReportV2() {
     // checks" is data. `all` counts every fidelity note the run recorded, including
     // the clean ones, which is what the other numbers are a fraction OF.
     const all = rows.reduce((n, r) => n + r.fidelity.filter((f) => !HIDDEN_ON_SCREEN.has(f.component)).length, 0);
+    // Counted so the screen can SAY it is hiding them. renderReportExcel writes every
+    // note, so a silent filter here makes the screen and the spreadsheet disagree on the
+    // total with nothing to explain the gap.
+    const hidden = rows.reduce((n, r) => n + r.fidelity.filter((f) => HIDDEN_ON_SCREEN.has(f.component)).length, 0);
+    // `created` is not `migrated`. An agent can be created and still be unshared and
+    // unproven -- Migrate Advisor on 2026-08-23 was exactly that -- so the headline
+    // number carries the verified count with it rather than standing alone.
+    const verified = rows.filter((r) => r.verifyStatus === 'verified').length;
     const raw = rows.flatMap((r) =>
       r.fidelity.filter((f) => NOTEWORTHY.has(f.status) && !HIDDEN_ON_SCREEN.has(f.component)));
     const grouped = new Map<string, { label: string; status: string; count: number; detail: string }>();
@@ -163,6 +171,8 @@ export default function ReportV2() {
       failed: rows.filter((r) => r.error).length,
       connectors: connectors.size,
       tools,
+      hidden,
+      verified,
       // Runs recorded before connectorsWired existed have no counts. A zero would be a
       // claim about the agent; "--" is a claim about our own record-keeping, which is the
       // true one.
@@ -242,13 +252,18 @@ export default function ReportV2() {
                   dash with the reason underneath — see the note on Stat below. */}
               <Band>
                 <BandCell label="Agents migrated" value={t.live}
-                  note={`of ${t.rows.length}`} tone={t.failed ? 'warn' : 'ok'} />
+                  note={`of ${t.rows.length} · ${t.verified} verified`}
+                  tone={t.failed || t.verified < t.live ? 'warn' : 'ok'} />
                 <BandCell label="Connectors live"
                   value={t.connectorsKnown ? t.connectors : '—'}
-                  note={t.connectorsKnown ? 'reconnected' : 'not recorded'} />
+                  note={t.connectorsKnown ? 'distinct systems' : 'not recorded'} />
+                {/* `across ${connectors}` was a division that never worked: tools are summed
+                    per agent while connectors are a Set deduped across the run, so a
+                    connector wired to three agents counted three times in the numerator and
+                    once in the denominator. Same numerator, honest denominator. */}
                 <BandCell label="Tools reproduced"
                   value={t.toolsKnown ? t.tools : '—'}
-                  note={t.toolsKnown ? `across ${t.connectors}` : 'not recorded'} />
+                  note={t.toolsKnown ? `across ${plural(t.rows.length, 'agent')}` : 'not recorded'} />
                 <BandCell label="Sub-agents"
                   value={t.subAgentsKnown ? t.subAgents : '—'}
                   note={t.subAgentsKnown ? 'from topics' : 'not recorded'} />
@@ -262,9 +277,14 @@ export default function ReportV2() {
                   <header>
                     <div>
                       <h3>{r.name}</h3>
+                      {/* These come from topicsSummary (the topic compiler); the verdict chip
+                          beside them counts fidelity notes (the mapper). Two different measures,
+                          so they are labelled as topics -- unlabelled, "14 capabilities · 12
+                          exact" sitting next to "1 not carried over" reads as one measure
+                          contradicting itself. */}
                       {r.capabilities && (
                         <p className="sub">
-                          {plural(r.capabilities.total, 'capability', 'capabilities')} ·{' '}
+                          {plural(r.capabilities.total, 'topic')} ·{' '}
                           {r.capabilities.exact} reproduced exactly
                         </p>
                       )}

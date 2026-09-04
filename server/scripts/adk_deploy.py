@@ -35,6 +35,7 @@ recognizable source name.
 import argparse
 import importlib.metadata
 import json
+import contextvars
 import os
 import re
 import sys
@@ -102,6 +103,171 @@ def emit(obj):
 # roles/secretmanager.secretAccessor on the project — without it every tool call
 # fails with 403 at inference time even though deployment succeeded.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# WHO IS CALLING.
+#
+# Copilot Studio tools can run under the SIGNED-IN USER's own connection (`invoker`)
+# rather than one connection the author configured (`maker`). Reproducing that needs the
+# caller's identity at tool-call time, and Gemini Enterprise supplies it: it drives the ADK
+# session contract (`create_session` / `stream_query`), and the `user_id` it passes is the
+# end user's email -- observed live on deployed engines ("zara@storefuze.com").
+#
+# Captured in a ContextVar from a before-tool callback rather than threaded through every
+# connector module: `_secret` is the ONE place a credential is read, and every connector
+# already goes through it. Adding a parameter to eleven tool modules to carry the same fact
+# would be eleven chances for one of them to forget.
+# NO module-level ContextVar here, deliberately. `_secret` below is closed over by EVERY
+# connector tool, and the tools are what Vertex pickles — so anything `_secret` can reach ends
+# up in the pickle graph whether or not the caller callback is wired. A ContextVar there made
+# every ADK deploy fail with "Failed to serialize agent engine" and silently fall back to
+# low-code create. Reproduced: cloudpickle.dumps -> TypeError: cannot pickle ContextVar.
+
+
+def _caller_user_id(tool_context) -> str:  # noqa: ANN001
+    """Best-effort read of the invoking end user from an ADK tool context.
+
+    Tries several shapes on purpose: the attribute path has moved between google-adk
+    releases and the deployed container's version is not pinned by us. Returns "" when
+    nothing is found -- callers MUST treat that as "unknown", never as "shared".
+    """
+    for get in (
+        lambda: tool_context._invocation_context.session.user_id,   # noqa: SLF001
+        lambda: tool_context.invocation_context.session.user_id,
+        lambda: tool_context.session.user_id,
+        lambda: tool_context.state.get("_caller_user_id"),
+    ):
+        try:
+            v = get()
+            if v:
+                return str(v)
+        except Exception:  # noqa: BLE001
+            continue
+    return ""
+
+
+# Empty at build time; holds the ContextVar once the container makes its first tool
+# call. See _caller_var() for why this indirection is load-bearing.
+_CALLER_HOLDER: dict = {}
+
+
+def _caller_var():
+    """The ContextVar holding the end user for the tool call running right now.
+
+    CREATED LAZILY, ON PURPOSE, NOT AT MODULE LEVEL. Vertex pickles the agent, this file
+    runs as __main__, so cloudpickle serialises the tool closures BY VALUE and everything
+    they reference is dragged into the pickle graph. A module-level ContextVar there made
+    EVERY ADK deploy fail with "Failed to serialize agent engine" and silently fall back to
+    low-code create -- reproduced as cloudpickle.dumps -> TypeError: cannot pickle
+    '_contextvars.ContextVar' object. An empty dict pickles fine, and the ContextVar is
+    only ever built on the first tool call, which happens inside the deployed container
+    after unpickling. `_assert_caller_channel_unarmed` enforces that nothing arms it early.
+
+    A ContextVar and not a plain dict because tool calls run CONCURRENTLY in one container:
+    a shared global would let two callers observe each other's identity, which is exactly
+    the cross-user leak per-user credentials exist to prevent. ContextVar is per-task.
+    """
+    var = _CALLER_HOLDER.get("var")
+    if var is None:
+        import contextvars
+
+        var = contextvars.ContextVar("csge_caller_user_id", default="")
+        _CALLER_HOLDER["var"] = var
+    return var
+
+
+def _assert_caller_channel_unarmed() -> None:
+    """Refuse to deploy if anything created the ContextVar before pickling.
+
+    This is the regression that cost a full migration run: the failure is invisible at
+    deploy time (Vertex reports serialization failure, the code falls back to low-code
+    create, and the agent comes out PRIVATE and unshared). Checking here turns a silent
+    fallback into a loud error next to its cause.
+    """
+    if _CALLER_HOLDER:
+        raise RuntimeError(
+            "caller channel armed at build time: a ContextVar would enter the pickle "
+            "graph and deployment would fail. Something called _caller_var() outside a "
+            "tool call."
+        )
+
+
+def _bind_caller(fn):
+    """Wrap one per-user tool so `_secret` can see who is asking.
+
+    ADK injects `tool_context` into any tool whose signature declares it, and omits that
+    parameter from the declaration the model sees. So the caller arrives as an ordinary
+    argument at call time -- no ambient global, and nothing added to the pickle graph
+    beyond an empty dict.
+
+    Applied ONLY to connectors marked perUser. A shared-credential tool keeps exactly the
+    signature and behaviour it has today, so this cannot regress the connectors that
+    already work.
+    """
+    import functools
+    import inspect
+
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        # Not introspectable (a tool object rather than a plain function). Leave it be:
+        # `_secret` still fails closed, which is the safe direction.
+        return fn
+    if "tool_context" in sig.parameters:
+        return fn
+
+    if inspect.iscoroutinefunction(fn):
+        @functools.wraps(fn)
+        async def _wrapper(*a, tool_context=None, **kw):
+            token = _caller_var().set(_caller_user_id(tool_context))
+            try:
+                return await fn(*a, **kw)
+            finally:
+                _caller_var().reset(token)
+    else:
+        @functools.wraps(fn)
+        def _wrapper(*a, tool_context=None, **kw):
+            token = _caller_var().set(_caller_user_id(tool_context))
+            try:
+                return fn(*a, **kw)
+            finally:
+                # reset(), not set(""): nested/concurrent calls each restore their own
+                # previous value, so one tool finishing cannot blank another's caller.
+                _caller_var().reset(token)
+
+    # Rebuild the signature so ADK sees `tool_context` and the model does not. A
+    # keyword-only parameter must precede **kwargs, hence the split rather than an append.
+    params = list(sig.parameters.values())
+    var_kw = [p for p in params if p.kind == inspect.Parameter.VAR_KEYWORD]
+    rest = [p for p in params if p.kind != inspect.Parameter.VAR_KEYWORD]
+    try:
+        from google.adk.tools import ToolContext as _ToolContext
+        annotation = _ToolContext
+    except Exception:  # noqa: BLE001 -- older/newer adk layouts; the NAME is what ADK matches
+        annotation = inspect.Parameter.empty
+    ctx_param = inspect.Parameter(
+        "tool_context",
+        inspect.Parameter.KEYWORD_ONLY,
+        default=None,
+        annotation=annotation,
+    )
+    _wrapper.__signature__ = sig.replace(parameters=rest + [ctx_param] + var_kw)
+    ann = dict(getattr(fn, "__annotations__", {}) or {})
+    if annotation is not inspect.Parameter.empty:
+        ann["tool_context"] = annotation
+    _wrapper.__annotations__ = ann
+    return _wrapper
+
+
+def _secret_safe(part: str) -> str:
+    """Mirror of secretSafe() in services/connectorCredentials.ts.
+
+    The server computes the shared id and the container derives the per-user one from it;
+    if these two safings ever disagree the lookup misses and every call fails at inference.
+    Keep them identical.
+    """
+    return re.sub(r"[^a-zA-Z0-9-]", "-", part).lower()
+
+
 def _build_live_connector_tool(conn: dict, project: str):
     """Return a callable ADK function tool (or list of tools) for one live
     connector. Dispatches to connector_tools/<kind>.py — each module owns its own
@@ -128,6 +294,19 @@ def _build_live_connector_tool(conn: dict, project: str):
 
     kind = (conn.get("kind") or conn.get("id") or "").lower()
     secret_ids = conn.get("secretIds") or {}
+    # See LiveConnectorSpec.perUser (services/adkDeployer.ts): the source tool ran under the
+    # caller's own connection, so this connector must too.
+    per_user = bool(conn.get("perUser"))
+    # Which credential fields belong to the PERSON rather than the app. Server-populated
+    # from the registry's userAuth block; empty means this connector has no delegated
+    # sign-in, and every per-user call must fail closed.
+    per_user_fields = set(conn.get("perUserFields") or [])
+    # IMPERSONATION keeps the SHARED app credential and names the caller on the request
+    # instead (MSCRMCallerID, or /users/{caller} on Graph). So none of the per-user secret
+    # logic below applies to it: there are deliberately no per-user secrets, and treating
+    # its empty `perUserFields` as "no per-user sign-in" makes every call fail closed for
+    # everyone -- which is exactly what a live two-caller test caught.
+    impersonating = bool(conn.get("perUser")) and conn.get("perUserMode") == "impersonate"
 
     def _secret(field: str) -> str:
         """Read one credential field from Secret Manager (latest version).
@@ -149,6 +328,43 @@ def _build_live_connector_tool(conn: dict, project: str):
         if not secret_id:
             raise RuntimeError(f"no secret id configured for field '{field}'")
 
+        # PER-USER CREDENTIALS: the source tool ran as whoever was asking, so this one must
+        # too. The id is the shared one plus the caller -- see connectorUserSecretId() in
+        # services/connectorCredentials.ts, which builds the same name server-side.
+        #
+        # There is NO fallback to the shared credential, deliberately. Falling back would
+        # make an unconfigured user silently act as one shared account: mail from the wrong
+        # mailbox, another person's CRM records -- the exact access collapse per-user exists
+        # to prevent, and invisible because the call succeeds. Failing here surfaces as an
+        # error the user can act on, which is the honest outcome.
+        if per_user and not impersonating and field in per_user_fields:
+            # Only the DELEGATED fields are personal. A connector's client_id and
+            # client_secret identify the OAuth app, are the same for everyone, and must
+            # keep resolving to the shared secret -- per-user-ing them would break the
+            # token exchange for every user including ones who have consented.
+            caller = _caller_var().get("")
+            if not caller:
+                raise RuntimeError(
+                    f"{conn_name}: this tool runs as whoever is asking, but the caller "
+                    "could not be identified, so it cannot pick their credential. "
+                    "(The ADK build in this container may not support tool_context.)"
+                )
+            secret_id = f"{secret_id}-u-{_secret_safe(caller.lower())}"
+        elif per_user and not impersonating:
+            # perUser with no delegated fields means the server found no per-user flow for
+            # this connector (see supportsUserAuth / ConnectorDef.userAuth). Fail closed.
+            #
+            # NOT softened to the shared credential, here or above: falling back would make
+            # every user of this tool act as ONE account -- mail from the wrong mailbox,
+            # another person's CRM records -- the exact access collapse per-user exists to
+            # prevent, and invisible because the call would succeed.
+            if not per_user_fields:
+                raise RuntimeError(
+                    f"{conn_name}: this tool ran under each user's own credentials in "
+                    "Copilot Studio and this connector has no per-user sign-in, so it "
+                    "cannot run for anyone. See the migration report's toolCredentials note."
+                )
+
         creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
         creds.refresh(_AuthRequest())
         url = (
@@ -156,8 +372,21 @@ def _build_live_connector_tool(conn: dict, project: str):
             f"/secrets/{secret_id}/versions/latest:access"
         )
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {creds.token}"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            payload = _json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                payload = _json.loads(resp.read().decode("utf-8"))
+        except Exception as e:  # noqa: BLE001
+            # A missing PER-USER secret is not a fault, it is a user who has not connected
+            # their account yet -- by far the most common way this call fails. Saying so
+            # turns a raw 404 in the model's context into an instruction it can relay.
+            status = getattr(e, "code", None)
+            if per_user and not impersonating and field in per_user_fields and status in (403, 404):
+                raise RuntimeError(
+                    f"{conn_name}: this tool uses each person's own account, and there is "
+                    "no stored connection for you yet. Connect your account in CloudFuze "
+                    "Studio Migrate, then try again."
+                ) from None
+            raise
         return base64.b64decode(payload["payload"]["data"]).decode("utf-8")
 
     base_url_tpl = conn.get("baseUrlTemplate") or ""
@@ -205,8 +434,16 @@ def _build_live_connector_tool(conn: dict, project: str):
         import urllib.parse
         import urllib.request
 
-        cached = token_cache.get("token")
-        if cached and token_cache.get("expires_at", 0) > time.time() + 60:
+        # CACHE KEY INCLUDES THE CALLER. The cache lives for the container's lifetime and is
+        # shared by every request it serves; keyed only by connector, a per-user token minted
+        # for one person would be handed to the next -- one user reading another's mailbox,
+        # which is precisely the collapse per-user credentials exist to prevent, and it would
+        # look like a cache hit rather than a bug. Shared-credential connectors keep the old
+        # single key, so their behaviour is unchanged.
+        cache_key = f"token:{_caller_var().get('')}" if per_user else "token"
+        exp_key = f"expires_at:{_caller_var().get('')}" if per_user else "expires_at"
+        cached = token_cache.get(cache_key)
+        if cached and token_cache.get(exp_key, 0) > time.time() + 60:
             return cached
 
         if auth_kind == "google-service-account":
@@ -218,16 +455,32 @@ def _build_live_connector_tool(conn: dict, project: str):
             creds = service_account.Credentials.from_service_account_info(
                 info, scopes=[scope or "https://www.googleapis.com/auth/cloud-platform"]
             )
-            # Domain-wide delegation, when the customer named a user to impersonate.
-            try:
-                subject = _secret("impersonate_email")
-                if subject:
-                    creds = creds.with_subject(subject)
-            except Exception:  # noqa: BLE001 — optional field
-                pass
+            # Domain-wide delegation names the person AT MINT TIME, so this is the single
+            # place a Google connector becomes per-user: every tool built on the resulting
+            # token -- Drive create/update/delete, Gmail send -- acts as that subject without
+            # knowing the caller exists. No identity map is involved, unlike Outlook: the ADK
+            # session's user_id is already a Google address, which is what DWD wants.
+            if impersonating and conn.get("impersonationResolve") == "google-dwd-subject":
+                subject = _caller_var().get("")
+                if not subject:
+                    # Fail closed. Falling back to `impersonate_email` here would quietly run
+                    # an invoker connector as one pinned person and, for Gmail, SEND AS THEM.
+                    raise RuntimeError(
+                        f"{conn_name}: this tool ran under each user's own credentials in "
+                        f"Copilot Studio, but the caller could not be identified, so it will "
+                        f"not act as anyone."
+                    )
+                creds = creds.with_subject(subject)
+            else:
+                try:
+                    subject = _secret("impersonate_email")
+                    if subject:
+                        creds = creds.with_subject(subject)
+                except Exception:  # noqa: BLE001 — optional field
+                    pass
             creds.refresh(google.auth.transport.requests.Request())
-            token_cache["token"] = creds.token
-            token_cache["expires_at"] = time.time() + 3000
+            token_cache[cache_key] = creds.token
+            token_cache[exp_key] = time.time() + 3000
             return creds.token
 
         form = {}
@@ -246,6 +499,12 @@ def _build_live_connector_tool(conn: dict, project: str):
                 "client_id": _secret("client_id"),
                 "client_secret": _secret("client_secret"),
             }
+            # Entra issues access tokens PER RESOURCE, so a refresh token consented for both
+            # Graph and Dataverse mints only one of them per exchange. Omitting the scope
+            # lets the provider choose, which fails later as a 401 against the other
+            # resource -- indistinguishable from a permissions problem. Name it.
+            if scope:
+                form["scope"] = fill(scope)
         else:
             raise RuntimeError(f"unsupported authKind for token minting: {auth_kind}")
 
@@ -261,8 +520,8 @@ def _build_live_connector_tool(conn: dict, project: str):
         token = payload.get("access_token")
         if not token:
             raise RuntimeError(f"token endpoint returned no access_token: {str(payload)[:200]}")
-        token_cache["token"] = token
-        token_cache["expires_at"] = time.time() + int(payload.get("expires_in") or 3600)
+        token_cache[cache_key] = token
+        token_cache[exp_key] = time.time() + int(payload.get("expires_in") or 3600)
         return token
 
     def _auth_header(fill) -> str:
@@ -307,6 +566,15 @@ def _build_live_connector_tool(conn: dict, project: str):
         if auth_kind == "bearer" and header and " " not in header.strip():
             header = f"Bearer {header.strip()}"
         return header
+
+    def _caller() -> str:
+        """Who is asking, for connectors that impersonate rather than hold a per-user token.
+
+        Empty when the caller could not be identified. Callers MUST treat that as unknown and
+        refuse -- running the shared app identity instead would return one person's records to
+        everybody, which is the exact failure per-user exists to prevent.
+        """
+        return _caller_var().get("")
 
     def _fill(tpl: str) -> str:
         """Resolve {placeholders} in a template from the stored credentials."""
@@ -357,7 +625,8 @@ def _build_live_connector_tool(conn: dict, project: str):
     # permissions with admin consent.
     if kind == "outlook":
         from connector_tools.outlook import build_tools as _build
-        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+        # `caller` so a per-user mailbox is the ASKER's own, not one pinned per agent.
+        return _build(conn, _secret, _mint_token, _auth_header, _fill, caller=_caller)
 
     # CROSS-VENDOR, second of two: Copilot's Teams connector -> Google Chat. Chat is FLAT,
     # so the Team -> Channel hierarchy has no equivalent; see connector_tools/chat.py.
@@ -396,7 +665,9 @@ def _build_live_connector_tool(conn: dict, project: str):
     # captured the source agent's actual swagger operations, else a single generic
     # call_external_api tool. See connector_tools/generic_rest.py.
     from connector_tools.generic_rest import build_tools as _build
-    return _build(conn, _secret, _mint_token, _auth_header, _fill)
+    # `caller` only here: generic_rest owns the bound-operation path, which is where an
+    # impersonating connector (Dataverse) actually makes its call.
+    return _build(conn, _secret, _mint_token, _auth_header, _fill, caller=_caller)
 
 
 # ---------------------------------------------------------------------------
@@ -880,6 +1151,11 @@ def main():
             built = _build_live_connector_tool(conn, args.project)
             # SharePoint contributes two tools (list + read); others contribute one.
             for fn in (built if isinstance(built, (list, tuple)) else [built]):
+                # Per-user tools need to know WHO is calling. Wrapping only these leaves
+                # every shared-credential tool byte-identical to what already deploys and
+                # works, so this can only regress connectors that fail closed today.
+                if conn.get("perUser"):
+                    fn = _bind_caller(fn)
                 original = getattr(fn, "__name__", "tool")
                 if original in used_tool_names:
                     kind_hint = re.sub(r"[^a-z0-9]+", "_", str(conn.get("kind") or conn.get("id") or "")).strip("_")
@@ -1037,6 +1313,9 @@ def main():
         # the agent still works, it is only less observable — but say so, because a
         # silently less-verifiable agent is exactly what this project keeps being bitten by.
         emit({"warn": "adk build does not support global_instruction/after_tool_callback; deploying without them"})
+        # Per-user tools are UNAFFECTED by this branch: the caller arrives through
+        # `tool_context` on the tool's own signature (see _bind_caller), not through an
+        # Agent-level callback, so it survives an adk build too old for these kwargs.
         root_agent = Agent(
             name=spec.get("name", "migrated_agent"),
             model=spec.get("model", "gemini-2.5-flash"),
@@ -1141,6 +1420,9 @@ def main():
             from vertexai.preview.reasoning_engines import AdkApp
         except ImportError:
             from vertexai.reasoning_engines import AdkApp
+        # Nothing may have created the caller ContextVar before this point -- it would
+        # join the pickle graph and turn deployment into a silent low-code fallback.
+        _assert_caller_channel_unarmed()
         agent_engine = AdkApp(agent=root_agent, enable_tracing=False)
         vertexai.init(project=args.project, location=args.location, staging_bucket=bucket)
         # gcs_dir_name is what isolates one deploy's package from another's — see --gcs-dir.

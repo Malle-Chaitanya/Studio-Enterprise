@@ -59,6 +59,68 @@ export interface ConnectorDef {
   tokenUrlTemplate?: string;
   /** Scope string sent with the token request, when the provider requires one. */
   scope?: string;
+  /**
+   * How ONE END USER authorizes this connector for themselves.
+   *
+   * Separate from `authKind`/`scope` above, which describe the shared app-only credential.
+   * The two are different grants of different scopes to different principals and must not be
+   * conflated: `oauth2-client-credentials` with `.default` gives the agent tenant-wide
+   * access ("Mail.Send lets the agent send email as any mailbox in your organization" —
+   * this file's own hint), while the delegated flow below gives it exactly what the signed-in
+   * person can already do.
+   *
+   * Present only for connectors where per-user access is actually reproducible. Its absence
+   * is meaningful: it means an `invoker` tool on this connector CANNOT be migrated per-user,
+   * and the fidelity note is the final answer rather than a temporary one.
+   */
+  userAuth?: {
+    /** Where the user is sent to consent. May contain {placeholders} from stored credentials. */
+    authorizeUrlTemplate: string;
+    /** Token + refresh endpoint. Usually the same host as authorize. */
+    tokenUrlTemplate: string;
+    /**
+     * DELEGATED scopes — what this person may do, not what the app may do tenant-wide.
+     * Must include whatever the provider requires to issue a refresh token
+     * (`offline_access` on Microsoft), or the grant expires in an hour and the agent
+     * silently stops working for that user.
+     */
+    scope: string;
+  };
+  /**
+   * Run as the caller WITHOUT asking them to sign in — the app credential carries a header
+   * naming who it is acting for, and the platform applies THAT person's permissions.
+   *
+   * Strictly better than `userAuth` where it exists, and for a different reason than it
+   * looks: consent produces a refresh token that lives in our Secret Manager, expires on its
+   * own (~90 days), dies on a password change, and cannot be obtained at all by someone who
+   * joins after this tool is decommissioned. Impersonation stores nothing per person, so a
+   * migrated agent keeps working for everyone, indefinitely, after we are gone.
+   *
+   * Verified live 2026-08-31 against Dataverse: an app-only call carrying MSCRMCallerID was
+   * refused with "The user with id … has not been assigned any roles. They need a role with
+   * the prvReadUser privilege" — the app can read 50 users, acting as that person it cannot.
+   * The permissions applied are the IMPERSONATED user's, which is the whole claim.
+   *
+   * Requires the application user to hold `prvActOnBehalfOfAnotherUser`; without it the call
+   * is refused outright rather than silently running as the app.
+   */
+  impersonation?: {
+    /** Request header carrying the impersonated principal. */
+    header: string;
+    /**
+     * How to turn a person into the id that header wants. 'dataverse-systemuser' looks the
+     * caller up in the target environment's `systemusers` by email — the id is per
+     * environment, so it cannot be resolved once at deploy time and cached forever.
+     *
+     * 'google-dwd-subject' carries no header at all: domain-wide delegation names the person
+     * when the TOKEN is minted (`with_subject`), so the caller is applied once in
+     * `_mint_token` and every Google tool inherits it — reads and writes alike. It also needs
+     * no identity map: the ADK session's user_id already IS a Google address, which is what
+     * DWD wants as a subject. (Outlook is the opposite case — the caller arrives as a Google
+     * address and has to be mapped back to a Microsoft one first.)
+     */
+    resolve: 'dataverse-systemuser' | 'graph-user-path' | 'google-dwd-subject';
+  };
   /** For 'basic-userpass': which credential field is the user and which the secret. */
   basicUserField?: string;
   basicSecretField?: string;
@@ -126,7 +188,10 @@ export const CREDENTIAL_GROUPS: Record<string, CredentialGroupDef> = {
     setupUrl: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade',
     setupHint:
       'Create ONE app registration for all Microsoft connectors. Add the permissions listed ' +
-      'per connector below as APPLICATION permissions, then click Grant admin consent.',
+      'per connector below as APPLICATION permissions, then click Grant admin consent. ' +
+      'If any tool ran as the SIGNED-IN USER in Copilot, that same app also needs the ' +
+      "DELEGATED permission shown on that connector, plus this tool's redirect URI added " +
+      'under Authentication — application permissions alone cannot act as a person.',
     credentials: [], // filled from MS_GRAPH_FIELDS below
   },
   hubspot: {
@@ -361,6 +426,18 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     authKind: 'oauth2-client-credentials',
     tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
     scope: '{org_url}/.default',
+    // Same Web API as shared_commondataserviceforapps, so the same delegated scope applies —
+    // see the fuller note there. Omitting it here would report an identical `invoker` tool as
+    // permanently lost on one connector id and fixable on the other, purely by which id the
+    // source agent happened to declare.
+    userAuth: {
+      authorizeUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize',
+      tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+      scope: 'openid email offline_access {org_url}/user_impersonation',
+    },
+    // PREFERRED over the userAuth block above — see ConnectorDef.impersonation. Consent is
+    // kept as the fallback for tenants that have not granted the app prvActOnBehalfOfAnotherUser.
+    impersonation: { header: 'MSCRMCallerID', resolve: 'dataverse-systemuser' },
   },
 
   {
@@ -383,12 +460,38 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     permissionsHint:
       'App-only Dataverse access needs the app registration added as an APPLICATION USER in the ' +
       'target environment with a security role — a Graph permission alone is not enough, and the ' +
-      'failure shows up as 401 on the first call, not at save time.',
+      'failure shows up as 401 on the first call, not at save time. For tools that ran as the ' +
+      'signed-in user, add Dynamics CRM > user_impersonation as a DELEGATED permission on the ' +
+      'same app; each person then connects their own account once, and their own security roles ' +
+      'decide what the agent can see for them.',
     baseUrlTemplate: '{org_url}/api/data/v9.2',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
     tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
     scope: '{org_url}/.default',
+    // Delegated equivalent, used when the source tool was Copilot `invoker` — which for
+    // Dataverse is the norm, not the exception (194 of 212 tools in the test tenant).
+    //
+    // `user_impersonation` is Dataverse's ONLY delegated scope: it means "act as this signed-in
+    // user", and the user's own security roles then decide what they can read. That is exactly
+    // what Copilot did, and it is why an app-only token cannot substitute — app-only sees every
+    // record in the environment regardless of who asked.
+    //
+    // The resource is per-ENVIRONMENT ({org_url}), so this scope is a template resolved at
+    // consent time from the environment being migrated. A tenant with two environments needs
+    // two consents; one token cannot span them, because Entra issues tokens per resource.
+    //
+    // NOTE: this is the CUSTOMER's own connector app, not our interactive sign-in. Adding a
+    // delegated Dynamics scope to the sign-in is what triggers AADSTS65001 and is still
+    // forbidden — see .claude/rules/security-rules.md. The two apps must stay separate.
+    userAuth: {
+      authorizeUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize',
+      tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+      scope: 'openid email offline_access {org_url}/user_impersonation',
+    },
+    // PREFERRED over the userAuth block above — see ConnectorDef.impersonation. Consent is
+    // kept as the fallback for tenants that have not granted the app prvActOnBehalfOfAnotherUser.
+    impersonation: { header: 'MSCRMCallerID', resolve: 'dataverse-systemuser' },
   },
 
   {
@@ -644,6 +747,12 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     // separate 'drive.readonly' scope string (exact-match, not hierarchical), so a
     // customer who only grants the broad scope still needs this to be the same one.
     scope: 'https://www.googleapis.com/auth/drive',
+    // Applied only when the SOURCE Copilot connector ran in invoker mode. `impersonate_email`
+    // above pins one person per agent, which is right for a maker connector; an invoker one
+    // ran as whoever was asking, so the subject has to follow the caller instead. Every Drive
+    // tool inherits it from the token, including create/update/delete — a file the agent
+    // writes then lands in the asker's Drive rather than one shared account's.
+    impersonation: { header: '', resolve: 'google-dwd-subject' },
   },
 
   {
@@ -678,6 +787,10 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     // Deliberately NOT mail.google.com: that scope also permits PERMANENT deletion, which no
     // tool here does or should.
     scope: 'https://www.googleapis.com/auth/gmail.modify',
+    // See the Drive note above. This matters more here than anywhere else: `gmail.modify`
+    // includes SEND, so without the caller as subject a migrated invoker agent would send
+    // mail FROM the one impersonated account no matter who asked it to.
+    impersonation: { header: '', resolve: 'google-dwd-subject' },
   },
 
   {
@@ -848,6 +961,26 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     authKind: 'oauth2-client-credentials',
     tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
     scope: 'https://graph.microsoft.com/.default',
+    // Delegated equivalent, used when the source tool was Copilot `invoker`. offline_access
+    // is not optional: without it Microsoft issues no refresh token, the access token dies
+    // in an hour, and the tool starts failing for that user with nothing to explain it.
+    userAuth: {
+      authorizeUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize',
+      tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+      // openid+email are not cosmetic: they make the provider return an id_token, which is
+      // how completeUserConsent proves the person who consented is the person the token gets
+      // filed under. Without them the binding is asserted by whoever built the link.
+      scope: 'openid email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read',
+    },
+    // PREFERRED over the consent block above. A mailbox belongs to exactly one person, so
+    // addressing app-only Graph at `/users/{caller}` IS the permission model — there is
+    // nothing a delegated token would additionally confine. And unlike consent it stores
+    // nothing per person, so a new joiner works immediately and the agent keeps working once
+    // this tool is decommissioned.
+    //
+    // 'graph-user-path' rather than a header: Graph has no act-as header, it scopes by the
+    // path segment. Same intent, different transport.
+    impersonation: { header: '', resolve: 'graph-user-path' },
   },
 
   // ── Marketing ──────────────────────────────────────────────────────────────
@@ -1082,6 +1215,28 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     authKind: 'oauth2-client-credentials',
     tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
     scope: 'https://graph.microsoft.com/.default',
+    // Delegated equivalent of the app-only grant above, used when the source tool was
+    // Copilot `invoker`. Same connector, different principal: `.default` above lets the
+    // agent send as ANY mailbox in the tenant, while these scopes give it exactly what the
+    // signed-in person can already do. offline_access is not optional — without it Microsoft
+    // issues no refresh token and the credential dies within the hour.
+    userAuth: {
+      authorizeUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize',
+      tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+      // openid+email are not cosmetic: they make the provider return an id_token, which is
+      // how completeUserConsent proves the person who consented is the person the token gets
+      // filed under. Without them the binding is asserted by whoever built the link.
+      scope: 'openid email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read',
+    },
+    // PREFERRED over the consent block above. A mailbox belongs to exactly one person, so
+    // addressing app-only Graph at `/users/{caller}` IS the permission model — there is
+    // nothing a delegated token would additionally confine. And unlike consent it stores
+    // nothing per person, so a new joiner works immediately and the agent keeps working once
+    // this tool is decommissioned.
+    //
+    // 'graph-user-path' rather than a header: Graph has no act-as header, it scopes by the
+    // path segment. Same intent, different transport.
+    impersonation: { header: '', resolve: 'graph-user-path' },
   },
 
   {

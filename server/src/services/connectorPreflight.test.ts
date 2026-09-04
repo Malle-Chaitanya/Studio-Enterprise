@@ -106,6 +106,29 @@ describe('preflight verdicts', () => {
     expect(out[0].detail).toContain('PERMISSION_DENIED');
   });
 
+  it('does NOT claim a connector is broken when the IAM policy simply cannot be read', async () => {
+    fetchMock
+      // getIamPolicy is refused — our SA lacks resourcemanager.projects.getIamPolicy
+      .mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({}), text: async () => 'denied' })
+      // the secret itself still reads back fine for us
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ payload: { data: Buffer.from('v').toString('base64') } }),
+        text: async () => '',
+      });
+    const out = await preflightConnectors('tok', 'proj', '1', [
+      { connectorId: 'shared_x', name: 'X', secretIds: { api_key: 'sec-x' } },
+    ]);
+    // "I could not check" is not "it is broken". Reporting a failure we cannot demonstrate
+    // sends the customer to grant a role that may well already be there — which is exactly
+    // what happened on a real run.
+    expect(out[0].ok).toBe(true);
+    expect(out[0].blocker).toBe('grant_unverifiable');
+    expect(out[0].detail).toContain('Could not read the IAM policy');
+    // Still carries the fix, in case the calls really do fail later.
+    expect(out[0].detail).toContain('roles/secretmanager.secretAccessor');
+  });
+
   it('a project-wide grant satisfies every secret without per-secret checks', async () => {
     const member = 'serviceAccount:service-1@gcp-sa-aiplatform-re.iam.gserviceaccount.com';
     fetchMock

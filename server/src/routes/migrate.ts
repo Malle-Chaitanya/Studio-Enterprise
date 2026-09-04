@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { runMigration } from '../orchestrator.js';
 import { renderReportExcel } from '../services/report.js';
 import { resolveScope } from '../services/scope.js';
+import { config } from '../config.js';
 import { getSession, updateSession, credentialScope, DEFAULT_APP_USER_ID } from '../sessionStore.js';
 import {
   upsertConnectorCredential,
@@ -43,6 +44,8 @@ import {
 } from '../services/connectorCredentials.js';
 import { impersonationAllowed, getWorkspaceDomainsAsAdmin } from '../auth/google.js';
 import { REGISTRY_BY_ID, CREDENTIAL_GROUPS } from '../connectors/registry.js';
+import { startUserConsent, supportsUserAuth } from '../services/userConnectorAuth.js';
+import { connectorUserSecretId } from '../services/connectorCredentials.js';
 import { resolveOpIndex } from '../connectors/captureOpIndex.js';
 import { MS_APP_REG_FIELDS } from '../services/connectorToolBuilder.js';
 import {
@@ -1212,6 +1215,25 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
       group: group
         ? { id: group.id, name: group.name, setupUrl: group.setupUrl, setupHint: group.setupHint, siblings }
         : undefined,
+      /**
+       * Per-user sign-in, for connectors whose `invoker` tools can actually be reproduced.
+       *
+       * `redirectUri` is here because it is the one value an admin CANNOT work out: it
+       * depends on where this server is deployed, and an app registration missing it fails
+       * consent with AADSTS50011 — an error that names the URI it wanted but not where to
+       * put it. Handing over the exact string to paste removes the whole class of ticket.
+       *
+       * `supported: false` is meaningful, not merely absent: it means an `invoker` tool on
+       * this connector is permanently shared-or-nothing, which is what the report calls
+       * 'lost'. The UI should say so rather than offering a button that cannot work.
+       */
+      userAuth: {
+        supported: !!def.userAuth,
+        redirectUri: def.userAuth
+          ? `${config.SERVER_ORIGIN}/api/auth/connector-consent/callback`
+          : undefined,
+        delegatedPermission: def.userAuth?.scope,
+      },
       configured: savedIds.has(id),
       credentialAlreadySupplied,
     };
@@ -1297,18 +1319,25 @@ migrateRouter.get('/connector-credentials', async (req, res) => {
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const destProject = effectiveGeminiProject(session.geminiProject);
   const saved = await listConnectorCredentials(appUserId);
-  // Secrets live in the project they were saved against. Migrating into a DIFFERENT
-  // project cannot read them, so a record from another project must NOT read as
-  // configured — live 2026-08-07 credentials saved during a GTM session made the UI
-  // show "✓ Saved" while the studio run skipped every Confluence source as
-  // "needs a connector or manual step".
+  // Secrets live in the project they were saved against, and the RUN now brings them
+  // across (orchestrator: strays are synced from their own project before resolution). So a
+  // record from another project is configured — it is just not copied yet.
+  //
+  // This used to answer false for those, which was correct while the run discarded them:
+  // live 2026-08-07, credentials saved during a GTM session made the UI show "✓ Saved"
+  // while the studio run skipped every Confluence source as "needs a connector or manual
+  // step". The cause was the discard, and the discard is gone; keeping the warning would now
+  // report a blocker that no longer exists. `project` still travels so the screen can say
+  // where a credential came from.
   res.json({
     connectors: saved.map((s) => ({
       connectorId: s.connectorId,
       fields: s.fields,
       project: s.project,
       updatedAt: s.updatedAt,
-      matchesDestination: !!destProject && s.project === destProject,
+      matchesDestination: !!destProject,
+      /** True when the credential lives elsewhere and the run will copy it in. */
+      syncedFromOtherProject: !!destProject && !!s.project && s.project !== destProject,
     })),
   });
 });
@@ -1523,4 +1552,137 @@ migrateRouter.get('/runs/:runId', async (req, res) => {
   // timestamp would be the tool refusing to tell the customer what it did.
   const run = await getRunHeader(appUserId, req.params.runId);
   res.json({ runId: req.params.runId, run, results });
+});
+
+
+// ── Per-user connector consent ────────────────────────────────────────────────
+//
+// A Copilot `invoker` tool ran under the SIGNED-IN user's own connection. Reproducing that
+// needs a refresh token per PERSON, which only that person can grant. These two routes are
+// the whole ceremony: mint the provider's consent URL here, and receive the code back at
+// /api/auth/connector-consent/callback (open, like the other OAuth callbacks — it is a
+// redirect from the provider and carries its own one-time state).
+
+/**
+ * POST /api/migrate/connector-consent/start
+ * body: { session, connectorId, userKey }
+ *
+ * Returns the URL that asks ONE named person to authorize ONE connector for themselves.
+ * Refuses rather than degrading: a connector with no delegated flow, or one whose OAuth app
+ * has not been registered, gets an error naming the missing piece. Handing back a shared
+ * credential here would tell the user they had connected their own account while the tool
+ * kept acting as someone else.
+ */
+migrateRouter.post('/connector-consent/start', async (req, res) => {
+  const body = req.body as { session?: string; connectorId?: string; userKey?: string };
+  const session = await getSession(body.session ?? '');
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+
+  const connectorId = (body.connectorId ?? '').trim();
+  const userKey = (body.userKey ?? '').trim();
+  if (!connectorId || !userKey) {
+    return void res.status(400).json({ error: 'connector_and_user_required' });
+  }
+  if (!supportsUserAuth(connectorId)) {
+    const name = REGISTRY_BY_ID.get(connectorId)?.name ?? connectorId;
+    return void res.status(400).json({
+      error: 'connector_not_delegable',
+      detail: `${name} has no per-user sign-in, so each person cannot connect their own account. Tools on this connector that ran as the end user in Copilot cannot be reproduced.`,
+    });
+  }
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const project = effectiveGeminiProject(session.geminiProject);
+  const record = await getConnectorCredential(appUserId, connectorId);
+  if (!record) {
+    return void res.status(400).json({
+      error: 'connector_not_configured',
+      detail: "Save this connector's OAuth app credentials before asking users to connect their own accounts.",
+    });
+  }
+
+  try {
+    const saToken = await getSaToken(session.gEmail);
+    // The consent URL needs the OAuth app's own client_id (and the tenant, for Microsoft)
+    // to be built at all. Read only the fields the templates can reference — never the
+    // whole record — and never log any of the values.
+    const fields: Record<string, string> = {};
+    for (const field of ['client_id', 'tenant_id', 'subdomain', 'base_url', 'org_url']) {
+      const secretId = record.secretIds[field];
+      if (!secretId) continue;
+      const got = await getEntraSecret(
+        saToken, `projects/${record.project}/secrets/${secretId}/versions/latest`,
+        { optional: true },
+      );
+      if (got.ok && got.plaintext) fields[field] = got.plaintext;
+    }
+
+    // {org_url} is Dataverse's delegated RESOURCE, and it is per environment — Entra issues
+    // tokens per resource, so one consent cannot span two environments. It is also not stored
+    // as a secret for shared_commondataserviceforapps (the migration already knows which
+    // environment it extracted from), so it comes from the selection rather than the vault.
+    if (!fields.org_url) {
+      const envUrls = [...new Set((session.agentSelection ?? []).map((a) => a.envUrl).filter(Boolean))];
+      const asked = (body as { orgUrl?: string }).orgUrl?.trim();
+      if (asked) fields.org_url = asked;
+      else if (envUrls.length === 1) fields.org_url = envUrls[0];
+      else if (envUrls.length > 1) {
+        // Guessing would send the user to consent for ONE environment and then fail on the
+        // other with an error that looks like a permissions problem. Ask instead.
+        return void res.status(400).json({
+          error: 'org_url_ambiguous',
+          detail: `This migration covers ${envUrls.length} environments and a per-user Dataverse connection is granted per environment. Name which one to connect.`,
+        });
+      }
+    }
+
+    const { authorizeUrl } = startUserConsent({
+      appUserId,
+      tenantId: session.tenantId ?? '',
+      userKey,
+      connectorId,
+      ownerScope: connectorCredentialScope(connectorId),
+      project,
+      redirectUri: `${config.SERVER_ORIGIN}/api/auth/connector-consent/callback`,
+      saSubject: session.gEmail,
+      fields,
+    });
+    // The identity, never the URL: it carries the client_id and is a live grant request.
+    logger.info({ connectorId, user: userKey }, 'user consent: issued an authorization url');
+    res.json({ authorizeUrl });
+  } catch (err) {
+    res.status(400).json({ error: 'consent_start_failed', detail: (err as Error).message });
+  }
+});
+
+/**
+ * GET /api/migrate/connector-consent/status?session=&connectorId=&userKey=
+ *
+ * Whether this person has already connected their own account. Reads the EXISTENCE of the
+ * per-user secret, never its value — so the UI can show "connected" without the server ever
+ * handling the token to answer a display question.
+ */
+migrateRouter.get('/connector-consent/status', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const connectorId = String(req.query.connectorId ?? '');
+  const userKey = String(req.query.userKey ?? '');
+  if (!connectorId || !userKey) {
+    return void res.status(400).json({ error: 'connector_and_user_required' });
+  }
+  const project = effectiveGeminiProject(session.geminiProject);
+  const secretId = connectorUserSecretId(
+    connectorId, 'refresh_token', connectorCredentialScope(connectorId), userKey,
+  );
+  try {
+    const saToken = await getSaToken(session.gEmail);
+    const got = await getEntraSecret(
+      saToken, `projects/${project}/secrets/${secretId}/versions/latest`,
+      { optional: true },
+    );
+    res.json({ connectorId, userKey, connected: got.ok, delegable: supportsUserAuth(connectorId) });
+  } catch {
+    // Not knowing is not the same as not connected. Say which one this is.
+    res.json({ connectorId, userKey, connected: null, delegable: supportsUserAuth(connectorId) });
+  }
 });

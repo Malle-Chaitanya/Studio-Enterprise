@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   replaceOne: vi.fn(),
   find: vi.fn(),
   findOne: vi.fn(),
+  countDocuments: vi.fn(),
+  deleteMany: vi.fn(),
 }));
 
 vi.mock('../../config.js', () => ({
@@ -35,12 +37,16 @@ vi.mock('../core.js', () => ({
       replaceOne: mocks.replaceOne,
       find: mocks.find,
       findOne: mocks.findOne,
+      countDocuments: mocks.countDocuments,
+      deleteMany: mocks.deleteMany,
     }),
   }),
 }));
 
-const { saveRawAgent, listRawAgents, getRawAgent, rawLandingEnabled, rawRetentionDays } =
-  await import('./rawAgents.js');
+const {
+  saveRawAgent, listRawAgents, getRawAgent, rawLandingEnabled, rawRetentionDays, rawAgentStats,
+  purgeRawAgents,
+} = await import('./rawAgents.js');
 
 const args = {
   appUserId: 'user-1',
@@ -57,6 +63,59 @@ beforeEach(() => {
   mocks.replaceOne.mockReset().mockResolvedValue({ acknowledged: true });
   mocks.find.mockReset().mockReturnValue({ toArray: async () => [] });
   mocks.findOne.mockReset().mockResolvedValue(null);
+  mocks.countDocuments.mockReset().mockResolvedValue(0);
+  mocks.deleteMany.mockReset().mockResolvedValue({ deletedCount: 3 });
+});
+
+describe('a purge deletes one customer, and admits what it left', () => {
+  it('deletes only the named tenant, never the operator whole', async () => {
+    const r = await purgeRawAgents('user-1', 'tenant-a');
+    // Deleting by operator would take a SECOND customer's payloads as collateral for a
+    // purge someone ran against the first.
+    expect(mocks.deleteMany).toHaveBeenCalledWith({ appUserId: 'user-1', tenantId: 'tenant-a' });
+    expect(r.deleted).toBe(3);
+  });
+
+  it('leaves rows with no tenant alone and REPORTS them, rather than deleting or hiding them', async () => {
+    mocks.countDocuments.mockResolvedValue(7);
+    const r = await purgeRawAgents('user-1', 'tenant-a');
+    // A row landed before tenants were recorded could belong to any connected customer.
+    // Silently deleting it risks another customer's data; silently ignoring it reports a
+    // completed purge that was not complete.
+    expect(r.untagged).toBe(7);
+    expect(mocks.deleteMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: { $exists: false } }),
+    );
+  });
+
+  it('purges the whole operator when no tenant is known, and claims no untagged remainder', async () => {
+    mocks.countDocuments.mockResolvedValue(7);
+    const r = await purgeRawAgents('user-1');
+    expect(mocks.deleteMany).toHaveBeenCalledWith({ appUserId: 'user-1' });
+    expect(r.untagged).toBe(0);
+  });
+
+  it('refuses rather than reporting a deletion it never attempted', async () => {
+    mocks.connected = false;
+    await expect(purgeRawAgents('user-1', 'tenant-a')).rejects.toThrow(/not connected/);
+  });
+});
+
+describe('held-payload counts name one customer, not one operator', () => {
+  it('counts only the given tenant when one is named', async () => {
+    await rawAgentStats('user-1', 'tenant-a');
+    // One operator may have several customers connected. Counting by operator put another
+    // customer's held payloads on this customer's status line.
+    expect(mocks.countDocuments).toHaveBeenCalledWith({ appUserId: 'user-1', tenantId: 'tenant-a' });
+    expect(mocks.countDocuments).toHaveBeenCalledWith(
+      { appUserId: 'user-1', tenantId: 'tenant-a', expiresAt: { $exists: false } },
+    );
+  });
+
+  it('falls back to the whole operator when no tenant is known, rather than counting nothing', async () => {
+    await rawAgentStats('user-1');
+    expect(mocks.countDocuments).toHaveBeenCalledWith({ appUserId: 'user-1' });
+  });
 });
 
 afterEach(() => vi.clearAllMocks());

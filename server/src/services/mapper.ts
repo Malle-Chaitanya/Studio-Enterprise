@@ -1,4 +1,5 @@
 import { config, llmEnabled } from '../config.js';
+import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import { logger } from '../logger.js';
 import type { ResolvedConnector } from './connectorToolBuilder.js';
 import { connectorCapabilityRefs, buildLiveConnectorInstruction } from './connectorToolBuilder.js';
@@ -67,6 +68,73 @@ function synthesizeInstruction(ir: AgentIR): { instruction: string; notes: Fidel
         '(one engine, not one per topic), rather than folded into the instruction text. The root agent ' +
         'routes to them by description — verify the routing matches how the source agent behaved.',
     });
+  }
+
+  // WHOSE credentials each tool runs under. Copilot's `invoker` mode means the tool used the
+  // SIGNED-IN USER's own connection — Erik's mail sent as Erik, Erik's CRM query returning
+  // only Erik's records. Every tool we deploy authenticates with ONE stored credential, so an
+  // invoker tool silently becomes shared: mail leaves from one mailbox for everybody, and
+  // every user sees whatever that one connection can see.
+  //
+  // It cannot be caught by testing — the tool works, it just answers for the wrong person —
+  // so the ONLY thing standing between the customer and finding out from their own users is
+  // this note. `connectionAuthMode` has been extracted since the connector work landed and
+  // nothing read it; a report that stayed silent here was claiming a fidelity we do not have.
+  // PER-USER TOOLS. Copilot `invoker` ran the tool as whoever was asking. These are deployed
+  // to run as the caller too — never on the shared credential — so the note's job is to say
+  // what each person must still do, and to be explicit where that is impossible.
+  //
+  // Split by whether the connector actually HAS a delegated sign-in, because the two are
+  // different facts with different remedies: one is a setup step, the other is a permanent
+  // limit. Reporting both as "needs review" would hide which is which.
+  const invokerTools = (ir.agentTools ?? []).filter((t) => t.connectionAuthMode === 'invoker');
+  if (invokerTools.length) {
+    const label = (t: { displayName?: string; name?: string }) => t.displayName || t.name;
+    // Three outcomes, three different things to tell the customer: nothing to do, one setup
+    // step per person, or a permanent limit. Collapsing them would either invent work that
+    // is not needed or imply a fix that does not exist.
+    const impersonated = invokerTools.filter(
+      (t) => t.connectorId && REGISTRY_BY_ID.get(t.connectorId)?.impersonation,
+    );
+    const delegable = invokerTools.filter(
+      (t) => !impersonated.includes(t) && t.connectorId && REGISTRY_BY_ID.get(t.connectorId)?.userAuth,
+    );
+    const blocked = invokerTools.filter((t) => !impersonated.includes(t) && !delegable.includes(t));
+
+    if (impersonated.length) {
+      notes.push({
+        component: 'toolCredentials',
+        status: 'mapped',
+        detail:
+          `${impersonated.length} tool(s) ran under each END USER's own connection in Copilot `
+          + `(${impersonated.map(label).join(', ')}) and still do: each call names the person `
+          + 'asking and the platform applies their own permissions. Nobody has to connect an '
+          + 'account, and nothing expires.',
+      });
+    }
+
+    if (delegable.length) {
+      notes.push({
+        component: 'toolCredentials',
+        status: 'needs-review',
+        detail:
+          `${delegable.length} tool(s) ran under each END USER's own connection in Copilot ` +
+          `(${delegable.map(label).join(', ')}) and are deployed the same way. Each person must ` +
+          'connect their own account once before these tools work for them; until they do, the ' +
+          'tool refuses rather than falling back to a shared account.',
+      });
+    }
+    if (blocked.length) {
+      notes.push({
+        component: 'toolCredentials',
+        status: 'lost',
+        detail:
+          `${blocked.length} tool(s) ran under each END USER's own connection in Copilot ` +
+          `(${blocked.map(label).join(', ')}), and their connector offers no per-user sign-in, ` +
+          'so that cannot be reproduced. These tools refuse for everyone rather than acting as ' +
+          "one shared account — which would silently give every user another person's access.",
+      });
+    }
   }
 
   // Web browsing still maps to the googleSearch tool (tool wiring, not text).

@@ -35,6 +35,35 @@ app.use(
   }),
 );
 app.use(express.json({ limit: '2mb' }));
+
+/**
+ * One line per request: method, path, status, duration.
+ *
+ * There was none until 2026-08-24, and its absence is not a missing nicety -- it is why a
+ * production migration investigation had nothing to read. Container logs are wiped on every
+ * deploy, and what survived recorded only what a handler chose to say, so "the app is doing
+ * nothing" and "the app is doing plenty and mentioning none of it" looked identical.
+ *
+ * `req.path`, never `req.originalUrl`: the query string carries the session id on every GET,
+ * and a log line is the one place a server-side-only identifier must not end up (see
+ * security-rules.md -- session ids are opaque and server-side, and logs get pasted into
+ * tickets). The path alone is enough to see the shape of a flow.
+ *
+ * Logged on 'finish' rather than up front so the status and duration are real rather than
+ * predicted, and at warn for 4xx/5xx so a failing call is greppable without reading
+ * everything around it. Best-effort by construction: it registers a listener and returns.
+ */
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - startedAt;
+    const line = `${req.method} ${req.path} ${res.statusCode} ${ms}ms`;
+    if (res.statusCode >= 500) logger.error(line);
+    else if (res.statusCode >= 400) logger.warn(line);
+    else logger.info(line);
+  });
+  next();
+});
 // Resolve the signed-in user on every request. Attaching it globally (rather than only
 // where it is required) means an open route can still record WHO acted, without any route
 // having to trust a client-supplied identity.
