@@ -256,6 +256,38 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
     # tool that created it is gone.
     caller_cache: dict = {}
 
+    def _caller_headers(url: str, auth: str) -> dict:
+        """Caller headers for ANY request this connector makes, or raise.
+
+        WHY THIS EXISTS AS A SEPARATE LAYER. Impersonation has to be applied where requests
+        are SENT, not per tool: a connector with no mapped swagger operations falls back to
+        `call_external_api`, which takes an arbitrary path, method and body. Wiring the caller
+        into the mapped-operation path alone left that fallback running every call -- writes
+        included -- as the application, with nothing on screen to say so.
+
+        An UNSUPPORTED resolve kind raises. Returning {} would mean "no impersonation
+        available" and "impersonation not needed" look identical at the send site, which is
+        how a per-user connector ends up quietly acting as the app. Jira, Confluence and
+        HubSpot have no impersonation mechanism at all -- an API token IS one account -- so
+        they must never be marked per-user in the first place; if one ever is, this refuses
+        rather than pretending.
+        """
+        if not conn.get("perUser") or conn.get("perUserMode") != "impersonate":
+            return {}
+        kind_ = conn.get("impersonationResolve") or "dataverse-systemuser"
+        if kind_ == "dataverse-systemuser":
+            # The environment's API root is only knowable from the resolved URL, and the
+            # systemusers lookup must run against the SAME environment as the call.
+            api_root = url.split("/api/data/")[0] + "/api/data/v9.2"
+            return _impersonation_headers(api_root, auth)
+        raise RuntimeError(
+            (conn.get("name") or "this tool")
+            + ": ran under each user's own credentials in Copilot Studio, but this connector"
+            + " has no way to act as another person ("
+            + str(kind_)
+            + "), so it will not run as anyone."
+        )
+
     def _impersonation_headers(base_url: str, auth: str) -> dict:
         """{MSCRMCallerID: <systemuserid>} for the caller, or raise.
 
@@ -374,12 +406,10 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             if header:
                 req_headers["Authorization"] = header
 
-            # Resolved here, not earlier: the environment's API root is only known once the
-            # operation's own URL has had its context substituted, and the systemusers lookup
-            # has to run against the SAME environment this call is about.
+            # Resolved here, not earlier: the caller headers depend on the operation's own
+            # URL, which is only complete once its context has been substituted.
             try:
-                api_root = url.split("/api/data/")[0] + "/api/data/v9.2"
-                req_headers.update(_impersonation_headers(api_root, header))
+                req_headers.update(_caller_headers(url, header))
             except Exception as e:  # noqa: BLE001
                 # Fail the CALL, never fall back to the app identity. An unresolvable caller
                 # served the application's view would answer one person's question with
@@ -481,10 +511,17 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         headers = {"Accept": "application/json"}
         if header:
             headers["Authorization"] = header
+        url = f"{base}/{path.lstrip('/')}"
+        # This tool accepts any path, method and body, so it is a WRITE path as much as a
+        # read one. Without this it ran as the application for every caller.
+        try:
+            headers.update(_caller_headers(url, header))
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
         data = body.encode("utf-8") if body else None
         if data:
             headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(f"{base}/{path.lstrip('/')}", data=data, headers=headers, method=method.upper())
+        req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
         try:
             with urllib.request.urlopen(req, timeout=25) as resp:
                 raw = resp.read().decode("utf-8")
