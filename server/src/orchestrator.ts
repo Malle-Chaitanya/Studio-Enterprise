@@ -2187,8 +2187,25 @@ async function execute(
             // `call_office365_api` tool ALONGSIDE whatever the customer's actual surface
             // choice (e.g. "Use Google Calendar") added — the wrong tool got called, not the
             // right one, even though the right one was ALSO present.
+            //
+            // EXCLUDE ONLY THE PROXY-ONLY ONES. This filter was written for shared_office365,
+            // whose targets are all OTHER connectors (shared_outlook, shared_gmail) -- it has
+            // no "keep" target of its own, so wiring it directly is always wrong. Applying it
+            // to every SURFACE_EQUIVALENTS key also removed the connectors whose "keep this"
+            // target IS the source id (Dataverse, Teams), and THOSE have no substitution to
+            // wire them: the Keep branch is a deliberate no-op that assumes this default path
+            // already ran. Confirmed live on Deal Desk 3 -- "Keep Dataverse" was decided, the
+            // run logged it ok, pre-flight passed, and the deployed agent had 17 Outlook tools,
+            // 3 flow tools and ZERO Dataverse tools. The model then called the tool its
+            // instructions still named and ADK raised "Tool 'GetClientProfile' not found",
+            // which reads as a broken agent rather than a missing capability.
+            const keepsOwnConnectorId = (key: string, base: string): boolean =>
+              (SURFACE_EQUIVALENTS[key]?.targets ?? []).some((t) => t.connectorId === base);
             const surfaceBaseConnectorIds = new Set(
-              Object.keys(SURFACE_EQUIVALENTS).map((k) => (k.includes(':') ? k.slice(0, k.indexOf(':')) : k)),
+              Object.keys(SURFACE_EQUIVALENTS)
+                .map((k) => [k, k.includes(':') ? k.slice(0, k.indexOf(':')) : k] as const)
+                .filter(([key, base]) => !keepsOwnConnectorId(key, base))
+                .map(([, base]) => base),
             );
             const usedConnectorIds = new Set([...usedConnectorIdsRaw].filter((id) => !surfaceBaseConnectorIds.has(id)));
 
