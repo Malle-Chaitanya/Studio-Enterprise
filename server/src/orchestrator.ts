@@ -3034,9 +3034,23 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                 const createRes = await ensureFlowIntegration(saToken, dest.project, appUserId, row.envUrl, flow);
                 const lostCount = flow.fidelityNotes.filter((n) => n.status === 'lost' || n.status === 'needs-review').length;
                 if (createRes.ok && createRes.executeUrl) {
+                  // NAME THE STEPS THAT DID NOT SURVIVE, in the description the model reads.
+                  // A flow whose only real action was dropped still returns 200 with an empty
+                  // output field, and the model reports it as done: Deal Desk 3 answered "I
+                  // have posted the amendment document to Teams" for a Teams post Microsoft
+                  // refuses outright. The tool cannot make the post happen, but it can stop
+                  // the agent claiming it did.
+                  const lostSteps = flow.fidelityNotes
+                    .filter((n) => n.status === 'lost')
+                    .map((n) => n.component.split(':').pop() ?? n.component);
+                  const caveat = lostSteps.length
+                    ? ` WARNING: ${lostSteps.length} step(s) of this flow could not be migrated ` +
+                      `(${lostSteps.join(', ')}). Those actions DO NOT happen when you call this tool. ` +
+                      'Never tell the user they were done — say explicitly that they could not be performed.'
+                    : '';
                   flowToolSpecs.push({
                     name: flow.flowName,
-                    description: `Migrated Copilot Studio Agent Flow "${flow.flowName}".`,
+                    description: `Migrated Copilot Studio Agent Flow "${flow.flowName}".${caveat}`,
                     executeUrl: createRes.executeUrl,
                     // MUST use the exact same key flowMapper.ts's trigger declares
                     // (paramKeyFor) — the raw WDL name (p.name) is a DIFFERENT string
@@ -3127,7 +3141,16 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               // which were mentioned anywhere (live 2026-08-07). The UI already told
               // them unsupported connectors were "recorded in the migration report as a
               // gap" — until now that claim was simply untrue.
+              // A SUBSTITUTED connector is wired under its TARGET id, never its source one:
+              // shared_office365 becomes shared_outlook, and the agent's own tools still
+              // carry the source id. Reading only scopedConnectors therefore reported every
+              // substituted connector as `lost` while it worked -- Deal Desk 3's mail was
+              // called "NOT migrated" by a report written the same minute 17 Outlook tools
+              // deployed. Count a source id as wired when the target it resolved to is.
               const wiredConnectorIds = new Set(scopedConnectors.map((c) => c.id));
+              for (const [sourceId, targetId] of resolvedSurfaceConnectorId) {
+                if (wiredConnectorIds.has(targetId)) wiredConnectorIds.add(sourceId);
+              }
               // Which operations actually became callable tools, per connector. An MCP
               // server is only "migrated" to the extent its declared tools rebuilt —
               // saying "mapped" because the connector is wired would claim capability we

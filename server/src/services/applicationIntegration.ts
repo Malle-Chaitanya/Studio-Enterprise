@@ -192,16 +192,29 @@ export async function ensureFlowIntegration(
   envUrl: string,
   flow: MappedFlowIntegration,
 ): Promise<EnsureFlowIntegrationResult> {
-  try {
-    return await ensureFlowIntegrationInner(saToken, project, appUserId, envUrl, flow);
-  } catch (e) {
-    // Same discipline as ensureAuthConfig above: a thrown network error (ECONNRESET
-    // observed live, 2026-09-06 — mid-upload while recreating "DraftFollwUpEMail")
-    // must degrade to a needs-review fidelity note on THIS flow, never escape and
-    // take down the whole agent insert.
-    logger.warn({ flowId: flow.flowId, err: String(e) }, 'applicationIntegration: ensureFlowIntegration threw, treating as failure');
-    return { ok: false, error: `network error: ${String(e)}` };
+  // RETRY A TRANSIENT, don't lose the tool to it. Creating a flow is several sequential
+  // uploads, and a single blip drops that tool from the deployed agent PERMANENTLY -- the
+  // agent still deploys, verifies and reports green, one capability short. Observed twice
+  // in three consecutive live runs (GetRateSheetBand, then DraftFollwUpEMail), each a bare
+  // `TypeError: fetch failed`. Idempotent by definition hash, so a repeat is safe.
+  let lastErr = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await ensureFlowIntegrationInner(saToken, project, appUserId, envUrl, flow);
+    } catch (e) {
+      // Same discipline as ensureAuthConfig above: a thrown network error (ECONNRESET
+      // observed live, 2026-09-06 — mid-upload while recreating "DraftFollwUpEMail")
+      // must degrade to a needs-review fidelity note on THIS flow, never escape and
+      // take down the whole agent insert.
+      lastErr = String(e);
+      logger.warn(
+        { flowId: flow.flowId, attempt: attempt + 1, err: lastErr },
+        'applicationIntegration: ensureFlowIntegration threw',
+      );
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+    }
   }
+  return { ok: false, error: `network error after 3 attempts: ${lastErr}` };
 }
 
 async function ensureFlowIntegrationInner(
