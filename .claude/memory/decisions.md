@@ -6,6 +6,112 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
+## 2026-09-08 — Design: Cloud SQL for PostgreSQL as the "full tenant cutover" target for live Dataverse connector tools (Architect sign-off, design-only)
+
+- **Decision**: Approved design (implementation not yet started) for a new, parallel migration
+  path for `AgentToolIR` entries whose `kind === 'connector'` and whose `connectorId` resolves to
+  Dataverse (`shared_commondataserviceforapps`) — used when the customer has declared a **full
+  tenant cutover** (Microsoft licenses removed, Dataverse unreachable after cutover), as opposed to
+  today's only path, which rebuilds the tool as a live call against Dataverse itself
+  (`_build_live_connector_tool` falling through to `connector_tools/generic_rest.py`'s
+  `build_tools`, with `MSCRMCallerID` impersonation headers). Worked example: "Deal Desk"'s
+  `GetClientProfile` tool (`cr88d_clientcreditfacilities`, `connectionAuthMode: 'invoker'`).
+  Six parts:
+  1. **Decision point — a run-level flag, not a per-tool UI choice.** New `ResolvedPlan.
+     dataverseCutoverMode?: 'coexistence' | 'full-tenant-cutover'` (absent/`'coexistence'` =
+     today's behavior, unchanged). Set once per migration run, alongside `forceRedeploy` /
+     `acknowledgeAclLoss` (both already run-level, consent-gated `ResolvedPlan` fields — same
+     shape, same UX precedent: a checkbox the customer explicitly ticks before Migrate starts,
+     never inferred). Deliberately **not** modeled on `agentSurfaceChoice`/`SURFACE_EQUIVALENTS`
+     (the per-agent "Keep Outlook vs Use Gmail" pattern) — that pattern exists because BOTH
+     targets remain genuinely viable steady states. Once a tenant is fully decommissioned there is
+     no "keep live Dataverse" option left to offer per tool; every Dataverse-bound connector tool
+     must move off Dataverse, so the only real decision is the binary run-level one. A per-agent
+     override table in the same shape as `agentSurfaceChoice` is left as a natural v2 extension
+     (e.g. "this table already has a Cloud SQL replica elsewhere, point at it instead of
+     provisioning a new one") but is not required for v1.
+  2. **`AgentToolIR` gains an additive, optional `cloudSqlTarget` block** (table/column-mapping/
+     connection reference), populated during Phase 2 classification/build, never at Phase-1
+     extraction — extraction stays platform-neutral and unaware of the destination. No existing
+     `AgentToolIR` consumer breaks; an IR extracted before this ships simply lacks the field.
+  3. **Schema mapping reuses `dataverseTableSchema.ts`'s shape, not its BigQuery types.**
+     `resolveTableAttributes` is reused verbatim (same EntityDefinitions `$expand` call);
+     `classifyAttribute`'s Dataverse-AttributeType decision tree is reused, but a new sibling
+     `buildPgSchema`/`exportTableRowsForPostgres` (new `dataverseTablePgSchema.ts` or extended
+     `dataverseTableSchema.ts`) targets Postgres column types (`TEXT`, `TIMESTAMPTZ`, `BOOLEAN`,
+     `BIGINT`, `NUMERIC`, twin-column lookup/choice flattening unchanged) instead of `BqFieldType`.
+     Same `flattenedNotes` discipline carries over unchanged.
+  4. **New service modules**: `services/cloudSqlUpload.ts` (server-side, parallel to
+     `bigqueryUpload.ts` — idempotent `ensureCloudSqlInstance`/`ensureDatabase`/`ensureTable` via
+     the Cloud SQL Admin API, REST, no new npm dependency, matching the existing
+     `ensureBqDataset`/`ensureBqTable` convention) and `connector_tools/cloudsql.py` (deploy-time,
+     parallel to `outlook.py`/`generic_rest.py` — a hand-written `build_tools` that runs a
+     parameterized `WHERE` lookup against the migrated table, dispatched via a new `kind:
+     "cloudsql"` in `_build_live_connector_tool`). **Flagged deviation from the stated "plain
+     REST, no heavy SDK" justification**: this holds for *provisioning* (Cloud SQL Admin API is
+     REST, same shape as BigQuery's), but does **not** hold for *querying* — unlike BigQuery's
+     HTTP `jobs.query`, Cloud SQL Postgres has no HTTP data-plane API; the deployed container
+     needs a real DB client (`pg8000`, pure-Python, no C build step, safe for the Reasoning Engine
+     container) plus the Cloud SQL Python Connector or equivalent. Recommended credential model:
+     **IAM database authentication** (`cloudsql.iam_authentication` flag + `roles/cloudsql.client`
+     + `roles/cloudsql.instanceUser` on the SA) rather than a stored DB password — no new Secret
+     Manager entry needed at all, simpler than the original "one more secret" framing and a better
+     fit for the "credential story is much simpler than Dataverse" claim than password auth would
+     be. Not yet live-verified against a real Cloud SQL instance — flag before implementation.
+  5. **Idempotency**: upsert by the table's real Dataverse primary-key GUID (`INSERT ... ON
+     CONFLICT (id) DO UPDATE`), mirroring the BigQuery snapshot path's "row ids are the table's
+     real Dataverse primary key" convention — but note the semantic difference: BigQuery's path is
+     `WRITE_TRUNCATE` (full re-snapshot, deletions propagate), this path is `ON CONFLICT` upsert
+     only (a row deleted upstream in Dataverse before cutover is NOT removed from Cloud SQL) —
+     acceptable because after cutover there is no more upstream to diverge from, but worth a
+     `FidelityNote` at the time of the LAST pre-cutover sync.
+  6. **Phase placement — a documented exception to the two-phase boundary, same shape as the
+     existing one.** This is a bridge step needing BOTH a Dataverse-read credential and a
+     Google-write credential in one call, same as `knowledgeDataStoreExecutor.ts`'s
+     `migrateDataverseSnapshot` (see the 2026-08-04 "Retroactive note" entry below, which already
+     names this exact carve-out: "a narrow, deliberate exception to architecture-boundaries.md's
+     'extraction never calls Gemini' rule for bulky/tabular knowledge content, which is resolved
+     by reference at INSERT time rather than staged in Mongo"). The new Cloud SQL sync is the same
+     shape and belongs in the **same INSERT-phase block** in `orchestrator.ts` as the connector
+     preflight (`preflightConnectors`, ~line 2820) and the flow-integration block
+     (`flowToolSpecs`/`ensureFlowIntegration`, ~line 2883) — specifically BEFORE `scopedConnectors`
+     is finalized and handed to `publishAgentToGallery`, since the Cloud SQL sync result (table
+     name, column plan) is what rewrites that tool's `LiveConnectorSpec.kind` from
+     `'commondataserviceforapps'` to `'cloudsql'`. `dvToken` is already in scope at that point in
+     `orchestrator.ts` (a single long-running async generator, not two separate processes) — the
+     "two-phase" rule is enforced by which *modules* call what, not by credential availability;
+     the new sync function is a Phase-2-only module in the same category as
+     `knowledgeDataStoreExecutor.ts`, never imported by `services/dataverse.ts` or Phase 1.
+- **Why**: Live-investigated this session against a real agent ("Deal Desk", org32322095.crm.
+  dynamics.com) — `GetClientProfile`'s `cr88d_clientcreditfacilities` table (credit limits,
+  interest rates, risk ratings — genuinely sensitive/transactional, correctly excluded from the
+  UNRELATED `dataverse-snapshot` knowledge-source path by `looksSensitive()`) has no destination at
+  all once Dataverse is decommissioned, and the customer's stated scenario is a full license
+  removal, not a phased coexistence. Cloud SQL for PostgreSQL (not BigQuery/Firestore) was already
+  settled this session — exact `$filter`-style lookups, plausible future write support, and is not
+  re-litigated here.
+- **Impact**: Additive to `AgentIR`/`AgentToolIR` only (new optional `cloudSqlTarget`), additive to
+  `ResolvedPlan` (new optional `dataverseCutoverMode`) — no existing consumer breaks, no DB-schema
+  migration (Mongo is schemaless). **Explicitly out of scope, carried forward as deferred, not
+  designed here**: rewiring `GetRateSheetBand` (OneDrive Excel via hardcoded Graph URL) and
+  `Postoteams` (hardcoded Graph Teams call) to cross-reference CloudFuze's separate content/
+  message/email migration products — a different, harder problem, deferred by the customer twice
+  this session. **Blocking before implementation**: (a) live-verify the Cloud SQL Admin API
+  provisioning calls (instance/database/table creation, idempotent check-then-create) against a
+  real customer-owned project; (b) live-verify IAM database authentication actually works from a
+  Reasoning Engine container (`pg8000` + Cloud SQL Python Connector + `enable_iam_auth=True`) —
+  this session did not run either, both are read-the-docs-confident, not live-proven, matching this
+  project's own discipline of not shipping an unverified endpoint as more than best-effort. Every
+  `FidelityNote` this path emits must be honest about: (1) Dataverse row-level security (Business
+  Unit/ownership) has NO Cloud SQL equivalent out of the box — `needs-review`, never silently
+  dropped; (2) the point-in-time nature of the copy and what happens to rows changed between the
+  last sync and actual cutover; (3) the destination tool being read-only initially (a write-back
+  gap versus the source's live, and now-editable-in-principle, Dataverse table); (4) the ongoing
+  Cloud SQL cost (~$8–49/mo depending on tier — already disclosed to and accepted by the customer
+  this session, not re-litigated here, but the report should still say it plainly per agent/table).
+
+---
+
 ## 2026-08-31 — RESOLVED: the blocking signal from the entry below, extraction now implemented
 
 - **Decision**: The Phase-0 spike the design below marked as blocking has run against the real
@@ -361,7 +467,7 @@ scaffold. Format: **date — decision — why — impact**.
   already flagged as, now actually fixed); the Back button unexpectedly dropping the user on
   what looks like a logged-out screen mid-workflow; and the red warning banner reading as an
   error rather than a normal in-progress state.
-- **Impact**: No `AgentIR`/schema-shape change — `findLatestConnectedSession`'s query is
+- **Impact:** No `AgentIR`/schema-shape change — `findLatestConnectedSession`'s query is
   broader but additive (a `$or`, not a new field). No other caller of `warn-banner` existed
   (grepped before renaming), so the CSS rename is safe. `IcoWarn` remains in `icons.tsx`
   (unused by this page now, kept in case another surface still wants a real warning triangle).

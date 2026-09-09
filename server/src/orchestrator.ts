@@ -16,6 +16,7 @@ import { resolveProjectNumber } from './services/adkDeployer.js';
 import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
+import { paramKeyFor } from './services/flowMapper.js';
 import { applyPerUserAuth } from './services/userConnectorAuth.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
 import { resolveSurfaceTarget, SURFACE_EQUIVALENTS, agentUsesSurface, CALENDAR_OPERATION_IDS, CONTACTS_OPERATION_IDS } from './db/repos/agentSurfaceChoice.js';
@@ -36,10 +37,12 @@ import {
   type DataverseSnapshotResult,
 } from './services/knowledgeDataStoreExecutor.js';
 import { resolveTableSearchTarget, type TableSearchTarget } from './services/dataverseTableExport.js';
+import { migrateDataverseTableToCloudSql } from './services/cloudSqlMigration.js';
 import { attachDataStoreToEngine, dataStoreExists, dataStoreResourcePath } from './services/geminiDataStore.js';
 import { getConnectorOperation, getConnectorDataStores } from './services/geminiConnector.js';
 import { getKnowledgeConnector, markKnowledgeConnectorStatus } from './db/repos/knowledgeConnectors.js';
 import { firstWebsiteSource, publishAgentToGallery } from './services/adkDeployer.js';
+import { ensureAuthConfig, ensureFlowIntegration } from './services/applicationIntegration.js';
 import { ensureSecretInProject, upsertSecretIfChanged } from './services/secretManager.js';
 import { getAdkDeployment, recordAdkDeployment } from './db/repos/adkDeployments.js';
 import { getMigratedSnapshot, saveMigratedSnapshot } from './db/repos/migratedSnapshot.js';
@@ -914,6 +917,13 @@ async function execute(
           && +new Date(rec.updatedAt ?? 0) > +new Date(cur.updatedAt ?? 0));
     if (recWins) bestByConnector.set(rec.connectorId, rec);
   }
+  // Dataverse -> Cloud SQL is a PER-AGENT decision (agentSurfaceChoice.ts's
+  // shared_commondataserviceforapps entry — "Keep Dataverse" vs "Use Cloud SQL"), the same
+  // choice already made per-agent for Outlook/Teams/etc. Whether ANY agent in this run still
+  // needs the raw Dataverse connector credential is therefore not knowable until each agent's
+  // choice is resolved further down — so, exactly like Outlook's credential, it is always
+  // copied/resolved here; the Phase 2 Cloud SQL block below is what keeps it out of any ONE
+  // agent's actually-wired tools when that agent's decision is "Use Cloud SQL".
   const durableConnectorRecords = [...bestByConnector.values()];
   if (destProject) {
     const strays = durableConnectorRecords.filter((c) => c.project && c.project !== destProject);
@@ -2385,6 +2395,13 @@ async function execute(
             // surfaceBaseConnectorIds above), so scoping by it directly would find nothing.
             const resolvedSurfaceConnectorId = new Map<string, string>();
             for (const msConnectorId of Object.keys(SURFACE_EQUIVALENTS)) {
+              // Dataverse is handled in its own dedicated block below (the Cloud SQL
+              // migration), never through this generic path: its "Use Cloud SQL" target
+              // ('cloudsql') is not a real registry connector, so buildLiveConnectorSpecsDetailed
+              // below would report it "unsupported" and this loop would wrongly log a `lost`
+              // fidelity note ("credential not configured") for a target that was never
+              // supposed to go through a connector spec at all.
+              if (msConnectorId === 'shared_commondataserviceforapps') continue;
               // Capability-aware, not just connector-id presence: shared_office365 carries
               // BOTH mail and calendar operations under one connector id, and whether each
               // moves to Google is an independent decision — see agentUsesSurface's own doc
@@ -2871,6 +2888,170 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                 tools: t.mcp!.toolSelection === 'specific' ? t.mcp!.tools : undefined,
               }));
 
+            // Dataverse -> Cloud SQL: a PER-AGENT choice (agentSurfaceChoice.ts's
+            // shared_commondataserviceforapps entry), the exact same "Keep Microsoft / Use
+            // Google equivalent" mechanism already used for Outlook/Teams/Calendar/Contacts —
+            // not a run-level flag. An agent whose Dataverse tool would break permanently once
+            // Microsoft licenses are dropped can be migrated to Cloud SQL while a DIFFERENT
+            // agent in the same run keeps calling Dataverse live, exactly as a customer might
+            // keep one agent's mail on Outlook while moving another's to Gmail.
+            const cloudSqlToolSpecs: { name: string; description: string; instanceConnectionName: string; database: string; table: string; primaryKeyAttr: string; columns: string[] }[] = [];
+            const dataverseTools = (row.mapped!.ir.agentTools ?? []).filter(
+              (t) => t.kind === 'connector' && t.connectorId?.startsWith('shared_commondataserviceforapps'),
+            );
+            if (dataverseTools.length) {
+              const dvEq = SURFACE_EQUIVALENTS['shared_commondataserviceforapps'];
+              const dvTarget = await resolveSurfaceTarget(appUserId, row.sourceId, 'shared_commondataserviceforapps');
+              const dvChosen = dvTarget && dvEq.targets.find((t) => t.connectorId === dvTarget.targetConnectorId);
+              if (dvChosen?.connectorId === 'cloudsql') {
+                const dvToken = await tokenFor(row.envUrl);
+                const saEmail = serviceAccountEmail();
+                for (const tool of dataverseTools) {
+                  // The model-facing name the customer actually typed in Copilot Studio's
+                  // Tools UI (e.g. "GetClientProfile") lives in `displayName` (modelDisplayName
+                  // in the source YAML) — `tool.name` is the botcomponent's OWN internal name,
+                  // which for a Dataverse "List rows" action defaults to the generic
+                  // "Microsoft Dataverse - List rows from selected environment" label
+                  // regardless of what the customer named the tool. Confirmed live 2026-09-08:
+                  // a deployed "GetClientProfile" tool showed up in the live chat as
+                  // "Microsoft Dataverse: List Rows From Selected Environment" instead, because
+                  // this block used the wrong field — every OTHER tool-naming path in this
+                  // codebase already prefers displayName (assess.ts, boundToolSpec.ts,
+                  // mapper.ts); this one just hadn't been brought in line with that yet.
+                  const label = tool.displayName || tool.name;
+                  if (!saEmail) {
+                    result.fidelity.push({
+                      component: `tool:${label}`,
+                      status: 'needs-review',
+                      detail:
+                        '"Use Cloud SQL" was chosen for this agent\'s Dataverse, but this deployment has no ' +
+                        'configured service account email — cannot provision Cloud SQL. This tool was NOT wired.',
+                    });
+                    continue;
+                  }
+                  const migrated = await migrateDataverseTableToCloudSql(dest, saToken, saEmail, dvToken, row.envUrl, tool);
+                  if (migrated.ok && migrated.cloudSqlTarget) {
+                    cloudSqlToolSpecs.push({
+                      name: label,
+                      description:
+                        tool.description ||
+                        `Looks up rows from "${migrated.cloudSqlTarget.table}" (migrated from Dataverse — "Use Cloud SQL" chosen).`,
+                      instanceConnectionName: migrated.cloudSqlTarget.instanceConnectionName,
+                      database: migrated.cloudSqlTarget.database,
+                      table: migrated.cloudSqlTarget.table,
+                      primaryKeyAttr: migrated.cloudSqlTarget.primaryKeyAttr,
+                      columns: migrated.cloudSqlTarget.columns,
+                    });
+                    result.fidelity.push(...migrated.fidelityNotes);
+                    emitLog(
+                      'info',
+                      `    ${row.name}: tool "${label}" migrated to Cloud SQL ("Use Cloud SQL" chosen) — ` +
+                        'will no longer call Dataverse live.',
+                    );
+                  } else {
+                    result.fidelity.push({
+                      component: `tool:${label}`,
+                      status: 'needs-review',
+                      detail:
+                        `"Use Cloud SQL" was chosen for this agent's Dataverse, but this tool could not be ` +
+                        `migrated: ${migrated.error}. This tool was NOT wired.`,
+                    });
+                    emitLog('warn', `    ${row.name}: tool "${label}" Cloud SQL migration failed — ${migrated.error}`);
+                  }
+                }
+                // The raw Dataverse connector credential is never wired for THIS agent once
+                // "Use Cloud SQL" is chosen — a live fallback would itself break the day
+                // Dataverse is decommissioned, so leaving it in place would be a false,
+                // temporary safety net, not a real one. Every Dataverse tool above either got
+                // a Cloud SQL replacement or an explicit needs-review note.
+                scopedConnectors = scopedConnectors.filter((c) => !c.id.startsWith('shared_commondataserviceforapps'));
+                result.fidelity.push({
+                  component: 'surface:shared_commondataserviceforapps',
+                  status: 'partial',
+                  detail: `${dvEq.sourceName}: ${dvChosen.name}. ${dvChosen.summary}`,
+                });
+                emitLog('ok', `  ${row.name}: ${dvEq.sourceName} -> ${dvChosen.name}`);
+              } else if (!dvTarget) {
+                // Explicit 'skip': no Dataverse tools at all for this agent — same fail-closed
+                // posture as skipping mail, just for data instead of a mailbox.
+                scopedConnectors = scopedConnectors.filter((c) => !c.id.startsWith('shared_commondataserviceforapps'));
+                result.fidelity.push({
+                  component: 'surface:shared_commondataserviceforapps',
+                  status: 'needs-review',
+                  detail: `${dvEq.sourceName}: skipped — this agent migrates with no Dataverse tools at all.`,
+                });
+                emitLog('warn', `  ${row.name}: Dataverse skipped — no data tools wired.`);
+              } else {
+                // "Keep Dataverse" — explicit, or the default when nothing was decided yet
+                // (see defaultDecision's doc comment). No code path changes at all: the tool
+                // keeps calling Dataverse live exactly as it always has. Still worth a visible
+                // note, same as every other surface choice, so this is no longer invisible
+                // outside a terminal log.
+                result.fidelity.push({
+                  component: 'surface:shared_commondataserviceforapps',
+                  status: 'partial',
+                  detail: `${dvEq.sourceName}: ${dvChosen!.name}. ${dvChosen!.summary}`,
+                });
+                emitLog('ok', `  ${row.name}: ${dvEq.sourceName} -> ${dvChosen!.name}`);
+              }
+            }
+
+            // Agent Flows: create/update each translated flow's real Application
+            // Integration resource BEFORE the agent is built, since the agent's tool
+            // definition needs an already-existing execute endpoint to point at (proven
+            // pattern — see services/flowMapper.ts's header comment). Never touches
+            // Dataverse; reads only the already-staged, already-translated result from
+            // Phase 1. A flow that fails to create degrades to a `needs-review` fidelity
+            // note — same discipline as the connector pre-flight above — never fails the
+            // whole agent.
+            const flowToolSpecs: { name: string; description: string; executeUrl: string; inputParameters: { key: string; displayName: string; dataType?: string }[] }[] = [];
+            const flowsWired: { name: string; taskCount: number; lostTaskCount: number; integrationName?: string }[] = [];
+            if (row.mapped!.flowIntegrations?.length) {
+              const authConfigsEnsured = new Set<string>();
+              for (const flow of row.mapped!.flowIntegrations) {
+                for (const need of flow.authConfigsNeeded) {
+                  if (authConfigsEnsured.has(need.authConfigName)) continue;
+                  const authRes = await ensureAuthConfig(saToken, dest.project, appUserId, need.authConfigName);
+                  if (!authRes.ok) {
+                    result.fidelity.push({
+                      component: `flow:${flow.flowName}`,
+                      status: 'needs-review',
+                      detail: `Could not set up the "${need.authConfigName}" connection this flow needs: ${authRes.error}`,
+                    });
+                  }
+                  authConfigsEnsured.add(need.authConfigName);
+                }
+                const createRes = await ensureFlowIntegration(saToken, dest.project, appUserId, row.envUrl, flow);
+                const lostCount = flow.fidelityNotes.filter((n) => n.status === 'lost' || n.status === 'needs-review').length;
+                if (createRes.ok && createRes.executeUrl) {
+                  flowToolSpecs.push({
+                    name: flow.flowName,
+                    description: `Migrated Copilot Studio Agent Flow "${flow.flowName}".`,
+                    executeUrl: createRes.executeUrl,
+                    // MUST use the exact same key flowMapper.ts's trigger declares
+                    // (paramKeyFor) — the raw WDL name (p.name) is a DIFFERENT string
+                    // whenever the author gave the field a real display name, which is
+                    // almost always. Confirmed live 2026-09-08: using p.name here sent the
+                    // deployed tool's real argument under a key the flow's own compiled
+                    // filter script never reads, so every numeric comparison silently
+                    // compared against 0 instead of the real value. See paramKeyFor's own
+                    // doc comment.
+                    inputParameters: flow.inputParameters.map((p) => ({ key: paramKeyFor(p), displayName: p.displayName?.trim() || p.name, dataType: p.dataType })),
+                  });
+                  flowsWired.push({ name: flow.flowName, taskCount: flow.inputParameters.length, lostTaskCount: lostCount, integrationName: createRes.integrationName });
+                  emitLog('info', `    ${row.name}: flow "${flow.flowName}" ${createRes.skippedUnchanged ? 'already up to date' : 'created/updated'} as ${createRes.integrationName}.`);
+                } else {
+                  result.fidelity.push({
+                    component: `flow:${flow.flowName}`,
+                    status: 'needs-review',
+                    detail: `Could not create this flow's Application Integration: ${createRes.error}. The flow's own translation notes are listed separately.`,
+                  });
+                  emitLog('warn', `    ${row.name}: flow "${flow.flowName}" was not created — ${createRes.error}`);
+                }
+              }
+            }
+            if (flowsWired.length) result.flowsWired = flowsWired;
+
             const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, {
               // Turn the deployer's transport-agnostic step callback into run events. The
               // deploy is 3-5 minutes of total silence otherwise, and a run that looks hung
@@ -2884,6 +3065,8 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               liveConnectors: scopedConnectors,
               subAgents: topicSubAgents,
               mcpTools: scopedMcpTools.length ? scopedMcpTools : undefined,
+              flowTools: flowToolSpecs.length ? flowToolSpecs : undefined,
+              cloudSqlTools: cloudSqlToolSpecs.length ? cloudSqlToolSpecs : undefined,
               // Redeploying an agent we already migrated: repoint the EXISTING agent at
               // the new Reasoning Engine rather than creating a second one. Creation is
               // capped by an undocumented daily quota and re-runs used to burn one every

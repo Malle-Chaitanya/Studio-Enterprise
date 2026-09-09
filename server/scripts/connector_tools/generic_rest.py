@@ -244,84 +244,6 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             token_cache[cache_key] = {"token": token, "expires_at": time.time() + int(payload.get("expires_in") or 3600)}
             return "Bearer " + token
 
-    # ── Impersonation: act as the person asking, using the shared app credential ──────
-    #
-    # Copilot `invoker` tools ran as the signed-in user. Dataverse can reproduce that exactly:
-    # an app-only call carrying MSCRMCallerID is evaluated against the NAMED user's security
-    # roles, not the application's. Verified live 2026-08-31 -- the app reads 50 rows, the same
-    # call as a role-less user is refused with "They need a role with the prvReadUser privilege".
-    #
-    # Preferred over a per-user OAuth token because nothing is stored per person: nothing
-    # expires, a new joiner works immediately, and the agent keeps working after the migration
-    # tool that created it is gone.
-    caller_cache: dict = {}
-
-    def _impersonation_headers(base_url: str, auth: str) -> dict:
-        """{MSCRMCallerID: <systemuserid>} for the caller, or raise.
-
-        RAISES rather than returning {} when the caller is unknown or has no account in this
-        environment. An empty dict would silently fall through to the application identity,
-        which sees every record in the environment -- one person's question answered with
-        everybody's data, and no error to notice.
-        """
-        if not conn.get("perUser") or conn.get("perUserMode") != "impersonate":
-            return {}
-        header = conn.get("impersonationHeader") or "MSCRMCallerID"
-        who = (caller() if caller else "") or ""
-        if not who:
-            raise RuntimeError(
-                (conn.get("name") or "this tool")
-                + ": runs as whoever is asking, but the caller could not be identified."
-            )
-        if who in caller_cache:
-            return {header: caller_cache[who]}
-
-        # The operator's own mapping first — see outlook.py for why a local-part guess is
-        # not safe here either. This turns the destination identity Gemini gives us into the
-        # source address the systemusers lookup below can actually match on.
-        who = (conn.get("callerIdentityMap") or {}).get(who.lower(), who)
-
-        import json as _json
-        import urllib.parse
-        import urllib.request
-
-        # The id is per ENVIRONMENT, so it is resolved here rather than baked in at deploy:
-        # a systemuserid from one org is meaningless in another, and someone who joins after
-        # the migration would not be in a deploy-time map at all.
-        #
-        # Matched on the caller's own address first, then on the local part, because the
-        # destination directory and the source Dataverse are usually different domains
-        # (alex@newco.com and alex@oldco.co being one person is the normal case, not the odd one).
-        local = who.split("@")[0].replace("'", "''")
-        safe = who.replace("'", "''")
-        flt = (
-            "internalemailaddress eq '" + safe + "'"
-            " or domainname eq '" + safe + "'"
-            " or startswith(internalemailaddress,'" + local + "@')"
-        )
-        url = (base_url + "/systemusers?$select=systemuserid,internalemailaddress&$top=2&$filter="
-               + urllib.parse.quote(flt, safe=""))
-        req = urllib.request.Request(url, headers={
-            "Authorization": auth, "Accept": "application/json",
-            "OData-MaxVersion": "4.0", "OData-Version": "4.0",
-        })
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            rows = (_json.loads(resp.read().decode("utf-8")) or {}).get("value") or []
-        if not rows:
-            raise RuntimeError(
-                (conn.get("name") or "this tool") + ": no account for " + who
-                + " exists in this environment, so it cannot run as them."
-            )
-        if len(rows) > 1:
-            # Two matches means the local-part fallback was ambiguous. Picking one would act
-            # as a person chosen by sort order.
-            raise RuntimeError(
-                (conn.get("name") or "this tool") + ": " + who
-                + " matches more than one account in this environment; cannot choose."
-            )
-        caller_cache[who] = rows[0]["systemuserid"]
-        return {header: caller_cache[who]}
-
         def _invoke(**kwargs) -> dict:
             try:
                 header = _aad_header() if op.get("auth") == "aad-token" else auth_header(fill)
@@ -442,6 +364,84 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         doc += "\nReturns:\n    dict with `status` and `body`, or `error`.\n"
         fn.__doc__ = doc
         return fn
+
+    # ── Impersonation: act as the person asking, using the shared app credential ──────
+    #
+    # Copilot `invoker` tools ran as the signed-in user. Dataverse can reproduce that exactly:
+    # an app-only call carrying MSCRMCallerID is evaluated against the NAMED user's security
+    # roles, not the application's. Verified live 2026-08-31 -- the app reads 50 rows, the same
+    # call as a role-less user is refused with "They need a role with the prvReadUser privilege".
+    #
+    # Preferred over a per-user OAuth token because nothing is stored per person: nothing
+    # expires, a new joiner works immediately, and the agent keeps working after the migration
+    # tool that created it is gone.
+    caller_cache: dict = {}
+
+    def _impersonation_headers(base_url: str, auth: str) -> dict:
+        """{MSCRMCallerID: <systemuserid>} for the caller, or raise.
+
+        RAISES rather than returning {} when the caller is unknown or has no account in this
+        environment. An empty dict would silently fall through to the application identity,
+        which sees every record in the environment -- one person's question answered with
+        everybody's data, and no error to notice.
+        """
+        if not conn.get("perUser") or conn.get("perUserMode") != "impersonate":
+            return {}
+        header = conn.get("impersonationHeader") or "MSCRMCallerID"
+        who = (caller() if caller else "") or ""
+        if not who:
+            raise RuntimeError(
+                (conn.get("name") or "this tool")
+                + ": runs as whoever is asking, but the caller could not be identified."
+            )
+        if who in caller_cache:
+            return {header: caller_cache[who]}
+
+        # The operator's own mapping first — see outlook.py for why a local-part guess is
+        # not safe here either. This turns the destination identity Gemini gives us into the
+        # source address the systemusers lookup below can actually match on.
+        who = (conn.get("callerIdentityMap") or {}).get(who.lower(), who)
+
+        import json as _json
+        import urllib.parse
+        import urllib.request
+
+        # The id is per ENVIRONMENT, so it is resolved here rather than baked in at deploy:
+        # a systemuserid from one org is meaningless in another, and someone who joins after
+        # the migration would not be in a deploy-time map at all.
+        #
+        # Matched on the caller's own address first, then on the local part, because the
+        # destination directory and the source Dataverse are usually different domains
+        # (alex@newco.com and alex@oldco.co being one person is the normal case, not the odd one).
+        local = who.split("@")[0].replace("'", "''")
+        safe = who.replace("'", "''")
+        flt = (
+            "internalemailaddress eq '" + safe + "'"
+            " or domainname eq '" + safe + "'"
+            " or startswith(internalemailaddress,'" + local + "@')"
+        )
+        url = (base_url + "/systemusers?$select=systemuserid,internalemailaddress&$top=2&$filter="
+               + urllib.parse.quote(flt, safe=""))
+        req = urllib.request.Request(url, headers={
+            "Authorization": auth, "Accept": "application/json",
+            "OData-MaxVersion": "4.0", "OData-Version": "4.0",
+        })
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            rows = (_json.loads(resp.read().decode("utf-8")) or {}).get("value") or []
+        if not rows:
+            raise RuntimeError(
+                (conn.get("name") or "this tool") + ": no account for " + who
+                + " exists in this environment, so it cannot run as them."
+            )
+        if len(rows) > 1:
+            # Two matches means the local-part fallback was ambiguous. Picking one would act
+            # as a person chosen by sort order.
+            raise RuntimeError(
+                (conn.get("name") or "this tool") + ": " + who
+                + " matches more than one account in this environment; cannot choose."
+            )
+        caller_cache[who] = rows[0]["systemuserid"]
+        return {header: caller_cache[who]}
 
     if bound_ops:
         built = []

@@ -346,6 +346,111 @@ export interface AgentIR {
    * Optional and additive: an agent with no tools simply omits it.
    */
   agentTools?: AgentToolIR[];
+  /**
+   * Copilot Studio Agent Flows this agent invokes (the `flow` AgentToolIR kind's real
+   * definition — `AgentToolIR.flowId` is the join key). Optional and additive: an agent
+   * with no flows simply omits it, and every existing consumer of AgentIR is unaffected.
+   *
+   * Flows are extracted here (Dataverse `workflows.clientdata`) but mapped into a Gemini
+   * Application Integration definition separately (see `services/flowMapper.ts`) — the
+   * translated result rides on `MappedAgent.flowIntegrations`, never here, keeping this
+   * field a pure extraction artifact per the extract/map phase boundary.
+   */
+  flows?: FlowIR[];
+}
+
+/** One trigger input field on a flow (`triggers.manual.inputs.schema.properties`). */
+export interface FlowParameterIR {
+  /** WDL schema property key, e.g. "text_1". */
+  name: string;
+  /** The schema property's `description` — the human-meaningful field name the author
+   *  gave it, e.g. " NewLimit" for a field literally named "text_1". */
+  displayName?: string;
+  /**
+   * The schema property's real JSON Schema `type` (confirmed live: a Copilot "Number"
+   * field extracts as `type: "number"` with `x-ms-content-hint: "NUMBER"`, not as text —
+   * so this is read directly from the schema, not inferred from content-hint alone).
+   * Drives lossless typing on the Gemini side (INT_VALUE vs STRING_VALUE) — a real bug
+   * this session traced to a Number field migrated as STRING_VALUE silently swallowing
+   * comma-formatted input.
+   */
+  dataType: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'unknown';
+  required?: boolean;
+}
+
+/** A flow's entry trigger (`triggers.manual` in WDL — always `type: Request, kind: Skills` in the flows seen so far, but stored verbatim rather than assumed). */
+export interface FlowTriggerIR {
+  type: string;
+  kind?: string;
+  inputSchema: FlowParameterIR[];
+  /** Full raw trigger JSON, preserved losslessly for manual review. */
+  raw?: unknown;
+}
+
+/** One `connectionReferences` entry — a connector the flow calls, e.g. "shared_teams". */
+export interface FlowConnectionReferenceIR {
+  /** The connectionReferences key used inside the flow's actions (host.connectionName). */
+  name: string;
+  /** Registry connector id resolved from `api.name`'s ARM path, e.g. `shared_teams`. */
+  connectorId?: string;
+  raw?: unknown;
+}
+
+/**
+ * One node in a flow's action graph (WDL `actions` / `else.actions` / `cases[].actions`).
+ * Recursive and generic — `type` is preserved VERBATIM (Compose, Response, OpenApiConnection,
+ * If, Switch, Foreach, Scope, Until, or anything else WDL allows) rather than narrowed to a
+ * fixed enum, so an unrecognized action still round-trips losslessly via `raw` and surfaces
+ * as `unmapped`/a fidelity note downstream instead of being silently dropped at extraction.
+ */
+export interface FlowActionIR {
+  /** WDL action key, e.g. "Post_message_in_a_chat_or_channel". */
+  id: string;
+  /** Raw WDL `type`, verbatim. */
+  type: string;
+  /** Other action ids this one must run after, and the required statuses. */
+  runAfter: Record<string, string[]>;
+  /** Full raw action JSON — lossless, mirrors TopicIR.raw. */
+  raw: unknown;
+  // Best-effort parsed facade below, populated only when `type` is recognized. Absence of
+  // a facade field does NOT mean data loss — `raw` always has the full definition.
+  compose?: { template: unknown };
+  response?: { statusCode?: number; bodyTemplate?: unknown; schema?: unknown };
+  connector?: {
+    connectionReferenceName: string;
+    apiId?: string;
+    operationId?: string;
+    parameters?: Record<string, unknown>;
+  };
+  /** `If` action's `expression`. */
+  condition?: unknown;
+  /** `Switch` action's `expression`. */
+  switchOn?: unknown;
+  /** Branches for `If` ('true'/'false'), `Switch` (case values + 'default'), or similar. */
+  branches?: { label: string; actions: FlowActionIR[] }[];
+}
+
+/**
+ * One Copilot Studio Agent Flow, extracted losslessly from Dataverse `workflows.clientdata`
+ * (Azure Logic Apps Workflow Definition Language JSON). See `AgentIR.flows` for how this
+ * plugs into the pipeline and `services/flowMapper.ts` for how it becomes a Gemini
+ * Application Integration definition.
+ */
+export interface FlowIR {
+  /** Dataverse workflow id — SAME value as the owning `AgentToolIR.flowId`, and the
+   *  deterministic identity used downstream for idempotent Application Integration naming. */
+  id: string;
+  name: string;
+  /** The `AgentToolIR.name` that invokes this flow, when known. */
+  ownerToolName?: string;
+  trigger?: FlowTriggerIR;
+  /** Top-level action graph, in WDL's own key order (dependency order is read from `runAfter`, never assumed from array position). */
+  actions: FlowActionIR[];
+  connectionReferences: FlowConnectionReferenceIR[];
+  /** Full raw clientdata JSON, verbatim. */
+  raw?: unknown;
+  /** Extraction-time gaps (unrecognized top-level shape) — same convention as `AgentIR.unmapped`. */
+  unmapped: string[];
 }
 
 /** How a tool is invoked in Copilot Studio. Mirrors `action.kind`. */
@@ -441,6 +546,38 @@ export interface AgentToolIR {
    * Meeting Scheduler Agent" ambiguity found earlier this session actually gets resolved.
    */
   childAgentTopicId?: string;
+  /**
+   * Set during Phase 2 INSERT (never at extraction — extraction stays platform-neutral)
+   * when this tool is a live Dataverse connector (`connectorId` starts with
+   * `shared_commondataserviceforapps`) AND the customer chose "Use Cloud SQL" for this
+   * agent's Dataverse surface (a per-agent decision — see
+   * db/repos/agentSurfaceChoice.ts's `shared_commondataserviceforapps` entry, the same
+   * "Keep Microsoft / Use Google equivalent" mechanism already used for Outlook/Teams). The
+   * tool's table has been copied into Cloud SQL and the deployed agent queries Postgres
+   * instead of calling Dataverse live. See services/cloudSqlMigration.ts.
+   *
+   * Absent whenever "Keep Dataverse" was chosen (explicitly, or by default when nothing was
+   * decided — see `defaultDecision`'s own doc comment) or the tool is not a Dataverse
+   * connector — the deployed tool then falls through to today's behavior
+   * (`connector_tools/generic_rest.py` calling Dataverse live). Additive/optional: an IR
+   * staged before this field existed simply lacks it and behaves exactly as before.
+   */
+  cloudSqlTarget?: {
+    instanceConnectionName: string; // "<project>:<region>:<instance>", the Cloud SQL Connector's own address format
+    database: string;
+    table: string;
+    /** The Dataverse primary-key attribute, kept as the Postgres primary key column name
+     *  too — re-running the copy upserts by this key instead of duplicating rows. */
+    primaryKeyAttr: string;
+    /**
+     * The table's real column names, in order. NOT optional, NOT decorative: the deployed
+     * Python tool (connector_tools/cloudsql.py) validates a model-supplied filter COLUMN
+     * against this exact list before using it in a query — SQL identifiers cannot be
+     * parameterized, so an allowlist is the injection defense, and this is that allowlist.
+     * The filter VALUE is always sent as a real parameterized bind, never interpolated.
+     */
+    columns: string[];
+  };
 }
 
 /**
@@ -595,12 +732,43 @@ export interface MappedAgent {
   groundingDataStores?: string[];
   /** Notes about lossy or heuristic mappings for the fidelity report. */
   fidelityNotes: FidelityNote[];
+  /**
+   * One entry per `AgentIR.flows[]`, produced by `services/flowMapper.ts` — a pure,
+   * offline (no network) translation of the flow's action graph into an Application
+   * Integration definition. Insert phase (`services/applicationIntegration.ts`) creates
+   * these; nothing here has touched Google yet. Optional/additive: an agent with no
+   * flows omits it.
+   */
+  flowIntegrations?: MappedFlowIntegration[];
 }
 
 export interface FidelityNote {
   component: string;
   status: 'mapped' | 'partial' | 'lost' | 'needs-review';
   detail: string;
+}
+
+/**
+ * The result of translating one `FlowIR` into a Google Application Integration
+ * definition — still Phase 1 output (pure/offline), staged alongside the agent so a
+ * failed Phase 2 insert never needs to re-extract or re-translate. See
+ * `services/flowMapper.ts` (the translator) and `services/applicationIntegration.ts`
+ * (what actually creates this in Google, during Phase 2).
+ */
+export interface MappedFlowIntegration {
+  /** Same as the source `FlowIR.id` — the idempotency key `db/repos/flowIntegrations.ts` looks up by. */
+  flowId: string;
+  flowName: string;
+  /** The full Application Integration `integrationDefinition` JSON body, ready for `versions:upload`. */
+  integrationDefinition: unknown;
+  /** Trigger input parameters the deployed ADK tool must pass through, with their inferred Gemini dataType. */
+  inputParameters: FlowParameterIR[];
+  /** Connectors this flow needs an AuthConfig for, resolved via the SAME registry/credential
+   *  path as agent-level connector tools — never a separate credential system. */
+  authConfigsNeeded: { connectorId: string; connectionReferenceName: string; authConfigName: string }[];
+  /** Per-action/per-expression fidelity notes from translation (splice-and-report fallback
+   *  for anything not confidently reproducible) — merged into the agent's overall fidelity report. */
+  fidelityNotes: FidelityNote[];
 }
 
 /** Outcome of pushing one mapped agent to Gemini Enterprise. */
@@ -672,6 +840,14 @@ export interface MigrationResult {
    * the connector names it can prove rather than a fabricated zero.
    */
   connectorsWired?: { name: string; toolCount: number; actsAs?: string }[];
+  /**
+   * Agent Flows actually created as Application Integration tools for THIS agent, and how
+   * much of each flow's action graph translated. Mirrors `connectorsWired`'s honesty
+   * convention: `lostTaskCount` > 0 means part of that flow's real behavior did not make
+   * it across (e.g. a blocked Teams post, or an unresolvable expression) — never hidden by
+   * reporting only that the flow "exists" as a tool.
+   */
+  flowsWired?: { name: string; taskCount: number; lostTaskCount: number; integrationName?: string }[];
   /** Topic sub-agents wired into the deployed engine. */
   subAgents?: number;
   /** Source capabilities found, and how many were reproduced at full fidelity. Shown as

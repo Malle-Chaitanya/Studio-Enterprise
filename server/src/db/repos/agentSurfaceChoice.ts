@@ -82,6 +82,26 @@ export const SURFACE_EQUIVALENTS: Record<
      */
     noun: string;
     targets: SurfaceTarget[];
+    /**
+     * false ONLY for Dataverse. Every other surface here is a personal identity (a mailbox, a
+     * calendar, a Teams account) — the deployed agent holds ONE identity, so "whose" is never
+     * implied by who is asking, and both the API and the UI require naming it before a
+     * decision can be saved. Dataverse -> Cloud SQL is not an identity choice at all: it is
+     * "copy this table once" vs "keep calling it live," so requiring an email here would be
+     * asking for information the decision has no use for. Absent (the default) means true —
+     * every existing surface keeps requiring one without having to say so.
+     */
+    requiresIdentity?: boolean;
+    /**
+     * What this surface behaves as when NO decision has been recorded yet. Every other surface
+     * leaves this undefined and FAILS CLOSED (wires nothing) — silence must never read as
+     * consent to reach into someone's mailbox or team's chat history. Dataverse is different:
+     * before this choice existed, an agent's live Dataverse tool already worked with no
+     * decision required at all, and failing it closed the same way mail does would regress
+     * every customer NOT doing a tenant cutover the day this shipped. Defaulting silence to
+     * "keep behaving exactly as before" is what makes this additive rather than breaking.
+     */
+    defaultDecision?: string;
   }
 > = {
   shared_office365: {
@@ -320,6 +340,45 @@ export const SURFACE_EQUIVALENTS: Record<
       },
     ],
   },
+  // Not an identity choice like the surfaces above — see requiresIdentity's own doc comment.
+  // 'cloudsql' below is NOT a real registry connector id; orchestrator.ts special-cases this
+  // one surface and never runs it through the generic connector-spec builder every other
+  // target here goes through (see orchestrator.ts's Cloud SQL block for why).
+  shared_commondataserviceforapps: {
+    sourceName: 'Microsoft Dataverse',
+    noun: 'data',
+    requiresIdentity: false,
+    defaultDecision: 'shared_commondataserviceforapps',
+    targets: [
+      {
+        connectorId: 'shared_commondataserviceforapps',
+        name: 'Keep Dataverse',
+        summary:
+          'The agent moves to Gemini but this tool keeps calling Dataverse live, through the ' +
+          'Microsoft Dataverse connector credentials configured on the Connectors step — ' +
+          'nothing about the tool\'s behavior changes. Choose this for a phased migration, or ' +
+          'whenever Dataverse is not being retired.',
+        prerequisite:
+          'Configure the Microsoft Dataverse connector credentials on the Connectors step, the ' +
+          'same as any other Microsoft connector.',
+      },
+      {
+        connectorId: 'cloudsql',
+        name: 'Use Cloud SQL',
+        summary:
+          'This tool\'s backing Dataverse table is copied once into Cloud SQL for PostgreSQL, ' +
+          'in your own Google Cloud project, and the deployed agent queries Postgres instead ' +
+          'of calling Dataverse live. Choose this ONLY if Dataverse itself will stop existing ' +
+          'after this migration — Dataverse\'s own row-level security (who can see which rows) ' +
+          'has no equivalent here, so every caller sees the same rows, and the copy is ' +
+          'point-in-time as of the migration run, not a live sync.',
+        prerequisite:
+          'Your Google Cloud project needs the Cloud SQL Admin API enabled, with this ' +
+          'migration\'s service account granted the "Cloud SQL Admin" and "Service Usage ' +
+          'Consumer" roles.',
+      },
+    ],
+  },
 };
 
 export async function getAgentSurfaceChoice(
@@ -382,8 +441,12 @@ export async function saveAgentSurfaceChoice(
 /**
  * Where should this agent's mail point?
  *
- * Returns null unless a target was explicitly chosen. Undecided and `skip` both wire nothing
- * — the fail-closed default that keeps a mailbox from being reached by silence.
+ * Returns null unless a target was explicitly chosen, UNLESS this surface declares a
+ * `defaultDecision` (only Dataverse does, today) — then an undecided agent resolves to that
+ * default instead of null. Every other surface leaves `defaultDecision` unset and keeps the
+ * original fail-closed behavior: undecided and `skip` both wire nothing, because silence must
+ * never read as consent to reach a mailbox or a team's chat history. See `defaultDecision`'s
+ * own doc comment on `SURFACE_EQUIVALENTS` for why Dataverse is the one exception.
  */
 export async function resolveSurfaceTarget(
   appUserId: string,
@@ -393,7 +456,10 @@ export async function resolveSurfaceTarget(
   const equivalent = SURFACE_EQUIVALENTS[sourceConnectorId];
   if (!equivalent) return null;
   const choice = await getAgentSurfaceChoice(appUserId, sourceId, sourceConnectorId);
-  if (!choice || choice.decision === 'skip') return null;
+  if (!choice) {
+    return equivalent.defaultDecision ? { targetConnectorId: equivalent.defaultDecision } : null;
+  }
+  if (choice.decision === 'skip') return null;
   const target = choice.targetConnectorId ?? choice.decision;
   // Only ever return a target this surface actually offers. A stored value that is not in
   // the list (an old row, a renamed connector) must read as undecided rather than wire

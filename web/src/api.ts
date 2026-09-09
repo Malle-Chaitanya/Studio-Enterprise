@@ -917,6 +917,14 @@ export interface SurfaceEquivalence {
   /** A target connectorId, `'skip'`, or null when undecided. */
   decision: string | null;
   impersonateEmail: string | null;
+  /**
+   * false ONLY for Dataverse today: "Keep Dataverse" / "Use Cloud SQL" is not an identity
+   * choice (no mailbox, no account to name), so the screen must not ask for one or block
+   * saving the decision on a missing email. OPTIONAL on the wire, same reason as `noun` —
+   * an older server does not send it, and its absence must read as `true` (every other
+   * surface needs an identity), never as a crash.
+   */
+  requiresIdentity?: boolean;
 }
 
 /**

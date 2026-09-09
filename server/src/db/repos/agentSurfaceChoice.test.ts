@@ -60,6 +60,39 @@ describe('resolveSurfaceTarget fails closed', () => {
   });
 });
 
+describe('Dataverse is the one surface that defaults instead of failing closed', () => {
+  it('resolves to "Keep Dataverse" with no decision recorded and no database connected', async () => {
+    // Dataverse's live tool already worked with zero decisions required before this choice
+    // existed — failing it closed the same way mail does would regress every customer NOT
+    // doing a tenant cutover the moment this shipped. This must hold even under the same
+    // "no DB connected" worst case the block above tests mail against.
+    expect(await resolveSurfaceTarget('u1', 'agent-1', 'shared_commondataserviceforapps'))
+      .toEqual({ targetConnectorId: 'shared_commondataserviceforapps' });
+  });
+
+  it('does not affect any other surface\'s fail-closed behavior', () => {
+    for (const [id, eq] of Object.entries(SURFACE_EQUIVALENTS)) {
+      if (id === 'shared_commondataserviceforapps') continue;
+      expect(eq.defaultDecision, id).toBeUndefined();
+    }
+  });
+
+  it('is the only surface that does not require naming an identity', () => {
+    const eq = SURFACE_EQUIVALENTS.shared_commondataserviceforapps;
+    expect(eq.requiresIdentity).toBe(false);
+    for (const [id, other] of Object.entries(SURFACE_EQUIVALENTS)) {
+      if (id === 'shared_commondataserviceforapps') continue;
+      expect(other.requiresIdentity, id).not.toBe(false);
+    }
+  });
+
+  it('offers Keep Dataverse first, then Use Cloud SQL — staying put leads, same ordering as every other surface', () => {
+    const eq = SURFACE_EQUIVALENTS.shared_commondataserviceforapps;
+    expect(eq.targets[0].connectorId).toBe('shared_commondataserviceforapps');
+    expect(eq.targets[1].connectorId).toBe('cloudsql');
+  });
+});
+
 describe('SURFACE_EQUIVALENTS', () => {
   it('offers keeping the source platform as well as moving', () => {
     // The requirement that produced this shape: an agent with Outlook tools must be able to
@@ -78,7 +111,11 @@ describe('SURFACE_EQUIVALENTS', () => {
   it('every target states its trade-off before the customer chooses', () => {
     for (const eq of Object.values(SURFACE_EQUIVALENTS)) {
       for (const t of eq.targets) {
-        expect(t.connectorId).toMatch(/^shared_/);
+        // 'cloudsql' is the one deliberate exception: Dataverse's "Use Cloud SQL" target is
+        // NOT a real registry connector (orchestrator.ts special-cases it, see
+        // SURFACE_EQUIVALENTS.shared_commondataserviceforapps's own comment), so it is never
+        // expected to look like one.
+        if (t.connectorId !== 'cloudsql') expect(t.connectorId).toMatch(/^shared_/);
         expect(t.name.length).toBeGreaterThan(0);
         expect(t.summary.length).toBeGreaterThan(80);
       }

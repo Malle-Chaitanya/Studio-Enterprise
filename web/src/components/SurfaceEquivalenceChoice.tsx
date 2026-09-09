@@ -23,6 +23,12 @@ import { fetchSurfaceEquivalences, saveSurfaceDecision, refreshAgents, type Surf
  * decision deploys without those tools and says so in its report. Silence is not consent for
  * someone's mailbox or their team's chat history.
  *
+ * ONE exception: Dataverse ("Keep Dataverse" / "Use Cloud SQL") is not an identity choice —
+ * there is no mailbox or account to silently reach into — and its live Dataverse tool already
+ * worked with no decision at all before this choice existed. So an undecided Dataverse surface
+ * shows "Keep Dataverse" as already selected (server-defaulted), matching what actually
+ * happens today, rather than a misleading "Not decided" next to a tool that works fine.
+ *
  * The trade-offs are shown BEFORE the choice, per option, including the admin step each one
  * needs first — because both of those have turned out to be the thing that actually decides
  * whether a path works (a scope string, a Chat app, an application permission that does not
@@ -107,10 +113,12 @@ export function SurfaceEquivalenceChoice({
   async function decide(s: SurfaceEquivalence, decision: string) {
     const k = key(s);
     const email = emails[k]?.trim();
+    const needsIdentity = s.requiresIdentity !== false;
     // Checked here as well as on the server so the customer sees it inline rather than as a
     // failed request. Both targets need a mailbox: a deployed agent holds one identity, so
-    // "whose mail" is never implied by who is asking.
-    if (decision !== 'skip' && !email) {
+    // "whose mail" is never implied by who is asking. Dataverse ("Keep Dataverse" / "Use
+    // Cloud SQL") is not an identity choice at all, so it skips this entirely.
+    if (needsIdentity && decision !== 'skip' && !email) {
       setErrors((e) => ({ ...e, [k]: 'Enter the mailbox address this agent should use.' }));
       return;
     }
@@ -204,8 +212,8 @@ export function SurfaceEquivalenceChoice({
       {refreshError && <p className="error">{refreshError}</p>}
       <p className="muted">
         {surfaces.length === 1 ? 'One agent uses' : `${surfaces.length} agents use`}{' '}
-        {sourceNames}. Each one can keep using it after the agent moves, switch to the Google
-        equivalent, or migrate with no {nouns} tools at all.
+        {sourceNames}. Each one can keep using it after the agent moves, switch to the
+        alternative shown below, or migrate with no {nouns} tools at all.
         {undecided > 0 && (
           <>
             {' '}
@@ -259,18 +267,22 @@ export function SurfaceEquivalenceChoice({
             </div>
 
             <div className="surface-actions">
-              <label>
-                {nounOf(s) === 'mail'
-                  ? 'Mailbox this agent uses'
-                  : `Account this agent acts as (${nounOf(s)})`}
-                <input
-                  type="email"
-                  placeholder="person@yourcompany.com"
-                  value={emails[k] ?? ''}
-                  onChange={(e) => setEmails((m) => ({ ...m, [k]: e.target.value }))}
-                  disabled={busy === k}
-                />
-              </label>
+              {/* Dataverse has no identity to name — "Keep Dataverse" / "Use Cloud SQL" is a
+                  data-copy choice, not a mailbox/account one. */}
+              {s.requiresIdentity !== false && (
+                <label>
+                  {nounOf(s) === 'mail'
+                    ? 'Mailbox this agent uses'
+                    : `Account this agent acts as (${nounOf(s)})`}
+                  <input
+                    type="email"
+                    placeholder="person@yourcompany.com"
+                    value={emails[k] ?? ''}
+                    onChange={(e) => setEmails((m) => ({ ...m, [k]: e.target.value }))}
+                    disabled={busy === k}
+                  />
+                </label>
+              )}
               <button type="button" onClick={() => decide(s, 'skip')} disabled={busy === k}>
                 No {nounOf(s)} tools
               </button>

@@ -1,6 +1,6 @@
 import { createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { JWT } from 'google-auth-library';
+import { JWT, GoogleAuth } from 'google-auth-library';
 import { ALL_SCOPES, config, GOOGLE_SCOPES, SA_DIRECTORY_SCOPES, SA_SCOPES } from '../config.js';
 import { logger } from '../logger.js';
 import { mapPoolCollect } from '../concurrency.js';
@@ -107,6 +107,45 @@ async function mintSaToken(scopes: string[], impersonate?: string): Promise<stri
 
 export async function getSaToken(impersonate?: string): Promise<string> {
   return mintSaToken(SA_SCOPES, impersonate);
+}
+
+/**
+ * A `GoogleAuth` client for this codebase's own service account, for libraries that want
+ * a real auth OBJECT to drive their own token refresh (not a one-shot bearer string) —
+ * needed by @google-cloud/cloud-sql-connector (services/cloudSqlUpload.ts).
+ *
+ * `quotaProjectId` is passed here, per call, not read from a shared env var — the two
+ * were tried and rejected this session:
+ *   - Passing our own JWT/GoogleAuth instance directly used to be blocked by a duplicate
+ *     `google-auth-library` install (this codebase pinned v9, the connector required
+ *     v11) that made two structurally-identical classes type-incompatible. FIXED at the
+ *     root 2026-09-08 by upgrading this codebase to v11 too — there is now only one
+ *     installed copy, so a real auth object can cross the boundary cleanly.
+ *   - Pointing GOOGLE_APPLICATION_CREDENTIALS / GOOGLE_CLOUD_QUOTA_PROJECT at a shared
+ *     process-global env var was considered and REJECTED: this server can run different
+ *     customers' migrations concurrently in the same process, and a global env var would
+ *     risk one customer's Cloud SQL calls being billed/quota-attributed to a DIFFERENT
+ *     customer's project under real concurrency — a genuine multi-tenant correctness bug,
+ *     not just an style issue, for a product sold to multiple clients.
+ * Passing an explicit, per-call auth object (this function) has no shared mutable state
+ * at all, so it's safe under real concurrency.
+ *
+ * `quota_project_id` MUST be set INSIDE `credentials`, not via the sibling
+ * `clientOptions.quotaProjectId` — confirmed live 2026-09-08 that `clientOptions` is
+ * silently ignored on this code path (explicit `credentials`, not an ADC file), so a
+ * `quotaProjectId` set there never reaches the actual request and every call falls back
+ * to some other default project's quota, 403ing in a way that looks unrelated.
+ */
+export function getSaAuthClient(quotaProjectId: string): GoogleAuth {
+  const key = saKey();
+  return new GoogleAuth({
+    credentials: {
+      client_email: key.client_email as string,
+      private_key: key.private_key as string,
+      quota_project_id: quotaProjectId,
+    },
+    scopes: SA_SCOPES,
+  });
 }
 
 /**

@@ -1200,6 +1200,29 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
   },
 
   {
+    // "Excel Online (Business)" — a distinct Power Automate connector from `shared_onedrive`,
+    // but backed by the SAME Microsoft Graph app-only credential (workbook operations live
+    // under Graph's `/drives/{id}/items/{id}/workbook/...`). Added for Agent Flow migration:
+    // a real Deal Desk flow (GetRateSheetBand) calls this connector's `GetItems` ("List rows
+    // present in a table") operation — see services/flowMapper.ts's GRAPH_OP_BINDINGS.
+    id: 'shared_excelonlinebusiness',
+    name: 'Excel Online (Business)',
+    category: 'productivity',
+    icon: '📊',
+    docsUrl: 'https://learn.microsoft.com/en-us/graph/api/resources/excel',
+    credentials: [], // supplied by the ms_graph credential group
+    credentialGroup: 'ms_graph',
+    requiredPermissions: ['Files.Read.All', 'User.Read.All'],
+    adminConsentRequired: true,
+    permissionsHint: 'This lets the agent read Excel workbook tables from every employee\'s OneDrive/SharePoint in your organization.',
+    baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'oauth2-client-credentials',
+    tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+    scope: 'https://graph.microsoft.com/.default',
+  },
+
+  {
     id: 'shared_office365',
     name: 'Office 365 / Outlook',
     category: 'productivity',

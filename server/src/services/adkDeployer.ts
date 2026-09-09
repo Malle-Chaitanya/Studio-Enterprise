@@ -197,25 +197,39 @@ export interface AdkSpec {
    * MCP-server tools (Track C — same "real callable tool" requirement as `liveConnectors`
    * above, and for the identical reason: an LLM hallucinating a JSON-RPC call is not a
    * working tool). Built by `adk_deploy.py`'s `_build_mcp_toolset` into a real ADK
-   * `McpToolset` (confirmed live 2026-09-01 via `AgentRegistry.get_mcp_toolset` against
-   * Discovery Engine's own MCP server — connect → discover → call all proven working end
-   * to end for a *registry-sanctioned* tool).
+   * toolset via `AgentRegistry.get_mcp_toolset` (real class:
+   * `google.adk.integrations.agent_registry.agent_registry.AgentRegistry`, confirmed
+   * 2026-09-07 against a live installed google-adk 2.8.0 and Google's own generated code
+   * snippet for a real registry entry — an earlier guessed import path,
+   * `google.adk.tools.mcp_tool.agent_registry`, does NOT exist and was corrected).
    *
-   * ⚠️ Two things this field does NOT yet solve, both load-bearing before this ships live:
+   * ⚠️ Load-bearing gaps, still open:
    *   1. `secretIds` here is populated ONLY for tools whose credentials are already
    *      resolved elsewhere in the pipeline (mirroring `liveConnectors.secretIds`) — no
    *      new credential-resolution path is invented by this field. An OAuth-secured MCP
    *      tool with nothing in `secretIds` needs the same `buildLiveConnectorSpecsDetailed`
    *      +`preflightConnectors` treatment `liveConnectors` already gets; that wiring is
    *      the next concrete step, not done by this change.
-   *   2. `tools` (the allow-list) is confirmed load-bearing for a DIFFERENT reason than
-   *      `mcp.tools` on AgentToolIR implies: live-verified 2026-09-01 that a server can
-   *      advertise a tool over the raw MCP protocol (`list_engines`) that the platform's
-   *      OWN registry never sanctioned for calling — invoking it 403s regardless of any
-   *      IAM grant. `tool_filter` must therefore be built from the DESTINATION registry's
-   *      actual sanctioned tool list, intersected with the source's allow-list — never
-   *      from the source's `mcp.tools` alone, which can name a tool the destination
-   *      refuses to execute.
+   *   2. `tools` (the allow-list) is enforced by INSTRUCTION only, not by construction —
+   *      confirmed 2026-09-07 that `get_mcp_toolset()` in the installed SDK takes no
+   *      `tool_filter`/similar parameter at all; it returns every tool the server exposes.
+   *      A model could still be talked into calling something outside this list; it is a
+   *      strong hint, not a hard guarantee, until ADK adds a real construction-time filter.
+   *   3. `tools` is also load-bearing for a second, separate reason: live-verified
+   *      2026-09-01 that a server can advertise a tool over the raw MCP protocol
+   *      (`tools/list`) that the platform's OWN registry never sanctioned for calling —
+   *      invoking it 403s regardless of any IAM grant. So this list must be the
+   *      DESTINATION registry's actual sanctioned tool list, intersected with the
+   *      source's allow-list — never the source's `mcp.tools` alone, which can name a
+   *      tool the destination refuses to execute.
+   *   4. Live-tested 2026-09-07 (personal ADC login, `calendarmcp.googleapis.com`):
+   *      toolset construction succeeds, but the MCP session itself failed with
+   *      "Session terminated" — most likely gcloud's shared OAuth client being blocked
+   *      from requesting the Calendar scope for personal logins (a real, documented
+   *      Google-wide policy), not a defect in this code. A deployed Reasoning Engine
+   *      authenticates as its own service account, not a personal login, so this specific
+   *      failure should not recur in a real deploy — but that has NOT been independently
+   *      re-confirmed with a service-account run as of this change.
    */
   mcpTools?: Array<{
     id: string;
@@ -229,12 +243,47 @@ export interface AdkSpec {
      *  ONLY path proven live end-to-end so far. Absent means adk_deploy.py must fall back
      *  to a raw-URL McpToolset construction, which has NOT been live-verified. */
     registryServerName?: string;
+    /** Agent Registry location for `registryServerName`, e.g. `global` — every
+     *  Google-managed server observed so far (Calendar, Gmail, Discovery Engine, ...) is
+     *  registered at `global`. Defaults to `global` in adk_deploy.py when omitted. */
+    registryLocation?: string;
     /** Intersection of the source's allow-list and what the destination registry actually
-     *  sanctions for this server — see the field-level warning above for why this is not
-     *  simply AgentToolIR.mcp.tools. */
+     *  sanctions for this server — see the field-level warnings above for why this is not
+     *  simply AgentToolIR.mcp.tools, and why it is enforced by instruction, not construction. */
     tools?: string[];
     authKind?: string;
     secretIds?: Record<string, string>;
+  }>;
+  /**
+   * Migrated Copilot Studio Agent Flows, each already created as a real Application
+   * Integration by services/applicationIntegration.ts (Phase 2, before this deploy runs —
+   * see orchestrator.ts's flow-creation block) — `executeUrl` is a concrete, already-live
+   * endpoint, not something adk_deploy.py has to build or discover. One `FunctionTool` per
+   * entry, built generically from this list (see scripts/adk_deploy.py's `_build_flow_tool`).
+   */
+  flowTools?: Array<{
+    name: string;
+    description?: string;
+    executeUrl: string;
+    inputParameters: { key: string; displayName: string; dataType?: string }[];
+  }>;
+  /**
+   * Full-tenant-cutover Dataverse tools, already copied into Cloud SQL by
+   * services/cloudSqlMigration.ts (Phase 2, before this deploy runs — see orchestrator.ts's
+   * cutover block, same placement pattern as flowTools above). One `FunctionTool` per entry,
+   * built generically from this list (see scripts/connector_tools/cloudsql.py's build_tools).
+   * The deployed tool queries Postgres directly via IAM auth — zero stored password.
+   */
+  cloudSqlTools?: Array<{
+    name: string;
+    description?: string;
+    instanceConnectionName: string;
+    database: string;
+    table: string;
+    primaryKeyAttr: string;
+    /** Real column names — the deployed tool's SQL-injection defense (allowlist for a
+     *  model-supplied filter column; the value is always a parameterized bind). */
+    columns: string[];
   }>;
   /**
    * Migrated Copilot topics, deployed as ADK sub-agents INSIDE this one Reasoning
@@ -908,6 +957,11 @@ export async function publishAgentToGallery(
     /** This agent's MCP-server tools (see AdkSpec.mcpTools) — built by the caller from
      *  ir.agentTools, same as liveConnectors is built by connectorToolBuilder. */
     mcpTools?: AdkSpec['mcpTools'];
+    /** This agent's migrated flows, already created in Google (see AdkSpec.flowTools). */
+    flowTools?: AdkSpec['flowTools'];
+    /** This agent's full-tenant-cutover Dataverse tools, already copied into Cloud SQL
+     *  (see AdkSpec.cloudSqlTools). */
+    cloudSqlTools?: AdkSpec['cloudSqlTools'];
   },
 ): Promise<{
   ok: boolean;
@@ -1106,6 +1160,8 @@ export async function publishAgentToGallery(
   }
   if (opts?.subAgents?.length) spec.subAgents = opts.subAgents;
   if (opts?.mcpTools?.length) spec.mcpTools = opts.mcpTools;
+  if (opts?.flowTools?.length) spec.flowTools = opts.flowTools;
+  if (opts?.cloudSqlTools?.length) spec.cloudSqlTools = opts.cloudSqlTools;
   logger.info({ agent: ir.name, location }, 'adk: deploying reasoning engine');
   opts?.onStep?.('deploy', 'start', `Building and deploying ${ir.name} (3-5 min)`);
   const dep = await deployReasoningEngine(dest.project, location, spec, { stagingBucket: opts?.stagingBucket });

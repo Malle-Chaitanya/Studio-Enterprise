@@ -384,6 +384,14 @@ export function Migrate() {
 function AgentCard({ r, dry }: { r: MigrationResult; dry: boolean }) {
   const isDry = dry || r.error === 'dry-run (not created)';
   const realError = !isDry && r.error;
+  // The tallies below (auto/adapt/needs review) were the only thing shown here — every
+  // individual fidelity note, including things like "Outlook -> Use Gmail" or "Dataverse ->
+  // Cloud SQL", only ever reached a terminal (via emitLog/pino), never this page. A
+  // customer running a live migration through the browser — not a diagnostic script — had
+  // no way to see WHAT got substituted for what, only a count. Expanding this shows the
+  // real per-tool detail text already computed server-side (same text the Excel report
+  // gets), so cross-vendor substitutions are visible wherever the migration actually runs.
+  const [expanded, setExpanded] = useState(false);
   let auto = 0;
   let adapt = 0;
   let review = 0;
@@ -410,11 +418,35 @@ function AgentCard({ r, dry }: { r: MigrationResult; dry: boolean }) {
       {realError && <div className="fidelity" style={{ color: 'var(--fail)' }}>{realError}</div>}
       {r.verifySample && <div className="fidelity">“{r.verifySample}”</div>}
       {r.fidelity.length > 0 && (
-        <div className="chips" style={{ marginTop: 8 }}>
+        <div className="chips" style={{ marginTop: 8, alignItems: 'center' }}>
           {auto > 0 && <span className="tag supported">{auto} auto</span>}
           {adapt > 0 && <span className="tag partial">{adapt} adapt</span>}
           {review > 0 && <span className="tag manual">{review} needs review</span>}
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--brand)',
+              fontSize: 12,
+              padding: 0,
+              marginLeft: 4,
+            }}
+          >
+            {expanded ? 'Hide details' : `Show details (${r.fidelity.length})`}
+          </button>
         </div>
+      )}
+      {expanded && (
+        <ul style={{ margin: '8px 0 0 18px', padding: 0, listStyle: 'disc' }}>
+          {r.fidelity.map((f, i) => (
+            <li key={i} style={{ fontSize: 13, marginBottom: 5 }}>
+              <strong>{f.component.replace(/^[a-z]+:/, '')}</strong> <span style={{ color: 'var(--muted)' }}>({f.status})</span> — {f.detail}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

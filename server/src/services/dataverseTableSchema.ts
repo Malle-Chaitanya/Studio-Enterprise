@@ -44,7 +44,7 @@ export interface BqSchemaField {
   mode?: 'REQUIRED' | 'NULLABLE';
 }
 
-type ColumnKind =
+export type ColumnKind =
   | 'string'
   | 'timestamp'
   | 'boolean'
@@ -94,7 +94,10 @@ export async function resolveTableAttributes(
   return json.value?.[0]?.Attributes ?? null;
 }
 
-function classifyAttribute(attributeType: string): ColumnKind {
+/** Exported for services/dataverseTablePgSchema.ts — the Postgres sibling of this module's
+ *  BigQuery type mapping reuses the exact same Dataverse-type classification, so the two
+ *  destinations never silently disagree about what kind of column an attribute becomes. */
+export function classifyAttribute(attributeType: string): ColumnKind {
   switch (attributeType) {
     case 'String':
     case 'Memo':
@@ -165,7 +168,9 @@ function columnsFor(attr: string, kind: ColumnKind): BqSchemaField[] {
   }
 }
 
-function flattenedNoteFor(attr: string, kind: ColumnKind): string | null {
+/** Exported for reuse by dataverseTablePgSchema.ts — same fidelity-note wording regardless
+ *  of destination, so a lookup/choice/money flattening reads identically in either report. */
+export function flattenedNoteFor(attr: string, kind: ColumnKind): string | null {
   switch (kind) {
     case 'lookup':
       return `"${attr}" is a lookup — flattened to id + display-name string; the relationship to the target record is not preserved.`;
@@ -209,7 +214,7 @@ export function buildBqSchema(attrs: DataverseAttributeDef[], primaryKeyAttr: st
 function shapeRow(
   raw: Record<string, unknown>,
   primaryKeyAttr: string,
-  plan: ColumnPlanEntry[],
+  plan: { attr: string; kind: ColumnKind }[],
 ): Record<string, unknown> {
   const idVal = raw[primaryKeyAttr];
   const out: Record<string, unknown> = { id: typeof idVal === 'string' ? idVal : String(idVal ?? '') };
@@ -263,7 +268,11 @@ export async function exportTableRowsForBigQuery(
   token: string,
   entitySetName: string,
   primaryKeyAttr: string,
-  plan: ColumnPlanEntry[],
+  // Only `attr`/`kind` are read (see shapeRow) — typed loosely on purpose so
+  // dataverseTablePgSchema.ts's own plan (same shape, different `columns` type) can be
+  // passed straight through without a pointless conversion. The function's name says
+  // "ForBigQuery" but the row shape it produces is a plain object, destination-agnostic.
+  plan: { attr: string; kind: ColumnKind }[],
   maxRows: number,
 ): Promise<Record<string, unknown>[]> {
   const rows: Record<string, unknown>[] = [];

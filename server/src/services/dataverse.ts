@@ -3,11 +3,12 @@ import { logger } from '../logger.js';
 import { ComponentType } from '../types.js';
 import { parseTopicGraph } from './topicGraph.js';
 import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClassifier.js';
-import { resolveConnectorId, connectionAuthModeFrom } from './connectorRef.js';
+import { resolveConnectorId, connectionAuthModeFrom, connectorIdFromArmPath } from './connectorRef.js';
 import { parseToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef, parseTopicConnectorActions } from './toolPayload.js';
 import { resolveMcpServerUrls } from '../connectors/customConnectorInventory.js';
-import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
+import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, FlowActionIR, FlowConnectionReferenceIR, FlowIR, FlowParameterIR, FlowTriggerIR, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
 import { fetchWithThrottleBackoff } from './httpTransient.js';
+import { mapPoolCollect } from '../concurrency.js';
 
 /**
  * Copilot Studio extraction: reads an agent's complete definition from the
@@ -963,6 +964,166 @@ function parseAgentTool(c: BotComponent): AgentToolIR {
   };
 }
 
+/** WDL JSON Schema `type` -> our FlowParameterIR.dataType. Confirmed live: a Copilot
+ *  "Number" field really does extract as `type: "number"` (not a string masquerading as
+ *  one) — see FlowParameterIR.dataType's own comment for the bug this fixes. */
+function flowParamDataType(schemaType: unknown): FlowParameterIR['dataType'] {
+  switch (schemaType) {
+    case 'string':
+      return 'string';
+    case 'number':
+    case 'integer':
+      return 'number';
+    case 'boolean':
+      return 'boolean';
+    case 'array':
+      return 'array';
+    case 'object':
+      return 'object';
+    default:
+      return 'unknown';
+  }
+}
+
+/** A flow's `triggers.manual` (or whatever the trigger key really is — read, not assumed). */
+function parseFlowTrigger(triggers: Record<string, unknown> | undefined): FlowTriggerIR | undefined {
+  if (!triggers) return undefined;
+  const entry = Object.values(triggers)[0] as
+    | { type?: string; kind?: string; inputs?: { schema?: { properties?: Record<string, unknown>; required?: string[] } } }
+    | undefined;
+  if (!entry) return undefined;
+  const props = entry.inputs?.schema?.properties ?? {};
+  const required = entry.inputs?.schema?.required ?? [];
+  const inputSchema: FlowParameterIR[] = Object.entries(props).map(([key, val]) => {
+    const v = val as { description?: unknown; type?: unknown };
+    return {
+      name: key,
+      displayName: typeof v.description === 'string' ? v.description.trim() : undefined,
+      dataType: flowParamDataType(v.type),
+      required: required.includes(key),
+    };
+  });
+  return { type: entry.type ?? 'Request', kind: entry.kind, inputSchema, raw: entry };
+}
+
+/**
+ * Recursively parse one WDL action node into a generic FlowActionIR. `type` is preserved
+ * verbatim regardless of whether it's recognized — an unrecognized action still round-trips
+ * via `raw` and surfaces as a translation-time fidelity note (services/flowMapper.ts),
+ * never silently dropped at extraction. Nested action maps (If/Switch branches, and any
+ * other WDL construct that nests `actions`, e.g. Scope/Foreach/Until) are walked the same
+ * way so their contents are preserved even before a translator exists for that shape.
+ */
+function parseOneFlowAction(id: string, a: Record<string, unknown>): FlowActionIR {
+  const type = String(a.type ?? 'unknown');
+  const runAfter = (a.runAfter as Record<string, string[]> | undefined) ?? {};
+  const node: FlowActionIR = { id, type, runAfter, raw: a };
+  const inputs = a.inputs as Record<string, unknown> | undefined;
+
+  if (type === 'Compose') {
+    node.compose = { template: inputs };
+  } else if (type === 'Response') {
+    node.response = {
+      statusCode: inputs?.statusCode as number | undefined,
+      bodyTemplate: inputs?.body,
+      schema: inputs?.schema,
+    };
+  } else if (type === 'OpenApiConnection') {
+    const host = (inputs?.host as Record<string, unknown> | undefined) ?? {};
+    node.connector = {
+      connectionReferenceName: (host.connectionName as string | undefined) ?? '',
+      apiId: host.apiId as string | undefined,
+      operationId: host.operationId as string | undefined,
+      parameters: inputs?.parameters as Record<string, unknown> | undefined,
+    };
+  } else if (type === 'If') {
+    node.condition = a.expression;
+    const elseActions = (a.else as { actions?: Record<string, unknown> } | undefined)?.actions;
+    node.branches = [
+      { label: 'true', actions: parseFlowActions(a.actions as Record<string, unknown> | undefined) },
+      { label: 'false', actions: parseFlowActions(elseActions) },
+    ];
+  } else if (type === 'Switch') {
+    node.switchOn = a.expression;
+    const branches: { label: string; actions: FlowActionIR[] }[] = [];
+    const cases = (a.cases as Record<string, { case?: unknown; actions?: Record<string, unknown> }> | undefined) ?? {};
+    for (const [caseName, caseVal] of Object.entries(cases)) {
+      branches.push({ label: String(caseVal?.case ?? caseName), actions: parseFlowActions(caseVal?.actions) });
+    }
+    const defaultActions = (a.default as { actions?: Record<string, unknown> } | undefined)?.actions;
+    if (defaultActions) branches.push({ label: 'default', actions: parseFlowActions(defaultActions) });
+    node.branches = branches;
+  } else if (a.actions) {
+    // Scope/Foreach/Until/etc — no Application Integration equivalent proven yet (see
+    // flowMapper.ts's honest fallback), but extraction still preserves the real nesting.
+    node.branches = [{ label: 'body', actions: parseFlowActions(a.actions as Record<string, unknown>) }];
+  }
+  return node;
+}
+
+/** Walk a WDL actions map (key order preserved; dependency order lives in `runAfter`, never assumed from map order). */
+function parseFlowActions(actions: Record<string, unknown> | undefined): FlowActionIR[] {
+  if (!actions) return [];
+  return Object.entries(actions).map(([id, a]) => parseOneFlowAction(id, a as Record<string, unknown>));
+}
+
+function parseFlowConnectionReferences(
+  refs: Record<string, unknown> | undefined,
+): FlowConnectionReferenceIR[] {
+  if (!refs) return [];
+  return Object.entries(refs).map(([name, def]) => {
+    const api = (def as { api?: { name?: string } } | undefined)?.api;
+    const apiName = api?.name;
+    // Observed live: `api.name` is already a bare connector id (e.g. "shared_teams"), not
+    // an ARM path — but connectorIdFromArmPath is tried first so an environment that DOES
+    // store the full ARM path here is handled the same way agent-level tools already are.
+    const connectorId = connectorIdFromArmPath(apiName) ?? apiName?.toLowerCase();
+    return { name, connectorId, raw: def };
+  });
+}
+
+/**
+ * Parse one flow's real Dataverse `workflows.clientdata` (Azure Logic Apps Workflow
+ * Definition Language JSON) into a lossless FlowIR. Never throws — an unparseable or
+ * unrecognized payload still returns a valid FlowIR with the gap named in `unmapped`,
+ * so one bad flow can never fail the whole agent's extraction.
+ */
+export function parseFlowDefinition(clientdata: string, flowId: string, flowName: string): FlowIR {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(clientdata);
+  } catch (e) {
+    return {
+      id: flowId,
+      name: flowName,
+      actions: [],
+      connectionReferences: [],
+      unmapped: [`clientdata is not valid JSON: ${(e as Error).message}`],
+    };
+  }
+  const p = parsed as { properties?: { definition?: unknown; connectionReferences?: unknown }; definition?: unknown; connectionReferences?: unknown };
+  const def = (p.properties?.definition ?? p.definition) as
+    | { triggers?: Record<string, unknown>; actions?: Record<string, unknown> }
+    | undefined;
+  const connRefs = (p.properties?.connectionReferences ?? p.connectionReferences) as Record<string, unknown> | undefined;
+  if (!def) {
+    return {
+      id: flowId,
+      name: flowName,
+      actions: [],
+      connectionReferences: [],
+      raw: parsed,
+      unmapped: ['no definition object found under properties.definition or definition'],
+    };
+  }
+  const trigger = parseFlowTrigger(def.triggers);
+  const actions = parseFlowActions(def.actions);
+  const connectionReferences = parseFlowConnectionReferences(connRefs);
+  const unmapped: string[] = [];
+  if (!trigger) unmapped.push('no recognizable trigger found under triggers.manual');
+  return { id: flowId, name: flowName, trigger, actions, connectionReferences, raw: parsed, unmapped };
+}
+
 function parseTopic(c: BotComponent, isChildAgent?: boolean): TopicIR {
   const raw = c.data ?? '';
   const doc = tryParseYaml(raw);
@@ -1854,6 +2015,46 @@ export async function extractAgent(
     await resolveMcpServerUrls(agentTools, mcpContext.tenantId, mcpContext.environmentId).catch(() => {});
   }
 
+  // Agent Flows: each `flow`-kind tool's real definition, fetched from Dataverse
+  // `workflows.clientdata` and parsed losslessly into FlowIR (generic — no per-flow
+  // special-casing). Bounded concurrency, same pattern as every other Dataverse fan-out
+  // in this file. A flow that fails to fetch or parse degrades to its own `unmapped`
+  // note rather than failing the whole agent's extraction — same discipline as every
+  // other best-effort read here.
+  const flowIds = [...new Set(agentTools.filter((t) => t.kind === 'flow' && t.flowId).map((t) => t.flowId!))];
+  let flows: FlowIR[] | undefined;
+  if (flowIds.length) {
+    flows = await mapPoolCollect(flowIds, 4, async (flowId): Promise<FlowIR> => {
+      try {
+        const wf = await dvGet<{ name?: string; clientdata?: string }>(
+          url,
+          token,
+          `workflows(${flowId})?$select=workflowid,name,clientdata`,
+        );
+        const name = wf.name ?? '(unnamed flow)';
+        if (!wf.clientdata) {
+          return { id: flowId, name, actions: [], connectionReferences: [], unmapped: ['no clientdata on this workflow row'] };
+        }
+        const flow = parseFlowDefinition(wf.clientdata, flowId, name);
+        flow.ownerToolName = agentTools.find((t) => t.flowId === flowId)?.name;
+        return flow;
+      } catch (e) {
+        logger.warn({ err: e, flowId, bot: bot.name }, 'extractAgent: flow fetch failed');
+        return { id: flowId, name: '(unnamed flow)', actions: [], connectionReferences: [], unmapped: [`fetch failed: ${(e as Error).message}`] };
+      }
+    });
+    // Honest wording matters here specifically: the flow-migration feature is still being
+    // built (extraction only, as of this note) — flowMapper.ts / applicationIntegration.ts
+    // do not exist yet, so nothing downstream actually creates these in Gemini. Do not
+    // claim "translated"/"migrated" until that's true, or this note becomes exactly the
+    // overclaiming the fidelity-honesty rule forbids.
+    unmapped.push(
+      `${flows.length} agent flow(s) extracted: ${flows.map((f) => f.name).join(', ')}. Flow migration to ` +
+        `Gemini Application Integration is not yet implemented — these flows are captured in the IR but no ` +
+        `tool is created for them in this run.`,
+    );
+  }
+
   logger.info(
     {
       bot: bot.name,
@@ -1882,6 +2083,7 @@ export async function extractAgent(
     sourceMetadata,
     permissions,
     agentTools: agentTools.length ? agentTools : undefined,
+    flows: flows?.length ? flows : undefined,
   };
 }
 

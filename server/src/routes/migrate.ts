@@ -769,8 +769,14 @@ migrateRouter.get('/surface-equivalence', async (req, res) => {
           sourceName: eq.sourceName,
           noun: eq.noun,
           targets: eq.targets,
-          decision: decided?.decision ?? null,
+          // Every surface but Dataverse leaves defaultDecision unset, so this is `null` for
+          // them exactly as before — undecided reads as undecided. Dataverse shows its
+          // default ("Keep Dataverse") as already selected here, because that IS what
+          // happens at migration time when nothing was explicitly chosen; showing "Not
+          // decided" instead would flatly contradict the tool that already works today.
+          decision: decided?.decision ?? eq.defaultDecision ?? null,
           impersonateEmail: decided?.impersonateEmail ?? null,
+          requiresIdentity: eq.requiresIdentity !== false,
         });
       }
     }
@@ -822,7 +828,11 @@ migrateRouter.post('/surface-equivalence', async (req, res) => {
   }
 
   const target = email?.trim();
-  if (chosen) {
+  // Dataverse ("Use Cloud SQL" / "Keep Dataverse") is not an identity choice — there is no
+  // mailbox/account to name, so this whole block is skipped for it. See
+  // SURFACE_EQUIVALENTS.requiresIdentity's own doc comment for why it's the one exception.
+  const needsIdentity = equivalent.requiresIdentity !== false;
+  if (chosen && needsIdentity) {
     if (!target) {
       return void res.status(400).json({
         error: 'email_required',
