@@ -3521,3 +3521,57 @@ narrow: transport only, never a bad spec, quota or auth error, which fail identi
 `verified=true`, no warnings. They were found by asking the agent to do its job.
 
 **Suite:** 28 files, 337 tests, `tsc --noEmit` clean in `server/` and `web/`.
+
+## 1.55 — Dataverse impersonation applies the CALLER's roles, proven both ways (2026-09-09)
+
+**The last open item from §1.47 is closed.** That entry proved the NEGATIVE half — an
+app-only call carrying `MSCRMCallerID` for a role-less user is refused. It could not prove the
+positive half, because no human user in the test tenant had a security role worth contrasting.
+Both halves are now on record.
+
+Reading `cr88d_clientcreditfacilities` app-only, **only `MSCRMCallerID` differing**:
+
+```
+erik@filefuze.co  (System Administrator)  200  3 rows  Atlas Industrial Group | Northgate Retail Partners | Meridian Foods Inc.
+alex@filefuze.co  (Environment Maker)     403  "Principal user ... roleCount=1, privilegeCount=1345"
+```
+
+Then `alex@filefuze.co` was granted **System Customizer** and the same probe re-run:
+
+```
+erik@filefuze.co  200  3 rows
+alex@filefuze.co  200  3 rows   <- was 403
+```
+
+Same credential, same query, same code. The caller's roles decide the result, and the decision
+is read **live per request** — not cached at deploy time, not baked into the container. That
+last point matters: `callerIdentityMap` IS baked at deploy, so it would have been reasonable to
+assume the permission decision was too. It is not.
+
+**The source agent agrees.** Copilot Studio's own test pane, asked as Alex, returns
+`ConnectorAuthorizationError` / HTTP 403 on the same table. A migrated agent refusing Alex is
+therefore FIDELITY, not a defect — the alarming outcome would be Alex succeeding after
+migration when he fails before it.
+
+**Three of the five roles that grant read on that table cannot be given to a human at all**,
+which is not documented anywhere obvious and costs an afternoon to discover:
+
+| Role | Assignable to a user? |
+|---|---|
+| Service Reader | NO — `0x80090911` "can only be assigned to an app user" |
+| Service Writer | NO — same |
+| Support User | NO — `0x80041d44` "cannot be assigned to a user" |
+| System Customizer | yes — and grants Organization-depth read on this custom table |
+| System Administrator | yes — too broad to use for this |
+
+So "give the user the least-privilege role that covers the table" has exactly one answer here,
+System Customizer, and the genuinely minimal option would be a custom role with Read at
+Organization depth on that one table.
+
+**Caveat for whoever reads this next:** alex@filefuze.co now HOLDS System Customizer, so the
+erik-vs-alex contrast no longer exists in this tenant. Revert the role before using that pair
+for a demo. The grant script prints its own DELETE URL.
+
+**Probes (read-only unless named otherwise):** `_probe_dv_as_user.ts` (the contrast),
+`_probe_dv_erik_alex.ts` (roles per user), `_probe_dv_roles_with_priv.ts` (which roles hold a
+privilege), `_prep_grant_alex_role.ts` (WRITES — grants one role, prints the revert).
