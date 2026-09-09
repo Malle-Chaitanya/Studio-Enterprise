@@ -40,6 +40,22 @@ DEFAULT_RESULTS = 10
 MAX_BODY_CHARS = 20000
 
 
+# Graph's sendMail/reply/forward/send all answer 202 Accepted, which means QUEUED, not
+# delivered. Delivery failures arrive later and out of band, as a bounce in the mailbox --
+# Exchange refusing on a recipient-rate limit ("550 5.1.90 ... reached your daily limit for
+# message recipients") is the common one, and the send call cannot see it.
+#
+# Observed live 2026-09-09: a migrated agent answered "OK, I've sent the email" while five
+# Undeliverable bounces for that exact send were already landing in the mailbox. Reporting
+# `sent: True` there is overclaiming -- the tool asserts a delivery it has no knowledge of,
+# and the agent repeats it to the person as fact.
+_DELIVERY_NOTE = (
+    "Accepted by Microsoft 365 for delivery. This is not confirmation of delivery: a bounce "
+    "(for example a recipient-rate limit) arrives later as a message in the mailbox. Say the "
+    "mail was submitted or queued, never that it was definitely received."
+)
+
+
 def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
     # Helpers are nested, NOT module level. cloudpickle serialises these closures by value
     # into the Reasoning Engine pickle; a module-level helper is pickled by REFERENCE as
@@ -393,7 +409,10 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         before calling this. Never send on a guess about what they meant.
 
         Returns:
-            dict with `sent` true, `to`, `subject`, or `error`.
+            dict with `queued` true plus a `delivery` caveat, `to`, `subject`, or `error`.
+
+            `queued` means Microsoft 365 ACCEPTED the message, not that it arrived. Tell the
+            user it was submitted; a bounce can still follow.
         """
         if not to:
             return {"error": "a recipient (to) is required"}
@@ -411,7 +430,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             _graph(f"{_user_path()}/sendMail", token, method="POST", body=payload)
         except Exception as e:  # noqa: BLE001
             return _err(e, "Outlook send failed")
-        return {"sent": True, "mailbox": _mailbox(), "to": to, "subject": subject}
+        return {"queued": True, "delivery": _DELIVERY_NOTE, "mailbox": _mailbox(), "to": to, "subject": subject}
 
     def outlook_reply_to_message(message_id: str, body: str, reply_all: bool = False) -> dict:
         """Reply to an email, keeping it in the same conversation. Irreversible.
@@ -439,7 +458,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                    method="POST", body={"comment": body or ""})
         except Exception as e:  # noqa: BLE001
             return _err(e, "Outlook reply failed")
-        return {"sent": True, "mailbox": _mailbox(), "repliedTo": message_id, "replyAll": bool(reply_all)}
+        return {"queued": True, "delivery": _DELIVERY_NOTE, "mailbox": _mailbox(), "repliedTo": message_id, "replyAll": bool(reply_all)}
 
     def outlook_forward_message(message_id: str, to: str, comment: str = "") -> dict:
         """Forward an email to someone else. Irreversible.
@@ -464,7 +483,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                    body={"comment": comment or "", "toRecipients": _to_recipients(to)})
         except Exception as e:  # noqa: BLE001
             return _err(e, "Outlook forward failed")
-        return {"sent": True, "mailbox": _mailbox(), "to": to,
+        return {"queued": True, "delivery": _DELIVERY_NOTE, "mailbox": _mailbox(), "to": to,
                 "note": "Attachments were forwarded with the message."}
 
     def outlook_create_draft(to: str, subject: str, body: str, cc: str = "") -> dict:
@@ -512,7 +531,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             _graph(f"{_user_path()}/messages/{draft_id}/send", token, method="POST", body={})
         except Exception as e:  # noqa: BLE001
             return _err(e, "Outlook draft send failed")
-        return {"sent": True, "mailbox": _mailbox(), "id": draft_id}
+        return {"queued": True, "delivery": _DELIVERY_NOTE, "mailbox": _mailbox(), "id": draft_id}
 
     def outlook_move_message(message_id: str, folder_id: str) -> dict:
         """Move an email to a different folder.

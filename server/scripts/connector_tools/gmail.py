@@ -34,6 +34,19 @@ MAX_RESULTS = 25
 DEFAULT_RESULTS = 10
 MAX_BODY_CHARS = 20000
 
+# Gmail's messages.send returns the created message, which means ACCEPTED for delivery, not
+# delivered. A bounce arrives later and out of band as a new message in the mailbox, so the
+# send call cannot see it. Reporting `sent: True` asserts a delivery this code has no
+# knowledge of, and the agent repeats that to the person as fact -- see the same fix in
+# outlook.py, where a migrated agent said "I've sent the email" while five Undeliverable
+# bounces for that exact send were already arriving (observed live 2026-09-09).
+_DELIVERY_NOTE = (
+    "Accepted by Gmail for delivery. This is not confirmation of delivery: a bounce (for "
+    "example a recipient-rate limit or an unknown address) arrives later as a message in the "
+    "mailbox. Say the mail was submitted or queued, never that it was definitely received."
+)
+
+
 def build_tools(conn, secret, mint_token, auth_header, fill):
     # Helpers live INSIDE build_tools deliberately, matching every other connector module
     # (confluence, google_drive, jira, sharepoint, generic_rest — none defines a helper at
@@ -390,7 +403,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
         except Exception as e:  # noqa: BLE001
             return {"error": f"Gmail send failed: {e}"}
         return {
-            "sent": True, "mailbox": _mailbox(), "id": sent.get("id"),
+            "queued": True, "delivery": _DELIVERY_NOTE, "mailbox": _mailbox(), "id": sent.get("id"),
             "threadId": sent.get("threadId"), "to": to, "subject": subject,
         }
 
@@ -437,7 +450,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
                           {"raw": raw, "threadId": original.get("threadId")}, token)
         except Exception as e:  # noqa: BLE001
             return {"error": f"Gmail reply failed: {e}"}
-        return {"sent": True, "mailbox": _mailbox(), "id": sent.get("id"),
+        return {"queued": True, "delivery": _DELIVERY_NOTE, "mailbox": _mailbox(), "id": sent.get("id"),
                 "threadId": sent.get("threadId"), "to": to, "subject": subject}
 
     def gmail_forward_message(message_id: str, to: str, comment: str = "") -> dict:
@@ -494,7 +507,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
             sent = _write("/messages/send", {"raw": _mime(to, subject, quoted)}, token)
         except Exception as e:  # noqa: BLE001
             return {"error": f"Gmail forward failed: {e}"}
-        result = {"sent": True, "mailbox": _mailbox(), "id": sent.get("id"), "to": to,
+        result = {"queued": True, "delivery": _DELIVERY_NOTE, "mailbox": _mailbox(), "id": sent.get("id"), "to": to,
                   "subject": subject, "attachmentsDropped": dropped}
         if dropped:
             result["note"] = (
@@ -597,7 +610,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
             sent = _write("/drafts/send", {"id": draft_id}, token)
         except Exception as e:  # noqa: BLE001
             return {"error": f"Gmail draft send failed: {e}"}
-        return {"sent": True, "mailbox": _mailbox(), "id": sent.get("id"),
+        return {"queued": True, "delivery": _DELIVERY_NOTE, "mailbox": _mailbox(), "id": sent.get("id"),
                 "threadId": sent.get("threadId")}
 
     def gmail_trash_message(message_id: str) -> dict:
