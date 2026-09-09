@@ -49,15 +49,32 @@ function tokenize(src: string): Token[] {
     if (c === "'") {
       let j = i + 1;
       let value = '';
-      while (j < src.length && src[j] !== "'") {
-        // WDL escapes an embedded single quote as ''
-        if (src[j] === "'" && src[j + 1] === "'") {
-          value += "'";
-          j += 2;
-          continue;
+      // The escape check MUST come before the terminator check. Written the other way
+      // round -- `while (... && src[j] !== "'")` with the escape branch inside -- the guard
+      // excludes the very character the branch tests for, so the branch is unreachable and
+      // a doubled quote reads as end-of-string. That truncated silently:
+      // concat('Customer''s order', name) parsed to the single string "Customer", losing the
+      // rest of the literal AND the following argument, with no error and no `raw` fallback.
+      let closed = false;
+      while (j < src.length) {
+        if (src[j] === "'") {
+          // WDL escapes an embedded single quote as ''
+          if (src[j + 1] === "'") {
+            value += "'";
+            j += 2;
+            continue;
+          }
+          closed = true;
+          break;
         }
         value += src[j];
         j++;
+      }
+      if (!closed) {
+        // Unterminated literal. Stop tokenizing so the parser falls back to `raw`, the same
+        // way an unrecognized character below does -- an honest unparseable beats a
+        // confidently wrong string built by inventing a closing quote.
+        break;
       }
       tokens.push({ type: 'string', value });
       i = j + 1;

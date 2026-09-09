@@ -89,3 +89,51 @@ describe('unwrapAccessors', () => {
     expect(u).toBeUndefined();
   });
 });
+
+/**
+ * Doubled-quote escapes.
+ *
+ * The tokenizer had the escape branch INSIDE a loop whose guard already excluded `'`, so it
+ * was unreachable and a doubled quote read as end-of-string. Nothing failed: it truncated.
+ * concat('Customer''s order', name) parsed to the single string "Customer" -- the rest of the
+ * literal and the following argument both vanished, with no error and no `raw` fallback, so a
+ * migrated Compose template would carry silently wrong text. That is lossy AND dishonest,
+ * which is the combination this project treats as unacceptable.
+ */
+describe('WDL doubled-quote escapes', () => {
+  it('keeps an escaped quote inside the literal', () => {
+    expect(parseFlowExpr("concat('it''s')")).toEqual({
+      kind: 'call',
+      name: 'concat',
+      args: [{ kind: 'string', value: "it's" }],
+    });
+  });
+
+  it('does not swallow the arguments that follow an escaped quote', () => {
+    const e = parseFlowExpr("concat('Customer''s order', 'x')") as { args: unknown[] };
+    expect(e.args).toHaveLength(2);
+    expect(e.args[0]).toEqual({ kind: 'string', value: "Customer's order" });
+    expect(e.args[1]).toEqual({ kind: 'string', value: 'x' });
+  });
+
+  it('handles several escapes in one literal', () => {
+    expect(parseFlowExpr("concat('a''b''c')")).toEqual({
+      kind: 'call',
+      name: 'concat',
+      args: [{ kind: 'string', value: "a'b'c" }],
+    });
+  });
+
+  it('still parses an empty literal', () => {
+    expect(parseFlowExpr("concat('')")).toEqual({
+      kind: 'call',
+      name: 'concat',
+      args: [{ kind: 'string', value: '' }],
+    });
+  });
+
+  it('falls back to raw on an unterminated literal rather than inventing a closing quote', () => {
+    const e = parseFlowExpr("concat('unterminated") as { args: { kind: string }[] };
+    expect(e.args[0].kind).toBe('raw');
+  });
+});

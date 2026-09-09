@@ -226,6 +226,182 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
+## 2026-09-03 — Phase 2 headless execution engine re-decision: Application Integration recommended over Cloud Workflows (Architect recommendation — NOT yet the user's approval)
+
+- **Decision (recommendation, requires the user's own explicit sign-off before
+  implementation)**: Reopens, at the user's explicit request, only the "which headless GCP
+  product implements Phase 2 flow execution" question — NOT the headless-vs-agent-tool
+  call in the entry immediately below, which stays as the historical record and is not
+  disturbed. The original follow-up design doc,
+  `docs/design/FLOWS-PHASE2-ARCHITECTURE.md`, assumed Cloud Workflows + Cloud Scheduler +
+  Cloud Run/Eventarc as the only headless option, because that was the only option ever
+  evaluated. A researcher pass ran a head-to-head fact check against **Google Cloud
+  Application Integration**, never evaluated before either prior decision, confirmed
+  against Google's own docs (with confidence levels stated per finding, not guessed).
+  Recommendation: build the headless execution layer on **Application Integration**, as a
+  single engine for all migrated flows — not a hybrid split by flow type (a hybrid was
+  considered and rejected; see the design doc §12 for why). `docs/design/
+  FLOWS-PHASE2-ARCHITECTURE.md` has been revised in place: §5 (mapping — `MappedFlow` now
+  carries an `IntegrationVersion` JSON with `triggerConfigs`/`taskConfigs` instead of Cloud
+  Workflows YAML + Scheduler/Run specs), §6.1 (identity — Application Integration's single
+  default per-project runtime SA resolves the design's prior open question about shared-
+  vs-per-flow SA granularity, since the platform doesn't offer a finer-grained choice),
+  §7 (verification — Application Integration's real `testCases` mocking mechanism
+  supersedes the prior design's unresolved, hand-rolled `dryRun`-input approach), §9 (open
+  questions — two new unconfirmed items added, see below), and §10 (DB schema —
+  `flowDeployments`' fields change from Cloud Workflow/Scheduler/Run resource names to
+  Application Integration resource identifiers: `integrationName`, `integrationVersionId`,
+  `triggerIds`, plus a new `testCaseId`). §1–4 and §8 are materially unchanged — `FlowIR`
+  itself, the extraction model, and the two-phase boundary are platform-neutral and do not
+  depend on which downstream engine consumes them; this is itself confirmation the IR
+  boundary is doing its job (an execution-target swap costs a mapper/deployer rewrite, not
+  an IR rewrite).
+- **Head-to-head, stated honestly, not a rubber-stamp of either side**: Application
+  Integration's advantages are real but narrower than they first look. Its one clear new
+  capability — a pre-built Dataverse connector for CRUD (`List`/`Get`/`Create`/`Update`/
+  `Delete`/`ListAssociations`/`ListNavigationProperties`) — has a **genuinely unconfirmed**
+  auth-model fit: its auth profile is generic OAuth2, and whether it supports Entra
+  app-only `client_credentials` (the auth model this entire project already uses
+  everywhere else, `auth/microsoft.ts`) was NOT confirmed by the researcher pass, and is
+  NOT assumed to work here. It also does **not** cover `PerformUnboundAction`/
+  `PerformBoundAction` at all — the ~84-distinct-action/339-call-site `msdyn_*` bucket,
+  the single largest operationId bucket in `HANDOFF_WORKFLOWS.md`, bigger than all CRUD
+  calls combined — so those still need a plain REST task + manual Entra token fetch,
+  **identical to what the original Cloud Workflows design already specified**. Neither
+  engine improves on `msdyn_*` handling; this is stated plainly in the revised design doc
+  rather than let the engine swap be read as having solved it. Control-flow fit is a mixed
+  bag: native For Each Loop/While Loop/Data Mapping/Return/Timer/Call Integration tasks are
+  a closer native match than Cloud Workflows' hand-generated YAML for loops/variables/waits/
+  sub-flow-calls, but there is no dedicated multi-branch Switch task (edge-conditions
+  instead — a minor new fidelity note the prior design didn't need) and `Scope` still has
+  no confirmed direct equivalent on either engine. Cost shape is genuinely different and
+  unpriced against real flow volume on both sides; Application Integration's Dataverse
+  connector specifically caps at 25 tx/sec/node (50 tx/sec on the 2 free nodes) — a real
+  per-customer throughput ceiling this project hasn't had to think about before, given
+  `HANDOFF_WORKFLOWS.md` documents hundreds of Dataverse calls per flow batch. Multi-tenant
+  fit is confirmed equivalent (per-project provisioning, one default SA, 4 APIs to enable).
+  Interaction with the already-accepted architecture — `secretManager.ts` reuse,
+  `parseFlowId()` as the join key, the `ExecuteCopilotAsyncV2`→Gemini Interactions API call
+  — is **identical either way**; a REST task calls the Interactions API exactly as easily as
+  a Cloud Workflows `http.post` step, so this does not differentiate the two options and is
+  called out explicitly in the design doc so it isn't miscounted as an advantage.
+- **The deciding factor**: verification. The prior design left `services/verifyFlow.ts`'s
+  core mechanism as an **explicitly unresolved, blocking open question** (§9 #3 in the
+  original design: "does the mapped Cloud Workflows YAML need a hand-rolled `dryRun` input
+  for safe synthetic verification" — no native answer existed). Application Integration
+  ships a real, confirmed mechanism for this: `versions.testCases.create`/`.execute`/
+  `.executeTest`, with per-task mock strategies ("No mock" / "Mock execution"
+  success-or-failure / "Mock Output" with a specified value) plus assertions on
+  status/inputs/outputs — letting any individual task, including a Dataverse write or an
+  `msdyn_*` custom action, be safely mocked during a verification run without needing a
+  bespoke input threaded through every generated flow definition. This directly and
+  concretely resolves a real, previously-open design gap rather than trading one unresolved
+  question for another.
+- **Two new genuinely unconfirmed items this re-decision introduces (do not guess at
+  either)**: (1) whether the Dataverse connector's generic-OAuth2 auth profile supports
+  Entra app-only `client_credentials` — until confirmed against a live tenant,
+  `flowMapper.ts` MUST default every Dataverse CRUD action to the same REST-task + manual
+  Entra-token fallback the `msdyn_*` actions already use, not the Connectors task. (2)
+  whether mocking a task in a test case (`Mock Output`/`Mock execution`) fully prevents any
+  real outbound network/auth call before the mock substitutes its result, or whether some
+  task types still attempt a real connection first — NOT assumed safe; needs a `_diag_*`
+  probe against a live tenant before `verifyFlow.ts`'s mocked-execution path is trusted
+  against real customer Dataverse environments. Both are recorded as open questions #8 and
+  #9 in the revised design doc's §9, alongside the five items carried forward unchanged
+  from the original design (agent-id field on `ExecuteCopilotAsyncV2`-family actions, the
+  confirmed `:assist`/`:streamAssist` low-code invocation gap, the unexplained
+  `workflowMigrations`/`workflowFlows`/`workflowAttempts`/`workflowGcpTokens` collections,
+  the Entra app registration's Dataverse scope sufficiency for `msdyn_*` writes, and the
+  wizard-UI placement question) plus two items marked resolved/superseded by this revision
+  (the `dryRun`-input question, superseded by test-case mocking; the shared-vs-per-flow
+  runtime SA question, resolved by Application Integration's platform-level constraint of
+  offering only one default per-project SA).
+- **Why a single engine, not a hybrid split by flow type**: a hybrid (Application
+  Integration for CRUD-heavy/branching/looping flows, a Cloud-Workflows-style REST-task
+  pattern for `msdyn_*`-heavy flows) was explicitly considered and rejected. Because the
+  `msdyn_*` REST-task fallback is identical on both engines regardless of which is chosen
+  as the primary target, running two different execution engines for two different flow
+  subsets would double the deployer/verifier code surface (`flowDeployer.ts`,
+  `verifyFlow.ts`) for no fidelity gain — every flow gets the same REST-task treatment for
+  those specific actions either way, so the split doesn't actually track a real
+  capability boundary. A single engine that natively covers more of the control-flow graph
+  AND has a confirmed, working verification story is a stronger, simpler call than
+  maintaining two runtimes for a distinction that mostly doesn't matter in practice.
+- **Impact**: **Design revision only — no code written, nothing implemented.** This is
+  explicitly a **recommendation pending the user's own sign-off**, not an approved
+  decision — per this project's rule that an IR/execution-contract-shape decision belongs
+  to product, not to an implementing session, a peer `backend-connectors` session, or this
+  Architect. `FlowIR` itself (the platform-neutral extraction contract, §4 of the design
+  doc) is **unchanged** — confirms the IR boundary held under a real execution-target
+  swap, exactly as the boundary is designed to do. `MappedFlow`'s shape and
+  `flowDeployments`' fields DO change if this recommendation is adopted (see design doc
+  §5, §10). No code currently depends on either shape (nothing has been implemented from
+  the original design yet), so there is nothing to migrate/break by adopting this
+  revision now rather than after implementation started. **Next step, not yet done**: the
+  user's explicit approval of this engine choice, then resolution of open questions #8 and
+  #9 (§9) before `flowMapper.ts` prefers the Dataverse connector over the REST fallback,
+  and before `verifyFlow.ts`'s mocked-execution path is trusted against production
+  customer tenants, respectively.
+
+---
+
+## 2026-09-03 — Phase 2 (flows/workflows) execution shape: headless Cloud Workflows, not an agent-tool surface
+
+- **Decision**: A migrated Copilot Studio flow (Power Automate, extracted from Dataverse
+  `workflows` where `category eq 5`) will run post-migration as **headless GCP
+  infrastructure** — Cloud Workflows for the flow logic, Cloud Scheduler for
+  `Recurrence`-triggered flows, Cloud Run/Eventarc for `Request`/`OpenApiConnectionWebhook`
+  triggers — not surfaced back into Gemini Enterprise as an agent-callable tool. This was a
+  direct product decision by the user, made explicitly instead of by Claude or by the
+  `backend-connectors` peer session, per this file's own rule that an `AgentIR`-shape-adjacent
+  call belongs to the Architect/product, not an implementing session. Rejected alternative:
+  "surfaced as an agent tool" (cheaper — reuses the ADK caller-impersonation channel from
+  `_bind_caller`, the connector tool builder, and `verify.ts`) and the hybrid split-by-trigger-
+  type option (agent-invoked flows as tools, scheduled/webhook flows headless).
+  **Note (added 2026-09-03, same day)**: this headless-vs-agent-tool call is NOT reopened by
+  the entry above — only which specific headless GCP product implements it was revisited.
+- **Why**: matches how Power Automate flows actually behave at the source — most triggers
+  (recurrence, webhook, HTTP) are independent of any single agent invocation, so forcing them
+  through an agent-tool surface would only work for a minority case and would misrepresent the
+  other two-thirds. This choice was made **fully aware of the cost it accepts**, confirmed live
+  by `backend-connectors` this same day: headless execution has no per-user identity story (the
+  ADK `user_id`→`_bind_caller` mechanism that connector impersonation relies on only exists
+  inside the ADK agent runtime; a headless Cloud Workflow has no caller by definition and needs
+  its own service identity instead), and **`verify.ts` cannot verify this surface at all** — a
+  new verification story has to be designed from scratch for whatever gets built here.
+- **Impact**: **Decision only, no code yet.** Implies a new `FlowIR` (or similarly-named)
+  contract, separate from `AgentIR`, will be needed — this is itself an IR-shape decision and
+  per this project's own rule requires Architect sign-off before implementation starts. Known
+  groundwork already in the codebase this new IR should build on top of, not duplicate:
+  `services/dataverse.ts:1838` already counts flows (`flowCount` on the session, degrades
+  quietly via `.catch(() => [])`); `services/toolPayload.ts:265` `parseFlowId()` already
+  extracts which agent tools call which flow during Phase-1 agent extraction — this is the
+  natural Phase1↔Phase2 join key, independent of the execution-shape choice above. Secret
+  Manager plumbing for the Entra credentials a flow's Dataverse calls will need already exists
+  and should be reused as-is: `server/src/services/secretManager.ts` (`putEntraSecret`,
+  `grantSecretAccessToServiceAgent`, `preflightSecretAccess`, `getEntraSecret`), same
+  create-then-add-version-with-409-as-idempotent convention, same "secrets live in the
+  customer's GCP project" placement, and the same preflight-before-deploy pattern used for
+  agents. **Correction to avoid over-trusting prior state**: four `workflow*` Mongo collections
+  (`workflowMigrations`, `workflowFlows`, `workflowAttempts`, `workflowGcpTokens`) exist in the
+  Mongo instance but are **not** declared among the 17 collections `db/mongo.ts` bootstraps —
+  they were created by something outside this app (a spike, or a different, unrelated project
+  sharing the same Mongo host) and must not be assumed to be real CS_GE schema until whoever
+  created them is identified. **Separately confirmed, hard platform constraint that will shape
+  the IR regardless of execution-shape**: low-code (non-ADK) Gemini agents have **no working
+  per-agent invocation surface at all** — `services/verify.ts:325-357`, live-tested
+  2026-08-24, documents that Discovery Engine's `:assist` 404s and `:streamAssist` silently
+  ignores `agentsConfig.agent`, answering with the engine's default assistant even for a bogus
+  agent id. Only ADK-deployed agents (via the Reasoning Engine endpoint directly) can be
+  individually targeted. This mattered for the now-rejected agent-tool alternative above, and
+  still matters for this decision: if any future work needs a flow to call back into one
+  specific migrated agent (e.g. `ExecuteCopilotAsyncV2` → Gemini Interactions API, seen in prior
+  Power Automate flow analysis), that agent must be ADK-deployed or the call cannot be aimed
+  correctly. **Next step, not yet done**: an Architect design pass for `FlowIR` and the
+  headless execution/verification model, before any extraction or mapper code is written.
+
+---
+
 ## 2026-08-22 — Removed `guardAgainstRestrictedSharingOnAdk`: a scope decision, not a reversal of the underlying safety concern
 
 - **Decision:** Deleted `services/permissionMapping.ts` and its call site in
@@ -258,7 +434,7 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
-## 2026-08-22 — Corrected an overstated claim: ADK per-agent grants DO control gallery/console discoverability
+## 2026-08-22 — Correction to an overstated claim: ADK per-agent grants DO control gallery/console discoverability
 
 - **Decision:** No code change to the sharing functions themselves — corrected documentation
   and comments (`docs/design/PERMISSION-MAPPING-ARCHITECTURE.md` §6, `orchestrator.ts`'s
