@@ -66,6 +66,28 @@ export async function ensureAuthConfig(
   }
 }
 
+/**
+ * Pick which stored credential record an AuthConfig is built from, when a credential group
+ * spans several connectors whose records point at DIFFERENT Secret Manager projects.
+ *
+ * The destination project WINS. A migration run authenticates as the customer admin by
+ * Domain-Wide Delegation, and that identity has access to the customer's own project only
+ * — it is 403 on ours, correctly. The run copies the credentials into the destination
+ * before this point, so a record there is always the readable one. Taking whichever record
+ * the registry happened to list first read from OUR project instead and failed the whole
+ * AuthConfig with "secret(s) could not be read", which deployed the flow with no way to get
+ * a token: a tool that exists, answers, and never works.
+ *
+ * Falls back to any other record so a run that has not copied credentials yet still works
+ * when the caller's identity does reach that project (the service account's own token does).
+ */
+export function pickCredentialRecord<T extends { project: string }>(
+  records: T[],
+  destinationProject: string,
+): T | undefined {
+  return records.find((r) => r.project === destinationProject) ?? records[0];
+}
+
 async function ensureAuthConfigInner(
   saToken: string,
   project: string,
@@ -73,19 +95,18 @@ async function ensureAuthConfigInner(
   authConfigName: string,
 ): Promise<EnsureAuthConfigResult> {
   const candidates = CONNECTOR_REGISTRY.filter((d) => d.credentialGroup === authConfigName || d.id === authConfigName);
-  let secretIds: Record<string, string> | undefined;
-  let secretsProject: string | undefined;
+  const stored: { project: string; secretIds: Record<string, string> }[] = [];
   for (const def of candidates) {
     const rec = await getConnectorCredential(appUserId, def.id);
-    if (rec?.secretIds?.tenant_id && rec.secretIds.client_id && rec.secretIds.client_secret) {
-      secretIds = rec.secretIds;
-      secretsProject = rec.project;
-      break;
+    if (rec?.project && rec.secretIds?.tenant_id && rec.secretIds.client_id && rec.secretIds.client_secret) {
+      stored.push({ project: rec.project, secretIds: rec.secretIds });
     }
   }
-  if (!secretIds || !secretsProject) {
+  const chosen = pickCredentialRecord(stored, project);
+  if (!chosen) {
     return { ok: false, error: `No stored Microsoft credentials found for credential group "${authConfigName}" — configure it the same way an agent-level connector tool on this group would.` };
   }
+  const { secretIds, project: secretsProject } = chosen;
 
   const [tenantId, clientId, clientSecret] = await Promise.all([
     getEntraSecret(saToken, `projects/${secretsProject}/secrets/${secretIds.tenant_id}/versions/latest`),
@@ -93,7 +114,9 @@ async function ensureAuthConfigInner(
     getEntraSecret(saToken, `projects/${secretsProject}/secrets/${secretIds.client_secret}/versions/latest`),
   ]);
   if (!tenantId.ok || !clientId.ok || !clientSecret.ok) {
-    return { ok: false, error: 'Stored credential secret(s) could not be read.' };
+    // Name the project. The same secret ids exist in several projects, so "could not be
+    // read" without one sent a live diagnosis chasing the wrong credential entirely.
+    return { ok: false, error: `Stored credential secret(s) in project "${secretsProject}" could not be read.` };
   }
   const currentHash = hashDefinition({ tenantId: tenantId.plaintext, clientId: clientId.plaintext, clientSecret: clientSecret.plaintext });
 
