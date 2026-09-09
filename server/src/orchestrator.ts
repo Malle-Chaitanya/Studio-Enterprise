@@ -1,4 +1,5 @@
 import { clientCredsToken } from './auth/microsoft.js';
+import { resolveCallerIdentityMap } from './services/callerIdentity.js';
 import { recoverSharePointUrlAcrossEnvs } from './services/sharePointUrlRecovery.js';
 import { getSaToken, serviceAccountEmail } from './auth/google.js';
 import { logger } from './logger.js';
@@ -1278,41 +1279,33 @@ async function execute(
   // So a destination that claims more than one source address is DROPPED. The tool then says
   // it cannot tell which account is theirs, and the operator resolves it by mapping one of
   // them elsewhere. Refusing is recoverable; reading a colleague's mail is not.
-  const callerIdentityMap: Record<string, string> = {};
-  const ambiguousCallers = new Set<string>();
-  for (const [ms, google] of Object.entries(identityOverrides.users)) {
-    if (!google) continue;
-    const dest = String(google).toLowerCase();
-    const existing = callerIdentityMap[dest];
-    if (existing) {
-      // Same account restated (often just different casing) is not a conflict — keep the
-      // first and move on. Overwriting would make the resolved address depend on key order
-      // for no reason.
-      if (existing.toLowerCase() !== ms.toLowerCase()) ambiguousCallers.add(dest);
-      continue;
+  const callerResolution = resolveCallerIdentityMap(identityOverrides.users, gEmail);
+  const callerIdentityMap = callerResolution.map;
+  if (callerResolution.resolved.length) {
+    // Settled, not silent. The operator has to be able to see WHICH account a person was
+    // resolved to, because that is the mailbox and the security roles their questions will
+    // be answered with — a choice they can only correct if they can read it.
+    for (const { dest, chosen, setAside } of callerResolution.resolved) {
+      emitLog(
+        'info',
+        `    ${dest} is mapped from ${setAside.length + 1} source accounts — using ${chosen} ` +
+          `(${setAside.join(', ')} set aside). Map the others to a different Google user if that is wrong.`,
+      );
     }
-    callerIdentityMap[dest] = ms;
   }
-  for (const dest of ambiguousCallers) delete callerIdentityMap[dest];
-  if (ambiguousCallers.size) {
+  if (callerResolution.dropped.length) {
     // Named, not counted: the operator can only fix what they can identify.
     logger.warn(
-      { callers: [...ambiguousCallers] },
-      'per-user tools: these destination users map to more than one source account, so tools that run as the caller cannot tell which is theirs',
+      { callers: callerResolution.dropped.map((d) => d.dest) },
+      'per-user tools: these destination users map to more than one source account IN THE SAME DOMAIN, so tools that run as the caller cannot tell which is theirs',
     );
     // And say it where the operator is actually looking. This used to reach the server
     // console only, so the person running the migration saw a healthy green run and then a
     // tool that refused every request from these people, with nothing connecting the two.
-    // The auto-matcher pairs on local part, so one Google account collecting the same name
-    // from several source domains is the ordinary case, not an exotic one.
-    for (const dest of ambiguousCallers) {
-      const sources = Object.entries(identityOverrides.users)
-        .filter(([, g]) => String(g ?? '').toLowerCase() === dest)
-        .map(([ms]) => ms)
-        .sort();
+    for (const { dest, sources } of callerResolution.dropped) {
       emitLog(
         'warn',
-        `    ${dest} is mapped from ${sources.length} source accounts (${sources.join(', ')}) — ` +
+        `    ${dest} is mapped from ${sources.length} source accounts in the same domain (${sources.join(', ')}) — ` +
           'tools that run as the caller will refuse this person rather than guess which mailbox ' +
           'is theirs. Map all but one of those source accounts to a different Google user to fix it.',
       );
