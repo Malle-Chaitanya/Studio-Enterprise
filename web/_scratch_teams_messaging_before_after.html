@@ -1,0 +1,283 @@
+<title>Teams Messaging Fix — Before / After</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --surface-2: #eef0f3;
+    --border: #dde1e7;
+    --text: #1a1d24;
+    --text-dim: #5c6270;
+    --text-faint: #8790a0;
+    --accent: #4650c9;
+    --accent-soft: #eceeff;
+    --bad: #b6540f;
+    --bad-soft: #fdf1e6;
+    --bad-border: #f0d6b8;
+    --good: #157a3d;
+    --good-soft: #eaf7ee;
+    --good-border: #c6e7d1;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", system-ui, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161b;
+      --surface: #1c1f26;
+      --surface-2: #23262e;
+      --border: #2e323c;
+      --text: #e9ebef;
+      --text-dim: #a2a8b5;
+      --text-faint: #6d7381;
+      --accent: #8b93ff;
+      --accent-soft: #262a45;
+      --bad: #e2934f;
+      --bad-soft: #362818;
+      --bad-border: #4d3a20;
+      --good: #5fd48c;
+      --good-soft: #17301f;
+      --good-border: #244a30;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161b; --surface: #1c1f26; --surface-2: #23262e; --border: #2e323c;
+    --text: #e9ebef; --text-dim: #a2a8b5; --text-faint: #6d7381;
+    --accent: #8b93ff; --accent-soft: #262a45;
+    --bad: #e2934f; --bad-soft: #362818; --bad-border: #4d3a20;
+    --good: #5fd48c; --good-soft: #17301f; --good-border: #244a30;
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f6f8; --surface: #ffffff; --surface-2: #eef0f3; --border: #dde1e7;
+    --text: #1a1d24; --text-dim: #5c6270; --text-faint: #8790a0;
+    --accent: #4650c9; --accent-soft: #eceeff;
+    --bad: #b6540f; --bad-soft: #fdf1e6; --bad-border: #f0d6b8;
+    --good: #157a3d; --good-soft: #eaf7ee; --good-border: #c6e7d1;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    padding: 40px 24px 64px;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+
+  .masthead { margin-bottom: 36px; }
+  .eyebrow {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 10px;
+  }
+  h1 {
+    font-size: 27px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 10px;
+    text-wrap: balance;
+  }
+  .sub {
+    font-size: 14.5px; line-height: 1.6; color: var(--text-dim); max-width: 640px; margin: 0;
+  }
+  .status-note {
+    display: inline-flex; align-items: center; gap: 7px; margin-top: 16px;
+    font-size: 12.5px; color: var(--text-dim); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px 5px 10px;
+  }
+  .status-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); flex: none; }
+
+  .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  @media (max-width: 820px) { .columns { grid-template-columns: 1fr; } }
+
+  .col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .col-title { font-size: 15px; font-weight: 650; margin: 0; }
+  .pill {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 999px; border: 1px solid transparent;
+  }
+  .pill-bad { color: var(--bad); background: var(--bad-soft); border-color: var(--bad-border); }
+  .pill-good { color: var(--good); background: var(--good-soft); border-color: var(--good-border); }
+
+  .stack { display: flex; flex-direction: column; gap: 16px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 18px 20px;
+  }
+  .card-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-faint); margin: 0 0 14px;
+  }
+
+  /* connector form mock */
+  .conn-header { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; }
+  .conn-icon {
+    width: 26px; height: 26px; border-radius: 7px; background: var(--surface-2);
+    display: flex; align-items: center; justify-content: center; font-size: 13px; flex: none;
+  }
+  .conn-name { font-size: 13.5px; font-weight: 600; }
+  .field { margin-bottom: 11px; }
+  .field:last-child { margin-bottom: 0; }
+  .field-label { font-size: 11.5px; color: var(--text-dim); margin-bottom: 5px; }
+  .field-input {
+    height: 30px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2);
+    font-family: var(--mono); font-size: 12px; color: var(--text-faint); display: flex;
+    align-items: center; padding: 0 10px; letter-spacing: 0.04em;
+  }
+  .divider { border: none; border-top: 1px solid var(--border); margin: 15px 0; }
+  .messaging-off {
+    font-size: 12px; color: var(--text-faint); display: flex; align-items: center; gap: 7px;
+  }
+  .messaging-off .x { color: var(--bad); font-weight: 700; }
+
+  .oauth-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  }
+  .oauth-copy { font-size: 12px; line-height: 1.4; }
+  .oauth-copy .t { font-weight: 600; margin-bottom: 2px; }
+  .oauth-copy .d { color: var(--text-dim); }
+  .btn-ms {
+    flex: none; font-size: 12px; font-weight: 600; color: #fff; background: var(--accent);
+    border: none; border-radius: 6px; padding: 7px 12px; white-space: nowrap;
+  }
+  .connected-chip {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--good);
+    background: var(--good-soft); border: 1px solid var(--good-border); border-radius: 999px;
+    padding: 5px 11px 5px 9px; font-weight: 600;
+  }
+  .connected-chip .avatar {
+    width: 15px; height: 15px; border-radius: 50%; background: var(--good); color: var(--surface);
+    font-size: 8px; font-weight: 800; display: flex; align-items: center; justify-content: center;
+  }
+
+  /* chat transcript mock */
+  .bubble-user, .bubble-agent { border-radius: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5; }
+  .bubble-user {
+    background: var(--surface-2); color: var(--text); margin-bottom: 10px;
+  }
+  .bubble-agent {
+    background: var(--accent-soft); border: 1px solid transparent;
+  }
+  :root[data-theme="dark"] .bubble-agent, .bubble-agent { color: var(--text); }
+  .bubble-agent.state-bad { background: var(--bad-soft); border-color: var(--bad-border); }
+  .bubble-agent.state-good { background: var(--good-soft); border-color: var(--good-border); }
+  .who { font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 5px; }
+  .attribution {
+    margin-top: 10px; font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px;
+    padding-top: 9px; border-top: 1px dashed var(--border);
+  }
+
+  footer { margin-top: 34px; font-size: 12px; color: var(--text-faint); line-height: 1.6; max-width: 640px; }
+  footer strong { color: var(--text-dim); }
+</style>
+
+<div class="wrap">
+  <div class="masthead">
+    <p class="eyebrow">Proposed fix · not yet built</p>
+    <h1>Teams messaging: delegated sign-in, added alongside the app-only connector</h1>
+    <p class="sub">
+      Reproduces the source agent's actual mechanism — Copilot Studio posts as the delegated
+      user who set up the connection, not as a service identity. Everything else on the Teams
+      connector (reading messages, channels, teams) stays on the existing app-only credentials;
+      only sending adds this one extra step.
+    </p>
+    <div class="status-note"><span class="dot"></span> Mockup for review — pending architect design pass before implementation</div>
+  </div>
+
+  <div class="columns">
+    <!-- BEFORE -->
+    <div>
+      <div class="col-head">
+        <h2 class="col-title">Before</h2>
+        <span class="pill pill-bad">Cannot send</span>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <p class="card-label">Connector setup</p>
+          <div class="conn-header">
+            <div class="conn-icon">🟣</div>
+            <div class="conn-name">Microsoft Teams</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Tenant ID</div>
+            <div class="field-input">••••••••••••••••••</div>
+          </div>
+          <div class="field">
+            <div class="field-label">App (Client) ID</div>
+            <div class="field-input">••••••••••••••••••</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Client Secret</div>
+            <div class="field-input">••••••••••••••••••</div>
+          </div>
+          <hr class="divider" />
+          <div class="messaging-off"><span class="x">✕</span> Sending messages is not available on this connection</div>
+        </div>
+
+        <div class="card">
+          <p class="card-label">Agent chat</p>
+          <div class="who">You</div>
+          <div class="bubble-user">post a message "hey! how's it going" in the group chat with alex &amp; ben</div>
+          <div class="who">WorkMate</div>
+          <div class="bubble-agent state-bad">I'm sorry, I was unable to post that message. The system reported an "Unauthorized" error, indicating that access to the tenant is denied. Please contact your administrator for help.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AFTER -->
+    <div>
+      <div class="col-head">
+        <h2 class="col-title">After</h2>
+        <span class="pill pill-good">Can send</span>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <p class="card-label">Connector setup</p>
+          <div class="conn-header">
+            <div class="conn-icon">🟣</div>
+            <div class="conn-name">Microsoft Teams</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Tenant ID</div>
+            <div class="field-input">••••••••••••••••••</div>
+          </div>
+          <div class="field">
+            <div class="field-label">App (Client) ID</div>
+            <div class="field-input">••••••••••••••••••</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Client Secret</div>
+            <div class="field-input">••••••••••••••••••</div>
+          </div>
+          <hr class="divider" />
+          <div class="oauth-row">
+            <div class="oauth-copy">
+              <div class="t">Enable sending messages</div>
+              <div class="d">Sign in once — the agent will send as this person, same as it does in Copilot Studio.</div>
+            </div>
+            <button class="btn-ms" type="button">Sign in with Microsoft</button>
+          </div>
+          <div style="margin-top:10px;">
+            <span class="connected-chip"><span class="avatar">E</span> Sending enabled — erik@filefuze.co</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <p class="card-label">Agent chat</p>
+          <div class="who">You</div>
+          <div class="bubble-user">post a message "hey! how's it going" in the group chat with alex &amp; ben</div>
+          <div class="who">WorkMate</div>
+          <div class="bubble-agent state-good">Sent — I've posted your message to the group chat with alex and ben.</div>
+          <div class="attribution">↳ Appears in Teams as sent by <strong>erik@filefuze.co</strong>, the account connected above — same as the source agent.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <strong>What actually changes:</strong> a new delegated OAuth consent, separate from the existing
+    Dataverse sign-in, scoped only to Teams message-sending. Reads (list chats, get messages, list
+    channels) keep using the existing app-only credentials above — unaffected either way.
+  </footer>
+</div>

@@ -6,6 +6,226 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
+## 2026-09-08 — Design: Cloud SQL for PostgreSQL as the "full tenant cutover" target for live Dataverse connector tools (Architect sign-off, design-only)
+
+- **Decision**: Approved design (implementation not yet started) for a new, parallel migration
+  path for `AgentToolIR` entries whose `kind === 'connector'` and whose `connectorId` resolves to
+  Dataverse (`shared_commondataserviceforapps`) — used when the customer has declared a **full
+  tenant cutover** (Microsoft licenses removed, Dataverse unreachable after cutover), as opposed to
+  today's only path, which rebuilds the tool as a live call against Dataverse itself
+  (`_build_live_connector_tool` falling through to `connector_tools/generic_rest.py`'s
+  `build_tools`, with `MSCRMCallerID` impersonation headers). Worked example: "Deal Desk"'s
+  `GetClientProfile` tool (`cr88d_clientcreditfacilities`, `connectionAuthMode: 'invoker'`).
+  Six parts:
+  1. **Decision point — a run-level flag, not a per-tool UI choice.** New `ResolvedPlan.
+     dataverseCutoverMode?: 'coexistence' | 'full-tenant-cutover'` (absent/`'coexistence'` =
+     today's behavior, unchanged). Set once per migration run, alongside `forceRedeploy` /
+     `acknowledgeAclLoss` (both already run-level, consent-gated `ResolvedPlan` fields — same
+     shape, same UX precedent: a checkbox the customer explicitly ticks before Migrate starts,
+     never inferred). Deliberately **not** modeled on `agentSurfaceChoice`/`SURFACE_EQUIVALENTS`
+     (the per-agent "Keep Outlook vs Use Gmail" pattern) — that pattern exists because BOTH
+     targets remain genuinely viable steady states. Once a tenant is fully decommissioned there is
+     no "keep live Dataverse" option left to offer per tool; every Dataverse-bound connector tool
+     must move off Dataverse, so the only real decision is the binary run-level one. A per-agent
+     override table in the same shape as `agentSurfaceChoice` is left as a natural v2 extension
+     (e.g. "this table already has a Cloud SQL replica elsewhere, point at it instead of
+     provisioning a new one") but is not required for v1.
+  2. **`AgentToolIR` gains an additive, optional `cloudSqlTarget` block** (table/column-mapping/
+     connection reference), populated during Phase 2 classification/build, never at Phase-1
+     extraction — extraction stays platform-neutral and unaware of the destination. No existing
+     `AgentToolIR` consumer breaks; an IR extracted before this ships simply lacks the field.
+  3. **Schema mapping reuses `dataverseTableSchema.ts`'s shape, not its BigQuery types.**
+     `resolveTableAttributes` is reused verbatim (same EntityDefinitions `$expand` call);
+     `classifyAttribute`'s Dataverse-AttributeType decision tree is reused, but a new sibling
+     `buildPgSchema`/`exportTableRowsForPostgres` (new `dataverseTablePgSchema.ts` or extended
+     `dataverseTableSchema.ts`) targets Postgres column types (`TEXT`, `TIMESTAMPTZ`, `BOOLEAN`,
+     `BIGINT`, `NUMERIC`, twin-column lookup/choice flattening unchanged) instead of `BqFieldType`.
+     Same `flattenedNotes` discipline carries over unchanged.
+  4. **New service modules**: `services/cloudSqlUpload.ts` (server-side, parallel to
+     `bigqueryUpload.ts` — idempotent `ensureCloudSqlInstance`/`ensureDatabase`/`ensureTable` via
+     the Cloud SQL Admin API, REST, no new npm dependency, matching the existing
+     `ensureBqDataset`/`ensureBqTable` convention) and `connector_tools/cloudsql.py` (deploy-time,
+     parallel to `outlook.py`/`generic_rest.py` — a hand-written `build_tools` that runs a
+     parameterized `WHERE` lookup against the migrated table, dispatched via a new `kind:
+     "cloudsql"` in `_build_live_connector_tool`). **Flagged deviation from the stated "plain
+     REST, no heavy SDK" justification**: this holds for *provisioning* (Cloud SQL Admin API is
+     REST, same shape as BigQuery's), but does **not** hold for *querying* — unlike BigQuery's
+     HTTP `jobs.query`, Cloud SQL Postgres has no HTTP data-plane API; the deployed container
+     needs a real DB client (`pg8000`, pure-Python, no C build step, safe for the Reasoning Engine
+     container) plus the Cloud SQL Python Connector or equivalent. Recommended credential model:
+     **IAM database authentication** (`cloudsql.iam_authentication` flag + `roles/cloudsql.client`
+     + `roles/cloudsql.instanceUser` on the SA) rather than a stored DB password — no new Secret
+     Manager entry needed at all, simpler than the original "one more secret" framing and a better
+     fit for the "credential story is much simpler than Dataverse" claim than password auth would
+     be. Not yet live-verified against a real Cloud SQL instance — flag before implementation.
+  5. **Idempotency**: upsert by the table's real Dataverse primary-key GUID (`INSERT ... ON
+     CONFLICT (id) DO UPDATE`), mirroring the BigQuery snapshot path's "row ids are the table's
+     real Dataverse primary key" convention — but note the semantic difference: BigQuery's path is
+     `WRITE_TRUNCATE` (full re-snapshot, deletions propagate), this path is `ON CONFLICT` upsert
+     only (a row deleted upstream in Dataverse before cutover is NOT removed from Cloud SQL) —
+     acceptable because after cutover there is no more upstream to diverge from, but worth a
+     `FidelityNote` at the time of the LAST pre-cutover sync.
+  6. **Phase placement — a documented exception to the two-phase boundary, same shape as the
+     existing one.** This is a bridge step needing BOTH a Dataverse-read credential and a
+     Google-write credential in one call, same as `knowledgeDataStoreExecutor.ts`'s
+     `migrateDataverseSnapshot` (see the 2026-08-04 "Retroactive note" entry below, which already
+     names this exact carve-out: "a narrow, deliberate exception to architecture-boundaries.md's
+     'extraction never calls Gemini' rule for bulky/tabular knowledge content, which is resolved
+     by reference at INSERT time rather than staged in Mongo"). The new Cloud SQL sync is the same
+     shape and belongs in the **same INSERT-phase block** in `orchestrator.ts` as the connector
+     preflight (`preflightConnectors`, ~line 2820) and the flow-integration block
+     (`flowToolSpecs`/`ensureFlowIntegration`, ~line 2883) — specifically BEFORE `scopedConnectors`
+     is finalized and handed to `publishAgentToGallery`, since the Cloud SQL sync result (table
+     name, column plan) is what rewrites that tool's `LiveConnectorSpec.kind` from
+     `'commondataserviceforapps'` to `'cloudsql'`. `dvToken` is already in scope at that point in
+     `orchestrator.ts` (a single long-running async generator, not two separate processes) — the
+     "two-phase" rule is enforced by which *modules* call what, not by credential availability;
+     the new sync function is a Phase-2-only module in the same category as
+     `knowledgeDataStoreExecutor.ts`, never imported by `services/dataverse.ts` or Phase 1.
+- **Why**: Live-investigated this session against a real agent ("Deal Desk", org32322095.crm.
+  dynamics.com) — `GetClientProfile`'s `cr88d_clientcreditfacilities` table (credit limits,
+  interest rates, risk ratings — genuinely sensitive/transactional, correctly excluded from the
+  UNRELATED `dataverse-snapshot` knowledge-source path by `looksSensitive()`) has no destination at
+  all once Dataverse is decommissioned, and the customer's stated scenario is a full license
+  removal, not a phased coexistence. Cloud SQL for PostgreSQL (not BigQuery/Firestore) was already
+  settled this session — exact `$filter`-style lookups, plausible future write support, and is not
+  re-litigated here.
+- **Impact**: Additive to `AgentIR`/`AgentToolIR` only (new optional `cloudSqlTarget`), additive to
+  `ResolvedPlan` (new optional `dataverseCutoverMode`) — no existing consumer breaks, no DB-schema
+  migration (Mongo is schemaless). **Explicitly out of scope, carried forward as deferred, not
+  designed here**: rewiring `GetRateSheetBand` (OneDrive Excel via hardcoded Graph URL) and
+  `Postoteams` (hardcoded Graph Teams call) to cross-reference CloudFuze's separate content/
+  message/email migration products — a different, harder problem, deferred by the customer twice
+  this session. **Blocking before implementation**: (a) live-verify the Cloud SQL Admin API
+  provisioning calls (instance/database/table creation, idempotent check-then-create) against a
+  real customer-owned project; (b) live-verify IAM database authentication actually works from a
+  Reasoning Engine container (`pg8000` + Cloud SQL Python Connector + `enable_iam_auth=True`) —
+  this session did not run either, both are read-the-docs-confident, not live-proven, matching this
+  project's own discipline of not shipping an unverified endpoint as more than best-effort. Every
+  `FidelityNote` this path emits must be honest about: (1) Dataverse row-level security (Business
+  Unit/ownership) has NO Cloud SQL equivalent out of the box — `needs-review`, never silently
+  dropped; (2) the point-in-time nature of the copy and what happens to rows changed between the
+  last sync and actual cutover; (3) the destination tool being read-only initially (a write-back
+  gap versus the source's live, and now-editable-in-principle, Dataverse table); (4) the ongoing
+  Cloud SQL cost (~$8–49/mo depending on tier — already disclosed to and accepted by the customer
+  this session, not re-litigated here, but the report should still say it plainly per agent/table).
+
+---
+
+## 2026-08-31 — RESOLVED: the blocking signal from the entry below, extraction now implemented
+
+- **Decision**: The Phase-0 spike the design below marked as blocking has run against the real
+  tenant and found a reliable, confirmed signal — extraction code is now written, live-tested, and
+  merged (not just designed). Two corrections to the design below, both load-bearing:
+  1. **The child-agent topic's `kind` is `AgentDialog`, not `AdaptiveDialog`.** (`beginDialog.kind:
+     OnToolSelected` alongside it.) The design below assumed `AdaptiveDialog`, the ordinary-topic
+     kind — that assumption was wrong; `AgentDialog` is the real, clean discriminator.
+     `isChildAgentComponent()` in `services/dataverse.ts` implements this.
+  2. **Tool ownership IS a real, native Dataverse field** — `_parentbotcomponentid_value` on the
+     `botcomponent` entity (surfaced via OData as `ParentBotComponentId`), distinct from
+     `_parentbotid_value` (which always points at the root bot). Live-confirmed by querying all 4 of
+     the real child agent's own tool components directly: every one had
+     `_parentbotcomponentid_value` set to the owning child-agent topic's own `botcomponentid`; the
+     root agent's other 31 tools do not carry this value. This was NOT one of the three candidates
+     the design below listed to check (`schemaname` prefix, `AdaptiveDialog` body field, or a
+     `botcomponent_botcomponent` relationship entity — that entity does not exist, confirmed 404) —
+     it is a fourth, simpler answer: a plain lookup column that was already being selected in queries
+     elsewhere in this codebase's history but never wired into extraction.
+- **What shipped**: `TopicIR.isChildAgent` and `AgentToolIR.childAgentTopicId` (types.ts), both
+  populated in `services/dataverse.ts::extractAgent` — `_parentbotcomponentid_value` added to the
+  component `$select`, `isChildAgentComponent()` added, `parseTopic()` takes an `isChildAgent` flag,
+  `parseAgentTool()` copies the raw parent-component value through. Verified end-to-end against the
+  real WorkMate/"Meeting Scheduler Agent" tenant (`_diag_fetch_workmate_live_current.ts`): the topic
+  correctly reports `isChildAgent: true`, all 4 of its own Outlook Calendar tools correctly report
+  `childAgentTopicId` pointing at it, and none of WorkMate's other 31 tools do. `npm run typecheck`
+  and `npm test` (421/421) both clean.
+- **Still NOT done** (this entry is extraction only — see the design below for the full sequence):
+  Phase 2 (`orchestrator.ts`'s `topicSubAgents` construction, `AdkSpec.subAgents[]` gaining
+  per-entry `liveConnectors`, `scripts/adk_deploy.py`'s sub-agent loop building each sub-agent's own
+  tools instead of inherit-all/none) has not been implemented yet. `AgentToolIR.childAgentTopicId`
+  is populated but nothing downstream reads it yet.
+- **Impact**: none beyond what the design below already scoped — this entry only resolves the open
+  question, it does not change the shape or the plan.
+
+---
+
+## 2026-08-31 — Design: child-agent tool ownership on `AgentIR` (Architect sign-off, design-only)
+
+- **Decision**: Approved design (implementation not yet started) for two additive `AgentIR`/type
+  extensions closing a proven fidelity gap in child-agent extraction: `TopicIR.isChildAgent?:
+  boolean` (marks a topic as a Copilot Studio "child agent" boundary, not just an ordinary
+  conversational topic) and `AgentToolIR.childAgentTopicId?: string` (a back-reference from a tool
+  to the `TopicIR.id` that owns it exclusively, when determinable) — deliberately distinct from the
+  existing `AgentToolIR.sourceTopic` (a topic NAME, meaning "this call was embedded inline in a
+  topic's own dialog steps", a different provenance story that must not be conflated with child-
+  agent ownership). Ownership stays a reference FROM tool TO topic; `agentTools` remains the single
+  flat source of truth — no duplicated tool lists on `TopicIR`. Mapping (`orchestrator.ts`'s
+  `topicSubAgents` construction + `AdkSpec.subAgents[]`) then filters `agentTools` by
+  `childAgentTopicId` to scope each child-agent sub-agent's own `liveConnectors`/tools, replacing
+  today's binary `inheritTools` all-or-none *for child-agent topics specifically* — ordinary topic
+  sub-agents (every non-child-agent topic already becomes a sub-agent today, per the 2026-08-?? ADK
+  sub-agent mechanism) keep their current behavior unchanged.
+- **Why**: live-confirmed 2026-08-31 (WorkMate + a real "Meeting Scheduler Agent" child agent, real
+  Dataverse extraction, `_diag_fetch_workmate_live_current.ts`) that a real child agent extracts as
+  an ordinary custom Topic (`componenttype: 9`, `kind: AdaptiveDialog`, the normal `parseTopic()`
+  path) whose 4 Office 365 Outlook tool operations land in the flat `AgentIR.agentTools` list with
+  **zero ownership signal today** — the same two-instrument-disagreement failure mode this codebase
+  hit before (2026-08-07 entry below, "componenttype 9 carries TOOLS as well as topics"): the agent
+  provably "has" these tools, but nothing says which conversational/agent boundary they belong to,
+  so a migrated child agent's capabilities would either silently bleed onto the root agent's tool
+  set or (once ADK sub-agent tool-scoping is built) have nowhere correct to attach.
+- **What's NOT yet confirmed — blocking before extraction code lands**: the actual raw-Dataverse
+  signal that lets `isChildAgent`/`childAgentTopicId` be SET reliably, as opposed to just existing
+  as unused fields. The earlier working hypothesis this session started with (`kind:
+  InlineAgentSkill`, the existing `isInlineSkillComponent`/`parseInlineSkill` mechanism used for a
+  different, older HubSpot-agent pattern) is **falsified** by this session's live test — the real
+  child agent's topic component did not match it. No formal parent-child relationship field was
+  found this session either (`_parentbotid_value` only points at the parent BOT, not at an owning
+  topic). A `_diag_*` spike is required before extraction logic is written: dump raw fields
+  (`schemaname`, `name`, `createdon`, first ~500 chars of `data`) for a real child-agent topic
+  component and its associated tool components (TaskDialog/ConnectorTool rows) side by side, and
+  check for (a) any additional discriminator field on the child agent's `AdaptiveDialog` body the
+  current regex checks don't look for, (b) a `schemaname`/namespace-prefix convention shared between
+  a child agent and its own tools but not the root agent's other tools, (c) a formal Dataverse
+  solution-component-dependency relationship reachable via `$expand` on `botcomponents`. **If no
+  reliable signal is found, both new fields must ship UNSET everywhere** (a safe no-op, identical to
+  today's behavior) and extraction must emit a `needs-review` `FidelityNote` recording the gap
+  honestly — this project does not guess at an ownership edge it cannot support.
+- **Impact**: Purely additive to `AgentIR`/`TopicIR`/`AgentToolIR` — **no DB migration** (Mongo is
+  schemaless; `stagedAgents` documents extracted before this ships simply lack the two new fields
+  and behave exactly as they do today — forward- and backward-compatible by construction).
+  `AdkSpec.subAgents[]` (`services/adkDeployer.ts`) gains an optional `liveConnectors`/
+  `groundingDataStores` per entry (mirroring the root agent's own fields of the same name), and
+  `scripts/adk_deploy.py`'s sub-agent build loop needs to build each sub-agent's own tool list from
+  its own entry when present (falling back to today's `tools if sa.get("inheritTools", True) else
+  []` when absent, so ordinary topic sub-agents are unaffected). This whole feature is **inert in
+  production** until `needsAdkDeployment()` is separately re-enabled (still hardcoded to return
+  `false` — deliberate Business-edition-only testing-phase gate per its own header comment; re-
+  enabling it, even scoped to "only when the agent has child agents," is explicitly called out as a
+  **separate decision** requiring its own sign-off, not bundled into this one) — but it is fully
+  implementable and testable now via the existing `_diag_*` harness pattern that already bypasses
+  that gate directly (proven this session: `_diag_adk_subagent_sanity.ts` deployed a real sub-agent
+  against a real copy of WorkMate's IR; a separate local `InMemoryRunner` probe,
+  `_diag_subagent_distinct_tools_local.py`, proved a sub-agent's own distinct `FunctionTool` is
+  genuinely invoked, not just narrated). Also scoped for this design pass, recorded here for
+  traceability, with their own follow-up decisions expected once built: a new
+  `scripts/connector_tools/calendar.py` module (Google Calendar API v3 — `events.insert`,
+  `events.list`, `freebusy.query` — DWD-impersonation pattern mirroring `gmail.py`, new `kind:
+  "googlecalendar"` in `_build_live_connector_tool`'s dispatch), new create/book-event functions
+  appended to the EXISTING `outlook.py` module (keep-Microsoft path, `kind: "outlook"`, which
+  already carries `outlook_list_calendar_events`), and new per-operation rows in
+  `connectors/equivalence.ts` for the 4 confirmed Meeting-Scheduler-Agent operations (Create event
+  V4, Get calendar view of events V3, Get calendars V2, Find meeting times V2) — **fidelity grades
+  for those rows are Researcher's job, not invented in this design pass.** Out of scope for this
+  decision entirely: connected agents (separate published Copilot agents, a distinct and harder
+  name→botid resolution problem) and the pre-existing, unrelated naming collision in
+  `topicGraph.ts` (`dependencyType: 'child-agent'` means "topic A calls topic B via
+  BeginDialog/ReplaceDialog in the same bot" — nothing to do with real Copilot child agents;
+  recommended rename to avoid two unrelated concepts sharing the string "child-agent" in this
+  codebase, a mechanical cleanup, not a design question).
+
+---
+
 ## 2026-08-22 — Removed `guardAgainstRestrictedSharingOnAdk`: a scope decision, not a reversal of the underlying safety concern
 
 - **Decision:** Deleted `services/permissionMapping.ts` and its call site in
@@ -247,7 +467,7 @@ scaffold. Format: **date — decision — why — impact**.
   already flagged as, now actually fixed); the Back button unexpectedly dropping the user on
   what looks like a logged-out screen mid-workflow; and the red warning banner reading as an
   error rather than a normal in-progress state.
-- **Impact**: No `AgentIR`/schema-shape change — `findLatestConnectedSession`'s query is
+- **Impact:** No `AgentIR`/schema-shape change — `findLatestConnectedSession`'s query is
   broader but additive (a `$or`, not a new field). No other caller of `warn-banner` existed
   (grepped before renaming), so the CSS rename is safe. `IcoWarn` remains in `icons.tsx`
   (unused by this page now, kept in case another surface still wants a real warning triangle).

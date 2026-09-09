@@ -2,6 +2,7 @@ import type { AgentIR } from '../types.js';
 import { planKnowledgeMigration, type KnowledgeMigrationAction } from './knowledgePlanner.js';
 import type { KnowledgeStrategy, GeminiTarget } from './knowledgeClassifier.js';
 import { planTopicsMigration, type Capability } from './topicsMigration.js';
+import { translateFlow, integrationNameForFlow } from './flowMapper.js';
 
 /**
  * Compatibility assessment: turns an extracted AgentIR into a read-only
@@ -9,8 +10,13 @@ import { planTopicsMigration, type Capability } from './topicsMigration.js';
  *
  * IMPORTANT: this is a HONEST, read-only preview — it reports what the engine
  * will actually do (supported / adapt / manual / none), including the things
- * v1 does NOT migrate (flows, connectors, RAG wiring). It never implies a
- * capability the migration engine doesn't have.
+ * v1 does NOT migrate (RAG wiring, some connector operations). It never implies
+ * a capability the migration engine doesn't have.
+ *
+ * Flows are previewed by actually RUNNING the real translator (flowMapper.ts) against
+ * the extracted FlowIR, not by a static claim — see the `flow` branch below. Since
+ * translation is pure and cheap, a dry-run preview can show the true per-flow verdict
+ * (how many of its steps will actually translate) rather than a blanket "not migrated".
  */
 
 export type Compatibility = 'supported' | 'partial' | 'manual' | 'none';
@@ -209,18 +215,46 @@ export function assessAgent(ir: AgentIR): AgentAssessment {
       dependencies.push({ type: 'Connected agent', ref: label.trim(), from: ir.name });
       continue;
     }
+    if (tool.kind === 'flow' && tool.flowId) {
+      const flow = ir.flows?.find((f) => f.id === tool.flowId);
+      if (flow) {
+        const preview = translateFlow(flow, { integrationName: integrationNameForFlow(flow.name) });
+        const totalSteps = flow.actions.length;
+        const lostSteps = preview.fidelityNotes.filter((n) => n.component !== `flow:${flow.name}` && (n.status === 'lost' || n.status === 'needs-review')).length;
+        const translatedSteps = totalSteps - lostSteps;
+        components.push({
+          component: label,
+          kind: 'tool (flow)',
+          compatibility: lostSteps === 0 ? 'partial' : translatedSteps > 0 ? 'partial' : 'manual',
+          note:
+            lostSteps === 0
+              ? `Invokes the "${flow.name}" Agent Flow — all ${totalSteps} step(s) translate to a real Google Application Integration tool.`
+              : `Invokes the "${flow.name}" Agent Flow — ${translatedSteps} of ${totalSteps} step(s) translate to a real Application Integration tool; the rest need manual review (see the per-flow fidelity notes after migration).`,
+        });
+        continue;
+      }
+      // Extracted before flow support existed, or the flow fetch failed — say so
+      // rather than silently falling through to the generic "no equivalent" note below.
+      components.push({
+        component: label,
+        kind: 'tool (flow)',
+        compatibility: 'manual',
+        note: 'Invokes an Agent Flow, but its definition was not extracted — re-run extraction to preview it.',
+      });
+      continue;
+    }
     components.push({
       component: label,
       kind: `tool (${tool.kind})`,
       compatibility: tool.kind === 'connector' && tool.connectorId ? 'partial' : 'manual',
       note:
         tool.kind === 'connector'
-          ? `Calls ${tool.connectorId ?? 'an unidentified connector'}${tool.operationId ? ` (${tool.operationId})` : ''} — rebuilt as a direct API call once that connector's credentials are supplied.`
-          : tool.kind === 'flow'
-            ? 'Invokes a Power Automate flow. Flows are not migrated in this phase — rebuild it separately.'
-            : tool.kind === 'ai-builder'
-              ? 'Uses an AI Builder prompt/model. The prompt text is folded into the instruction where available; the model itself is not migrated.'
-              : 'Tool of a kind with no Gemini equivalent yet — preserved in the extraction, not recreated.',
+          ? tool.connectorId?.startsWith('shared_commondataserviceforapps')
+            ? `Calls Microsoft Dataverse${tool.operationId ? ` (${tool.operationId})` : ''} — on the Connectors step, choose "Keep Dataverse" to rebuild this as a direct API call (needs that connector's credentials), or "Use Cloud SQL" to copy this table into Cloud SQL for PostgreSQL instead (no credentials needed for this connector) — use that only if Dataverse itself will stop existing after this migration.`
+            : `Calls ${tool.connectorId ?? 'an unidentified connector'}${tool.operationId ? ` (${tool.operationId})` : ''} — rebuilt as a direct API call once that connector's credentials are supplied.`
+          : tool.kind === 'ai-builder'
+            ? 'Uses an AI Builder prompt/model. The prompt text is folded into the instruction where available; the model itself is not migrated.'
+            : 'Tool of a kind with no Gemini equivalent yet — preserved in the extraction, not recreated.',
     });
     needCredential(tool.connectorId);
   }

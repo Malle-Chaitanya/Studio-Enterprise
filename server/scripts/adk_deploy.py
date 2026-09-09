@@ -129,19 +129,31 @@ def _caller_user_id(tool_context) -> str:  # noqa: ANN001
     Tries several shapes on purpose: the attribute path has moved between google-adk
     releases and the deployed container's version is not pinned by us. Returns "" when
     nothing is found -- callers MUST treat that as "unknown", never as "shared".
+
+    PRINTS which shape resolved and to what value (never which failed silently) — a plain
+    print, not a log/tool-response field, because Cloud Logging redacts actual conversation
+    content for gen_ai events ("<elided>") but does NOT redact plain stdout. Confirmed live
+    2026-09-08: a real invoker-mode Gmail tool failed with a generic "permissions" message
+    the model paraphrased, and there was no way to see WHICH identity (if any) it actually
+    tried to impersonate without this — silently debugging identity resolution blind is not
+    something a real customer's support case should ever have to repeat.
     """
-    for get in (
-        lambda: tool_context._invocation_context.session.user_id,   # noqa: SLF001
-        lambda: tool_context.invocation_context.session.user_id,
-        lambda: tool_context.session.user_id,
-        lambda: tool_context.state.get("_caller_user_id"),
-    ):
+    shapes = (
+        ("_invocation_context.session.user_id", lambda: tool_context._invocation_context.session.user_id),  # noqa: SLF001
+        ("invocation_context.session.user_id", lambda: tool_context.invocation_context.session.user_id),
+        ("session.user_id", lambda: tool_context.session.user_id),
+        ("state['_caller_user_id']", lambda: tool_context.state.get("_caller_user_id")),
+    )
+    for label, get in shapes:
         try:
             v = get()
+            print(f"[caller-id] {label} -> {v!r}")
             if v:
                 return str(v)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            print(f"[caller-id] {label} -> FAILED: {e!r}")
             continue
+    print("[caller-id] no shape resolved a value — returning empty")
     return ""
 
 
@@ -462,6 +474,7 @@ def _build_live_connector_tool(conn: dict, project: str):
             # session's user_id is already a Google address, which is what DWD wants.
             if impersonating and conn.get("impersonationResolve") == "google-dwd-subject":
                 subject = _caller_var().get("")
+                print(f"[mint-token] {conn_name}: resolved caller subject = {subject!r}")
                 if not subject:
                     # Fail closed. Falling back to `impersonate_email` here would quietly run
                     # an invoker connector as one pinned person and, for Gmail, SEND AS THEM.
@@ -471,6 +484,19 @@ def _build_live_connector_tool(conn: dict, project: str):
                         f"not act as anyone."
                     )
                 creds = creds.with_subject(subject)
+                try:
+                    creds.refresh(google.auth.transport.requests.Request())
+                except Exception as e:  # noqa: BLE001
+                    # Plain print, not just re-raise: the caller's own try/except turns this
+                    # into a tool-response error dict, which Cloud Logging redacts for gen_ai
+                    # events — this is the one place the REAL Google-side rejection reason
+                    # (invalid_grant / unauthorized_client / "Client is unauthorized...") is
+                    # still visible in the logs at all.
+                    print(f"[mint-token] {conn_name}: DWD subject={subject!r} refresh FAILED: {e!r}")
+                    raise
+                token_cache[cache_key] = creds.token
+                token_cache[exp_key] = time.time() + 3000
+                return creds.token
             else:
                 try:
                     subject = _secret("impersonate_email")
@@ -600,6 +626,26 @@ def _build_live_connector_tool(conn: dict, project: str):
         from connector_tools.gmail import build_tools as _build
         return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
+    # CROSS-VENDOR, third of three (after gmail, googlechat): Copilot's Office 365 Outlook
+    # Calendar operations -> Google Calendar. Requires calendar scope + an
+    # `impersonate_email` secret, same DWD pattern as gmail. See connector_tools/calendar.py
+    # for the fidelity divergences (Show As -> transparency, single primary calendar only)
+    # this mapping cannot avoid.
+    if kind in ("googlecalendar", "calendar"):
+        from connector_tools.calendar import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
+    # CROSS-VENDOR, fourth: Copilot's Office 365 Outlook Contacts operations -> Google
+    # Contacts (People API). Requires the `contacts` scope + an `impersonate_email`
+    # secret, same DWD pattern as gmail/calendar. See connector_tools/contacts.py for
+    # the fidelity divergences (folders vs groups, non-portable resourceName ids) this
+    # mapping cannot avoid. No Keep-Microsoft equivalent exists yet — see
+    # connectors/equivalence.ts's mcp_ContactsManagement row and
+    # db/repos/agentSurfaceChoice.ts's 'shared_office365:contacts' entry.
+    if kind in ("googlecontacts", "contacts"):
+        from connector_tools.contacts import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
     # Mail that STAYS in Microsoft: the agent moves to Gemini, Graph still serves its mail.
     # Requires app-only ms_graph credentials plus Mail.ReadWrite / Mail.Send APPLICATION
     # permissions with admin consent.
@@ -648,6 +694,395 @@ def _build_live_connector_tool(conn: dict, project: str):
     # `caller` only here: generic_rest owns the bound-operation path, which is where an
     # impersonating connector (Dataverse) actually makes its call.
     return _build(conn, _secret, _mint_token, _auth_header, _fill, caller=_caller)
+
+
+# ---------------------------------------------------------------------------
+# MCP-server tools (Track C).
+#
+# Two paths here, NOT equally proven:
+#
+#   (a) Agent-Registry path (mcp["registryServerName"] set) — go through the
+#       DESTINATION project's own Agent Registry to connect/discover/call a
+#       server. CORRECTED 2026-09-07 against a live installed google-adk 2.8.0
+#       and Google's own auto-generated code snippet for a real registry entry
+#       (Agent Platform console -> Agent Registry -> MCP Servers -> any entry ->
+#       Overview -> Code Snippet): the real class is
+#       `google.adk.integrations.agent_registry.agent_registry.AgentRegistry`
+#       (NOT google.adk.tools.mcp_tool.agent_registry — that path was an
+#       educated guess from an earlier session and does not exist in 2.8.0),
+#       constructed as `AgentRegistry(project_id=..., location=...)`, and
+#       `get_mcp_toolset(mcp_server_name)` takes NO tool_filter parameter at
+#       all — it returns every tool the server exposes, full stop. Re-check
+#       against whatever google-adk version _pinned() reports if this ever
+#       raises ImportError again — this SDK's internal module layout has moved
+#       more than once already (see McpHttpClientFactory in the module
+#       docstring history).
+#
+#       Because there is no mechanism-level filter, restricting which of the
+#       server's tools the model actually uses (to respect the source agent's
+#       own `tools` allow-list, or a destination-side safety narrowing) can
+#       ONLY be done via instruction today, not construction. See
+#       `_mcp_tool_filter_instruction` below.
+#
+#       Live-tested 2026-09-07 against calendarmcp.googleapis.com (Google
+#       Calendar's registry entry, 8 real tools: list_events, get_event,
+#       list_calendars, suggest_time, create_event, update_event, delete_event,
+#       respond_to_event — confirmed via `gcloud agent-registry mcp-servers
+#       describe`) using a personal-account ADC token: toolset construction
+#       succeeded, but the MCP session itself failed ("Session terminated") —
+#       most likely because gcloud's shared OAuth client is blocked from
+#       requesting the Calendar scope for personal logins (a real, Google-wide
+#       policy, confirmed via the console's own warning text), not a defect in
+#       this construction path. A deployed Reasoning Engine authenticates as
+#       its OWN service account, not a personal login, so this specific
+#       failure mode should not recur in a real deploy — but that has NOT been
+#       independently confirmed with a service-account run as of this change.
+#       Treat that gap honestly until it has been.
+#   (b) Raw-URL path (mcp["serverUrl"] only, no registryServerName) — required
+#       for every CUSTOM/third-party connector (HubSpot etc.), since those
+#       servers are never in Google's Agent Registry. Built the way ADK's own
+#       McpToolset + StreamableHTTPConnectionParams are documented to work, but
+#       NOT live-tested end to end against a real third-party server as of this
+#       change. Treat a deploy that used this path as unverified — surface that
+#       in the report — until it has been.
+#
+# Root cause a full day was spent on (2026-08-31/09-01), load-bearing for BOTH
+# paths: an MCP server can ADVERTISE a tool over the raw protocol (`tools/list`)
+# that the calling platform never actually sanctions for execution — ADK's own
+# runtime error listed `list_engines` as "available" and it still 403'd on every
+# call, while `search`/`conversational_search` (the only two tools Discovery
+# Engine's Agent Registry entry lists on its own "Tools" tab) worked cleanly.
+# The tool-list instruction below is therefore NOT simply "pass through
+# mcp['tools'] from the source agent" — that would tell the model to try a tool
+# the destination may never actually be able to call. It narrows what's already
+# offered; it cannot widen it.
+# ---------------------------------------------------------------------------
+def _mcp_tool_filter_instruction(mcp: dict) -> str:
+    """Best-effort tool restriction for a registry toolset that has no real
+    tool_filter mechanism (see module comment above). Returns an instruction
+    fragment naming the allowed tools, or '' when the source allowed everything
+    ('all' selection) and there is nothing to narrow."""
+    tools = mcp.get("tools") or []
+    if not tools:
+        return ""
+    names = ", ".join(tools)
+    return (
+        f"\nFor the '{mcp.get('id')}' tools, you are ONLY allowed to use: {names}. "
+        f"Never call any other tool from that server, even if it looks relevant — "
+        f"the source agent this was migrated from was never granted access to it.\n"
+    )
+
+
+def _build_mcp_toolset(mcp: dict, project: str):
+    """Return a real ADK MCP toolset for one migrated mcp-server tool entry.
+
+    `mcp` is one entry of spec["mcpTools"] — see AdkSpec.mcpTools in
+    adkDeployer.ts for the exact shape and its own load-bearing caveats
+    (secretIds is honestly empty for most tools today; tools is the intersection
+    the SOURCE allowed, not a guarantee the destination will honor all of it;
+    it is enforced by instruction only, not by construction — see
+    _mcp_tool_filter_instruction above).
+
+    Raises on failure — the caller wraps every entry in the same
+    fail-the-whole-deploy try/except every other tool kind in this file already
+    uses, so a broken MCP tool is reported, not silently dropped.
+    """
+    from google.adk.tools.mcp_tool.mcp_toolset import McpToolset  # noqa: F401 — availability check
+
+    registry_name = mcp.get("registryServerName")
+    if registry_name:
+        from google.adk.integrations.agent_registry.agent_registry import AgentRegistry
+
+        registry = AgentRegistry(project_id=project, location=mcp.get("registryLocation") or "global")
+        return registry.get_mcp_toolset(registry_name)
+
+    server_url = mcp.get("serverUrl")
+    if not server_url:
+        raise RuntimeError(
+            f"mcp tool '{mcp.get('id')}' has neither registryServerName nor serverUrl — nothing to connect to"
+        )
+
+    from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+
+    auth_kind = mcp.get("authKind")
+    secret_ids = mcp.get("secretIds") or {}
+    headers: dict = {}
+    if auth_kind and secret_ids:
+        # Mirrors _build_live_connector_tool's own _secret() one-for-one — the same
+        # REST-not-client reasoning applies identically here (see that function's
+        # docstring: the google-cloud-secret-manager client shadows the google.cloud
+        # namespace package and silently breaks VertexAiSearchTool).
+        import base64
+        import json as _json
+        import urllib.request
+
+        import google.auth
+        from google.auth.transport.requests import Request as _AuthRequest
+
+        def _secret(field: str) -> str:
+            secret_id = secret_ids.get(field)
+            if not secret_id:
+                raise RuntimeError(f"mcp tool '{mcp.get('id')}': no secret id configured for field '{field}'")
+            creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            creds.refresh(_AuthRequest())
+            url = (
+                f"https://secretmanager.googleapis.com/v1/projects/{project}"
+                f"/secrets/{secret_id}/versions/latest:access"
+            )
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {creds.token}"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                payload = _json.loads(resp.read().decode("utf-8"))
+            return base64.b64decode(payload["payload"]["data"]).decode("utf-8")
+
+        if auth_kind == "bearer":
+            token = _secret("token")
+            headers["Authorization"] = token if " " in token.strip() else f"Bearer {token.strip()}"
+        else:
+            # oauth2-*/basic-* raw-URL MCP auth is not built yet — every credential kind
+            # actually proven so far (Secret Manager fetch, header shape) is the bearer
+            # one, since that is what the live-tested registry path also uses under the
+            # hood. Fail loud rather than silently connecting with no auth at all.
+            raise RuntimeError(f"mcp tool '{mcp.get('id')}': unsupported authKind '{auth_kind}' for a raw-URL MCP server")
+
+    return McpToolset(
+        connection_params=StreamableHTTPConnectionParams(url=server_url, headers=headers or None),
+        tool_filter=tool_filter,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Migrated Agent Flow tools.
+#
+# `flow` is one entry of spec["flowTools"] — see AdkSpec.flowTools in adkDeployer.ts.
+# `executeUrl` already points at a real, already-created Application Integration
+# (services/applicationIntegration.ts ran before this deploy, in Phase 2) — this
+# function has nothing to discover or build on the Google-resource side, only a real
+# HTTP call to make. Generalizes the hand-built draft_follow_up_email/
+# get_rate_sheet_band prototypes this project proved live earlier: same POST-with-
+# minted-SA-token shape, but the parameter LIST is generic (from `inputParameters`),
+# not hardcoded per flow.
+#
+# Signature-generation mirrors connector_tools/generic_rest.py's own convention
+# exactly (thin exec'd wrapper calling a real closure, docstring set separately) —
+# see that module's comment for why a real signature is load-bearing: ADK builds
+# the tool's schema from the function's signature, so **kwargs would describe no
+# arguments to the model at all.
+# ---------------------------------------------------------------------------
+def _build_flow_tool(flow: dict):
+    """Build a real ADK function tool for one migrated Agent Flow."""
+    import re as _re
+    import json as _json
+    import urllib.request
+    import google.auth
+    from google.auth.transport.requests import Request as _AuthRequest
+
+    def _invoke(**kwargs) -> dict:
+        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        creds.refresh(_AuthRequest())
+        req = urllib.request.Request(
+            flow["executeUrl"],
+            data=_json.dumps(kwargs).encode("utf-8"),
+            headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return _json.loads(resp.read().decode("utf-8"))
+        except Exception as e:  # noqa: BLE001
+            try:
+                detail = e.read().decode("utf-8")[:500]  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                detail = str(e)
+            return {"error": f"{flow.get('name', 'migrated flow')} failed: {detail}"}
+
+    params = flow.get("inputParameters") or []
+    # Each Application Integration parameter key is already a sanitized identifier
+    # (see sanitizeIdent in flowMapper.ts) — safe to use directly as a Python arg name.
+    arg_names = [p["key"] for p in params]
+
+    # ADK derives the Gemini function-calling schema from THIS signature, so a
+    # dataType-aware type hint is not cosmetic: typing a limit/amount field as `str`
+    # let the model pass literal text straight through ("$4M"), which a downstream
+    # numeric parse then turned into NaN/None with no error — every row comparison
+    # silently failed and the tool reported "no rate found" for an amount that WAS
+    # in range. Typing it `float` forces the model to emit an actual JSON number
+    # before the call ever leaves the model, not a string it merely looks numeric.
+    def _py_type(p: dict) -> tuple[str, str]:
+        dt = (p.get("dataType") or "").lower()
+        if dt == "number":
+            return "float", "0.0"
+        if dt == "boolean":
+            return "bool", "False"
+        return "str", '""'
+
+    sig = ", ".join(f"{p['key']}: {_py_type(p)[0]} = {_py_type(p)[1]}" for p in params)
+    call_args = ", ".join(f"{n}={n}" for n in arg_names)
+    tool_name = _re.sub(r"[^a-zA-Z0-9_]", "_", (flow.get("name") or "migrated_flow")).strip("_").lower() or "migrated_flow"
+    src = f"def {tool_name}({sig}) -> dict:\n    return _invoke({call_args})\n"
+    ns = {"_invoke": _invoke}
+    exec(src, ns)  # noqa: S102 - generated from our own spec, never from model output
+    fn = ns[tool_name]
+
+    def _arg_line(p: dict) -> str:
+        label = p.get("displayName") or p["key"]
+        if (p.get("dataType") or "").lower() == "number":
+            return (
+                f"    {p['key']}: {label} — a plain number (e.g. 4000000). Expand any "
+                "shorthand or currency formatting the caller used ($4M -> 4000000, "
+                "4,000,000 -> 4000000) before calling this tool; never pass the original "
+                "text.\n"
+            )
+        return f"    {p['key']}: {label}\n"
+
+    arg_doc = "".join(_arg_line(p) for p in params)
+    doc = str(flow.get("description") or f"Calls the migrated flow \"{flow.get('name')}\".") + "\n"
+    if arg_doc:
+        doc += "\nArgs:\n" + arg_doc
+    doc += "\nReturns:\n    dict with the flow's real output fields, or an 'error' key.\n"
+    fn.__doc__ = doc
+    return fn
+
+
+# ---------------------------------------------------------------------------
+# Full-tenant-cutover Cloud SQL tools.
+#
+# `spec` is one entry of AdkSpec["cloudSqlTools"] — a Dataverse connector tool's table,
+# already copied into Cloud SQL by services/cloudSqlMigration.ts (Phase 2, before this
+# deploy runs). This is the LIVE-VERIFIED connection shape (real test instance, 2026-09-08,
+# deleted after verification): IAM database auth, ZERO stored password. Two real gotchas
+# proven live and preserved here on purpose:
+#   1. `Connector(credentials=creds, quota_project=...)` — NOT `creds.with_quota_project()`,
+#      which silently does not propagate into the Connector's own internal HTTP client and
+#      403s with a confusing "wrong project" error that looks like a permissions problem.
+#   2. The IAM database username is the service account email WITH ITS TRAILING
+#      ".gserviceaccount.com" STRIPPED — using the full email silently fails to
+#      authenticate.
+#
+# SQL INJECTION DEFENSE: the model supplies a COLUMN NAME (to filter on) and a VALUE.
+# Column names cannot be parameterized in SQL — the allowlist against `spec["columns"]`
+# (the table's REAL columns, from services/cloudSqlMigration.ts, never model-supplied) is
+# the actual defense, not a formality. The VALUE is always sent as a real parameterized
+# bind, never string-interpolated, regardless of what it contains.
+# ---------------------------------------------------------------------------
+def _cloudsql_json_safe(value):
+    """pg8000 hands back native Python types for Postgres columns that have no direct JSON
+    equivalent — NUMERIC as decimal.Decimal, TIMESTAMPTZ/DATE as datetime objects, BYTEA as
+    bytes. The ADK/genai SDK eventually calls json.dumps() on the tool's return value to send
+    it back to the model, and plain json.dumps() has no idea what to do with any of those —
+    it raises `TypeError: Object of type Decimal is not JSON serializable` and silently kills
+    the ENTIRE agent turn (confirmed live 2026-09-08 via Cloud Logging: "Dynamic node ...
+    failed", no error ever reaching the chat UI — the tool call itself shows as succeeded,
+    then the conversation just goes idle). Fixing only Decimal would have left the identical
+    crash waiting for the first table with a date column referenced — which is effectively
+    every Dataverse table, since createdon/modifiedon are standard system columns — so this
+    converts every type pg8000 can hand back that isn't already JSON-safe, not just the one
+    that happened to get hit first."""
+    import datetime as _datetime
+    import decimal as _decimal
+
+    if isinstance(value, _decimal.Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, (_datetime.datetime, _datetime.date)):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8", errors="replace")
+    return value
+
+
+def _build_cloudsql_tool(spec: dict):
+    """Build a real ADK function tool for one Dataverse table migrated to Cloud SQL."""
+    import re as _re
+
+    table = spec["table"]
+    columns = spec.get("columns") or []
+    instance_connection_name = spec["instanceConnectionName"]
+    database = spec["database"]
+
+    def _query(filter_column: str, filter_value: str) -> dict:
+        if filter_column not in columns:
+            return {
+                "error": f"'{filter_column}' is not a real column on \"{table}\". "
+                f"Valid columns: {', '.join(columns)}"
+            }
+        import google.auth
+        from google.cloud.sql.connector import Connector, IPTypes
+        import pg8000
+
+        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        project = instance_connection_name.split(":")[0]
+        connector = Connector(credentials=creds, quota_project=project)
+        try:
+            # The connecting identity is always THIS deployment's own (attached) service
+            # account. `creds.service_account_email` can read back the literal string
+            # "default" before the credentials have been refreshed against real Compute
+            # Engine/Reasoning Engine metadata — asking the metadata server directly is the
+            # reliable way to resolve it, with the credentials object as a local-dev fallback.
+            import urllib.request as _urlreq
+            try:
+                _req = _urlreq.Request(
+                    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                    headers={"Metadata-Flavor": "Google"},
+                )
+                with _urlreq.urlopen(_req, timeout=5) as _resp:
+                    sa_email = _resp.read().decode("utf-8").strip()
+            except Exception:  # noqa: BLE001
+                sa_email = getattr(creds, "service_account_email", "") or ""
+            iam_user = _re.sub(r"\.gserviceaccount\.com$", "", sa_email)
+            conn = connector.connect(
+                instance_connection_name,
+                "pg8000",
+                user=iam_user,
+                db=database,
+                enable_iam_auth=True,
+                ip_type=IPTypes.PUBLIC,
+            )
+            try:
+                cur = conn.cursor()
+                # Case-insensitive PARTIAL match (`::text ILIKE '%value%'`), not exact
+                # equality — confirmed live 2026-09-08: a real chat user said "Meridian
+                # Foods" while the migrated row's actual value is "Meridian Foods Inc.",
+                # and an exact match silently returned zero rows for a client that was
+                # right there in the table. The model calling this tool almost never knows
+                # a stored value's literal punctuation/suffix/casing verbatim — it only has
+                # whatever phrasing the end user typed. `::text` lets this apply uniformly
+                # to any column type (numeric/date columns included) without needing column
+                # type metadata here. This also restores parity with the source Dataverse
+                # "List rows" action this tool replaces, which itself matches text filters
+                # with `contains()`, not exact equality — so this is a fidelity fix, not a
+                # new behavior invented for Cloud SQL.
+                cur.execute(
+                    f'SELECT * FROM "{table}" WHERE "{filter_column}"::text ILIKE %s LIMIT 20',
+                    (f"%{filter_value}%",),
+                )
+                col_names = [d[0] for d in cur.description]
+                rows = [
+                    {k: _cloudsql_json_safe(v) for k, v in zip(col_names, r)}
+                    for r in cur.fetchall()
+                ]
+                cur.close()
+                return {"rows": rows, "count": len(rows)}
+            finally:
+                conn.close()
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"{table} lookup failed: {e}"}
+        finally:
+            connector.close()
+
+    tool_name = _re.sub(r"[^a-zA-Z0-9_]", "_", spec.get("name") or f"lookup_{table}").strip("_").lower()
+    src = f"def {tool_name}(filter_column: str, filter_value: str) -> dict:\n    return _query(filter_column, filter_value)\n"
+    ns = {"_query": _query}
+    exec(src, ns)  # noqa: S102 - generated from our own spec, never from model output
+    fn = ns[tool_name]
+    fn.__doc__ = (
+        str(spec.get("description") or f'Looks up rows from "{table}".') + "\n\n"
+        "Args:\n"
+        f"    filter_column: which column to filter on. Must be exactly one of: {', '.join(columns)}\n"
+        "    filter_value: text to look for in that column (case-insensitive, partial match — "
+        "you do not need the exact/full stored value, e.g. a partial client name works).\n\n"
+        "Returns:\n"
+        "    dict with 'rows' (list, up to 20) and 'count', or an 'error' key.\n"
+    )
+    return fn
 
 
 # ---------------------------------------------------------------------------
@@ -940,6 +1375,9 @@ def main():
     # stores use _make_search_tool (module-level, see its comment above for
     # the full reasoning) instead of combining VertexAiSearchTool instances.
     tools = []
+    # Populated inside the mcpTools loop below; declared here so it's always defined
+    # by the time naming_rule is built further down, even on an empty mcpTools list.
+    mcp_tool_filter_instructions = ""
     # Set when the single-store branch below appends its VertexAiSearchTool, so
     # built_tool_names (near the end of this function) can report its TRUE
     # query-time name instead of whatever this raw, pre-wrap object's own
@@ -1019,6 +1457,15 @@ def main():
             built = _build_live_connector_tool(conn, args.project)
             # SharePoint contributes two tools (list + read); others contribute one.
             for fn in (built if isinstance(built, (list, tuple)) else [built]):
+                # A builder returning None (silently, no exception) used to reach
+                # Agent(tools=[...]) as a literal None entry, which ADK/pydantic rejects with
+                # an opaque "tools.0.callable ... input_value=None" error that names neither
+                # the connector nor which builder produced it — surfaced live 2026-09-06 via
+                # a real Deal Desk migration, root cause never pinned to a specific builder.
+                # Never let it reach Agent() silently again: name it and skip it instead.
+                if fn is None:
+                    emit({"warn": f"connector tool build for kind={conn.get('kind') or conn.get('id')} returned no tool — skipped, not wired."})
+                    continue
                 # Per-user tools need to know WHO is calling. Wrapping only these leaves
                 # every shared-credential tool byte-identical to what already deploys and
                 # works, so this can only regress connectors that fail closed today.
@@ -1041,6 +1488,35 @@ def main():
                         pass
                 used_tool_names.add(getattr(fn, "__name__", original))
                 tools.append(fn)
+
+        # MCP-server tools (Track C) — see _build_mcp_toolset's own module comment
+        # for the two paths and which one is actually proven. Same fail-the-whole-
+        # deploy semantics as live_connectors above and everything else in this
+        # try block: a broken tool must be reported, not silently dropped from an
+        # agent whose source genuinely had it.
+        #
+        # No name-collision handling here unlike live_connectors: a McpToolset
+        # exposes however many tools the server advertises, discovered at deploy
+        # time, not one renameable Python function — there is no single __name__ to
+        # dedupe against used_tool_names. If a name genuinely collides with a live
+        # connector's function, ADK's own deploy-time "Duplicate function
+        # declaration" error is what surfaces it, the same signal
+        # _make_search_tool's module comment already relies on elsewhere in this
+        # file — not a silent failure.
+        mcp_tool_filter_instructions = ""
+        for mcp in (spec.get("mcpTools") or []):
+            tools.append(_build_mcp_toolset(mcp, args.project))
+            mcp_tool_filter_instructions += _mcp_tool_filter_instruction(mcp)
+
+        # Migrated Agent Flows — see _build_flow_tool's own module comment. Same
+        # fail-the-whole-deploy semantics as every other tool kind in this try block.
+        for flow in (spec.get("flowTools") or []):
+            tools.append(_build_flow_tool(flow))
+
+        # Full-tenant-cutover Dataverse tables migrated to Cloud SQL — see
+        # _build_cloudsql_tool's own module comment.
+        for cs in (spec.get("cloudSqlTools") or []):
+            tools.append(_build_cloudsql_tool(cs))
     except Exception as e:  # noqa: BLE001
         emit({"error": f"tool wiring failed: {e}"}); return
 
@@ -1083,14 +1559,52 @@ def main():
     sub_agent_specs = spec.get("subAgents") or []
     sub_agents = []
     for sa in sub_agent_specs:
+        # A REAL Copilot Studio child agent (AgentIR.TopicIR.isChildAgent) carries its own
+        # liveConnectors — the tools extraction found scoped exclusively to it via
+        # AgentToolIR.childAgentTopicId (see services/dataverse.ts and orchestrator.ts's
+        # topicSubAgents construction). When present, build THIS sub-agent's own tools from
+        # its own connector list — reusing the exact same _build_live_connector_tool dispatch
+        # the root uses — instead of the root's tools wholesale. An ordinary migrated TOPIC
+        # (not a real child agent) has no liveConnectors entry and keeps the previous
+        # inherit-all/inherit-none behavior unchanged, so this is purely additive.
+        sub_live_connectors = sa.get("liveConnectors") or []
+        if sub_live_connectors:
+            sub_tools = []
+            sub_used_tool_names = set()
+            for conn in sub_live_connectors:
+                try:
+                    built = _build_live_connector_tool(conn, args.project)
+                except Exception as e:  # noqa: BLE001
+                    emit({"warn": f"sub-agent {sa.get('id')}: connector tool build failed for {conn.get('kind')}: {e}"})
+                    continue
+                for fn in (built if isinstance(built, (list, tuple)) else [built]):
+                    if fn is None:
+                        emit({"warn": f"sub-agent {sa.get('id')}: connector tool build for kind={conn.get('kind') or conn.get('id')} returned no tool — skipped, not wired."})
+                        continue
+                    original = getattr(fn, "__name__", "tool")
+                    if original in sub_used_tool_names:
+                        i = 2
+                        candidate = f"{original}_{i}"
+                        while candidate in sub_used_tool_names:
+                            i += 1
+                            candidate = f"{original}_{i}"
+                        try:
+                            fn.__name__ = candidate[:60]
+                        except (AttributeError, TypeError):
+                            pass
+                    sub_used_tool_names.add(getattr(fn, "__name__", original))
+                    sub_tools.append(fn)
+            resolved_tools = sub_tools
+        else:
+            # Sub-agents inherit nothing implicitly: give them the same tools as the
+            # root so a topic that needs SharePoint or a connector can still act.
+            resolved_tools = tools if sa.get("inheritTools", True) else []
         sa_kwargs = dict(
             name=_safe_agent_name(sa.get("id") or sa.get("name") or "topic"),
             model=sa.get("model") or spec.get("model", "gemini-2.5-flash"),
             description=sa.get("description") or f"Handles {sa.get('displayName') or sa.get('id')} requests.",
             instruction=sa.get("instruction") or "",
-            # Sub-agents inherit nothing implicitly: give them the same tools as the
-            # root so a topic that needs SharePoint or a connector can still act.
-            tools=tools if sa.get("inheritTools", True) else [],
+            tools=resolved_tools,
         )
         try:
             # Same tool-call record as the root. Once the root transfers to a topic, the
@@ -1111,6 +1625,11 @@ def main():
         "describe them to the user. Describe what you can DO and which systems you can reach, "
         "using their product names (SharePoint, Jira, Confluence), never a function name."
     )
+    # Appended, not merged into the caller-provided globalInstruction — this is the ONLY
+    # place a registry MCP toolset's tools-allow-list can be enforced (see
+    # _mcp_tool_filter_instruction's own comment: get_mcp_toolset has no construction-time
+    # filter parameter in the installed google-adk version, confirmed 2026-09-07).
+    naming_rule += mcp_tool_filter_instructions
 
     try:
         root_agent = Agent(
@@ -1200,6 +1719,13 @@ def main():
     if any((c.get("kind") or "").lower() in ("sharepointonline", "sharepoint", "onedrive", "googledrive")
            for c in live_connectors):
         requirements += ["pypdf", "python-docx", "openpyxl"]
+    # Full-tenant-cutover Dataverse tables migrated to Cloud SQL (_build_cloudsql_tool) —
+    # Postgres has no HTTP data plane, so a real client + the Cloud SQL Connector are a
+    # genuine, deliberate dependency here, not an oversight (see that function's module
+    # comment). Added only when such a tool is present, same minimal-container discipline
+    # as the SharePoint/Drive document libraries above.
+    if spec.get("cloudSqlTools"):
+        requirements += ["pg8000", "cloud-sql-python-connector[pg8000]"]
     emit({"info": "reasoning engine requirements", "requirements": requirements})
 
     # Ship the connector_tools/ package alongside this script whenever a live

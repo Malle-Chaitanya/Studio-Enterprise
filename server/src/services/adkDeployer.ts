@@ -194,6 +194,98 @@ export interface AdkSpec {
     scopeUris?: string[];
   }>;
   /**
+   * MCP-server tools (Track C — same "real callable tool" requirement as `liveConnectors`
+   * above, and for the identical reason: an LLM hallucinating a JSON-RPC call is not a
+   * working tool). Built by `adk_deploy.py`'s `_build_mcp_toolset` into a real ADK
+   * toolset via `AgentRegistry.get_mcp_toolset` (real class:
+   * `google.adk.integrations.agent_registry.agent_registry.AgentRegistry`, confirmed
+   * 2026-09-07 against a live installed google-adk 2.8.0 and Google's own generated code
+   * snippet for a real registry entry — an earlier guessed import path,
+   * `google.adk.tools.mcp_tool.agent_registry`, does NOT exist and was corrected).
+   *
+   * ⚠️ Load-bearing gaps, still open:
+   *   1. `secretIds` here is populated ONLY for tools whose credentials are already
+   *      resolved elsewhere in the pipeline (mirroring `liveConnectors.secretIds`) — no
+   *      new credential-resolution path is invented by this field. An OAuth-secured MCP
+   *      tool with nothing in `secretIds` needs the same `buildLiveConnectorSpecsDetailed`
+   *      +`preflightConnectors` treatment `liveConnectors` already gets; that wiring is
+   *      the next concrete step, not done by this change.
+   *   2. `tools` (the allow-list) is enforced by INSTRUCTION only, not by construction —
+   *      confirmed 2026-09-07 that `get_mcp_toolset()` in the installed SDK takes no
+   *      `tool_filter`/similar parameter at all; it returns every tool the server exposes.
+   *      A model could still be talked into calling something outside this list; it is a
+   *      strong hint, not a hard guarantee, until ADK adds a real construction-time filter.
+   *   3. `tools` is also load-bearing for a second, separate reason: live-verified
+   *      2026-09-01 that a server can advertise a tool over the raw MCP protocol
+   *      (`tools/list`) that the platform's OWN registry never sanctioned for calling —
+   *      invoking it 403s regardless of any IAM grant. So this list must be the
+   *      DESTINATION registry's actual sanctioned tool list, intersected with the
+   *      source's allow-list — never the source's `mcp.tools` alone, which can name a
+   *      tool the destination refuses to execute.
+   *   4. Live-tested 2026-09-07 (personal ADC login, `calendarmcp.googleapis.com`):
+   *      toolset construction succeeds, but the MCP session itself failed with
+   *      "Session terminated" — most likely gcloud's shared OAuth client being blocked
+   *      from requesting the Calendar scope for personal logins (a real, documented
+   *      Google-wide policy), not a defect in this code. A deployed Reasoning Engine
+   *      authenticates as its own service account, not a personal login, so this specific
+   *      failure should not recur in a real deploy — but that has NOT been independently
+   *      re-confirmed with a service-account run as of this change.
+   */
+  mcpTools?: Array<{
+    id: string;
+    name?: string;
+    description?: string;
+    /** Host resolved from the source connector's own backend (AgentToolIR.mcp.serverUrl)
+     *  — see that field's own comment: often a host only, not the exact `/mcp` route. */
+    serverUrl?: string;
+    /** Set when this tool maps to a server already in the destination's Agent Registry
+     *  (Google-managed catalog, or a previously-registered third-party server) — the
+     *  ONLY path proven live end-to-end so far. Absent means adk_deploy.py must fall back
+     *  to a raw-URL McpToolset construction, which has NOT been live-verified. */
+    registryServerName?: string;
+    /** Agent Registry location for `registryServerName`, e.g. `global` — every
+     *  Google-managed server observed so far (Calendar, Gmail, Discovery Engine, ...) is
+     *  registered at `global`. Defaults to `global` in adk_deploy.py when omitted. */
+    registryLocation?: string;
+    /** Intersection of the source's allow-list and what the destination registry actually
+     *  sanctions for this server — see the field-level warnings above for why this is not
+     *  simply AgentToolIR.mcp.tools, and why it is enforced by instruction, not construction. */
+    tools?: string[];
+    authKind?: string;
+    secretIds?: Record<string, string>;
+  }>;
+  /**
+   * Migrated Copilot Studio Agent Flows, each already created as a real Application
+   * Integration by services/applicationIntegration.ts (Phase 2, before this deploy runs —
+   * see orchestrator.ts's flow-creation block) — `executeUrl` is a concrete, already-live
+   * endpoint, not something adk_deploy.py has to build or discover. One `FunctionTool` per
+   * entry, built generically from this list (see scripts/adk_deploy.py's `_build_flow_tool`).
+   */
+  flowTools?: Array<{
+    name: string;
+    description?: string;
+    executeUrl: string;
+    inputParameters: { key: string; displayName: string; dataType?: string }[];
+  }>;
+  /**
+   * Full-tenant-cutover Dataverse tools, already copied into Cloud SQL by
+   * services/cloudSqlMigration.ts (Phase 2, before this deploy runs — see orchestrator.ts's
+   * cutover block, same placement pattern as flowTools above). One `FunctionTool` per entry,
+   * built generically from this list (see scripts/connector_tools/cloudsql.py's build_tools).
+   * The deployed tool queries Postgres directly via IAM auth — zero stored password.
+   */
+  cloudSqlTools?: Array<{
+    name: string;
+    description?: string;
+    instanceConnectionName: string;
+    database: string;
+    table: string;
+    primaryKeyAttr: string;
+    /** Real column names — the deployed tool's SQL-injection defense (allowlist for a
+     *  model-supplied filter column; the value is always a parameterized bind). */
+    columns: string[];
+  }>;
+  /**
    * Migrated Copilot topics, deployed as ADK sub-agents INSIDE this one Reasoning
    * Engine — not as separate deployments. A Copilot agent with six topic domains would
    * otherwise cost six engines and exhaust the ~7/day agent-creation quota on a single
@@ -208,8 +300,19 @@ export interface AdkSpec {
     description?: string;
     instruction: string;
     model?: string;
-    /** Sub-agents share the root's tools unless this is false. */
+    /** Sub-agents share the root's tools unless this is false. Ignored when
+     *  `liveConnectors` below is present. */
     inheritTools?: boolean;
+    /**
+     * Set ONLY for a real Copilot Studio child agent (AgentIR.TopicIR.isChildAgent) —
+     * its own scoped connectors, built the same way the root's `liveConnectors` is
+     * (filtering `AgentToolIR[]` by `childAgentTopicId === topic.id`). When present,
+     * adk_deploy.py builds this sub-agent's tools from ITS OWN connector list — the
+     * same dispatch the root uses — instead of inheriting the root's tools wholesale.
+     * An ordinary migrated topic (not a real child agent) never sets this and keeps
+     * today's inheritTools behavior unchanged.
+     */
+    liveConnectors?: AdkSpec['liveConnectors'];
   }>;
 }
 
@@ -851,6 +954,14 @@ export async function publishAgentToGallery(
     liveConnectors?: AdkSpec['liveConnectors'];
     /** Migrated topics as in-deployment sub-agents (see AdkSpec.subAgents). */
     subAgents?: AdkSpec['subAgents'];
+    /** This agent's MCP-server tools (see AdkSpec.mcpTools) — built by the caller from
+     *  ir.agentTools, same as liveConnectors is built by connectorToolBuilder. */
+    mcpTools?: AdkSpec['mcpTools'];
+    /** This agent's migrated flows, already created in Google (see AdkSpec.flowTools). */
+    flowTools?: AdkSpec['flowTools'];
+    /** This agent's full-tenant-cutover Dataverse tools, already copied into Cloud SQL
+     *  (see AdkSpec.cloudSqlTools). */
+    cloudSqlTools?: AdkSpec['cloudSqlTools'];
   },
 ): Promise<{
   ok: boolean;
@@ -951,13 +1062,25 @@ export async function publishAgentToGallery(
   const spec = buildAdkSpec(ir, { model: opts?.model, instruction: opts?.instruction, groundingDataStores });
   if (opts?.liveConnectors?.length) {
     spec.liveConnectors = opts.liveConnectors;
+    // On globalInstruction, NOT spec.instruction — moved 2026-08-26. This agent has topic
+    // sub-agents, and per globalAnswerContract's own doc comment, once the root transfers to
+    // a sub-agent, the sub-agent's own instruction governs the reply and the ROOT's
+    // instruction (spec.instruction) no longer applies at all. A rule about calling tools
+    // placed only on spec.instruction silently stopped applying the moment a question routed
+    // to a topic — which is exactly the failure mode hit live 2026-08-26 (see below) even
+    // after this same rule had supposedly already fixed the Jira case on 2026-08-07: that
+    // earlier fix likely only ever got exercised on questions the ROOT answered directly.
+    // global_instruction is the one thing ADK actually applies everywhere, so that is where
+    // a rule that must hold unconditionally belongs — same reasoning as globalAnswerContract
+    // itself already documents for the citation-format rule.
+    //
     // Appended LAST, after the knowledge rules, because the model weights the end of the
     // instruction most and this is the behaviour that kept losing. Asked "how many
     // tickets do we have in Jira?" the agent answered "I cannot provide live counts,
     // check Jira directly" WITHOUT calling jira_search — while jira_search was wired,
     // listed among its tools, and worked when named explicitly (live 2026-08-07).
     // Describing the capability was not enough; it needed a rule against deflecting.
-    spec.instruction +=
+    spec.globalInstruction +=
       '\n' +
       [
         '## Live systems — non-negotiable',
@@ -973,10 +1096,72 @@ export async function publishAgentToGallery(
         '',
         'Report what the tool returned, including empty results ("Jira returned no matching',
         'issues") and errors, verbatim. An empty result is an answer; a refusal is not.',
+        '',
+        // A second, more specific deflection than the one above — found live 2026-08-26:
+        // asked a HubSpot question, the agent answered that "the HubSpot connector has not
+        // been set up" and walked through Gemini Enterprise's OWN native Data Store
+        // onboarding steps (Google Cloud console → Data stores → + Create data store →
+        // HubSpot), citing real Google documentation — while its own working HubSpot tool
+        // sat unused in its tool list the entire time. The model appears to pattern-match
+        // the connector name to Gemini Enterprise's built-in connector gallery rather than
+        // recognizing the custom tool it was actually deployed with. Zero function_call
+        // frames were present in that response — confirmed the tool was never attempted,
+        // not merely that it failed.
+        `You already have working, custom-built tools for: ${(opts.liveConnectors.map((c) => c.name ?? c.id).join(', '))}.`,
+        'This is separate from, and unrelated to, Gemini Enterprise\'s own built-in "Data',
+        'store" connector gallery (Google Cloud console → Data stores). NEVER tell the user',
+        'to create a data store, configure a connector, or that a connector "has not been',
+        'set up" for any of the systems named above — that describes a different feature you',
+        'do not use. Your own tool already works. Call it.',
+      ].join('\n') +
+      '\n';
+  }
+  // A calendar-capable agent — root OR any topic sub-agent, on EITHER calendar backend —
+  // has NO built-in knowledge of the actual current date. Confirmed live 2026-09-01 on
+  // the Google Calendar path: asked "when is my free time today", the deployed agent
+  // answered "You are free all day today, May 15, 2024" — a pure hallucination that then
+  // carried into the final booking confirmation too ("today, May 15, 2024, at 1:00 PM
+  // UTC"), not a one-off wrong answer. The same failure mode applies identically to the
+  // KEEP-MICROSOFT path (kind: 'outlook') — the model has no ground truth for "today"
+  // regardless of which calendar backend actually serves the events, so this must not be
+  // gated on Google Calendar alone or every "Keep Outlook Calendar" customer in a bulk
+  // migration hits the exact same bug unfixed. The fix is a get-current-datetime tool on
+  // EACH backend (calendar_get_current_datetime / outlook_get_current_datetime); this
+  // rule is what makes calling one non-negotiable rather than hoping tool order is enough.
+  //
+  // On globalInstruction, NOT spec.instruction, for the same reason as the "call the
+  // tool, don't deflect" rule above: calendar tools usually live on a topic SUB-AGENT
+  // (see childAgentTopicId scoping), and spec.instruction stops governing the reply the
+  // moment the root transfers control to one.
+  const allLiveConnectorKinds = [
+    ...(opts?.liveConnectors ?? []),
+    ...(opts?.subAgents ?? []).flatMap((s) => s.liveConnectors ?? []),
+  ].map((c) => c.kind);
+  const CALENDAR_CAPABLE_KINDS = new Set(['googlecalendar', 'calendar', 'outlook']);
+  if (allLiveConnectorKinds.some((k) => CALENDAR_CAPABLE_KINDS.has(k))) {
+    spec.globalInstruction +=
+      '\n' +
+      [
+        "## Today's date — non-negotiable",
+        '',
+        'You have NO built-in knowledge of the actual current date — your training data has',
+        'a fixed cutoff, and today is never that date. Before answering ANYTHING that',
+        'references "today", "tomorrow", "this week", "next Monday", or any other relative',
+        'date, and before creating, updating, responding to, or checking availability for',
+        'any event based on a relative date, you MUST first call whichever',
+        'get-current-datetime tool you have (calendar_get_current_datetime or',
+        'outlook_get_current_datetime) to get the REAL current date. Never guess, assume,',
+        'or recall a date from memory or from an earlier turn — re-check it every time a',
+        'new request depends on "today", since the conversation may span real time. A wrong',
+        'date here books a real event at the wrong time and misleads the user about their',
+        'own schedule.',
       ].join('\n') +
       '\n';
   }
   if (opts?.subAgents?.length) spec.subAgents = opts.subAgents;
+  if (opts?.mcpTools?.length) spec.mcpTools = opts.mcpTools;
+  if (opts?.flowTools?.length) spec.flowTools = opts.flowTools;
+  if (opts?.cloudSqlTools?.length) spec.cloudSqlTools = opts.cloudSqlTools;
   logger.info({ agent: ir.name, location }, 'adk: deploying reasoning engine');
   opts?.onStep?.('deploy', 'start', `Building and deploying ${ir.name} (3-5 min)`);
   const dep = await deployReasoningEngine(dest.project, location, spec, { stagingBucket: opts?.stagingBucket });

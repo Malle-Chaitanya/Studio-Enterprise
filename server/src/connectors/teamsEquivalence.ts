@@ -128,17 +128,19 @@ export const TEAMS_MESSAGING: Equivalence[] = [
       'chats differ in membership rules.',
     tool: 'chat_find_direct_message',
     graph: {
-      // Same root cause as PostMessageToConversation, and it is a documented platform rule
-      // rather than a missing grant: Microsoft allows app-only POST of a chatMessage ONLY
-      // for import/migration (Teamwork.Migrate.All), never for sending a live message. No
-      // application permission exists that would change this, so no consent the customer
-      // could give unblocks it. The routes that DO exist — delegated permissions (a real
-      // user signing in, per user) or an Azure Bot added to each chat — are different
-      // products, not a configuration of this one.
+      // CORRECTED 2026-08-24: this previously conflated creating the chat OBJECT with
+      // sending a message into it — they are different Graph operations governed by
+      // different permissions. Chat.Create covers the former; the chatMessage-POST wall
+      // below (same root cause as PostMessageToConversation, and a documented platform rule,
+      // not a missing grant — Microsoft allows app-only chatMessage POST only for
+      // import/migration, Teamwork.Migrate.All) still blocks the latter. NOT yet measured
+      // against a live tenant.
       capability:
-        'POST /chats — NOT AVAILABLE app-only. Microsoft permits app-only chatMessage POST ' +
-        'only for import (Teamwork.Migrate.All); live sending requires delegated permissions ' +
-        'or a Bot Framework app added to the chat.',
+        'POST /chats — creates the chat object via Chat.Create. This does NOT unblock ' +
+        'sending the first message into it: chatMessage POST is still import-only ' +
+        '(Teamwork.Migrate.All), so the created chat starts empty and stays that way from ' +
+        'this agent — someone has to send the first message from the Teams client.',
+      tool: 'teams_create_chat',
     },
   },
   {
@@ -264,14 +266,13 @@ export const TEAMS_MESSAGING: Equivalence[] = [
   {
     surface: 'teams',
     operationId: 'ListJoinedTeams',
-    covers: ['GetTeam', 'ListAssociatedTeams', 'GetChannelDetails'],
-    label: 'List joined teams / associated teams / Get a team (3 operations)',
+    label: 'List joined teams',
     target: null,
     fidelity: 'lost',
     reason:
-      'Google Chat has no team object. There is nothing to list, so these cannot be mapped ' +
-      'even approximately. On the KEEP-TEAMS path they work unchanged, which is the clearest ' +
-      'case in the table for offering that choice at all.',
+      'Google Chat has no team object. There is nothing to list, even approximately. On the ' +
+      'KEEP-TEAMS path this works unchanged, which is the clearest case in the table for ' +
+      'offering that choice at all.',
     // graph.verified, while `fidelity` stays `lost`, and the two are not in conflict:
     // `fidelity` grades the move to Google Chat (no team object exists there, so it really is
     // lost), and `graph` grades the keep-Microsoft path, where the operation works unchanged.
@@ -286,6 +287,61 @@ export const TEAMS_MESSAGING: Equivalence[] = [
   },
   {
     surface: 'teams',
+    // Split out of the ListJoinedTeams bucket 2026-08-24: bundling three operations behind
+    // one `graph` field meant a report reading GetTeam's row off that bucket would have named
+    // teams_list_joined_teams as its tool, which is wrong now that teams_get_team exists as
+    // its own function — the exact per-operation drift this table exists to prevent.
+    operationId: 'GetTeam',
+    label: 'Get a team',
+    target: null,
+    fidelity: 'lost',
+    reason:
+      'Google Chat has no team object, so there is nothing to fetch by id. On the ' +
+      'keep-Microsoft path the operation works unchanged.',
+    // Proven live 2026-08-24 (_diag_teams_new_reads_probe.ts) as tenant 807d6772: returned
+    // "22nov_public-channel" with visibility=public — the same team ListJoinedTeams sees.
+    graph: { capability: 'GET /teams/{team-id}', tool: 'teams_get_team', verified: true },
+  },
+  {
+    surface: 'teams',
+    operationId: 'ListAssociatedTeams',
+    label: 'List associated teams',
+    target: null,
+    fidelity: 'lost',
+    reason:
+      'Google Chat has no team object, so there is nothing to list. On the keep-Microsoft ' +
+      'path the operation works, at a different endpoint than the Copilot swagger uses: ' +
+      "Graph rejects the swagger's /me/teamwork/associatedTeams app-only (the /me alias needs " +
+      'a signed-in user), so the tool calls /users/{id}/teamwork/associatedTeams instead.',
+    // Proven live 2026-08-24 (_diag_teams_new_reads_probe.ts) as erik@filefuze.co: 22
+    // associated teams returned WITH names — confirming both the permission and the
+    // corrected /users/{id} path (the swagger's own /me path was never tried, by design).
+    graph: {
+      capability: 'GET /users/{id}/teamwork/associatedTeams',
+      tool: 'teams_list_associated_teams',
+      verified: true,
+    },
+  },
+  {
+    surface: 'teams',
+    operationId: 'GetChannelDetails',
+    label: 'Get details for a specific channel',
+    target: null,
+    fidelity: 'lost',
+    reason:
+      "Google Chat has no team object. A channel's identity comes from which team it is in, " +
+      'so getting "the channel" by id has no equivalent even though its name and description ' +
+      'individually would. On the keep-Microsoft path the operation works unchanged.',
+    // Proven live 2026-08-24 (_diag_teams_new_reads_probe.ts): returned "General"
+    // membershipType=standard for the channel ListChannels discovered.
+    graph: {
+      capability: 'GET /teams/{team-id}/channels/{channel-id}',
+      tool: 'teams_get_channel',
+      verified: true,
+    },
+  },
+  {
+    surface: 'teams',
     operationId: 'ArchiveChannel',
     label: 'Archive a channel',
     target: null,
@@ -295,6 +351,12 @@ export const TEAMS_MESSAGING: Equivalence[] = [
       'its history — mapping a reversible action onto an irreversible one is refused. Note ' +
       'this row was first written as lost WITH a target because update was bundled into it; ' +
       'the honesty test rejected it, which is what that test is for.',
+    // NOT yet measured — see teams.py's "ADDITIONAL PERMISSIONS" block (2026-08-24).
+    // Channel.ReadWrite.All is a new grant this connector did not previously request.
+    graph: {
+      capability: 'POST /teams/{team-id}/channels/{channel-id}/archive',
+      tool: 'teams_archive_channel',
+    },
   },
   {
     surface: 'teams',
@@ -305,7 +367,34 @@ export const TEAMS_MESSAGING: Equivalence[] = [
     reason:
       'Renaming and re-describing a space maps. What does not is anything about the channel ' +
       'that depends on its team — membership type and team-scoped settings have no ' +
-      'equivalent on a standalone space. Not built.',
+      'equivalent on a standalone space. Not built on the migrate path.',
+    // NOT yet measured — see teams.py's "ADDITIONAL PERMISSIONS" block (2026-08-24).
+    // Channel.ReadWrite.All is a new grant this connector did not previously request.
+    graph: {
+      capability: 'PATCH /teams/{team-id}/channels/{channel-id}',
+      tool: 'teams_update_channel',
+    },
+  },
+  {
+    surface: 'teams',
+    operationId: 'CreateATeam',
+    label: 'Create a team',
+    target: { service: 'chat', capability: 'spaces.create' },
+    fidelity: 'narrowed',
+    reason:
+      'Creates a Chat space, not a Microsoft 365 group with a Team wrapped around it — Chat ' +
+      'has no group/team object under a space, so everything that comes from being a group ' +
+      '(membership sync, the SharePoint site, Planner, per-team apps) is absent. Not built on ' +
+      "the migrate path; chat_create_space covers Create-a-channel's narrower case only.",
+    graph: {
+      // NOT yet measured — see teams.py's "ADDITIONAL PERMISSIONS" block (2026-08-24).
+      // Team.Create is a new grant, heavier than Channel.Create: it provisions a whole group.
+      capability:
+        'POST /teams — creates a Microsoft 365 group plus Team via Team.Create. ' +
+        'Asynchronous (202, no body): the tool reports the request as accepted, not the team ' +
+        'as created, because Graph gives no id back to confirm it.',
+      tool: 'teams_create_team',
+    },
   },
   {
     surface: 'teams',

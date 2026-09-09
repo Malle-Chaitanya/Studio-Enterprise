@@ -3,7 +3,8 @@ import { REGISTRY_BY_ID } from '../connectors/registry.js';
 import { logger } from '../logger.js';
 import type { ResolvedConnector } from './connectorToolBuilder.js';
 import { connectorCapabilityRefs, buildLiveConnectorInstruction } from './connectorToolBuilder.js';
-import type { AgentIR, FidelityNote, MappedAgent } from '../types.js';
+import { translateFlow, integrationNameForFlow } from './flowMapper.js';
+import type { AgentIR, FidelityNote, MappedAgent, MappedFlowIntegration } from '../types.js';
 
 /**
  * Maps an AgentIR to a Gemini Enterprise agent definition.
@@ -268,6 +269,16 @@ export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAg
     });
   }
 
+  // Agent Flows: translate each one (pure, offline — see flowMapper.ts) and merge its
+  // fidelity notes into the agent's overall report, exactly like every other capability
+  // here. Creation in Google happens separately, in Phase 2 (services/applicationIntegration.ts) —
+  // this only produces what that phase needs, staged alongside the rest of `mapped`.
+  let flowIntegrations: MappedFlowIntegration[] | undefined;
+  if (ir.flows?.length) {
+    flowIntegrations = ir.flows.map((flow) => translateFlow(flow, { integrationName: integrationNameForFlow(flow.name) }));
+    for (const f of flowIntegrations) fidelityNotes.push(...f.fidelityNotes);
+  }
+
   return {
     ir,
     displayName: ir.name,
@@ -282,5 +293,6 @@ export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAg
     // deploy time via AdkSpec.liveConnectors (see connectorToolBuilder).
     tools: ir.capabilities?.webBrowsing ? [{ name: 'googleSearch' }] : [],
     fidelityNotes,
+    flowIntegrations,
   };
 }

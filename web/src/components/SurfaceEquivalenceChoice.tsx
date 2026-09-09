@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchSurfaceEquivalences, saveSurfaceDecision, type SurfaceEquivalence } from '../api';
+import { fetchSurfaceEquivalences, saveSurfaceDecision, refreshAgents, type SurfaceEquivalence } from '../api';
 
 /**
  * "This agent uses a Microsoft service. Where should that capability come from now?"
@@ -22,6 +22,12 @@ import { fetchSurfaceEquivalences, saveSurfaceDecision, type SurfaceEquivalence 
  * Undecided is a real, visible state and is NOT defaulted to anything: an agent with no
  * decision deploys without those tools and says so in its report. Silence is not consent for
  * someone's mailbox or their team's chat history.
+ *
+ * ONE exception: Dataverse ("Keep Dataverse" / "Use Cloud SQL") is not an identity choice —
+ * there is no mailbox or account to silently reach into — and its live Dataverse tool already
+ * worked with no decision at all before this choice existed. So an undecided Dataverse surface
+ * shows "Keep Dataverse" as already selected (server-defaulted), matching what actually
+ * happens today, rather than a misleading "Not decided" next to a tool that works fine.
  *
  * The trade-offs are shown BEFORE the choice, per option, including the admin step each one
  * needs first — because both of those have turned out to be the thing that actually decides
@@ -49,6 +55,33 @@ export function SurfaceEquivalenceChoice({
   // that one existed — and every affected agent then migrates with no tools for it.
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+
+  // Re-extract straight from Copilot Studio rather than trust whatever was cached the last
+  // time a real migration ran — that cache is otherwise the ONLY thing that refreshes it, so
+  // an agent edited since (a new topic, a new tool, a new child agent) shows stale data here
+  // with no way to fix it short of running an incomplete migration first. Confirmed live
+  // 2026-08-31 against a real child agent that was invisible on this screen for exactly that
+  // reason.
+  async function handleRefresh() {
+    setRefreshing(true);
+    setRefreshError(null);
+    setRefreshMsg(null);
+    try {
+      const result = await refreshAgents(session, envUrl, sourceIds);
+      setRefreshMsg(
+        `Re-checked ${result.refreshed.length + result.failed.length} agent(s) against the source — ` +
+          `${result.refreshed.length} updated${result.failed.length ? `, ${result.failed.length} could not be read` : ''}.`,
+      );
+      setReloadKey((n) => n + 1);
+    } catch (err) {
+      setRefreshError((err as Error).message);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const key = (s: SurfaceEquivalence) => `${s.sourceId}:${s.sourceConnectorId}`;
 
@@ -80,10 +113,12 @@ export function SurfaceEquivalenceChoice({
   async function decide(s: SurfaceEquivalence, decision: string) {
     const k = key(s);
     const email = emails[k]?.trim();
+    const needsIdentity = s.requiresIdentity !== false;
     // Checked here as well as on the server so the customer sees it inline rather than as a
     // failed request. Both targets need a mailbox: a deployed agent holds one identity, so
-    // "whose mail" is never implied by who is asking.
-    if (decision !== 'skip' && !email) {
+    // "whose mail" is never implied by who is asking. Dataverse ("Keep Dataverse" / "Use
+    // Cloud SQL") is not an identity choice at all, so it skips this entirely.
+    if (needsIdentity && decision !== 'skip' && !email) {
       setErrors((e) => ({ ...e, [k]: 'Enter the mailbox address this agent should use.' }));
       return;
     }
@@ -124,7 +159,25 @@ export function SurfaceEquivalenceChoice({
     );
   }
 
-  if (surfaces.length === 0) return null;
+  if (surfaces.length === 0) {
+    // NOT silently rendering nothing: "no surfaces detected" and "the cache is stale and
+    // hasn't seen an agent's real tools yet" look IDENTICAL from here, and only the customer
+    // clicking Refresh can tell them apart. Confirmed live 2026-08-31: a real child agent's
+    // calendar tools were invisible on this exact screen for exactly this reason, with no
+    // way to know from the empty result alone.
+    return (
+      <section className="surface-equivalence">
+        <p className="muted small">
+          No agent here currently needs a Microsoft-to-Google decision — or the cached data is
+          out of date. {refreshMsg && <strong>{refreshMsg}</strong>}
+        </p>
+        <button type="button" onClick={handleRefresh} disabled={refreshing}>
+          {refreshing ? 'Re-checking against Copilot Studio…' : 'Refresh from Copilot Studio'}
+        </button>
+        {refreshError && <p className="error">{refreshError}</p>}
+      </section>
+    );
+  }
 
   const undecided = surfaces.filter((s) => s.decision === null).length;
 
@@ -149,11 +202,18 @@ export function SurfaceEquivalenceChoice({
 
   return (
     <section className="surface-equivalence">
-      <h3>{heading}</h3>
+      <div className="surface-head-row">
+        <h3>{heading}</h3>
+        <button type="button" onClick={handleRefresh} disabled={refreshing} title="Re-check every agent's real tools against Copilot Studio — this list is only as fresh as the last migration run or refresh.">
+          {refreshing ? 'Re-checking…' : 'Refresh from Copilot Studio'}
+        </button>
+      </div>
+      {refreshMsg && <p className="muted small">{refreshMsg}</p>}
+      {refreshError && <p className="error">{refreshError}</p>}
       <p className="muted">
         {surfaces.length === 1 ? 'One agent uses' : `${surfaces.length} agents use`}{' '}
-        {sourceNames}. Each one can keep using it after the agent moves, switch to the Google
-        equivalent, or migrate with no {nouns} tools at all.
+        {sourceNames}. Each one can keep using it after the agent moves, switch to the
+        alternative shown below, or migrate with no {nouns} tools at all.
         {undecided > 0 && (
           <>
             {' '}
@@ -207,18 +267,22 @@ export function SurfaceEquivalenceChoice({
             </div>
 
             <div className="surface-actions">
-              <label>
-                {nounOf(s) === 'mail'
-                  ? 'Mailbox this agent uses'
-                  : `Account this agent acts as (${nounOf(s)})`}
-                <input
-                  type="email"
-                  placeholder="person@yourcompany.com"
-                  value={emails[k] ?? ''}
-                  onChange={(e) => setEmails((m) => ({ ...m, [k]: e.target.value }))}
-                  disabled={busy === k}
-                />
-              </label>
+              {/* Dataverse has no identity to name — "Keep Dataverse" / "Use Cloud SQL" is a
+                  data-copy choice, not a mailbox/account one. */}
+              {s.requiresIdentity !== false && (
+                <label>
+                  {nounOf(s) === 'mail'
+                    ? 'Mailbox this agent uses'
+                    : `Account this agent acts as (${nounOf(s)})`}
+                  <input
+                    type="email"
+                    placeholder="person@yourcompany.com"
+                    value={emails[k] ?? ''}
+                    onChange={(e) => setEmails((m) => ({ ...m, [k]: e.target.value }))}
+                    disabled={busy === k}
+                  />
+                </label>
+              )}
               <button type="button" onClick={() => decide(s, 'skip')} disabled={busy === k}>
                 No {nounOf(s)} tools
               </button>

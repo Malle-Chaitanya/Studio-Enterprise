@@ -18,7 +18,7 @@ import { clientCredsToken, discoverEnvironments } from '../auth/microsoft.js';
 import { extractAgent, listBots } from '../services/dataverse.js';
 
 await connectMongo();
-const cache = (await getDb().collection('environmentsCache').find({ tenantId: { $exists: true } })
+const cache = (await getDb().collection('environmentsCache').find({ tenantId: { $exists: true, $ne: '' } })
   .sort({ $natural: -1 }).limit(1).next()) as { tenantId?: string } | null;
 const tenantId = cache!.tenantId!;
 

@@ -75,6 +75,22 @@ export interface McpBindingIR {
    */
   toolSelection: 'specific' | 'all' | 'unknown';
   tools?: string[];
+  /**
+   * The MCP server's endpoint, e.g. `https://api.hubapi.com`. Never present in the
+   * TaskDialog payload itself (proven live 2026-08-07 through 2026-09-01 against
+   * calendarmcp, cloudtrace, and a live HubSpot binding — none carry a URL). It has to be
+   * resolved separately, from the custom connector's own backend host
+   * (`customConnectorInventory.ts::listCustomConnectors`), and joined onto this binding by
+   * `connectorId` after parsing.
+   *
+   * Best-effort and often just a HOST, not the full MCP path: `listCustomConnectors`
+   * reports the vendor's backend host (`api.hubapi.com`), not the connector's exact `/mcp`
+   * route, which varies per vendor and isn't recoverable from the swagger alone. Treat a
+   * present `serverUrl` as "here is who to go ask for the real endpoint," not as a
+   * plug-and-call destination URL — never construct a `/mcp` suffix and assume it is
+   * correct.
+   */
+  serverUrl?: string;
 }
 
 const KNOWN_INPUT_KINDS: Record<string, ToolInputIR['source']> = {
@@ -225,13 +241,19 @@ export function parseMcpBinding(data: string): McpBindingIR | undefined {
     return undefined;
   }
   const operationId = /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1];
+  // The regex only ever captures 'SpecificTools', 'AllTools', or nothing — so this is
+  // a two-way, not three-way, decision; `unknown` is not reachable from this parser.
+  //
+  // Live-verified 2026-09-01 against a real "CRM Hubspot" MCP tool (Meeting Intelligence
+  // Agent): when the author never turns "Allow all" off, Copilot Studio writes NO
+  // UseSpecificTools/UseAllTools block at all — there is nothing to record, because
+  // nothing was customized. Confirmed against the live tool: the agent had all ~20 tools
+  // the server exposes, not zero. Treating an absent block as `unknown` (which the mapper
+  // conservatively treats as empty) undersold a fully-capable tool as having none — the
+  // opposite failure from the over-granting risk `unknown` exists to prevent.
   const selectionWord = /kind:\s*Use(SpecificTools|AllTools)/i.exec(data)?.[1];
   const toolSelection: McpBindingIR['toolSelection'] =
-    selectionWord?.toLowerCase() === 'specifictools'
-      ? 'specific'
-      : selectionWord?.toLowerCase() === 'alltools'
-        ? 'all'
-        : 'unknown';
+    selectionWord?.toLowerCase() === 'specifictools' ? 'specific' : 'all';
   // The list sits under the second `tools:` key (the first introduces the selection).
   const toolLines = data.split(/\r?\n/);
   const tools: string[] = [];

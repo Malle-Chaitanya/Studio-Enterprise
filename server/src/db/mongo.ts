@@ -234,6 +234,25 @@ async function ensureCollections(): Promise<void> {
   //     distinct from the shared service-account key used across a whole migration.
   //     See db/repos/agentConnectorIdentity.ts and
 
+  // 18. flowIntegrations — tracks already-created Application Integration resources for
+  //     source Agent Flows, so a re-run versions the SAME integration by its deterministic
+  //     name instead of creating a duplicate. See db/repos/flowIntegrations.ts.
+  await ensure('flowIntegrations');
+  await db.collection('flowIntegrations').createIndex(
+    { appUserId: 1, envUrl: 1, sourceId: 1, project: 1, location: 1 },
+    { unique: true },
+  );
+
+  // 19. flowAuthConfigs — tracks which credential VALUES an Application Integration
+  //     AuthConfig was last built from, so a rotated client secret gets detected and
+  //     the AuthConfig updated instead of silently left stale. See
+  //     db/repos/flowAuthConfigs.ts.
+  await ensure('flowAuthConfigs');
+  await db.collection('flowAuthConfigs').createIndex(
+    { appUserId: 1, project: 1, authConfigName: 1 },
+    { unique: true },
+  );
+
   // rawAgents — verbatim Copilot payloads, landed before parsing. OFF unless
   // RAW_RETENTION_DAYS > 0. The TTL index is what makes retention real: `expiresAt` is
   // written on every row and Mongo deletes it, so unredacted customer data cannot outlive
@@ -357,5 +376,5 @@ async function ensureCollections(): Promise<void> {
     /* best-effort: a count failing must never stop the app booting */
   }
 
-  logger.info('All 17 collections verified with indexes (multi-tenant scoped)');
+  logger.info('All 19 collections verified with indexes (multi-tenant scoped)');
 }

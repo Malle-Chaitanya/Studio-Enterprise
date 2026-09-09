@@ -224,6 +224,36 @@ export const CREDENTIAL_GROUPS: Record<string, CredentialGroupDef> = {
         hint: 'id.atlassian.com -> Security -> Create and manage API tokens' },
     ],
   },
+  // One customer-owned service account key, shared by every Google-side destination
+  // connector (Drive, Gmail, Calendar today; any future one lands here too) — same
+  // reasoning as ms_graph/atlassian above: DWD authorizes ONE service account Client ID
+  // for MULTIPLE scopes at once, so asking for the same JSON key three times under three
+  // unrelated-looking cards was pure repeated friction, not a real security boundary.
+  // Confirmed 2026-08-31: before this, shared_gmail had ZERO credential rows ever saved
+  // by any customer in this system's history — the standalone-card model this replaces
+  // never actually got used successfully even once.
+  //
+  // What stays PER-CONNECTOR, deliberately not folded into this group: each connector's
+  // own `scope` (drive / gmail.modify / calendar — genuinely different, all authorized
+  // under the same Client ID in one Workspace-admin DWD entry), and WHO the agent
+  // impersonates (a per-agent fact — Drive's own "acts as X" screen, or the surface-choice
+  // email field for Gmail/Calendar — never a tenant-wide default here).
+  google_service_account: {
+    id: 'google_service_account',
+    name: 'Google Cloud (one service account)',
+    setupUrl: 'https://console.cloud.google.com/iam-admin/serviceaccounts',
+    setupHint:
+      'Create ONE service account in your OWN Google Cloud project (not CloudFuze\'s), then ' +
+      'authorize its Client ID for domain-wide delegation in your Workspace admin console with ' +
+      'every scope listed below, across every Google connector you use — Drive, Gmail, ' +
+      'Calendar. One key, one DWD authorization, reused by all of them. WHICH person each ' +
+      'agent acts as is set per-agent, not here.',
+    credentials: [
+      { key: 'service_account_json', label: 'Service Account JSON key (your own project)', type: 'password',
+        placeholder: '{"type":"service_account","project_id":...}',
+        hint: 'Google Cloud Console -> IAM & Admin -> Service Accounts -> Create Service Account (in your own project) -> Keys -> Add key (JSON). Paste the whole file. Authorize its Client ID for domain-wide delegation with the scope(s) each connector below states.' },
+    ],
+  },
 };
 
 const MS_GRAPH_FIELDS: CredentialField[] = [
@@ -705,11 +735,8 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     // fact, not a per-migration one (Erik's agent needs Erik's Drive, Alex's needs
     // Alex's) — see docs/connector-architecture-decisions.md §12.5. That's collected on
     // a separate per-agent screen (db/repos/agentConnectorIdentity.ts), not here.
-    credentials: [
-      { key: 'service_account_json', label: 'Service Account JSON key (your own project)', type: 'password',
-        placeholder: '{"type":"service_account","project_id":...}',
-        hint: 'Google Cloud Console -> IAM & Admin -> Service Accounts -> Create Service Account (in your own project, not CloudFuze\'s) -> Keys -> Add key (JSON). Paste the whole file. Then authorize its Client ID for domain-wide delegation in your Workspace admin console with the scope below.' },
-    ],
+    credentials: [], // supplied by the google_service_account credential group
+    credentialGroup: 'google_service_account',
     baseUrlTemplate: 'https://www.googleapis.com/drive/v3',
     authHeaderTemplate: 'Bearer {access_token}',
     // A pasted access token lasts ~1h and customers cannot mint one. The JSON key is
@@ -744,12 +771,12 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     // Offered per agent, never applied automatically: whether an Outlook agent SHOULD read
     // Gmail is the customer's call, and a mailbox is more sensitive than a file share.
     permissionsHint:
-      'Create this service account in your OWN Google Cloud project, then authorize its Client ID for domain-wide delegation in your Workspace admin console with the scope below. NOTE: scope strings are matched EXACTLY — granting a broader scope such as mail.google.com does NOT satisfy gmail.modify. One key covers every agent; WHICH mailbox each agent reads is set per-agent on the next screen.',
-    credentials: [
-      { key: 'service_account_json', label: 'Service Account JSON key (your own project)', type: 'password',
-        placeholder: '{"type":"service_account","project_id":...}',
-        hint: 'Google Cloud Console -> IAM & Admin -> Service Accounts -> Create Service Account -> Keys -> Add key (JSON). Paste the whole file.' },
-    ],
+      'Uses the same service account key as your other Google connectors (see the Google Cloud ' +
+      'credential group). Authorize its Client ID for domain-wide delegation with THIS scope too ' +
+      '— NOTE: scope strings are matched EXACTLY, granting a broader scope such as mail.google.com ' +
+      'does NOT satisfy gmail.modify. WHICH mailbox each agent reads is set per-agent on the next screen.',
+    credentials: [], // supplied by the google_service_account credential group
+    credentialGroup: 'google_service_account',
     baseUrlTemplate: 'https://gmail.googleapis.com/gmail/v1',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'google-service-account',
@@ -764,6 +791,64 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     // includes SEND, so without the caller as subject a migrated invoker agent would send
     // mail FROM the one impersonated account no matter who asked it to.
     impersonation: { header: '', resolve: 'google-dwd-subject' },
+  },
+
+  {
+    id: 'shared_googlecalendar',
+    name: 'Google Calendar',
+    category: 'storage',
+    icon: '📅',
+    docsUrl: 'https://developers.google.com/workspace/calendar/api/v3/reference',
+    requiredPermissions: ['https://www.googleapis.com/auth/calendar'],
+    // CROSS-VENDOR, the third one after shared_gmail and shared_googlechat: the Google
+    // destination for Copilot's Office 365 Outlook Calendar operations. Confirmed officially
+    // 2026-08-31 (Google's own Calendar API v3 reference): events.insert/events.list/
+    // freebusy.query all exist and need nothing beyond this one scope — the gap this fills
+    // was purely an unbuilt module (connector_tools/calendar.py), never a platform limit.
+    //
+    // Same connector id (shared_office365) as Outlook mail on the SOURCE side, but a
+    // genuinely separate DECISION from mail — a customer may want mail kept on Microsoft
+    // while calendar moves to Google, or the reverse. See
+    // db/repos/agentSurfaceChoice.ts's `shared_office365:calendar` composite surface key.
+    permissionsHint:
+      'Uses the same service account key as your other Google connectors (see the Google Cloud ' +
+      'credential group). Authorize its Client ID for domain-wide delegation with THIS scope too. ' +
+      'WHICH calendar each agent acts as is set per-agent on the next screen.',
+    credentials: [], // supplied by the google_service_account credential group
+    credentialGroup: 'google_service_account',
+    baseUrlTemplate: 'https://www.googleapis.com/calendar/v3',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'google-service-account',
+    scope: 'https://www.googleapis.com/auth/calendar',
+  },
+
+  {
+    id: 'shared_googlecontacts',
+    name: 'Google Contacts',
+    category: 'storage',
+    icon: '📇',
+    docsUrl: 'https://developers.google.com/people/api/rest/v1/people',
+    requiredPermissions: ['https://www.googleapis.com/auth/contacts'],
+    // CROSS-VENDOR, the fourth after shared_gmail/shared_googlechat/shared_googlecalendar:
+    // the Google destination for Copilot's Office 365 Outlook Contacts operations.
+    // Confirmed officially 2026-09-01 (Google's own People API reference):
+    // people.connections.list/people.get/people.createContact/people.updateContact/
+    // contactGroups.list all exist and need nothing beyond this one scope — the gap this
+    // fills was purely an unbuilt module (connector_tools/contacts.py), never a platform
+    // limit. There is no Keep-Microsoft equivalent yet (no Graph contacts tools exist in
+    // connector_tools/outlook.py) — see db/repos/agentSurfaceChoice.ts's
+    // 'shared_office365:contacts' entry, which offers only this one target for now.
+    permissionsHint:
+      'Uses the same service account key as your other Google connectors (see the Google Cloud ' +
+      'credential group). Authorize its Client ID for domain-wide delegation with THIS scope too ' +
+      '— a SEPARATE grant from gmail.modify and calendar, even if this agent also uses those. ' +
+      'WHICH account\'s contacts each agent acts on is set per-agent on the next screen.',
+    credentials: [], // supplied by the google_service_account credential group
+    credentialGroup: 'google_service_account',
+    baseUrlTemplate: 'https://people.googleapis.com/v1',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'google-service-account',
+    scope: 'https://www.googleapis.com/auth/contacts',
   },
 
   {
@@ -1107,6 +1192,29 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     requiredPermissions: ['Files.Read.All', 'User.Read.All'],
     adminConsentRequired: true,
     permissionsHint: 'This lets the agent read files from every employee\'s OneDrive in your organization.',
+    baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'oauth2-client-credentials',
+    tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+    scope: 'https://graph.microsoft.com/.default',
+  },
+
+  {
+    // "Excel Online (Business)" — a distinct Power Automate connector from `shared_onedrive`,
+    // but backed by the SAME Microsoft Graph app-only credential (workbook operations live
+    // under Graph's `/drives/{id}/items/{id}/workbook/...`). Added for Agent Flow migration:
+    // a real Deal Desk flow (GetRateSheetBand) calls this connector's `GetItems` ("List rows
+    // present in a table") operation — see services/flowMapper.ts's GRAPH_OP_BINDINGS.
+    id: 'shared_excelonlinebusiness',
+    name: 'Excel Online (Business)',
+    category: 'productivity',
+    icon: '📊',
+    docsUrl: 'https://learn.microsoft.com/en-us/graph/api/resources/excel',
+    credentials: [], // supplied by the ms_graph credential group
+    credentialGroup: 'ms_graph',
+    requiredPermissions: ['Files.Read.All', 'User.Read.All'],
+    adminConsentRequired: true,
+    permissionsHint: 'This lets the agent read Excel workbook tables from every employee\'s OneDrive/SharePoint in your organization.',
     baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',

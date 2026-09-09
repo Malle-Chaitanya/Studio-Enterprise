@@ -205,6 +205,60 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             detail = str(e)
         return {"error": f"{what}: {detail}"}
 
+    def outlook_get_current_datetime() -> dict:
+        """Get the REAL current date, time and day of week for this mailbox. ALWAYS call
+        this before answering anything that references "today", "tomorrow", "this week",
+        "next Monday" or any other relative date, and before creating, updating,
+        responding to, or checking availability for any calendar event based on a
+        relative date.
+
+        You have NO other way to know the actual current date — a model's training data
+        has a fixed cutoff and is never "now". This is the SAME failure mode as
+        connector_tools/calendar.py's identical tool on the Google Calendar path
+        (confirmed live 2026-09-01: a deployed agent answered "you are free all day
+        today, May 15, 2024") — it applies here identically, regardless of which
+        calendar backend actually serves the events.
+
+        Returns:
+            dict with `mailbox`, `date` (YYYY-MM-DD), `time` (HH:MM:SS), `dayOfWeek`,
+            `timezone`, `iso` (full RFC3339 — the value to use when the caller means
+            "now"), or `error`. `timezone` falls back to UTC when the mailbox's own
+            Graph setting is a Windows-style name (e.g. "Pacific Standard Time") rather
+            than an IANA one — Python's zoneinfo only resolves IANA names, and Graph
+            mailbox settings commonly default to Windows names. The DATE returned in
+            that fallback is still the real UTC today, not a guess — only the timezone
+            label is approximate in that case.
+        """
+        try:
+            token = mint_token(fill)
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"auth failed: {e}"}
+        tz_name = "UTC"
+        try:
+            settings = _graph(f"{_user_path()}/mailboxSettings", token, {"$select": "timeZone"})
+            tz_name = settings.get("timeZone") or "UTC"
+        except Exception:  # noqa: BLE001 — the timezone lookup is a nicety, never fatal
+            pass
+        import datetime as _dt
+
+        try:
+            from zoneinfo import ZoneInfo
+
+            now = _dt.datetime.now(ZoneInfo(tz_name))
+        except Exception:  # noqa: BLE001 — Windows-style tz names (Graph's common
+            # default) are not resolvable by zoneinfo; degrade to UTC rather than fail
+            # the whole question just because the DISPLAY timezone could not be resolved.
+            now = _dt.datetime.now(_dt.timezone.utc)
+            tz_name = "UTC"
+        return {
+            "mailbox": _mailbox(),
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M:%S"),
+            "dayOfWeek": now.strftime("%A"),
+            "timezone": tz_name,
+            "iso": now.isoformat(),
+        }
+
     def outlook_search_messages(query: str = "", max_results: int = DEFAULT_RESULTS) -> dict:
         """Search the mailbox and return matching emails with sender, subject and date.
 
@@ -758,6 +812,11 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         return out
 
     return [
+        # First, ahead of even the other read tools — every relative-date question
+        # depends on it, and the model reaches for what it sees earliest. See
+        # adkDeployer.ts's globalInstruction rule, which additionally makes calling it
+        # non-negotiable rather than relying on tool order alone.
+        outlook_get_current_datetime,
         outlook_search_messages,
         outlook_read_message,
         outlook_list_folders,

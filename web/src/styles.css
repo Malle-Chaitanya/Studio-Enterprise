@@ -2744,6 +2744,8 @@ table.assess td.note {
    migrates without mail tools, and that should look like an unfinished step. */
 .surface-equivalence { margin-top: 24px; }
 .surface-equivalence h3 { margin-bottom: 4px; }
+.surface-head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.surface-head-row h3 { margin-bottom: 0; }
 .surface-row {
   border: 1px solid var(--border, #d8dde3);
   border-left-width: 4px;

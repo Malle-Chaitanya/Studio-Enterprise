@@ -917,6 +917,14 @@ export interface SurfaceEquivalence {
   /** A target connectorId, `'skip'`, or null when undecided. */
   decision: string | null;
   impersonateEmail: string | null;
+  /**
+   * false ONLY for Dataverse today: "Keep Dataverse" / "Use Cloud SQL" is not an identity
+   * choice (no mailbox, no account to name), so the screen must not ask for one or block
+   * saving the decision on a missing email. OPTIONAL on the wire, same reason as `noun` —
+   * an older server does not send it, and its absence must read as `true` (every other
+   * surface needs an identity), never as a crash.
+   */
+  requiresIdentity?: boolean;
 }
 
 /**
@@ -1000,6 +1008,30 @@ export async function fetchSurfaceEquivalences(
     throw new Error(body.detail || body.error || `surface_equivalence_failed (${res.status})`);
   }
   return ((await res.json()) as { surfaces: SurfaceEquivalence[] }).surfaces;
+}
+
+/**
+ * Re-extract the named agents straight from Copilot Studio and refresh their cached IR —
+ * the same data the Connectors screen (and everywhere else that reads a cached agent) uses.
+ * Never deploys anything; safe to call whenever the source may have changed (a new topic,
+ * a new tool, a new child agent) since the last real migration run, which is otherwise the
+ * only thing that refreshes this cache.
+ */
+export async function refreshAgents(
+  session: string,
+  envUrl: string,
+  sourceIds: string[],
+): Promise<{ refreshed: string[]; failed: { sourceId: string; error: string }[] }> {
+  const res = await fetch('/api/migrate/refresh-agents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, envUrl, sourceIds }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+    throw new Error(body.detail || body.error || `refresh_agents_failed (${res.status})`);
+  }
+  return res.json();
 }
 
 /** Record whether ONE agent's Microsoft surface migrates to its Google equivalent. */

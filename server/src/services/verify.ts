@@ -219,7 +219,7 @@ export async function verifyAgent(
     const groundedProbe =
       'Search your knowledge sources and name one specific document, page or file you can ' +
       'actually see. If you cannot access them, say why.';
-    const r = await chatWithAdkAgent(dest.project, saToken, {
+    let r = await chatWithAdkAgent(dest.project, saToken, {
       reasoningEngineId: opts.reasoningEngineId,
       message: opts.expectsGrounding ? groundedProbe : probe,
       userId: 'cf-verify',
@@ -229,10 +229,23 @@ export async function verifyAgent(
       return failed(`agent did not answer: ${(r.error ?? '').slice(0, 200)}`);
     }
 
+    // Which tools THIS probe's answer can be judged against. The grounded probe explicitly
+    // instructs the agent to search its knowledge sources ("Search your knowledge sources and
+    // name one specific document...") — it never mentions HubSpot, Jira, or any connector, so
+    // it can never legitimately invoke one. Judging that answer against the full connector
+    // tool list guaranteed a false `wrong_agent_tools` verdict for every agent that had BOTH
+    // grounding and connector tools (confirmed live 2026-08-26 on WorkMate and Migrate
+    // Advisor: both deployed cleanly, both correctly called their knowledge-search tool for
+    // this exact probe, and both were reported as "serving the wrong package" for it).
+    // Connector tools get their own, separate, purpose-built check below (Level 3 — TOOL
+    // INVENTORY) regardless of what happens here; this stage only needs to catch a genuinely
+    // foreign tool showing up, not the absence of tools this probe was never going to use.
+    const earlyExpectedTools = opts.expectsGrounding ? [] : (opts.expectsTools ?? []);
+
     // What this turn actually establishes. Computed once and attached to every outcome
     // below, so the report can show WHAT RAN rather than only a verdict.
-    const evidence = classifyEvidence(
-      opts.expectsTools ?? [],
+    let evidence = classifyEvidence(
+      earlyExpectedTools,
       r.toolNames ?? [],
       !!r.toolSucceeded,
       true,
@@ -243,10 +256,46 @@ export async function verifyAgent(
     // checked explicitly rather than inferred from a passing probe. Found live on
     // 2026-08-21, when two agents built from the same GCS pickle both answered with the
     // second one's toolset and only a differing tool list gave it away.
+    //
+    // RETRIED ONCE before failing, added 2026-08-25: this verdict fires immediately after a
+    // fresh deploy, and a fresh Reasoning Engine's serving route can lag its own creation —
+    // measured live, an agent that failed this exact check answered with its OWN tools
+    // (including a connector-specific one no other agent has) on a manual re-probe under 3
+    // minutes later, no redeploy in between. This verdict is the most dangerous one in this
+    // module specifically because every surface signal is green, which cuts both ways: a
+    // false pass hides a real swap, but reporting a working deployment as broken from one
+    // race-prone probe is its own honesty failure. One retry after a short wait distinguishes
+    // "still wrong on the second try" (report it) from "just not warmed up yet" (do not).
+    if (evidence.verdict === 'wrong_agent_tools') {
+      await sleep(20_000);
+      const retry = await chatWithAdkAgent(dest.project, saToken, {
+        reasoningEngineId: opts.reasoningEngineId,
+        message: opts.expectsGrounding ? groundedProbe : probe,
+        userId: 'cf-verify-retry',
+        location: opts.location,
+      });
+      if (retry.ok) {
+        const retryEvidence = classifyEvidence(
+          earlyExpectedTools,
+          retry.toolNames ?? [],
+          !!retry.toolSucceeded,
+          true,
+        );
+        if (retryEvidence.verdict !== 'wrong_agent_tools') {
+          logger.warn(
+            { reasoningEngineId: opts.reasoningEngineId, firstAttempt: evidence.unexpected },
+            'verify: wrong_agent_tools on first probe, but the retry saw the correct tools — treating the first probe as a transient serving-route race, not a real package swap',
+          );
+          r = retry;
+          evidence = retryEvidence;
+        }
+      }
+    }
     if (evidence.verdict === 'wrong_agent_tools') {
       return failed(
         `agent answered using ANOTHER agent's tools (${evidence.unexpected.slice(0, 4).join(', ')}) — ` +
-          'none of the tools it was wired with were invoked; this deployment is serving the wrong package',
+          'none of the tools it was wired with were invoked; this deployment is serving the wrong package ' +
+          '(confirmed on a retried probe, not a one-off)',
         (r.answer ?? '').slice(0, 240),
         { toolsProven: r.toolNames, toolsMissing: evidence.missing, evidence },
       );

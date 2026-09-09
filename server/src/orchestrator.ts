@@ -16,9 +16,10 @@ import { resolveProjectNumber } from './services/adkDeployer.js';
 import { listConnectorCredentials } from './db/repos/connectorCredentials.js';
 import { uploadAgentFile, updateAgentFiles, getAgent, readAgentFiles, mimeTypeForFile, type AgentFile } from './services/geminiAgentFiles.js';
 import { mapAgent } from './services/mapper.js';
+import { paramKeyFor } from './services/flowMapper.js';
 import { applyPerUserAuth } from './services/userConnectorAuth.js';
 import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnectorIds } from './services/connectorToolBuilder.js';
-import { resolveSurfaceTarget, SURFACE_EQUIVALENTS } from './db/repos/agentSurfaceChoice.js';
+import { resolveSurfaceTarget, SURFACE_EQUIVALENTS, agentUsesSurface, CALENDAR_OPERATION_IDS, CONTACTS_OPERATION_IDS } from './db/repos/agentSurfaceChoice.js';
 import { connectorsSharingCredentials, connectorSecretId } from './services/connectorCredentials.js';
 import { getAgentConnectorIdentity } from './db/repos/agentConnectorIdentity.js';
 import { readinessFor } from './connectors/readiness.js';
@@ -36,10 +37,12 @@ import {
   type DataverseSnapshotResult,
 } from './services/knowledgeDataStoreExecutor.js';
 import { resolveTableSearchTarget, type TableSearchTarget } from './services/dataverseTableExport.js';
+import { migrateDataverseTableToCloudSql } from './services/cloudSqlMigration.js';
 import { attachDataStoreToEngine, dataStoreExists, dataStoreResourcePath } from './services/geminiDataStore.js';
 import { getConnectorOperation, getConnectorDataStores } from './services/geminiConnector.js';
 import { getKnowledgeConnector, markKnowledgeConnectorStatus } from './db/repos/knowledgeConnectors.js';
 import { firstWebsiteSource, publishAgentToGallery } from './services/adkDeployer.js';
+import { ensureAuthConfig, ensureFlowIntegration } from './services/applicationIntegration.js';
 import { ensureSecretInProject, upsertSecretIfChanged } from './services/secretManager.js';
 import { getAdkDeployment, recordAdkDeployment } from './db/repos/adkDeployments.js';
 import { getMigratedSnapshot, saveMigratedSnapshot } from './db/repos/migratedSnapshot.js';
@@ -69,7 +72,7 @@ import {
   permissionFidelityNotes,
   resolvePermissions,
 } from './services/identityMap.js';
-import type { AgentIR, FidelityNote, GeminiDestination, IdentityMapOverrides, KnowledgeSourceIR, MigrationResult, PermissionResolution, ProgressEvent, ResolvedPlan, ResolvedPrincipal } from './types.js';
+import type { AgentIR, AgentToolIR, FidelityNote, GeminiDestination, IdentityMapOverrides, KnowledgeSourceIR, MigrationResult, PermissionResolution, ProgressEvent, ResolvedPlan, ResolvedPrincipal } from './types.js';
 
 /** Strip extension + OneDrive/Windows dedup suffixes (" -1)", " (1)") and lowercase, for name comparison only. */
 function normalizeForNameCompare(name: string): string {
@@ -914,6 +917,13 @@ async function execute(
           && +new Date(rec.updatedAt ?? 0) > +new Date(cur.updatedAt ?? 0));
     if (recWins) bestByConnector.set(rec.connectorId, rec);
   }
+  // Dataverse -> Cloud SQL is a PER-AGENT decision (agentSurfaceChoice.ts's
+  // shared_commondataserviceforapps entry — "Keep Dataverse" vs "Use Cloud SQL"), the same
+  // choice already made per-agent for Outlook/Teams/etc. Whether ANY agent in this run still
+  // needs the raw Dataverse connector credential is therefore not knowable until each agent's
+  // choice is resolved further down — so, exactly like Outlook's credential, it is always
+  // copied/resolved here; the Phase 2 Cloud SQL block below is what keeps it out of any ONE
+  // agent's actually-wired tools when that agent's decision is "Use Cloud SQL".
   const durableConnectorRecords = [...bestByConnector.values()];
   if (destProject) {
     const strays = durableConnectorRecords.filter((c) => c.project && c.project !== destProject);
@@ -1054,19 +1064,30 @@ async function execute(
       // Land the verbatim payload before parsing, when the operator has opted in. The sink
       // is fire-and-forget: `saveRawAgent` never throws and never blocks, so a diagnostic
       // capture cannot slow or fail the extraction it exists to explain.
-      const ir = await extractAgent(item.envUrl, token, item.bot, (raw) => {
-        void saveRawAgent({
-          appUserId,
-          tenantId: session.tenantId,
-          runId,
-          envUrl: raw.envUrl,
-          sourceId: raw.sourceId,
-          sourceName: raw.sourceName,
-          components: raw.components,
-          botRecord: raw.botRecord,
-          disabledComponentNames: raw.disabledComponentNames,
-        });
-      });
+      const ir = await extractAgent(
+        item.envUrl,
+        token,
+        item.bot,
+        (raw) => {
+          void saveRawAgent({
+            appUserId,
+            tenantId: session.tenantId,
+            runId,
+            envUrl: raw.envUrl,
+            sourceId: raw.sourceId,
+            sourceName: raw.sourceName,
+            components: raw.components,
+            botRecord: raw.botRecord,
+            disabledComponentNames: raw.disabledComponentNames,
+          });
+        },
+        // Reuses the same session.environments lookup captureCtxFor already does for
+        // connector op-index resolution — an mcp-server tool's serverUrl comes from the
+        // identical custom-connector listing, just joined by connectorId instead of by
+        // operation. Undefined (extraction still succeeds, just without a serverUrl) when
+        // this environment isn't in session.environments — best-effort, never blocking.
+        captureCtxFor(item.envUrl),
+      );
       // Compile topics ONCE (Topic → Capability → Connected-Agent plan) so a
       // flat, queryable copy of the capabilities can be staged. Topics are not
       // migrated in this phase, so the plan is not surfaced in the fidelity
@@ -2158,7 +2179,25 @@ async function execute(
             // The agent's own tools name their connectors, and a knowledge source that
             // needs a crawler names one implicitly. Anything else is dropped and
             // reported, never silently.
-            const usedConnectorIds = agentConnectorIds(row.mapped!.ir);
+            const usedConnectorIdsRaw = agentConnectorIds(row.mapped!.ir);
+            // A connector id that has a SURFACE_EQUIVALENTS entry (shared_office365 today,
+            // covering both mail and calendar) must NEVER be wired directly through the
+            // default per-connector path below — it exists ONLY to be resolved into a real
+            // target (shared_outlook, shared_gmail, shared_googlecalendar) by the
+            // substitution loop further down. Confirmed live 2026-08-31: shared_office365
+            // has its OWN real, bindable registry entry (Graph credentials, ms_graph
+            // credential group) despite the intent documented on that entry
+            // ("stays proxy-only and unbindable") — so once a customer had that credential
+            // group connected for an unrelated reason (Teams/Dataverse), the raw connector
+            // silently qualified for default wiring, fell through to the generic REST
+            // fallback (no dedicated Python module for it), and produced a broken
+            // `call_office365_api` tool ALONGSIDE whatever the customer's actual surface
+            // choice (e.g. "Use Google Calendar") added — the wrong tool got called, not the
+            // right one, even though the right one was ALSO present.
+            const surfaceBaseConnectorIds = new Set(
+              Object.keys(SURFACE_EQUIVALENTS).map((k) => (k.includes(':') ? k.slice(0, k.indexOf(':')) : k)),
+            );
+            const usedConnectorIds = new Set([...usedConnectorIdsRaw].filter((id) => !surfaceBaseConnectorIds.has(id)));
 
             // Connectors this agent genuinely uses that we have no registry entry for.
             // These cannot become tools, and used to vanish with only a server-log
@@ -2347,8 +2386,27 @@ async function execute(
             //
             // The substitution ADDS a spec rather than replacing one: shared_office365 is
             // proxy-only and never produced a live tool, so there is nothing to replace.
+            //
+            // Recorded per surface key (e.g. "shared_office365:calendar" -> "shared_googlecalendar")
+            // so the child-agent tool-ownership scoping below can point at what the tool
+            // ACTUALLY resolved to, not the raw shared_office365 id every calendar/mail tool
+            // still carries on its own AgentToolIR.connectorId — that raw id is now
+            // deliberately excluded from ever getting its own live spec (see
+            // surfaceBaseConnectorIds above), so scoping by it directly would find nothing.
+            const resolvedSurfaceConnectorId = new Map<string, string>();
             for (const msConnectorId of Object.keys(SURFACE_EQUIVALENTS)) {
-              if (!usedConnectorIds.has(msConnectorId)) continue;
+              // Dataverse is handled in its own dedicated block below (the Cloud SQL
+              // migration), never through this generic path: its "Use Cloud SQL" target
+              // ('cloudsql') is not a real registry connector, so buildLiveConnectorSpecsDetailed
+              // below would report it "unsupported" and this loop would wrongly log a `lost`
+              // fidelity note ("credential not configured") for a target that was never
+              // supposed to go through a connector spec at all.
+              if (msConnectorId === 'shared_commondataserviceforapps') continue;
+              // Capability-aware, not just connector-id presence: shared_office365 carries
+              // BOTH mail and calendar operations under one connector id, and whether each
+              // moves to Google is an independent decision — see agentUsesSurface's own doc
+              // comment. usedConnectorIds alone can't distinguish them.
+              if (!agentUsesSurface(row.mapped!.ir, msConnectorId)) continue;
               const target = await resolveSurfaceTarget(appUserId, row.sourceId, msConnectorId);
               const eq = SURFACE_EQUIVALENTS[msConnectorId];
               const chosen = target && eq.targets.find((t) => t.connectorId === target.targetConnectorId);
@@ -2364,6 +2422,7 @@ async function execute(
                 emitLog('warn', `  ${row.name}: uses ${eq.sourceName}; no decision recorded — no ${eq.noun} tools wired.`);
                 continue;
               }
+              resolvedSurfaceConnectorId.set(msConnectorId, target.targetConnectorId);
               // Build through the SAME builder every other connector uses, so the Gmail spec
               // gets its secret ids, auth kind and scope from the registry rather than a
               // hand-rolled copy that can drift.
@@ -2600,6 +2659,53 @@ async function execute(
               }
             }
 
+            // Real Copilot Studio child agents (TopicIR.isChildAgent) carry their OWN
+            // private tools — extraction already resolved exactly which agentTools belong
+            // to which child-agent topic via AgentToolIR.childAgentTopicId (see
+            // services/dataverse.ts, live-confirmed 2026-08-31 against a real child agent's
+            // Office 365 Outlook Calendar tools). Group connector ids by owning topic here
+            // so each child agent's sub-agent entry gets ONLY its own connectors — not the
+            // root's, and not another child agent's — instead of the previous inherit-all
+            // default. A connector id NOT tied to any child-agent tool is left alone; it
+            // stays on the root exactly as before.
+            const childOwnedConnectorIds = new Map<string, Set<string>>(); // topicId -> connectorIds
+            const connectorIdsUsedOutsideChildAgents = new Set<string>();
+            // A tool's OWN AgentToolIR.connectorId is the raw source id (shared_office365 for
+            // BOTH mail and calendar) — but shared_office365 itself never gets its own live
+            // spec (see surfaceBaseConnectorIds above), only its resolved target does. So
+            // ownership must be recorded against the RESOLVED id, or scoping below finds
+            // nothing in scopedConnectors and the child agent silently gets zero tools.
+            // Live-confirmed 2026-08-31: without this resolution, a real child agent got
+            // wired to the raw, never-built shared_office365 spec, which fell through to a
+            // broken generic REST tool instead of the real (working) Google Calendar one.
+            const effectiveConnectorId = (tool: AgentToolIR): string | undefined => {
+              if (!tool.connectorId) return undefined;
+              if (!surfaceBaseConnectorIds.has(tool.connectorId)) return tool.connectorId;
+              const isCalendar = tool.operationId != null && CALENDAR_OPERATION_IDS.has(tool.operationId);
+              const isContacts = tool.operationId != null && CONTACTS_OPERATION_IDS.has(tool.operationId);
+              const surfaceKey = isCalendar
+                ? `${tool.connectorId}:calendar`
+                : isContacts
+                  ? `${tool.connectorId}:contacts`
+                  : tool.connectorId;
+              // undefined when undecided/not configured — correctly means "not wired
+              // anywhere", matching the fail-closed note the substitution loop already
+              // pushed for this surface.
+              return resolvedSurfaceConnectorId.get(surfaceKey);
+            };
+            for (const tool of row.mapped!.ir.agentTools ?? []) {
+              const connectorId = effectiveConnectorId(tool);
+              if (!connectorId) continue;
+              if (tool.childAgentTopicId) {
+                if (!childOwnedConnectorIds.has(tool.childAgentTopicId)) {
+                  childOwnedConnectorIds.set(tool.childAgentTopicId, new Set());
+                }
+                childOwnedConnectorIds.get(tool.childAgentTopicId)!.add(connectorId);
+              } else {
+                connectorIdsUsedOutsideChildAgents.add(connectorId);
+              }
+            }
+
             // Copilot topics become ADK sub-agents INSIDE this deployment. Not one
             // Reasoning Engine per topic: that would multiply cost and burn the ~7/day
             // agent-creation quota on a single migrated agent.
@@ -2607,24 +2713,65 @@ async function execute(
               .filter((t) => !t.isSystem && t.name?.trim())
               .map((t) => {
                 const name = t.name.trim();
+                const ownedConnectorIds = t.isChildAgent ? childOwnedConnectorIds.get(t.id) : undefined;
+                // Only the child agent's OWN connectors — scopedConnectors already holds
+                // every connector the whole agent (root + every child agent) uses, so this
+                // is a filter, not a rebuild.
+                const childLiveConnectors = ownedConnectorIds
+                  ? scopedConnectors.filter((c) => ownedConnectorIds.has(c.id))
+                  : undefined;
                 return {
                   id: name,
                   displayName: name,
                   // The root agent routes on this text, so it must say WHEN to hand
                   // over — a description that only restates the name routes nothing.
-                  description: `Handles "${name}" requests — the migrated Copilot topic of the same name.`,
+                  // A real child agent already authored its own routing description at
+                  // the source — reuse it verbatim rather than the generic topic phrasing,
+                  // since it is what the maker actually wrote for this exact purpose.
+                  description:
+                    t.isChildAgent && t.modelDescription
+                      ? t.modelDescription
+                      : `Handles "${name}" requests — the migrated Copilot topic of the same name.`,
+                  // A real child agent's own authored instructions (settings.instructions on
+                  // its `kind: AgentDialog` row) are its actual behavior rules — e.g. "always
+                  // collect the title, date, attendees, and duration before booking; never
+                  // guess." Falling back to the generic per-topic template here (meant for
+                  // flattening an ordinary migrated TOPIC into a sub-agent, which never has
+                  // its own authored instructions) silently dropped those rules — live-
+                  // confirmed 2026-09-01: the migrated sub-agent booked a meeting without ever
+                  // asking for a title or duration, a real behavior regression from the
+                  // source agent, not a difference in how the two platforms' models behave.
                   instruction:
-                    `You handle the "${name}" topic, migrated from Microsoft Copilot Studio.
+                    t.isChildAgent && t.childAgentInstructions
+                      ? t.childAgentInstructions
+                      : `You handle the "${name}" topic, migrated from Microsoft Copilot Studio.
 ` +
-                    (t.aiPrompt ? `
+                        (t.aiPrompt ? `
 Original AI Builder prompt:
 ${t.aiPrompt}
 ` : '') +
-                    `
+                        `
 If the request is outside "${name}", say so briefly so the main assistant takes over.`,
+                  liveConnectors: childLiveConnectors?.length ? childLiveConnectors : undefined,
                 };
               });
             result.subAgents = topicSubAgents.length;
+
+            // A connector used EXCLUSIVELY by a child agent must not also stay on the
+            // root's own tool list — otherwise the root silently inherits capabilities that
+            // belong only to its child agent (the exact "sub-agent tools flatten into the
+            // shared pile" gap this design closes). A connector shared between the root and
+            // a child agent (or used by more than one child agent) is left on the root,
+            // since removing it would break the root's own, independent use of it.
+            const connectorIdsToRemoveFromRoot = new Set<string>();
+            for (const ownedIds of childOwnedConnectorIds.values()) {
+              for (const id of ownedIds) {
+                if (!connectorIdsUsedOutsideChildAgents.has(id)) connectorIdsToRemoveFromRoot.add(id);
+              }
+            }
+            if (connectorIdsToRemoveFromRoot.size) {
+              scopedConnectors = scopedConnectors.filter((c) => !connectorIdsToRemoveFromRoot.has(c.id));
+            }
             if (topicSubAgents.length) {
               emitLog('info', `    ${row.name}: ${topicSubAgents.length} topic(s) → sub-agents in one engine.`);
             }
@@ -2723,6 +2870,188 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               }
             }
 
+            // MCP-server tools need no credential pre-flight of their own (unlike
+            // scopedConnectors above) — Track C ships with `secretIds` empty for every
+            // entry (see AdkSpec.mcpTools's own doc comment on why that's an honest gap,
+            // not an oversight) until the same buildLiveConnectorSpecsDetailed-style
+            // credential resolution this connector path already has is extended to cover
+            // MCP auth too. `tools` is only carried for `specific` selections — an `all`
+            // selection means "grant the destination's full sanctioned set," which
+            // adk_deploy.py resolves at deploy time against the registry, not here.
+            const scopedMcpTools = (row.mapped!.ir.agentTools ?? [])
+              .filter((t) => t.kind === 'mcp-server' && t.mcp)
+              .map((t) => ({
+                id: t.connectorId || t.name,
+                name: t.displayName || t.name,
+                description: t.description,
+                serverUrl: t.mcp!.serverUrl,
+                tools: t.mcp!.toolSelection === 'specific' ? t.mcp!.tools : undefined,
+              }));
+
+            // Dataverse -> Cloud SQL: a PER-AGENT choice (agentSurfaceChoice.ts's
+            // shared_commondataserviceforapps entry), the exact same "Keep Microsoft / Use
+            // Google equivalent" mechanism already used for Outlook/Teams/Calendar/Contacts —
+            // not a run-level flag. An agent whose Dataverse tool would break permanently once
+            // Microsoft licenses are dropped can be migrated to Cloud SQL while a DIFFERENT
+            // agent in the same run keeps calling Dataverse live, exactly as a customer might
+            // keep one agent's mail on Outlook while moving another's to Gmail.
+            const cloudSqlToolSpecs: { name: string; description: string; instanceConnectionName: string; database: string; table: string; primaryKeyAttr: string; columns: string[] }[] = [];
+            const dataverseTools = (row.mapped!.ir.agentTools ?? []).filter(
+              (t) => t.kind === 'connector' && t.connectorId?.startsWith('shared_commondataserviceforapps'),
+            );
+            if (dataverseTools.length) {
+              const dvEq = SURFACE_EQUIVALENTS['shared_commondataserviceforapps'];
+              const dvTarget = await resolveSurfaceTarget(appUserId, row.sourceId, 'shared_commondataserviceforapps');
+              const dvChosen = dvTarget && dvEq.targets.find((t) => t.connectorId === dvTarget.targetConnectorId);
+              if (dvChosen?.connectorId === 'cloudsql') {
+                const dvToken = await tokenFor(row.envUrl);
+                const saEmail = serviceAccountEmail();
+                for (const tool of dataverseTools) {
+                  // The model-facing name the customer actually typed in Copilot Studio's
+                  // Tools UI (e.g. "GetClientProfile") lives in `displayName` (modelDisplayName
+                  // in the source YAML) — `tool.name` is the botcomponent's OWN internal name,
+                  // which for a Dataverse "List rows" action defaults to the generic
+                  // "Microsoft Dataverse - List rows from selected environment" label
+                  // regardless of what the customer named the tool. Confirmed live 2026-09-08:
+                  // a deployed "GetClientProfile" tool showed up in the live chat as
+                  // "Microsoft Dataverse: List Rows From Selected Environment" instead, because
+                  // this block used the wrong field — every OTHER tool-naming path in this
+                  // codebase already prefers displayName (assess.ts, boundToolSpec.ts,
+                  // mapper.ts); this one just hadn't been brought in line with that yet.
+                  const label = tool.displayName || tool.name;
+                  if (!saEmail) {
+                    result.fidelity.push({
+                      component: `tool:${label}`,
+                      status: 'needs-review',
+                      detail:
+                        '"Use Cloud SQL" was chosen for this agent\'s Dataverse, but this deployment has no ' +
+                        'configured service account email — cannot provision Cloud SQL. This tool was NOT wired.',
+                    });
+                    continue;
+                  }
+                  const migrated = await migrateDataverseTableToCloudSql(dest, saToken, saEmail, dvToken, row.envUrl, tool);
+                  if (migrated.ok && migrated.cloudSqlTarget) {
+                    cloudSqlToolSpecs.push({
+                      name: label,
+                      description:
+                        tool.description ||
+                        `Looks up rows from "${migrated.cloudSqlTarget.table}" (migrated from Dataverse — "Use Cloud SQL" chosen).`,
+                      instanceConnectionName: migrated.cloudSqlTarget.instanceConnectionName,
+                      database: migrated.cloudSqlTarget.database,
+                      table: migrated.cloudSqlTarget.table,
+                      primaryKeyAttr: migrated.cloudSqlTarget.primaryKeyAttr,
+                      columns: migrated.cloudSqlTarget.columns,
+                    });
+                    result.fidelity.push(...migrated.fidelityNotes);
+                    emitLog(
+                      'info',
+                      `    ${row.name}: tool "${label}" migrated to Cloud SQL ("Use Cloud SQL" chosen) — ` +
+                        'will no longer call Dataverse live.',
+                    );
+                  } else {
+                    result.fidelity.push({
+                      component: `tool:${label}`,
+                      status: 'needs-review',
+                      detail:
+                        `"Use Cloud SQL" was chosen for this agent's Dataverse, but this tool could not be ` +
+                        `migrated: ${migrated.error}. This tool was NOT wired.`,
+                    });
+                    emitLog('warn', `    ${row.name}: tool "${label}" Cloud SQL migration failed — ${migrated.error}`);
+                  }
+                }
+                // The raw Dataverse connector credential is never wired for THIS agent once
+                // "Use Cloud SQL" is chosen — a live fallback would itself break the day
+                // Dataverse is decommissioned, so leaving it in place would be a false,
+                // temporary safety net, not a real one. Every Dataverse tool above either got
+                // a Cloud SQL replacement or an explicit needs-review note.
+                scopedConnectors = scopedConnectors.filter((c) => !c.id.startsWith('shared_commondataserviceforapps'));
+                result.fidelity.push({
+                  component: 'surface:shared_commondataserviceforapps',
+                  status: 'partial',
+                  detail: `${dvEq.sourceName}: ${dvChosen.name}. ${dvChosen.summary}`,
+                });
+                emitLog('ok', `  ${row.name}: ${dvEq.sourceName} -> ${dvChosen.name}`);
+              } else if (!dvTarget) {
+                // Explicit 'skip': no Dataverse tools at all for this agent — same fail-closed
+                // posture as skipping mail, just for data instead of a mailbox.
+                scopedConnectors = scopedConnectors.filter((c) => !c.id.startsWith('shared_commondataserviceforapps'));
+                result.fidelity.push({
+                  component: 'surface:shared_commondataserviceforapps',
+                  status: 'needs-review',
+                  detail: `${dvEq.sourceName}: skipped — this agent migrates with no Dataverse tools at all.`,
+                });
+                emitLog('warn', `  ${row.name}: Dataverse skipped — no data tools wired.`);
+              } else {
+                // "Keep Dataverse" — explicit, or the default when nothing was decided yet
+                // (see defaultDecision's doc comment). No code path changes at all: the tool
+                // keeps calling Dataverse live exactly as it always has. Still worth a visible
+                // note, same as every other surface choice, so this is no longer invisible
+                // outside a terminal log.
+                result.fidelity.push({
+                  component: 'surface:shared_commondataserviceforapps',
+                  status: 'partial',
+                  detail: `${dvEq.sourceName}: ${dvChosen!.name}. ${dvChosen!.summary}`,
+                });
+                emitLog('ok', `  ${row.name}: ${dvEq.sourceName} -> ${dvChosen!.name}`);
+              }
+            }
+
+            // Agent Flows: create/update each translated flow's real Application
+            // Integration resource BEFORE the agent is built, since the agent's tool
+            // definition needs an already-existing execute endpoint to point at (proven
+            // pattern — see services/flowMapper.ts's header comment). Never touches
+            // Dataverse; reads only the already-staged, already-translated result from
+            // Phase 1. A flow that fails to create degrades to a `needs-review` fidelity
+            // note — same discipline as the connector pre-flight above — never fails the
+            // whole agent.
+            const flowToolSpecs: { name: string; description: string; executeUrl: string; inputParameters: { key: string; displayName: string; dataType?: string }[] }[] = [];
+            const flowsWired: { name: string; taskCount: number; lostTaskCount: number; integrationName?: string }[] = [];
+            if (row.mapped!.flowIntegrations?.length) {
+              const authConfigsEnsured = new Set<string>();
+              for (const flow of row.mapped!.flowIntegrations) {
+                for (const need of flow.authConfigsNeeded) {
+                  if (authConfigsEnsured.has(need.authConfigName)) continue;
+                  const authRes = await ensureAuthConfig(saToken, dest.project, appUserId, need.authConfigName);
+                  if (!authRes.ok) {
+                    result.fidelity.push({
+                      component: `flow:${flow.flowName}`,
+                      status: 'needs-review',
+                      detail: `Could not set up the "${need.authConfigName}" connection this flow needs: ${authRes.error}`,
+                    });
+                  }
+                  authConfigsEnsured.add(need.authConfigName);
+                }
+                const createRes = await ensureFlowIntegration(saToken, dest.project, appUserId, row.envUrl, flow);
+                const lostCount = flow.fidelityNotes.filter((n) => n.status === 'lost' || n.status === 'needs-review').length;
+                if (createRes.ok && createRes.executeUrl) {
+                  flowToolSpecs.push({
+                    name: flow.flowName,
+                    description: `Migrated Copilot Studio Agent Flow "${flow.flowName}".`,
+                    executeUrl: createRes.executeUrl,
+                    // MUST use the exact same key flowMapper.ts's trigger declares
+                    // (paramKeyFor) — the raw WDL name (p.name) is a DIFFERENT string
+                    // whenever the author gave the field a real display name, which is
+                    // almost always. Confirmed live 2026-09-08: using p.name here sent the
+                    // deployed tool's real argument under a key the flow's own compiled
+                    // filter script never reads, so every numeric comparison silently
+                    // compared against 0 instead of the real value. See paramKeyFor's own
+                    // doc comment.
+                    inputParameters: flow.inputParameters.map((p) => ({ key: paramKeyFor(p), displayName: p.displayName?.trim() || p.name, dataType: p.dataType })),
+                  });
+                  flowsWired.push({ name: flow.flowName, taskCount: flow.inputParameters.length, lostTaskCount: lostCount, integrationName: createRes.integrationName });
+                  emitLog('info', `    ${row.name}: flow "${flow.flowName}" ${createRes.skippedUnchanged ? 'already up to date' : 'created/updated'} as ${createRes.integrationName}.`);
+                } else {
+                  result.fidelity.push({
+                    component: `flow:${flow.flowName}`,
+                    status: 'needs-review',
+                    detail: `Could not create this flow's Application Integration: ${createRes.error}. The flow's own translation notes are listed separately.`,
+                  });
+                  emitLog('warn', `    ${row.name}: flow "${flow.flowName}" was not created — ${createRes.error}`);
+                }
+              }
+            }
+            if (flowsWired.length) result.flowsWired = flowsWired;
+
             const adk = await publishAgentToGallery(dest, saToken, row.mapped!.ir, {
               // Turn the deployer's transport-agnostic step callback into run events. The
               // deploy is 3-5 minutes of total silence otherwise, and a run that looks hung
@@ -2735,6 +3064,9 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
               groundingDataStores,
               liveConnectors: scopedConnectors,
               subAgents: topicSubAgents,
+              mcpTools: scopedMcpTools.length ? scopedMcpTools : undefined,
+              flowTools: flowToolSpecs.length ? flowToolSpecs : undefined,
+              cloudSqlTools: cloudSqlToolSpecs.length ? cloudSqlToolSpecs : undefined,
               // Redeploying an agent we already migrated: repoint the EXISTING agent at
               // the new Reasoning Engine rather than creating a second one. Creation is
               // capped by an undocumented daily quota and re-runs used to burn one every

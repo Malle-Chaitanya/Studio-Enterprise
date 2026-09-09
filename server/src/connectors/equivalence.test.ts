@@ -271,30 +271,96 @@ describe('the keep-Microsoft path is mapped too', () => {
     }
   });
 
-  it('the calendar row is proven on Graph and still honest about Google', () => {
+  it('the calendar row is proven on Graph, has a real Google tool, but is not yet verified live', () => {
     // This test previously asserted the OPPOSITE — that the row must not claim Graph proof —
     // because Graph answered ErrorAccessDenied on 2026-08-20 with Calendars.Read unconsented.
-    // The grant was made and the call re-run on 2026-08-21, so the claim is now earned. What
-    // must NOT drift is the other half: nothing is built on the Google path, and the row has
-    // to keep saying so.
+    // The grant was made and the call re-run on 2026-08-21, so the claim is now earned.
+    //
+    // UPDATED 2026-08-31: connector_tools/calendar.py now exists (Google Calendar
+    // events.list/events.insert/freebusy.query — officially confirmed to need nothing beyond
+    // a standard OAuth scope, so "NOT BUILT" was an implementation gap, not a platform one).
+    // What must NOT drift now: the Google path has real CODE but has not yet had a live call
+    // made and its result recorded, so `verified` stays false until that happens — a written
+    // module is not the same claim as a proven one.
     const cal = findEquivalence('outlook', 'GetEventsCalendarViewV3');
     expect(cal, 'GetEventsCalendarViewV3 resolves to nothing').toBeTruthy();
     expect(cal!.graph?.tool).toBe('outlook_list_calendar_events');
     expect(cal!.graph?.verified, 'the Graph path was proven live — see ledger 1.52').toBe(true);
-    // The GOOGLE path is a different claim and remains unproven: gmail.py has no calendar
-    // tool and the delegation scope is gmail.readonly.
-    expect(Boolean(cal!.verified), 'the Google path has no calendar tool and cannot be proven').toBe(false);
-    expect(cal!.reason).toMatch(/NOT BUILT/);
-    expect(cal!.reason).toMatch(/Calendars\.Read/);
+    // The GOOGLE path now has a real tool (built, not yet proven) — this must stay in sync
+    // with connector_tools/calendar.py, not silently drift back to "no tool at all".
+    expect(cal!.tool, 'the Google path should name calendar_list_events now that it exists').toBe('calendar_list_events');
+    expect(Boolean(cal!.verified), 'the module is written but no live call has been recorded yet').toBe(false);
   });
 
   it('a bucket row never re-counts an operation that got its own row', () => {
-    // Pulling GetEventsCalendarViewV3 out of "(35 calendar operations)" without decrementing
-    // the bucket would count it twice and overstate the unexamined remainder.
+    // Pulling GetEventsCalendarViewV3, CalendarGetTables_V2, FindMeetingTimes_V2, and
+    // V4CalendarPostItem out of "(35 calendar operations)" without decrementing the bucket
+    // would count them twice and overstate the unexamined remainder. Decremented again
+    // 2026-09-01 (31 -> 28) when V3CalendarGetItem, V4CalendarPatchItem and
+    // RespondToEvent_V2 got their own rows too.
     const bucket = EQUIVALENCES.find((r) => r.operationId.startsWith('(') && /calendar/i.test(r.operationId));
-    expect(bucket?.operationId).toContain('34');
-    // The bucket must not also answer for the operation that now has a row of its own.
-    expect((bucket?.covers ?? []).includes('GetEventsCalendarViewV3')).toBe(false);
+    expect(bucket?.operationId).toContain('28');
+    // The bucket must not also answer for any operation that now has a row of its own.
+    for (const op of [
+      'GetEventsCalendarViewV3',
+      'CalendarGetTables_V2',
+      'FindMeetingTimes_V2',
+      'V4CalendarPostItem',
+      'V3CalendarGetItem',
+      'V4CalendarPatchItem',
+      'RespondToEvent_V2',
+      'GetRooms_V2',
+    ]) {
+      expect((bucket?.covers ?? []).includes(op), `${op} should not double-count in the bucket`).toBe(false);
+    }
+  });
+
+  it('the six newly-measured calendar operations resolve and are honestly unverified', () => {
+    // Measured live 2026-08-31 / pulled from the captured swagger 2026-09-01 — not guessed
+    // names. See connector_tools/calendar.py's module docstring for context.
+    for (const [opId, tool] of [
+      ['CalendarGetTables_V2', 'calendar_list_calendars'],
+      ['FindMeetingTimes_V2', 'calendar_check_availability'],
+      ['V4CalendarPostItem', 'calendar_create_event'],
+      ['V3CalendarGetItem', 'calendar_get_event'],
+      ['V4CalendarPatchItem', 'calendar_update_event'],
+      ['RespondToEvent_V2', 'calendar_respond_to_event'],
+    ] as const) {
+      const row = findEquivalence('outlook', opId);
+      expect(row, `${opId} resolves to nothing`).toBeTruthy();
+      expect(row!.tool).toBe(tool);
+      // Written this session, not yet exercised against a live Google Calendar — the
+      // honesty gate must not let a fresh module claim proof it does not have.
+      expect(Boolean(row!.verified), `${opId} should not claim verified before a real call is made`).toBe(false);
+    }
+  });
+
+  it('GetRooms_V2 is honestly lost, not silently built', () => {
+    // A different API (Admin Directory) and a different scope from every other calendar
+    // tool in this table — not a gap that connector_tools/calendar.py can close.
+    const row = findEquivalence('outlook', 'GetRooms_V2');
+    expect(row, 'GetRooms_V2 resolves to nothing').toBeTruthy();
+    expect(row!.fidelity).toBe('lost');
+    expect(row!.target).toBeNull();
+    expect(row!.tool).toBeUndefined();
+  });
+
+  it('the five Google Contacts operations resolve to contacts.py tools, honestly unverified', () => {
+    // Real operationIds pulled 2026-09-01 from the captured swagger — see
+    // connector_tools/contacts.py's module docstring for context. The contacts scope has
+    // not been authorised in DWD for any customer yet, so none of these can be verified.
+    for (const [opId, tool] of [
+      ['ContactPostItem_V2', 'contacts_create_contact'],
+      ['ContactGetItem_V2', 'contacts_get_contact'],
+      ['ContactGetTablesV2', 'contacts_list_contact_groups'],
+      ['ContactGetItems_V2', 'contacts_list_contacts'],
+      ['ContactPatchItem_V2', 'contacts_update_contact'],
+    ] as const) {
+      const row = findEquivalence('outlook', opId);
+      expect(row, `${opId} resolves to nothing`).toBeTruthy();
+      expect(row!.tool).toBe(tool);
+      expect(Boolean(row!.verified), `${opId} should not claim verified before a real call is made`).toBe(false);
+    }
   });
 
   it('every Graph mapping that names a tool is proven live', () => {
