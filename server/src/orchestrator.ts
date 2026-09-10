@@ -934,6 +934,9 @@ async function execute(
         `Bringing ${strays.length} connector credential(s) into ${destProject} from `
         + `${[...new Set(strays.map((c) => c.project))].join(', ')}`,
       );
+      // The SA's OWN identity for the source read. `saToken` impersonates the customer admin
+      // (DWD), which is 403 on our project by design — see ensureSecretInProject.
+      const ownSaToken = await getSaToken().catch(() => saToken);
       await Promise.all(strays.flatMap((c) => {
         // Prefer the ids the credential was ACTUALLY written under; fall back to the
         // computed name for records saved before secretIds were recorded.
@@ -942,7 +945,7 @@ async function execute(
           ? ids
           : Object.keys(c.fields ?? {}).map((f) => connectorSecretId(c.connectorId, f, credentialScope(session)));
         return names.map((secretId) =>
-          ensureSecretInProject(saToken, c.project, destProject, secretId)
+          ensureSecretInProject(saToken, c.project, destProject, secretId, ownSaToken)
             .catch(() => undefined),
         );
       }));
@@ -2806,9 +2809,12 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                   .filter((secretId) => !destScopedSecretIds.has(secretId))
                   .map((secretId) => ({ from, secretId }));
               });
+              // Minted ONCE, outside the map: `await` cannot appear inside a non-async
+              // arrow, and one token per secret would be a pointless round trip each.
+              const ownSaTokenForCopy = await getSaToken().catch(() => saToken);
               await Promise.all(
                 pairs.map(({ from, secretId }) =>
-                  ensureSecretInProject(saToken, from, dest.project, secretId),
+                  ensureSecretInProject(saToken, from, dest.project, secretId, ownSaTokenForCopy),
                 ),
               );
             }

@@ -209,13 +209,30 @@ export async function ensureSecretInProject(
   sourceProject: string,
   targetProject: string,
   secretId: string,
+  sourceToken?: string,
 ): Promise<void> {
   if (!sourceProject || sourceProject === targetProject) return;
   try {
-    const source = await getEntraSecret(saToken, `projects/${sourceProject}/secrets/${secretId}/versions/latest`, {
+    // READ WITH A TOKEN THAT CAN ACTUALLY READ THE SOURCE. A migration run authenticates as
+    // the CUSTOMER's admin by Domain-Wide Delegation, and that identity is 403 on OUR project
+    // -- correctly, it is not theirs. Using it for both sides meant the read failed, the
+    // `optional` flag turned the 403 into a silent no-op, and the secret was never copied.
+    // The run then deployed an agent whose credential does not exist in the deploy project.
+    // Caught live 2026-09-10: Gmail's service-account key stayed in studio-enterprise-migration
+    // and the deployed agent's mail tools had no credential to read.
+    const source = await getEntraSecret(sourceToken ?? saToken, `projects/${sourceProject}/secrets/${secretId}/versions/latest`, {
       optional: true, // a source project that never held this secret is the documented no-op below
     });
-    if (!source.ok || !source.plaintext) return; // nothing to copy — the existing per-secret-grant failure still reports this
+    if (!source.ok || !source.plaintext) {
+      // NOT silent. "Nothing to copy" and "we were not allowed to look" produce the same
+      // empty result here, and the second one deploys a broken agent -- so say which secret
+      // and which projects, or the next person debugs it from the far end again.
+      logger.warn(
+        { secretId, sourceProject, targetProject, detail: String((source as { error?: string }).error ?? '').slice(0, 160) },
+        'ensureSecretInProject: source secret not readable — not copied',
+      );
+      return;
+    }
     const { written } = await upsertSecretIfChanged(saToken, targetProject, secretId, source.plaintext);
     if (written) {
       logger.info({ secretId, sourceProject, targetProject }, 'ensureSecretInProject: synced a connector secret to the deploy project');
