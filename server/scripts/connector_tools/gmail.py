@@ -185,13 +185,19 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             return _json.loads(raw) if raw else {}
 
     def _mime(to: str, subject: str, body: str, cc: str = "", bcc: str = "",
-              in_reply_to: str = "", references: str = "") -> str:
+              in_reply_to: str = "", references: str = "", is_html: bool = False) -> str:
         """Build an RFC-2822 message, base64url encoded, the way Gmail's `raw` field wants.
 
         Outlook's connector took structured fields (to/subject/body). Gmail takes a whole
         MIME message the caller assembles, which is the single biggest shape difference
         between the two APIs — the equivalence table records it as the reason SendEmailV2 is
         `narrowed` rather than `exact`.
+
+        `is_html` matters: `EmailMessage.set_content()` defaults to `text/plain`, so a body
+        containing real HTML markup (tables, headers, lists) was previously sent as literal
+        tag text instead of being rendered — observed live 2026-09-10 (a migrated agent's
+        formatted proposal email arrived showing raw `<table>`/`<h3>` tags in Gmail). Pass
+        `is_html=True` whenever `body` is HTML so Gmail renders it instead of displaying it.
         """
         import base64
         from email.message import EmailMessage
@@ -208,7 +214,10 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             # brand-new conversation even when threadId is set on the request.
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = references or in_reply_to
-        msg.set_content(body or "")
+        if is_html:
+            msg.set_content(body or "", subtype="html")
+        else:
+            msg.set_content(body or "")
         return base64.urlsafe_b64encode(msg.as_bytes()).decode()
 
     def gmail_search_messages(query: str = "", max_results: int = DEFAULT_RESULTS) -> dict:
@@ -398,7 +407,8 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
     # sets the scope; the grant must match it exactly (scope strings are matched literally).
     # ---------------------------------------------------------------------------------
 
-    def gmail_send_message(to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> dict:
+    def gmail_send_message(to: str, subject: str, body: str, cc: str = "", bcc: str = "",
+                           is_html: bool = False) -> dict:
         """Send a NEW email. This is irreversible — the message cannot be recalled.
 
         ALWAYS show the user the recipient, subject and body and get their explicit
@@ -407,9 +417,11 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         Args:
             to: recipient address, or several separated by commas.
             subject: the subject line.
-            body: plain-text body.
+            body: the email body — plain text by default, or HTML if is_html is True.
             cc: optional cc addresses, comma separated.
             bcc: optional bcc addresses, comma separated.
+            is_html: set True when body contains HTML markup (tables, headers, lists, etc.)
+                so it renders instead of showing the raw tags. Leave False for plain text.
 
         Returns:
             dict with `sent` true, `id`, `threadId`, `to`, `subject`, or `error`.
@@ -421,7 +433,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         except Exception as e:  # noqa: BLE001
             return {"error": f"auth failed: {e}"}
         try:
-            sent = _write("/messages/send", {"raw": _mime(to, subject, body, cc, bcc)}, token)
+            sent = _write("/messages/send", {"raw": _mime(to, subject, body, cc, bcc, is_html=is_html)}, token)
         except Exception as e:  # noqa: BLE001
             return {"error": f"Gmail send failed: {e}"}
         return {
@@ -429,15 +441,18 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             "threadId": sent.get("threadId"), "to": to, "subject": subject,
         }
 
-    def gmail_reply_to_message(message_id: str, body: str, reply_all: bool = False) -> dict:
+    def gmail_reply_to_message(message_id: str, body: str, reply_all: bool = False,
+                                is_html: bool = False) -> dict:
         """Reply to an email, keeping it in the same conversation. Irreversible.
 
         ALWAYS show the user what you intend to say and get their agreement first.
 
         Args:
             message_id: the message to reply to, from gmail_search_messages.
-            body: your plain-text reply.
+            body: your reply — plain text by default, or HTML if is_html is True.
             reply_all: include everyone on the original (to and cc), not just the sender.
+            is_html: set True when body contains HTML markup so it renders instead of
+                showing the raw tags.
 
         Returns:
             dict with `sent` true, `id`, `threadId`, `to`, or `error`.
@@ -466,7 +481,8 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             to = ", ".join(x for x in (to, extra) if x)
 
         raw = _mime(to, subject, body,
-                    in_reply_to=h.get("message-id", ""), references=h.get("references", ""))
+                    in_reply_to=h.get("message-id", ""), references=h.get("references", ""),
+                    is_html=is_html)
         try:
             sent = _write("/messages/send",
                           {"raw": raw, "threadId": original.get("threadId")}, token)
@@ -538,11 +554,20 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             )
         return result
 
-    def gmail_create_draft(to: str, subject: str, body: str, cc: str = "") -> dict:
+    def gmail_create_draft(to: str, subject: str, body: str, cc: str = "",
+                           is_html: bool = False) -> dict:
         """Write an email and SAVE IT AS A DRAFT without sending it.
 
         Prefer this over gmail_send_message when the user has not clearly asked for the mail
         to go out — a draft is reversible, a sent message is not.
+
+        Args:
+            to: recipient address, or several separated by commas.
+            subject: the subject line.
+            body: the email body — plain text by default, or HTML if is_html is True.
+            cc: optional cc addresses, comma separated.
+            is_html: set True when body contains HTML markup so it renders instead of
+                showing the raw tags.
 
         Returns:
             dict with `draftId`, `messageId`, or `error`.
@@ -554,17 +579,27 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         except Exception as e:  # noqa: BLE001
             return {"error": f"auth failed: {e}"}
         try:
-            d = _write("/drafts", {"message": {"raw": _mime(to, subject, body, cc)}}, token)
+            d = _write("/drafts", {"message": {"raw": _mime(to, subject, body, cc, is_html=is_html)}}, token)
         except Exception as e:  # noqa: BLE001
             return {"error": f"Gmail draft creation failed: {e}"}
         return {"created": True, "mailbox": _mailbox(), "draftId": d.get("id"),
                 "messageId": (d.get("message") or {}).get("id"), "to": to, "subject": subject}
 
-    def gmail_update_draft(draft_id: str, to: str, subject: str, body: str, cc: str = "") -> dict:
+    def gmail_update_draft(draft_id: str, to: str, subject: str, body: str, cc: str = "",
+                           is_html: bool = False) -> dict:
         """Replace the contents of an existing draft. Not sent.
 
         Gmail replaces the whole draft, so pass every field you want it to end up with, not
         just the ones you are changing.
+
+        Args:
+            draft_id: the draft to replace, from gmail_list_drafts.
+            to: recipient address, or several separated by commas.
+            subject: the subject line.
+            body: the email body — plain text by default, or HTML if is_html is True.
+            cc: optional cc addresses, comma separated.
+            is_html: set True when body contains HTML markup so it renders instead of
+                showing the raw tags.
 
         Returns:
             dict with `updated` true and `draftId`, or `error`.
@@ -577,7 +612,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             return {"error": f"auth failed: {e}"}
         try:
             d = _write(f"/drafts/{draft_id}",
-                       {"message": {"raw": _mime(to, subject, body, cc)}}, token, method="PUT")
+                       {"message": {"raw": _mime(to, subject, body, cc, is_html=is_html)}}, token, method="PUT")
         except Exception as e:  # noqa: BLE001
             return {"error": f"Gmail draft update failed: {e}"}
         return {"updated": True, "mailbox": _mailbox(), "draftId": d.get("id"),
