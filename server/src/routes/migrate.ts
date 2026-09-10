@@ -44,6 +44,7 @@ import {
 } from '../services/connectorCredentials.js';
 import { impersonationAllowed, getWorkspaceDomainsAsAdmin } from '../auth/google.js';
 import { REGISTRY_BY_ID, CREDENTIAL_GROUPS } from '../connectors/registry.js';
+import { expandWithDecidedSurfaceTargets } from '../services/surfaceCredentialRequirements.js';
 import { startUserConsent, supportsUserAuth } from '../services/userConnectorAuth.js';
 import { connectorUserSecretId } from '../services/connectorCredentials.js';
 import { resolveOpIndex } from '../connectors/captureOpIndex.js';
@@ -1117,6 +1118,12 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
   if (ids.length === 0) return void res.json({ connectors: [] });
 
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+
+  // A surface substitution authenticates as the TARGET connector, not the source the caller
+  // asked about — so the target's credential has to be offered here or it can never be
+  // supplied. See services/surfaceCredentialRequirements.ts.
+  const decided = await listAgentSurfaceChoices(appUserId).catch(() => []);
+  const wantedIds = expandWithDecidedSurfaceTargets(ids, decided, (cid) => REGISTRY_BY_ID.has(cid));
   const destProject = effectiveGeminiProject(session.geminiProject);
   const saved = await listConnectorCredentials(appUserId);
   // Only credentials stored in the project we are migrating INTO are usable — the
@@ -1155,14 +1162,14 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
       : undefined;
   const discovered = new Map<string, { displayName: string; bindable: boolean }>();
   if (capCtx) {
-    for (const id of ids) {
+    for (const id of wantedIds) {
       if (REGISTRY_BY_ID.has(id)) continue;
       const index = await resolveOpIndex(id, capCtx).catch(() => undefined);
       if (index) discovered.set(id, { displayName: index.displayName, bindable: Boolean(index.vendorBinding) });
     }
   }
 
-  const connectors = ids.map((id) => {
+  const connectors = wantedIds.map((id) => {
     const def = REGISTRY_BY_ID.get(id);
     if (!def) {
       const d = discovered.get(id);
