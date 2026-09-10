@@ -619,12 +619,16 @@ def _build_live_connector_tool(conn: dict, project: str):
         return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
     # Cross-vendor: a Copilot agent that read Outlook mail migrates to one that reads Gmail.
-    # Requires scope=gmail.readonly and an `impersonate_email` secret — a mailbox belongs to
-    # a person, so DWD needs a subject. See connector_tools/gmail.py for the fidelity
-    # divergences (folders vs labels, flags vs stars) this mapping cannot avoid.
+    # Requires scope=gmail.modify (read AND write — send, drafts, labels, star) and, for a
+    # MAKER connector, an `impersonate_email` secret: a mailbox belongs to a person, so DWD
+    # needs a subject. An INVOKER one instead resolves the subject per caller at mint time
+    # (registry `google-dwd-subject`), which is why `caller` is handed over here — the tools
+    # cannot otherwise say WHOSE mailbox they just read, and every response names it. See
+    # connector_tools/gmail.py for the fidelity divergences (folders vs labels, flags vs
+    # stars) this mapping cannot avoid.
     if kind == "gmail":
         from connector_tools.gmail import build_tools as _build
-        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+        return _build(conn, _secret, _mint_token, _auth_header, _fill, caller=_caller)
 
     # CROSS-VENDOR, third of three (after gmail, googlechat): Copilot's Office 365 Outlook
     # Calendar operations -> Google Calendar. Requires calendar scope + an

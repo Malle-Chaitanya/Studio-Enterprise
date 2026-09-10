@@ -11,17 +11,26 @@ map one-to-one, and the places they diverge are documented on each tool rather t
   * Outlook flags carry state and a due date. Gmail's equivalent is a boolean STARRED
     label. Information is dropped, not translated.
 
-READ ONLY, deliberately. Sending, replying and forwarding are irreversible outward actions
-taken in a real person's name, and whether a migrated agent should be able to do that at all
-is a product decision, not a code one. Adding a send tool here would quietly answer it.
+READ AND WRITE. Sending, replying and forwarding are irreversible outward actions taken in a
+real person's name, so whether a migrated agent should do them at all was a product decision
+rather than a code one -- it was taken, and these tools exist. `gmail.modify` is the single
+scope behind all of them.
 
-IDENTITY, and why it matters: these tools reach a mailbox through Domain-Wide Delegation
-with a single impersonated subject (`impersonate_email`). In Copilot, an Outlook connector
-in Invoker mode read the CALLER's mail as the caller. A deployed Gemini agent holds one
-identity, so "summarise my inbox" means the impersonated account's inbox for every user
-except that one person. Every response therefore carries `mailbox`, so an answer can never
-silently appear to be about the reader's own mail. Confirmed reachable live 2026-08-19:
-DWD + gmail.readonly for zara@storefuze.com returned real message ids.
+IDENTITY, and why it matters: these tools reach a mailbox through Domain-Wide Delegation,
+and WHOSE mailbox depends on how the source connector ran.
+
+  * INVOKER (registry `google-dwd-subject`): the subject is the CALLER, resolved when the
+    token is minted, so every tool -- send included -- acts as the person asking. This is
+    the faithful reproduction of Copilot's Invoker mode. No identity map is involved: the
+    ADK session's user_id already IS a Google address, which is what DWD wants.
+  * MAKER: one pinned subject from the `impersonate_email` secret, the same for everybody.
+
+Every response carries `mailbox` so an answer can never silently appear to be about the
+reader's own mail. That field MUST follow the identity the token was actually minted for --
+reporting the pinned secret while reading the caller's mail names the wrong person on their
+own inbox, which is worse than saying nothing. Hence `caller`, handed in by adk_deploy.
+
+Confirmed reachable live 2026-08-19: DWD for zara@storefuze.com returned real message ids.
 
 See connector_tools/google_drive.py for the shared build_tools contract.
 """
@@ -47,7 +56,7 @@ _DELIVERY_NOTE = (
 )
 
 
-def build_tools(conn, secret, mint_token, auth_header, fill):
+def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
     # Helpers live INSIDE build_tools deliberately, matching every other connector module
     # (confluence, google_drive, jira, sharepoint, generic_rest — none defines a helper at
     # module level). cloudpickle serialises these nested functions BY VALUE into the
@@ -123,7 +132,20 @@ def build_tools(conn, secret, mint_token, auth_header, fill):
         return out
 
     def _mailbox() -> str:
-        """Whose mailbox these tools actually read. Reported on every response."""
+        """Whose mailbox these tools actually read. Reported on every response.
+
+        The CALLER wins when this connector impersonates: the token was minted with that
+        person as the DWD subject, so the pinned `impersonate_email` secret -- which may not
+        even be set -- describes a mailbox these tools are not touching. Naming it would tell
+        someone their own inbox belonged to a colleague.
+        """
+        if caller and conn.get("perUser") and conn.get("perUserMode") == "impersonate":
+            try:
+                who = caller()
+                if who:
+                    return who
+            except Exception:  # noqa: BLE001 — identity is informational, never fatal
+                pass
         try:
             return secret("impersonate_email") or "(unknown)"
         except Exception:  # noqa: BLE001 — identity is informational, never fatal
