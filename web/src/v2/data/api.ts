@@ -38,6 +38,8 @@ import {
   planMigration,
   saveIdentityMap,
   suggestIdentityMap,
+  fetchSurfaceEquivalences,
+  fetchSelection,
   type DiscoveredIdentityPrincipal,
   type MsUserBrief,
 } from '../../api.ts';
@@ -75,26 +77,68 @@ function mergeDetected(lists: DetectedConnector[][]): DetectedConnector[] {
 }
 
 /** The agents the customer picked, per environment. Written by the Select data step. */
-function readScope(session: string): ScopeEnv[] {
+/**
+ * The agents this scan covers.
+ *
+ * sessionStorage FIRST because it is instant and always current in the tab that chose them
+ * — but never alone. It is per tab and empty after a reload or in a new tab, and an empty
+ * scope makes every scan return nothing, which renders as "none of the agents you selected
+ * use a connector". That is the worst possible failure for this screen: it does not error,
+ * it states the opposite of the truth, and the customer migrates with no credentials asked
+ * for. The server-side selection is the durable answer, and is what the per-agent decisions
+ * panel already reads — this screen was the last one still trusting the tab alone.
+ */
+async function readScope(session: string): Promise<ScopeEnv[]> {
   try {
     const raw: ScopeEnv[] = JSON.parse(sessionStorage.getItem(`csge_data_${session}`) || '[]');
-    return raw.filter((s) => s.botIds.length > 0);
+    const scoped = raw.filter((s) => s.botIds.length > 0);
+    if (scoped.length > 0) return scoped;
   } catch {
-    return [];
+    // fall through to the server
   }
+  return await fetchSelection(session)
+    .then((sel) => sel.filter((s) => s.botIds.length > 0).map((s) => ({ env: s.env, botIds: s.botIds })))
+    .catch(() => []);
+}
+
+/**
+ * The substitution targets whose credentials the run will really need.
+ *
+ * A decided Outlook -> Gmail substitution points the agent at a connector NO scan detects,
+ * because the SOURCE agent never used it — so without this the Connectors screen never asks
+ * for the Google credential and the migration deploys an agent that cannot authenticate.
+ *
+ * Only a DECIDED target counts: undecided and `'skip'` wire nothing, and asking for a
+ * credential the run will never use is worse than not asking.
+ */
+export function decidedSubstitutions<T extends { decision: string | null; sourceConnectorId: string }>(
+  surfaces: T[],
+  detectedIds: string[],
+): T[] {
+  return surfaces.filter(
+    (s) =>
+      !!s.decision
+      && s.decision !== 'skip'
+      && s.decision !== s.sourceConnectorId
+      && detectedIds.includes(s.sourceConnectorId),
+  );
 }
 
 async function scan(session: string): Promise<ConnectorScan> {
-  const envs = readScope(session);
+  const envs = await readScope(session);
 
   // Each scan is independently best-effort: a Power Automate scan that fails must
   // not hide the knowledge connectors we did find.
-  const [flows, knowledge, needed] = await Promise.all([
+  const [flows, knowledge, needed, surfaces] = await Promise.all([
     Promise.all(envs.map((e) => fetchThirdPartyConnectors(session, e.env).catch(() => [])))
       .then(mergeDetected),
     Promise.all(envs.map((e) => fetchKnowledgeSourceConnectors(session, e.env, e.botIds).catch(() => [])))
       .then(mergeDetected),
     Promise.all(envs.map((e) => fetchConnectorsNeeded(session, e.env, e.botIds).catch(() => [])))
+      .then((r) => r.flat()),
+    // A surface substitution (Outlook -> Gmail) points an agent at a connector NO scan
+    // detects, because the source agent never used it. Its credentials are still needed.
+    Promise.all(envs.map((e) => fetchSurfaceEquivalences(session, e.env, e.botIds).catch(() => [])))
       .then((r) => r.flat()),
   ]);
 
@@ -106,7 +150,10 @@ async function scan(session: string): Promise<ConnectorScan> {
   const knowledgeMsIds = [...new Set(
     needed.map((n) => KNOWLEDGE_MS_IDS[n.kind]).filter((id): id is string => Boolean(id)),
   )];
-  const ids = [...new Set([...detectedById.keys(), ...knowledgeMsIds])];
+  const detectedIds = [...new Set([...detectedById.keys(), ...knowledgeMsIds])];
+
+  const substituted = decidedSubstitutions(surfaces, detectedIds);
+  const ids = [...new Set([...detectedIds, ...substituted.map((s) => s.decision as string)])];
 
   const [reqs, saved] = await Promise.all([
     fetchConnectorRequirements(session, ids, envs[0]?.env).catch(() => []),
@@ -132,12 +179,19 @@ async function scan(session: string): Promise<ConnectorScan> {
 
     // Knowledge-source connectors carry agent names; flow connectors carry flow
     // names. Show whichever we truly have — never invent the other.
-    const agentNames = det?.agentNames ?? (knowledgeMsIds.includes(id)
+    // A substituted target was never scanned, so it has no `det` and would render as
+    // belonging to nobody. The agents are the ones whose surface points at it.
+    const substitutedFor = substituted.filter((s) => s.decision === id);
+    const agentNames = det?.agentNames ?? (substitutedFor.length
+      ? [...new Set(substitutedFor.map((s) => s.agentName))]
+      : knowledgeMsIds.includes(id)
       ? [...new Set(needed.filter((n) => KNOWLEDGE_MS_IDS[n.kind] === id).flatMap((n) => n.agentNames))]
       : []);
     // Both entry points, or half the rows would be unmatchable: a row can come from
     // the flow/knowledge scan OR from connectors-needed, and the two are merged here.
-    const agentIds = det?.agentIds ?? (knowledgeMsIds.includes(id)
+    const agentIds = det?.agentIds ?? (substitutedFor.length
+      ? [...new Set(substitutedFor.map((s) => s.sourceId))]
+      : knowledgeMsIds.includes(id)
       ? [...new Set(needed.filter((n) => KNOWLEDGE_MS_IDS[n.kind] === id).flatMap((n) => n.agentIds ?? []))]
       : []);
 
