@@ -4,10 +4,23 @@ import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
   Band, BandCell, Btn, Chip, Group, Inspector, InspectorHead, InspectorSection, KeyValue,
-  Note, NoteRow, Panel, PanelHead, SelectBar, SkeletonRows, Tick, WizardFooter,
+  Note, NoteRow, Panel, PanelHead, SkeletonRows, Tick, WizardFooter,
 } from '../../components/v2/primitives.tsx';
 import { readAgo, useResource } from '../../v2/data/cache.ts';
 import { useSource, type AgentRow } from '../../v2/data/index.ts';
+import { IcoClock } from '../../icons.tsx';
+
+/** On-screen form next to the clock icon - "read 5 minutes ago" belongs in the
+ *  title tooltip, not stitched onto a sentence about what this screen shows. */
+function readAgoShort(full: string): string {
+  if (full === 'not read yet') return '—';
+  if (full === 'read just now') return 'now';
+  const m = /read (\d+) minutes? ago/.exec(full);
+  if (m) return `${m[1]}m`;
+  if (full === 'read an hour ago') return '1h';
+  const h = /read (\d+) hours? ago/.exec(full);
+  return h ? `${h[1]}h` : full;
+}
 
 /**
  * Select agents.
@@ -132,20 +145,28 @@ export default function SelectAgentsV2() {
       <Panel>
         <PanelHead
           title="Select agents"
-          sub={`Grouped by environment; only environments with a Gemini app appear. Everything after this step — connectors, identities, the run — is scoped to what you pick here · ${readAgo(agents.readAt)}`}
+          sub="Grouped by environment — only environments with a Gemini app appear."
           actions={
             <>
+              {/* Select all / Clear moved up from their own toolbar row, same move as
+                  Map users - one header carrying the row's context instead of a
+                  header card sitting on top of a second, separate toolbar card. */}
+              <span className="kind">{selectedRows.length} of {rows.length} selected</span>
+              <Btn onClick={() => setChosen(new Set(rows.map((r) => r.botId)))}>Select all</Btn>
+              <Btn onClick={() => setChosen(new Set())}>Clear</Btn>
               {syncing && <Chip tone="run">syncing</Chip>}
               <Btn onClick={() => { paired.sync(); agents.sync(); }} disabled={syncing}>
                 {syncing ? 'Syncing…' : 'Sync'}
               </Btn>
+              {/* The read-time was stitched onto the description sentence with a "·",
+                  though it has nothing to do with what the sentence describes - moved
+                  next to the other timestamp-shaped fact instead, same as Map users. */}
+              <span className="kind v2-ico-lb" title={readAgo(agents.readAt)}>
+                <IcoClock s={12} />{readAgoShort(readAgo(agents.readAt))}
+              </span>
             </>
           }
         />
-        <SelectBar summary={`${selectedRows.length} of ${rows.length} selected`}>
-          <Btn onClick={() => setChosen(new Set(rows.map((r) => r.botId)))}>Select all</Btn>
-          <Btn onClick={() => setChosen(new Set())}>Clear</Btn>
-        </SelectBar>
 
         {error && (
           <NoteRow tone="bad">
@@ -161,6 +182,8 @@ export default function SelectAgentsV2() {
           </NoteRow>
         )}
 
+        {!loading && !error && rows.length > 0 && (
+          <div className="v2-scrollbox tight">
         {byEnv.map(([env, list]) => {
           const on = list.filter((r) => chosen.has(r.botId)).length;
           const state = on === 0 ? 'off' : on === list.length ? 'on' : 'mixed';
@@ -209,6 +232,8 @@ export default function SelectAgentsV2() {
             </Group>
           );
         })}
+          </div>
+        )}
       </Panel>
 
       <WizardFooter

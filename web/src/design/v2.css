@@ -96,17 +96,8 @@
   background: var(--v2-paper);
   padding-bottom: 24px;
 }
-.v2-rail-h { padding: 14px 16px 12px; border-bottom: 1px solid var(--v2-edge); }
-.v2-rail-h .k {
-  font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
-  color: var(--v2-ink-4); font-weight: 600;
-}
-.v2-rail-h .pair {
-  margin-top: 6px; display: grid; gap: 1px; font-size: 12.5px; font-weight: 500;
-}
-.v2-rail-h .pair .arrow { color: var(--v2-ink-4); font-size: 10px; }
 .v2-rail-l {
-  padding: 13px 16px 7px; font-size: 9.5px; letter-spacing: .11em;
+  padding: 16px 16px 7px; font-size: 9.5px; letter-spacing: .11em;
   text-transform: uppercase; color: var(--v2-ink-4); font-weight: 600;
 }
 
@@ -154,6 +145,10 @@
   min-height: calc(100vh - var(--header-h));
 }
 .v2-canvas { padding: 18px 20px 150px; min-width: 0; }
+/* `manual` screens (every v2 screen today) never render the AgentDock, so the
+   150px reserved for it above is dead space - the direct cause of an outer page
+   scroll a bounded-height list (`.v2-maprows`) should never need. */
+.v2-canvas.compact { padding-bottom: 24px; }
 /* A screen with nothing to inspect gets the width back. Without this the 300px
    track stays reserved and renders as a blank column, which reads as a panel that
    failed to load rather than one that was never there. */
@@ -189,12 +184,19 @@
 }
 .v2-panel + .v2-panel { margin-top: 14px; }
 .v2-panel-h {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 10px;
   padding: 13px 16px; border-bottom: 1px solid var(--v2-edge);
 }
 .v2-panel-h h2 { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
 .v2-panel-h .sub { font-size: 12px; color: var(--v2-ink-3); margin-top: 1px; }
-.v2-panel-h .sp { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+/* Same wrap-safety as `.v2-selbar .sp`: a header that now carries a whole toolbar
+   (Map users' search/filter/rescan controls, moved up from their own row) must
+   still hug the right edge if it ever overflows, not strand a stray control
+   under the title on the left. */
+.v2-panel-h .sp {
+  margin-left: auto; display: flex; align-items: center; flex-wrap: wrap;
+  justify-content: flex-end; gap: 8px; row-gap: 8px;
+}
 
 /* ── instrument band. Serif only here, where a number is the point. ── */
 .v2-band { display: flex; flex-wrap: wrap; }
@@ -307,6 +309,48 @@
    only control is this select and the column has the room, so widen it here rather
    than every select in the app. */
 .v2-row.mapuser .v2-select { max-width: none; width: 100%; }
+/* A row list can run to 60+ items (Map users' people, Select agents' agents).
+   Scrolling the whole page to reach Continue turned that into an endless scroll
+   instead of a screen, so the rows scroll INSIDE this box - same trick `.v2-insp`
+   already uses - and the header/toolbar above plus the Continue button below
+   stay on screen the whole time. Shared by every screen with a long list, so the
+   fix (and any future tuning of it) lives in one place.
+   Budget = canvas top padding + panel head + footer + the 24px canvas bottom
+   padding (`.v2-canvas.compact`) + borders, with headroom for the head's
+   actions row wrapping to two lines on medium widths. Undersizing this budget
+   is what let a list claim more height than actually fit and force the outer
+   page to scroll again even after the dead 150px dock reserve was removed. */
+.v2-scrollbox { max-height: calc(100vh - var(--header-h) - 220px); overflow-y: auto; }
+/* Select agents has one more fixed-height card above this one (the stat band -
+   Selected/Topics/Knowledge/Environments) that Map users does not, so the plain
+   220px budget above still overflowed the viewport by exactly that band's
+   height. `.tight` is that same budget plus the band's own measured height. */
+.v2-scrollbox.tight { max-height: calc(100vh - var(--header-h) - 350px); }
+@media (max-width: 900px) {
+  /* Stacked layout is already one long page below 900px; forcing an inner scroll
+     on top of that just traps the list in a box shorter than the finger scrolling it. */
+  /* `.tight` has higher specificity than the plain class above (two classes vs
+     one), so it must be listed here too or it would keep winning under 900px
+     and the stacked layout would still be pinned to a short inner scrollbox. */
+  .v2-scrollbox, .v2-scrollbox.tight { max-height: none; overflow-y: visible; }
+}
+/* Icon + a couple characters instead of a full sentence: what actually keeps the
+   toolbar on one line. The dropped words move to `title` so the fact is still one
+   hover away, never lost - "minimum context", not zero context. */
+.v2-ico-lb { display: inline-flex; align-items: center; gap: 4px; }
+.v2-ico-lb svg { flex: 0 0 auto; color: var(--v2-ink-3); }
+.v2-mapsearch {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px;
+  padding: 0 10px; width: 128px; border: 1px solid var(--v2-edge-2);
+  border-radius: var(--v2-r-s); background: var(--v2-paper); color: var(--v2-ink-4);
+}
+.v2-mapsearch:focus-within { border-color: var(--v2-brand-l); box-shadow: 0 0 0 3px var(--v2-tint); }
+.v2-mapsearch svg { flex: 0 0 auto; }
+.v2-mapsearch .v2-field {
+  height: auto; width: 100%; border: 0; padding: 0; background: none;
+  font-family: inherit; font-size: 12.5px; color: var(--v2-ink);
+}
+.v2-mapsearch .v2-field:focus { box-shadow: none; }
 .v2-row.note { align-items: flex-start; }
 .v2-row.note .why { overflow: visible; white-space: normal; text-overflow: clip; }
 /* One agent's findings, grouped so the agent name reads as a heading for them. */
@@ -585,7 +629,14 @@
   border-bottom: 1px solid var(--v2-edge); background: var(--v2-paper-2);
 }
 .v2-selbar .big { font-size: 13px; font-weight: 500; }
-.v2-selbar .sp { margin-left: auto; display: flex; gap: 7px; flex-wrap: wrap; }
+/* `justify-content: flex-end` matters once this wraps: without it, whichever
+   control lands on the second line sits under wherever line one happened to
+   start (Map users' Rescan button floating alone, off to the left, was this) -
+   with it, an overflow line still hugs the right edge like the first one. */
+.v2-selbar .sp {
+  margin-left: auto; display: flex; align-items: center; flex-wrap: wrap;
+  justify-content: flex-end; gap: 8px; row-gap: 8px;
+}
 
 .v2-grp { border-bottom: 1px solid var(--v2-edge); }
 .v2-grp:last-child { border-bottom: 0; }

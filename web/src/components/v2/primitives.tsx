@@ -358,10 +358,15 @@ export function WizardFooter({ onBack, onNext, nextLabel, blocked, note, backLab
   return (
     <div className="v2-wizard">
       {onBack && <Btn className="back" onClick={onBack}>{backLabel}</Btn>}
+      {/* Note BEFORE Next in DOM: `.note`'s margin-left:auto pushes itself and
+          every sibling after it to the right edge as one group. With Next after
+          it, that group is just the note; Next stayed stranded next to Back
+          instead of anchoring the far right corner the way a wizard's primary
+          action should. */}
+      <span className={`note${blocked ? ' blocked' : ''}`}>{note}</span>
       {nextLabel && (
         <Btn tone="blue" className="next" onClick={onNext} disabled={blocked}>{nextLabel}</Btn>
       )}
-      <span className={`note${blocked ? ' blocked' : ''}`}>{note}</span>
     </div>
   );
 }

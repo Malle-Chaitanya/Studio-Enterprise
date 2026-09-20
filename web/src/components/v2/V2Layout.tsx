@@ -98,7 +98,12 @@ export function V2Layout({
             what the cached state already proves. */}
         <PhaseRail current={phase} status={mergeStatus(derivePhaseStatus(session, phase), phaseStatus)} />
         <div className="v2-work">
-          <div className="v2-canvas">{canvas}</div>
+          {/* `.v2-canvas`'s default bottom padding reserves room for the floating
+              AgentDock. `manual` screens never render that dock, so the reserve was
+              150px of dead space at the foot of every page - exactly what forced an
+              outer page scroll even after a screen's own list was already bounded
+              and scrolling itself (Map users' row list, for one). */}
+          <div className={`v2-canvas${manual ? ' compact' : ''}`}>{canvas}</div>
           {inspector}
         </div>
       </div>

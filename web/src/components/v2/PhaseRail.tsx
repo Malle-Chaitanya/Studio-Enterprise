@@ -88,15 +88,6 @@ export function PhaseRail({ current, status }: {
 
   return (
     <nav className="v2-rail" aria-label="Migration phases">
-      <div className="v2-rail-h">
-        <div className="k">Migration</div>
-        <div className="pair">
-          <span>Copilot Studio</span>
-          <span className="arrow" aria-hidden="true">↓</span>
-          <span>Gemini Enterprise</span>
-        </div>
-      </div>
-
       <div className="v2-rail-l">Phases</div>
       {PHASES.map((p, i) => {
         const st = status?.[p.id];

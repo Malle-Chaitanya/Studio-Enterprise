@@ -3,10 +3,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
-  Btn, Chip, NoteRow, Panel, PanelHead, Select, SelectBar, SkeletonRows, WizardFooter,
+  Btn, Chip, NoteRow, Panel, PanelHead, Select, SkeletonRows, WizardFooter,
 } from '../../components/v2/primitives.tsx';
 import { markProgress, useResource } from '../../v2/data/cache.ts';
 import { useSource, type CandidatePage, type UserRow } from '../../v2/data/index.ts';
+import { IcoClock, IcoEye, IcoRefresh, IcoSearch, IcoUsers } from '../../icons.tsx';
 
 /**
  * Map users - who owns each migrated agent in Gemini.
@@ -32,7 +33,9 @@ import { useSource, type CandidatePage, type UserRow } from '../../v2/data/index
  *  - The empty state. A directory-consent failure and an empty tenant are identical
  *    without it.
  */
-/** "read 4 min ago" — vague on purpose; a timestamp implies a precision nobody needs here. */
+/** "read 4 min ago" — vague on purpose; a timestamp implies a precision nobody needs here.
+ *  Full sentence for the tooltip; `readAgoShort` is the on-screen form next to the clock
+ *  icon, kept to a couple of characters so it never contributes to the toolbar wrapping. */
 function readAgo(at?: number): string {
   if (!at) return '';
   const mins = Math.floor((Date.now() - at) / 60_000);
@@ -40,6 +43,13 @@ function readAgo(at?: number): string {
   if (mins < 60) return `read ${mins} min ago`;
   const hrs = Math.floor(mins / 60);
   return `read ${hrs} hr ago`;
+}
+function readAgoShort(at?: number): string {
+  if (!at) return '';
+  const mins = Math.floor((Date.now() - at) / 60_000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h`;
 }
 
 export default function MapUsersV2() {
@@ -49,6 +59,9 @@ export default function MapUsersV2() {
   const source = useSource();
 
   const [showAll, setShowAll] = useState(false);
+  /** Narrows the rows on screen only - auto-match, counts and the footer note all
+   *  still run over every person, so filtering can never hide someone from those. */
+  const [q, setQ] = useState('');
   /** Corrections made here, on top of what the server holds. */
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [toast, setToast] = useState('');
@@ -182,27 +195,71 @@ export default function MapUsersV2() {
 
   const unmatched = people.filter((r) => !effective(r)).length;
 
+  const needle = q.trim().toLowerCase();
+  const visible = needle
+    ? people.filter((r) => (r.sourceName ?? '').toLowerCase().includes(needle)
+      || r.sourceEmail.toLowerCase().includes(needle))
+    : people;
+
   const canvas = (
     <>
       <Panel>
-        <PanelHead title="Map users" sub="Who owns each agent in Gemini." />
-        <SelectBar summary="">
-          <Chip tone={dir.filter?.licenceCheck === 'unavailable' ? 'you' : 'plain'}>
-            {dir.filter?.licenceCheck === 'unavailable'
-              ? 'licence unreadable - list not filtered'
-              : `${dir.users.length} licensed account${dir.users.length === 1 ? '' : 's'}`}
-          </Chip>
-          {dir.truncated && <Chip tone="warn">list truncated</Chip>}
-          <Btn tone={showAll ? 'blue' : 'plain'} onClick={() => setShowAll((v) => !v)}>
-            {showAll ? 'Licensed only' : 'Show all users'}
-          </Btn>
-          {/* Earns its place now that the lists are cached: if data can be stale by design,
-              the screen has to say how old it is and offer a way to refresh it. */}
-          <span className="kind">{readAgo(dirRes.readAt)}</span>
-          <Btn onClick={rescan} disabled={dirRes.syncing || cands.syncing}>
-            {dirRes.syncing || cands.syncing ? 'Rescanning...' : 'Rescan'}
-          </Btn>
-        </SelectBar>
+        <PanelHead
+          title="Map users"
+          sub="Who owns each agent in Gemini."
+          actions={
+            <>
+              {/* Icon + count, full wording moved to the title tooltip - the same fact
+                  in a third of the width, which is what keeps this row from wrapping
+                  now that it shares space with the title on the left. */}
+              <Chip tone={dir.filter?.licenceCheck === 'unavailable' ? 'you' : 'plain'}>
+                <span
+                  className="v2-ico-lb"
+                  title={dir.filter?.licenceCheck === 'unavailable'
+                    ? 'licence unreadable - list not filtered'
+                    : `${dir.users.length} licensed account${dir.users.length === 1 ? '' : 's'}`}
+                >
+                  <IcoUsers s={12} />
+                  {dir.filter?.licenceCheck === 'unavailable' ? '?' : dir.users.length}
+                </span>
+              </Chip>
+              {dir.truncated && <Chip tone="warn">list truncated</Chip>}
+              {/* Client-side only, over the same `people` the footer counts - narrowing
+                  this can never change who is or isn't mapped, only what's on screen. */}
+              <span className="v2-mapsearch">
+                <IcoSearch s={13} />
+                <input
+                  className="v2-field"
+                  type="search"
+                  placeholder="Search"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  aria-label="Search people by name or email"
+                />
+              </span>
+              <Btn
+                tone={showAll ? 'blue' : 'plain'}
+                onClick={() => setShowAll((v) => !v)}
+                title={showAll ? 'Showing everyone - click to show licensed accounts only' : 'Showing licensed accounts only - click to show everyone'}
+              >
+                <span className="v2-ico-lb"><IcoEye s={13} off={showAll} />{showAll ? 'All' : 'Licensed'}</span>
+              </Btn>
+              {/* Earns its place now that the lists are cached: if data can be stale by
+                  design, the screen has to say how old it is and offer a way to refresh it. */}
+              {dirRes.readAt && (
+                <span className="kind v2-ico-lb" title={readAgo(dirRes.readAt)}>
+                  <IcoClock s={12} />{readAgoShort(dirRes.readAt)}
+                </span>
+              )}
+              <Btn onClick={rescan} disabled={dirRes.syncing || cands.syncing} title="Re-read both directories">
+                <span className="v2-ico-lb">
+                  <IcoRefresh s={13} />
+                  {dirRes.syncing || cands.syncing ? 'Rescanning…' : 'Rescan'}
+                </span>
+              </Btn>
+            </>
+          }
+        />
 
         {error && (
           <NoteRow tone="bad">
@@ -219,7 +276,17 @@ export default function MapUsersV2() {
           </NoteRow>
         )}
 
-        {people.map(userRow)}
+        {/* Bounded and scrolled IN PLACE, the way the inspector already does - a
+            tenant with 60+ people used to mean scrolling the whole page to reach
+            Continue. The toolbar above and the footer below now stay on screen. */}
+        {!loading && !error && people.length > 0 && (
+          <div className="v2-scrollbox">
+            {visible.length === 0 && (
+              <NoteRow>No one matches "{q}".</NoteRow>
+            )}
+            {visible.map(userRow)}
+          </div>
+        )}
       </Panel>
 
       <WizardFooter
