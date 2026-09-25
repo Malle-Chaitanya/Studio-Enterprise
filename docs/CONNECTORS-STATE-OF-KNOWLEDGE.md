@@ -298,6 +298,102 @@ Unit tests covering this area: `operationBinding.test.ts`, `connectorValidator.t
 
 ---
 
+## 11. Update — 2026-09-25: the credential & identity layer built since this doc was written
+
+AI-298 ("go through code and see how connectors are working"). Everything below is **C**
+(code-verified — read to confirm, not executed against a live system). Sections 1–10 above
+still hold; nothing here contradicts them. The operation-binding picture in §2 (13
+connectors in `VENDOR_BINDINGS`, `server/src/connectors/operationBinding.ts`) is unchanged
+and re-confirmed (`grep -c` against current code: still 13). What is new is a whole layer
+above binding that this doc didn't cover, because most of it didn't exist yet on 08-19.
+
+**A second, broader connector catalog now exists alongside the binding table.**
+`server/src/connectors/registry.ts` defines `ConnectorDef` for **44** connectors (re-counted
+against current code), not just the 13 that can be operation-bound from captured swagger.
+This catalog is about *credentials*, not operation binding: `authKind` (`bearer |
+basic-userpass | basic-raw | oauth2-client-credentials | oauth2-refresh-token |
+google-service-account`), optional `userAuth` (delegated per-user OAuth), optional
+`impersonation` (act-as-caller without per-user consent), and `credentialGroup` (one shared
+credential set serving several sibling connectors — one Azure app registration covers 5+
+Graph connectors, one Atlassian token covers Jira+Confluence, one Google service-account
+JSON covers Drive/Gmail/Calendar/Contacts/Chat).
+
+**Tenant-scoped credential storage.** `server/src/services/connectorCredentials.ts`:
+`connectorSecretId(connectorId, field, ownerScope)` builds the Secret Manager id and
+**requires** `ownerScope` — no silent fallback. The code comment says this used to default
+to an un-scoped legacy namespace, which was a cross-tenant overwrite bug class. Per-END-USER
+secrets get a further `-u-{userKey}` suffix (`connectorUserSecretId`) for invoker-mode
+reproduction. `legacyConnectorSecretId()` is a read-only fallback for pre-scoping saves.
+
+**Live credential validation, three-way verdict.** `connectorValidator.ts` makes a real call
+to the provider (Graph client-credentials + `/sites?search=`, Atlassian Basic-auth +
+`/rest/api/3/myself`, HubSpot bearer + `/crm/v3/objects/contacts`) and returns `ok |
+invalid_credentials | permission_denied | unreachable | unverified` — distinguishing "wrong
+value" from "right value, needs admin consent." Connectors outside `{ms_graph, atlassian,
+hubspot}` honestly return `unverified` rather than claiming success — same honesty
+discipline as the `proxy-only` verdicts in §2.
+
+**A third, separate identity check at deploy time.** `connectorPreflight.ts` proves the
+*deployed agent's own* Reasoning Engine service agent
+(`service-{projectNumber}@gcp-sa-aiplatform-re.iam.gserviceaccount.com`) can read the secret
+— distinct from "our server can validate it" (`connectorValidator`) and "our server can
+write it." Three separate identities, three separate checks.
+
+**Invoker (per-user) reproduction — decided 2026-08-31, not in the 08-19 doc at all.** Three
+strategies, in preference order:
+1. **Impersonation** (`ConnectorDef.impersonation`) — one shared app credential, the call
+   names the caller (Dataverse `MSCRMCallerID` header, Graph user-path addressing, Google DWD
+   `with_subject`). Nothing stored per person, never expires. Proven live 2026-08-31 through
+   2026-09-09 on Dataverse, Graph/Outlook, and the real Gemini Enterprise UI with distinct
+   caller identities resolving to distinct mailboxes and distinct row-level permissions — see
+   the `invoker-impersonation-decision` memory for the live evidence chain.
+2. **Delegated OAuth consent** (`ConnectorDef.userAuth`, `userConnectorAuth.ts`) — fallback
+   only, for connectors with no impersonation mechanism (currently the HubSpot custom
+   connector). Verifies the OAuth `id_token` email actually matches the person consent was
+   started for before storing anything.
+3. **Blocked** — no delegated mechanism exists; the tool fails closed for everyone rather
+   than silently running as one shared account.
+A per-user consent flow as the *primary* path was explicitly rejected: refresh tokens expire
+(~90 days), die on password change, and can't be obtained by anyone who joins after CS_GE
+(a migration tool, not a standing service) is gone.
+
+**Surface substitution — a decision layer above binding, not in the 08-19 doc.**
+`db/repos/agentSurfaceChoice.ts`'s `SURFACE_EQUIVALENTS` table: for cross-vendor capabilities
+(`shared_office365` mail/calendar/contacts → Gmail/Calendar/Contacts, `shared_teams` → Google
+Chat, `shared_commondataserviceforapps` → Cloud SQL), the customer explicitly picks
+keep-Microsoft / use-Google / skip per agent, per capability. Undecided fails closed (wires
+nothing) except Dataverse, which defaults to "keep" for backward compatibility. Two commits
+(`6c371a6`, `c05daca`, both on this branch's recent history) fixed a gap where a chosen
+substitution authenticates as a *different* connector than the source agent referenced
+(Outlook→Gmail needs the `shared_gmail` credential, not `shared_office365`), so the
+credential screen was never offering the right card. Server-side fix:
+`surfaceCredentialRequirements.ts`'s `expandWithDecidedSurfaceTargets()`.
+
+**Identity mapping is two distinct systems, easy to conflate.**
+`services/identityMap.ts` (+ `MapUsers.tsx`/`v2/MapUsersV2.tsx`) maps **sharing/ownership
+principals** (agent owner/editor/viewer) from Microsoft → Google for the migrated agent's own
+access control — unrelated to connector calls. `services/callerIdentity.ts` **reverses** that
+same table into a destination→source lookup a per-caller connector tool needs at runtime
+(e.g. a Gemini caller's Google email → their Outlook mailbox for impersonation), ranking
+ambiguous collisions and dropping ones it can't resolve rather than guessing. See the
+`identity-map-partial-save` memory: an empty map (a real incident, fixed 2026-09-01 in
+`6a631e0`) makes per-caller connectors fail-closed for everyone, which reads as impersonation
+being broken rather than the map being empty — check `Identity map: N user override(s)` in
+the run log before touching connector code.
+
+**Newer UI generation.** `web/src/pages/v2/ConnectorsV2.tsx` groups the credential-entry step
+by shared credential group (not per-connector), and explicitly disables the "agent driver"
+auto-narration/dimming chrome on this screen — comment in the code: "Entering credentials is
+work only a person may do... a page that dims itself and announces YOUR TURN over a secret
+field is pure interference."
+
+**Not re-measured in this pass (still trust the 08-19 numbers in §3/§4 unless re-run):** the
+452-bindable/340-blocked swagger count, the 0.3%-real-demand queue, and the JIRA/HubSpot/
+Confluence live-proof list. This update read code only; it did not execute
+`_diag_ms_op_usage.ts`, `_diag_probe_connectors.ts`, or any other live probe.
+
+---
+
 ## What this document deliberately does not claim
 
 - That any Microsoft connector works end to end. None has been proven live.
