@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+// Config for CloudFuze Studio Migrate — moves agents from Copilot Studio to Gemini Enterprise.
 /**
  * Central, validated configuration. All secrets come from the environment —
  * nothing is hardcoded. In production, populate these from Secret Manager.
