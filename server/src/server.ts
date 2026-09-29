@@ -16,6 +16,7 @@ import { agentRouter } from './routes/agent.js';
 import { identityRouter } from './routes/identity.js';
 import { migrateRouter } from './routes/migrate.js';
 import { runPendingGroundingRechecks } from './services/groundingRecheck.js';
+import { runConnectorRegistryRefresh, connectorRegistryRefreshConfigured } from './services/connectorRegistryRefresh.js';
 
 const app = express();
 
@@ -153,6 +154,17 @@ async function start(): Promise<void> {
     setInterval(() => {
       runPendingGroundingRechecks().catch((e) => logger.warn(`grounding recheck sweep failed: ${(e as Error).message}`));
     }, 5 * 60_000);
+  }
+
+  // Background freshness sweep for the connector registry (db/repos/connectorRegistry.ts):
+  // re-reads each stored connector's live swagger from one reference Power Platform
+  // environment and updates its operations/auth if Microsoft actually changed them — see
+  // services/connectorRegistryRefresh.ts. Runs hourly (cheap no-op when nothing is due);
+  // disabled entirely when CONNECTOR_REGISTRY_* env vars are unset.
+  if (connectorRegistryRefreshConfigured()) {
+    setInterval(() => {
+      runConnectorRegistryRefresh().catch((e) => logger.warn(`connector registry refresh sweep failed: ${(e as Error).message}`));
+    }, 60 * 60_000);
   }
 }
 

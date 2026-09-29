@@ -3,24 +3,14 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
-  Band, BandCell, Btn, Chip, Group, Inspector, InspectorHead, InspectorSection, KeyValue,
-  Note, NoteRow, Panel, PanelHead, SkeletonRows, Tick, WizardFooter,
+  Btn, Chip, Group, Inspector, InspectorHead, InspectorSection, KeyValue,
+  Note, NoteRow, Panel, SelectBar, SkeletonRows, Tick, WizardFooter,
 } from '../../components/v2/primitives.tsx';
-import { readAgo, useResource } from '../../v2/data/cache.ts';
+import { useResource } from '../../v2/data/cache.ts';
 import { useSource, type AgentRow } from '../../v2/data/index.ts';
-import { IcoClock } from '../../icons.tsx';
+import { IcoChevronLeft, IcoChevronRight, IcoRefresh, IcoSearch } from '../../icons.tsx';
 
-/** On-screen form next to the clock icon - "read 5 minutes ago" belongs in the
- *  title tooltip, not stitched onto a sentence about what this screen shows. */
-function readAgoShort(full: string): string {
-  if (full === 'not read yet') return '—';
-  if (full === 'read just now') return 'now';
-  const m = /read (\d+) minutes? ago/.exec(full);
-  if (m) return `${m[1]}m`;
-  if (full === 'read an hour ago') return '1h';
-  const h = /read (\d+) hours? ago/.exec(full);
-  return h ? `${h[1]}h` : full;
-}
+const PAGE_SIZES = [25, 50, 100, 200] as const;
 
 /**
  * Select agents.
@@ -41,6 +31,14 @@ export default function SelectAgentsV2() {
   const [picked, setPicked] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [agent, dispatch] = useReducer(reduceAgent, initialAgentState);
+  /** Narrows the rows on screen only — same as Map users' own search box —
+   *  the selection, counts and footer note all still run over every agent. */
+  const [q, setQ] = useState('');
+  /** Real pagination over the flat agent list, same bottom bar as Map users
+   *  (page X of Y, rows-per-page, prev/next) instead of one long internally
+   *  scrolled box with no sense of how much more there is. */
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[1]);
 
   // Cache-first. Walking back here used to re-read Dataverse and reset the
   // selection to "everything", quietly discarding the choice you had just made.
@@ -81,11 +79,32 @@ export default function SelectAgentsV2() {
     });
   }, [rows, session]);
 
+  /** Narrows what's ON SCREEN only — selection, the save payload, and the
+   *  footer note all still run over every agent (`rows`), same as Map
+   *  users' own search: a search can never quietly hide someone from a
+   *  decision already made about them. */
+  const needle = q.trim().toLowerCase();
+  const searched = needle
+    ? rows.filter((r) => r.name.toLowerCase().includes(needle)
+      || (r.owner ?? '').toLowerCase().includes(needle))
+    : rows;
+
+  /** Resets to page 1 whenever the underlying list, search, or page size
+   *  changes — page 3 of an old 90-agent list reads as page 3 of nothing
+   *  once a search or directory re-read drops it to 12 agents. */
+  useEffect(() => { setPage(1); }, [rows.length, q, pageSize]);
+  const totalPages = Math.max(1, Math.ceil(searched.length / pageSize));
+  const pageClamped = Math.min(page, totalPages);
+  const pageRows = searched.slice((pageClamped - 1) * pageSize, pageClamped * pageSize);
+
+  /** Grouped by environment WITHIN the current page only — an environment
+   *  that straddles a page boundary shows its own header again on the next
+   *  page, the same tradeoff any paginated-and-grouped table makes. */
   const byEnv = useMemo(() => {
     const m = new Map<string, AgentRow[]>();
-    for (const r of rows) m.set(r.env, [...(m.get(r.env) ?? []), r]);
+    for (const r of pageRows) m.set(r.env, [...(m.get(r.env) ?? []), r]);
     return [...m.entries()];
-  }, [rows]);
+  }, [pageRows]);
 
   const selectedRows = rows.filter((r) => chosen.has(r.botId));
   const topics = selectedRows.reduce((n, r) => n + r.topics, 0);
@@ -131,42 +150,51 @@ export default function SelectAgentsV2() {
 
   const canvas = (
     <>
-      <Panel>
-        <Band>
-          <BandCell label="Selected" value={selectedRows.length} note={`of ${rows.length} available`} tone="warn" />
-          {/* Dash, not zero: the topic count is not read here (see the inspector). */}
-          <BandCell label="Topics" value={topics || '—'} note={topics ? 'will be compiled' : 'not counted here'} />
-          <BandCell label="Knowledge" value={knowledge || '—'} note="sources to index" />
-          <BandCell label="Environments" value={new Set(selectedRows.map((r) => r.env)).size}
-            note="in this run" tone="ok" />
-        </Band>
-      </Panel>
+      {/* Outside the card, first — same treatment as Connect Clouds' and Map
+          users' own headings (`.v2-canvas-h`): a plain page-level title +
+          small description sitting directly on the canvas, not tucked inside
+          a panel's own header row. */}
+      <div className="v2-canvas-h">
+        <h2>Select agents</h2>
+        <div className="sub">Pick which agents to migrate to Gemini Enterprise.</div>
+      </div>
 
       <Panel>
-        <PanelHead
-          title="Select agents"
-          sub="Grouped by environment — only environments with a Gemini app appear."
-          actions={
-            <>
-              {/* Select all / Clear moved up from their own toolbar row, same move as
-                  Map users - one header carrying the row's context instead of a
-                  header card sitting on top of a second, separate toolbar card. */}
-              <span className="kind">{selectedRows.length} of {rows.length} selected</span>
-              <Btn onClick={() => setChosen(new Set(rows.map((r) => r.botId)))}>Select all</Btn>
-              <Btn onClick={() => setChosen(new Set())}>Clear</Btn>
-              {syncing && <Chip tone="run">syncing</Chip>}
-              <Btn onClick={() => { paired.sync(); agents.sync(); }} disabled={syncing}>
-                {syncing ? 'Syncing…' : 'Sync'}
-              </Btn>
-              {/* The read-time was stitched onto the description sentence with a "·",
-                  though it has nothing to do with what the sentence describes - moved
-                  next to the other timestamp-shaped fact instead, same as Map users. */}
-              <span className="kind v2-ico-lb" title={readAgo(agents.readAt)}>
-                <IcoClock s={12} />{readAgoShort(readAgo(agents.readAt))}
-              </span>
-            </>
+        {/* Search on the left, same shape as Map users' own search box.
+            Select all / Clear / Refresh stay as the dedicated toolbar row's
+            actions. "Auto Map" is Map users' own term for auto-MATCHING
+            destinations — this button does something unrelated (re-reads the
+            agent list from the source side), so it gets the plain name for
+            what it does instead of borrowing that one's label. The "N of M
+            selected" count is dropped here — it's already the first stat in
+            the bottom bar below, so showing it twice was redundant. */}
+        <SelectBar
+          summary={
+            <span className="v2-mapsearch v2-mapsearch--wide">
+              <IcoSearch s={13} />
+              <input
+                className="v2-field"
+                type="search"
+                placeholder="Search agents"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                aria-label="Search agents by name or owner"
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+              />
+            </span>
           }
-        />
+        >
+          <Btn onClick={() => setChosen(new Set(rows.map((r) => r.botId)))}>Select all</Btn>
+          <Btn onClick={() => setChosen(new Set())}>Clear</Btn>
+          <Btn onClick={() => { paired.sync(); agents.sync(); }} disabled={syncing} title="Re-read agents from the source side">
+            <span className="v2-ico-lb">
+              <IcoRefresh s={13} spinning={syncing} />
+              {syncing ? 'Refreshing…' : 'Refresh'}
+            </span>
+          </Btn>
+        </SelectBar>
 
         {error && (
           <NoteRow tone="bad">
@@ -181,8 +209,11 @@ export default function SelectAgentsV2() {
             that this admin can see them.
           </NoteRow>
         )}
+        {!loading && !error && rows.length > 0 && searched.length === 0 && (
+          <NoteRow>No agent matches &quot;{q}&quot;.</NoteRow>
+        )}
 
-        {!loading && !error && rows.length > 0 && (
+        {!loading && !error && searched.length > 0 && (
           <div className="v2-scrollbox tight">
         {byEnv.map(([env, list]) => {
           const on = list.filter((r) => chosen.has(r.botId)).length;
@@ -191,7 +222,6 @@ export default function SelectAgentsV2() {
             <Group
               key={env}
               title={list[0]?.envName ?? env}
-              id={env.replace('https://', '')}
               count={`${on} of ${list.length}`}
               open={!shut.has(env)}
               onToggleOpen={() => setShut((prev) => {
@@ -217,7 +247,6 @@ export default function SelectAgentsV2() {
                     <span className="kind">
                       {r.owner ?? 'no owner recorded'}
                       {r.topics ? ` · ${r.topics} topics` : ''}
-                      {r.knowledge ? ` · ${r.knowledge} knowledge` : ''}
                     </span>
                   </span>
                   <span className="why">
@@ -235,6 +264,52 @@ export default function SelectAgentsV2() {
           </div>
         )}
       </Panel>
+
+      {/* Its own strip below the table, not the table's last row — same shape
+          as Map users' standalone pagination bar: real counts on the left
+          (over the FULL list, not just this page), paging controls on the
+          right. Zero is a real, honest count here (nothing detected), not an
+          unknown — shown as 0, not a dash. */}
+      {!loading && !error && rows.length > 0 && (
+        <div className="v2-pagebar v2-pagebar-standalone">
+          <span className="v2-pagebar-stats">
+            <span>Selected agents <strong>{selectedRows.length}</strong></span>
+            <span>Topics <strong>{topics}</strong></span>
+            <span>Knowledge sources <strong>{knowledge}</strong></span>
+          </span>
+          <span className="v2-pagebar-ctl">
+            <span className="v2-pagebar-of">
+              Page {pageClamped} of {totalPages}
+            </span>
+            <label className="v2-pagebar-size">
+              Rows per page
+              <select
+                className="v2-select"
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+              >
+                {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+            <Btn
+              className="v2-card-icon-btn"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={pageClamped <= 1}
+              title="Previous page"
+            >
+              <IcoChevronLeft s={13} />
+            </Btn>
+            <Btn
+              className="v2-card-icon-btn"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={pageClamped >= totalPages}
+              title="Next page"
+            >
+              <IcoChevronRight s={13} />
+            </Btn>
+          </span>
+        </div>
+      )}
 
       <WizardFooter
         onBack={() => navigate(`/v2/map-users?${params.toString()}`)}

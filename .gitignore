@@ -10,6 +10,7 @@ build/
 *service-account*.json
 service_account.json
 secrets/
+server/Copilotstudio-gemini Enterprise-gem_co.json
 # SSH deploy keys — the private half lives only in the GitHub secret DEPLOY_SSH_KEY
 *_deploy
 *_deploy.pub

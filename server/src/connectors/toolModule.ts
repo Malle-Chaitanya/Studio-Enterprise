@@ -47,6 +47,10 @@ const KIND_ALIASES: Record<string, string> = {
   // <kind>.py check missed it, and the drift test caught it immediately — which is the
   // reason that test reads the Python instead of trusting this table.
   googledrive: 'google_drive',
+  // Word Online (Business) -> word_online.py (2026-09-24): every captured operation is a
+  // Power Automate connectionId proxy, not a Graph path — see operationBinding.ts's
+  // shared_wordonlinebusiness VENDOR_BINDINGS entry for why this needed a hand-written tool.
+  wordonlinebusiness: 'word_online',
 };
 
 /**

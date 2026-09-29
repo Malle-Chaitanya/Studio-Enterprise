@@ -14,6 +14,12 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
     base_url_tpl = conn.get("baseUrlTemplate") or ""
     conn_name = conn.get("name") or kind or "connector"
     auth_kind = conn.get("authKind") or "bearer"
+    # Almost every connector sends its credential as `Authorization`, but a few vendors
+    # (BigCommerce's X-Auth-Token, Pivotal Tracker's X-TrackerToken, VirusTotal's x-apikey)
+    # use a different header name for the exact same "one credential value" shape — not a
+    # different auth KIND, just a different header key. Defaulting to Authorization keeps
+    # every existing connector's behavior identical.
+    auth_header_name = conn.get("authHeaderName") or "Authorization"
 
     # The operations the SOURCE agent actually invoked, extracted from Copilot Studio.
     # Telling the model which ones this agent was built around is the difference between
@@ -244,6 +250,125 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             token_cache[cache_key] = {"token": token, "expires_at": time.time() + int(payload.get("expires_in") or 3600)}
             return "Bearer " + token
 
+        def _invoke(**kwargs) -> dict:
+            try:
+                header = _aad_header() if op.get("auth") == "aad-token" else auth_header(fill)
+            except Exception as e:  # noqa: BLE001
+                return {"error": "auth failed (" + str(op.get("auth") or auth_kind) + "): " + str(e)}
+
+            path_params, query, headers = {}, {}, {}
+            body_val = None
+            for name, meta in fixed.items():
+                where = meta.get("in") or "query"
+                val = meta.get("value")
+                if where == "path":
+                    path_params[name] = val
+                elif where == "header":
+                    headers[name] = str(val)
+                elif where == "body":
+                    body_val = val
+                else:
+                    query[name] = val
+            for pn, a in unique_args:
+                val = kwargs.get(pn)
+                if val is None or val == "" or val == 0 or val is False:
+                    continue
+                where = a.get("in") or "query"
+                if where == "path":
+                    path_params[a["name"]] = val
+                elif where == "header":
+                    headers[a["name"]] = str(val)
+                elif where == "body":
+                    body_val = val
+                else:
+                    query[a["name"]] = val
+
+            url = url_tpl
+            try:
+                for c in ctx_required:
+                    url = url.replace("{" + c + "}", _context(c, ctx_values))
+            except Exception as e:  # noqa: BLE001
+                return {"error": str(e)}
+            for name, val in path_params.items():
+                url = url.replace("{" + name + "}", urllib.parse.quote(str(val), safe=""))
+            missing = _re.findall(r"\{(\w+)\}", url)
+            if missing:
+                return {"error": "missing required value(s) for " + ", ".join(missing)}
+            if query:
+                url = url + "?" + urllib.parse.urlencode(query)
+
+            req_headers = {"Accept": "application/json"}
+            req_headers.update(headers)
+            if header:
+                req_headers[auth_header_name] = header
+
+            # Resolved here, not earlier: the caller headers depend on the operation's own
+            # URL, which is only complete once its context has been substituted.
+            try:
+                req_headers.update(_caller_headers(url, header))
+            except Exception as e:  # noqa: BLE001
+                # Fail the CALL, never fall back to the app identity. An unresolvable caller
+                # served the application's view would answer one person's question with
+                # everybody's data, and nothing on screen would say so.
+                return {"error": str(e)}
+            data = None
+            if body_val is not None and method in ("POST", "PUT", "PATCH"):
+                payload = body_val if isinstance(body_val, str) else _json.dumps(body_val)
+                data = payload.encode("utf-8")
+                req_headers["Content-Type"] = "application/json"
+            req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    raw = resp.read().decode("utf-8")
+                    try:
+                        parsed = _json.loads(raw)
+                    except Exception:  # noqa: BLE001
+                        return _capped({"status": resp.status, "body": raw}, narrowing)
+                    return _capped({"status": resp.status, "body": parsed}, narrowing)
+            except Exception as e:  # noqa: BLE001
+                # Quote the failure. A vague error invites the model to narrate a
+                # plausible answer instead of reporting that it could not look.
+                try:
+                    detail = e.read().decode("utf-8")[:500]  # type: ignore[attr-defined]
+                except Exception:  # noqa: BLE001
+                    detail = str(e)
+                return {"error": conn_name + " " + op_id + " failed: " + detail}
+
+        # ADK describes a tool to the model from its SIGNATURE and docstring, so the
+        # signature has to be real. Generated here rather than **kwargs, which ADK
+        # cannot turn into a FunctionDeclaration.
+        parts = []
+        for pn, a in unique_args:
+            t = a.get("type")
+            if t == "integer":
+                parts.append(pn + ": int = 0")
+            elif t == "boolean":
+                parts.append(pn + ": bool = False")
+            else:
+                parts.append(pn + ': str = ""')
+        sig = ", ".join(parts)
+        call_args = ", ".join(pn + "=" + pn for pn, _ in unique_args)
+        fn_name = op.get("toolName") or ("call_" + op_id.lower())
+        src = "def " + fn_name + "(" + sig + ") -> dict:\n    return _invoke(" + call_args + ")\n"
+        ns = {"_invoke": _invoke}
+        exec(src, ns)  # noqa: S102 - generated from our own spec, never from model output
+        fn = ns[fn_name]
+
+        arg_doc = ""
+        for pn, a in unique_args:
+            arg_doc += "    " + pn + ": " + str(a.get("description") or a.get("name") or "")
+            arg_doc += " (required)\n" if a.get("required") else "\n"
+        pinned = ", ".join(k + "=" + str(v.get("value")) for k, v in fixed.items())
+        doc = str(op.get("description") or op_id) + "\n\n"
+        doc += "Calls " + conn_name + " (" + op_id + "). Migrated from Microsoft Copilot Studio.\n"
+        if pinned:
+            doc += "Fixed by the original agent: " + pinned + "\n"
+        if arg_doc:
+            doc += "\nArgs:\n" + arg_doc
+        doc += "\nReturns:\n    dict with `status` and `body`, or `error`.\n"
+        fn.__doc__ = doc
+        return fn
+
     # ── Impersonation: act as the person asking, using the shared app credential ──────
     #
     # Copilot `invoker` tools ran as the signed-in user. Dataverse can reproduce that exactly:
@@ -354,125 +479,6 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         caller_cache[who] = rows[0]["systemuserid"]
         return {header: caller_cache[who]}
 
-        def _invoke(**kwargs) -> dict:
-            try:
-                header = _aad_header() if op.get("auth") == "aad-token" else auth_header(fill)
-            except Exception as e:  # noqa: BLE001
-                return {"error": "auth failed (" + str(op.get("auth") or auth_kind) + "): " + str(e)}
-
-            path_params, query, headers = {}, {}, {}
-            body_val = None
-            for name, meta in fixed.items():
-                where = meta.get("in") or "query"
-                val = meta.get("value")
-                if where == "path":
-                    path_params[name] = val
-                elif where == "header":
-                    headers[name] = str(val)
-                elif where == "body":
-                    body_val = val
-                else:
-                    query[name] = val
-            for pn, a in unique_args:
-                val = kwargs.get(pn)
-                if val is None or val == "" or val == 0 or val is False:
-                    continue
-                where = a.get("in") or "query"
-                if where == "path":
-                    path_params[a["name"]] = val
-                elif where == "header":
-                    headers[a["name"]] = str(val)
-                elif where == "body":
-                    body_val = val
-                else:
-                    query[a["name"]] = val
-
-            url = url_tpl
-            try:
-                for c in ctx_required:
-                    url = url.replace("{" + c + "}", _context(c, ctx_values))
-            except Exception as e:  # noqa: BLE001
-                return {"error": str(e)}
-            for name, val in path_params.items():
-                url = url.replace("{" + name + "}", urllib.parse.quote(str(val), safe=""))
-            missing = _re.findall(r"\{(\w+)\}", url)
-            if missing:
-                return {"error": "missing required value(s) for " + ", ".join(missing)}
-            if query:
-                url = url + "?" + urllib.parse.urlencode(query)
-
-            req_headers = {"Accept": "application/json"}
-            req_headers.update(headers)
-            if header:
-                req_headers["Authorization"] = header
-
-            # Resolved here, not earlier: the caller headers depend on the operation's own
-            # URL, which is only complete once its context has been substituted.
-            try:
-                req_headers.update(_caller_headers(url, header))
-            except Exception as e:  # noqa: BLE001
-                # Fail the CALL, never fall back to the app identity. An unresolvable caller
-                # served the application's view would answer one person's question with
-                # everybody's data, and nothing on screen would say so.
-                return {"error": str(e)}
-            data = None
-            if body_val is not None and method in ("POST", "PUT", "PATCH"):
-                payload = body_val if isinstance(body_val, str) else _json.dumps(body_val)
-                data = payload.encode("utf-8")
-                req_headers["Content-Type"] = "application/json"
-            req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
-            try:
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    raw = resp.read().decode("utf-8")
-                    try:
-                        parsed = _json.loads(raw)
-                    except Exception:  # noqa: BLE001
-                        return _capped({"status": resp.status, "body": raw}, narrowing)
-                    return _capped({"status": resp.status, "body": parsed}, narrowing)
-            except Exception as e:  # noqa: BLE001
-                # Quote the failure. A vague error invites the model to narrate a
-                # plausible answer instead of reporting that it could not look.
-                try:
-                    detail = e.read().decode("utf-8")[:500]  # type: ignore[attr-defined]
-                except Exception:  # noqa: BLE001
-                    detail = str(e)
-                return {"error": conn_name + " " + op_id + " failed: " + detail}
-
-        # ADK describes a tool to the model from its SIGNATURE and docstring, so the
-        # signature has to be real. Generated here rather than **kwargs, which ADK
-        # cannot turn into a FunctionDeclaration.
-        parts = []
-        for pn, a in unique_args:
-            t = a.get("type")
-            if t == "integer":
-                parts.append(pn + ": int = 0")
-            elif t == "boolean":
-                parts.append(pn + ": bool = False")
-            else:
-                parts.append(pn + ': str = ""')
-        sig = ", ".join(parts)
-        call_args = ", ".join(pn + "=" + pn for pn, _ in unique_args)
-        fn_name = op.get("toolName") or ("call_" + op_id.lower())
-        src = "def " + fn_name + "(" + sig + ") -> dict:\n    return _invoke(" + call_args + ")\n"
-        ns = {"_invoke": _invoke}
-        exec(src, ns)  # noqa: S102 - generated from our own spec, never from model output
-        fn = ns[fn_name]
-
-        arg_doc = ""
-        for pn, a in unique_args:
-            arg_doc += "    " + pn + ": " + str(a.get("description") or a.get("name") or "")
-            arg_doc += " (required)\n" if a.get("required") else "\n"
-        pinned = ", ".join(k + "=" + str(v.get("value")) for k, v in fixed.items())
-        doc = str(op.get("description") or op_id) + "\n\n"
-        doc += "Calls " + conn_name + " (" + op_id + "). Migrated from Microsoft Copilot Studio.\n"
-        if pinned:
-            doc += "Fixed by the original agent: " + pinned + "\n"
-        if arg_doc:
-            doc += "\nArgs:\n" + arg_doc
-        doc += "\nReturns:\n    dict with `status` and `body`, or `error`.\n"
-        fn.__doc__ = doc
-        return fn
-
 
     if bound_ops:
         built = []
@@ -511,7 +517,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
 
         headers = {"Accept": "application/json"}
         if header:
-            headers["Authorization"] = header
+            headers[auth_header_name] = header
         url = f"{base}/{path.lstrip('/')}"
         # This tool accepts any path, method and body, so it is a WRITE path as much as a
         # read one. Without this it ran as the application for every caller.

@@ -71,6 +71,19 @@ const schema = z.object({
   INSTRUCTION_LLM_MODEL: z.string().optional(),
 
   /**
+   * The single Power Platform environment the connector-registry freshness sweep reads
+   * live swagger from (services/connectorRegistryRefresh.ts) — the same reference tenant
+   * the one-time `_prep_populate_*` spikes were seeded from. A connector's own operation
+   * list/auth shape is not customer data (same reasoning as db/repos/connectorRegistry.ts),
+   * so one reference environment is enough to keep every customer's copy of the registry
+   * current; this is deliberately NOT per-customer. All three unset (the default) disables
+   * the sweep entirely — same graceful-degrade posture as GOOGLE_SA_KEY_FILE being unset.
+   */
+  CONNECTOR_REGISTRY_TENANT_ID: z.string().optional(),
+  CONNECTOR_REGISTRY_ENV_ID: z.string().optional(),
+  CONNECTOR_REGISTRY_SCOPE: z.string().optional(),
+
+  /**
    * Row-count threshold above which a Dataverse-snapshot knowledge source is
    * exported via BigQuery instead of Discovery Engine's inline documents:import
    * (capped at 100 rows/request). Below the threshold, inline stays the default

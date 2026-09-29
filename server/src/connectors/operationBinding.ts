@@ -213,6 +213,30 @@ export const VENDOR_BINDINGS: Record<string, VendorBinding> = {
       'Office 365 Outlook connector paths are a Power Platform table abstraction ' +
       '(/$metadata.json/datasets/...), not Graph paths.',
   },
+  // Every one of this connector's 8 captured operations routes through '/{connectionId}/api/
+  // templates/...' or '/{connectionId}/codeless/v1.0/...'. Unlike shared_office365users'
+  // codeless operations (which pass through to a genuine Graph path once '{connectionId}/
+  // codeless/' is stripped), Word Online's 'api/templates/*' operations are Microsoft's own
+  // document-conversion microservice, addressed by a connectionId the customer's app
+  // credential cannot obtain — proven live 2026-09-24, a Tier-2 tool built against
+  // graph.microsoft.com for GetFilePDF never actually worked.
+  shared_wordonlinebusiness: {
+    baseUrl: '',
+    pathStyle: 'proxy-only',
+    auth: 'aad-token',
+    aadResource: 'https://graph.microsoft.com',
+    proxyReason:
+      "Word Online's connector paths ('api/templates/convertFile', 'codeless/v1.0/drives/…') "
+      + 'are a Power Automate document-conversion service addressed by a connectionId, not '
+      + 'Graph paths — reproducing them needs a hand-written mapping to the Graph drive API.',
+    customToolOperations: {
+      GetFilePDF:
+        "Recreated as `word_online_convert_to_pdf`, using Microsoft Graph's own file-content "
+        + 'API (`GET /drive/items/{id}/content?format=pdf`), which performs the identical '
+        + 'server-side conversion and accepts the app credential directly — proven live '
+        + '2026-09-24 against a real .docx.',
+    },
+  },
   shared_sharepointonline: {
     baseUrl: '',
     pathStyle: 'proxy-only',

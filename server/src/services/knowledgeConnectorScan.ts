@@ -53,7 +53,7 @@ const SOURCE_KIND_TO_CONNECTOR: Record<string, string> = {
 const FEDERATED_TEXT_HINTS: Record<string, string> = {
   confluence: 'shared_confluence',
   jira: 'shared_jira',
-  servicenow: 'shared_servicenow',
+  servicenow: 'shared_service-now',
   zendesk: 'shared_zendesk',
   salesforce: 'shared_salesforce',
 };

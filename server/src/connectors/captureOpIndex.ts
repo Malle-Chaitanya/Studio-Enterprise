@@ -20,6 +20,7 @@ import { logger } from '../logger.js';
 import { clientCredsToken } from '../auth/microsoft.js';
 import { loadOpIndex } from './opIndex.js';
 import { getCachedOpIndex, putCachedOpIndex } from '../db/repos/connectorOpIndex.js';
+import { loadFromRegistry } from '../db/repos/connectorRegistry.js';
 import type { ConnectorOpIndex, OpIndexOperation, OpIndexParameter, VendorAuth } from './operationBinding.js';
 
 export const POWERAPPS_AUDIENCE = 'https://service.powerapps.com';
@@ -223,9 +224,15 @@ export async function resolveOpIndex(
     const custom = await captureCustomConnector(connectorId, ctx);
     if (custom) return custom;
   }
+  // The pre-populated registry (db/repos/connectorRegistry.ts): a live capture taken once,
+  // ahead of time, from SOME customer's environment — fresher and far broader than the
+  // committed fixtures below, but still not THIS customer's own environment, so it stays
+  // behind the cache/live-capture/custom attempts above, never ahead of them.
+  const registry = await loadFromRegistry(connectorId);
+  if (registry) return registry;
   // The fixture is a different tenant's capture of the same connector. Fine as a fallback —
-  // the operations of `shared_confluence` are Microsoft's, not ours — but it is the third
-  // choice, not the first, because a customer's environment can hold a different version.
+  // the operations of `shared_confluence` are Microsoft's, not ours — but it is the last
+  // choice, because a customer's environment can hold a different version.
   return loadOpIndex(connectorId);
 }
 

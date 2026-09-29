@@ -1,3 +1,4 @@
+import { config } from './config.js';
 import { clientCredsToken } from './auth/microsoft.js';
 import { resolveCallerIdentityMap } from './services/callerIdentity.js';
 import { recoverSharePointUrlAcrossEnvs } from './services/sharePointUrlRecovery.js';
@@ -2273,6 +2274,30 @@ async function execute(
               // ones baked into the original flow. That is a real, worth-reporting
               // difference, but it is `partial`, not `lost`.
               const hasLiveTool = liveConnectorSpecs.some((c) => c.id === connectorId);
+
+              // ── Customer-facing progress (separate channel from the technical `emitLog`
+              // lines below). A customer running their own migration wants one clear line
+              // per connector — did it connect or not — not a per-operation technical
+              // trace with connector ids and reason strings. The full honest detail (why,
+              // exactly which operation, what's narrowed) still lives in the fidelity
+              // report; this is just the live "what's happening right now" signal, and it
+              // renders as the same tool_start/tool_end chips the UI already shows for
+              // every other step.
+              emitToolStart(emit, connectorId, `Connecting ${readiness.displayName}…`, row.name);
+              // A connector counts as working for the customer if it has SOME live tool at
+              // all — even one that decides its own arguments rather than replaying the
+              // source agent's exact ones is a real, working capability, not a failure.
+              // Only "no live tool whatsoever" reads as not-connected from this view.
+              emitToolEnd(
+                emit,
+                connectorId,
+                hasLiveTool,
+                hasLiveTool
+                  ? `${readiness.displayName} connected`
+                  : `${readiness.displayName} isn't available yet — this agent's ${readiness.displayName} actions won't carry over`,
+                row.name,
+              );
+
               for (const blockedOp of readiness.blocked) {
                 // A judged operation gets its real verdict: the TOOL that serves it, whether
                 // it was proven live, and what is actually narrowed. The generic wording
@@ -2382,7 +2407,7 @@ async function execute(
                   // The caller map rides on the connector because that is what the container
                   // sees; without it a per-user tool cannot turn "who asked" into an account
                   // in the source tenant, and refuses for everyone.
-                  ? { ...applyPerUserAuth(c), callerIdentityMap }
+                  ? { ...applyPerUserAuth(c), callerIdentityMap, appUserId, consentServerOrigin: config.SERVER_ORIGIN }
                   : c,
               );
             }
@@ -2465,7 +2490,7 @@ async function execute(
               if (invokerConnectorIds.has(msConnectorId)) {
                 scopedConnectors = scopedConnectors.map((c) =>
                   c.id === target.targetConnectorId
-                    ? { ...applyPerUserAuth(c), callerIdentityMap }
+                    ? { ...applyPerUserAuth(c), callerIdentityMap, appUserId, consentServerOrigin: config.SERVER_ORIGIN }
                     : c,
                 );
               }

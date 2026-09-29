@@ -4,9 +4,16 @@ import {
 } from './primitives.tsx';
 import { invalidateCache, markStale, primeResource, useResource } from '../../v2/data/cache.ts';
 import { useSource, type DestOption, type EnvPair, type EnvRow } from '../../v2/data/index.ts';
+import { IcoCheck } from '../../icons.tsx';
 
 /**
- * Environment → Gemini app pairing, as a panel rather than a phase.
+ * Environment → Gemini app pairing, as a phase-in-place rather than a phase
+ * of its own — its own distinct block on the Connect page, not merged into
+ * the cards above it. The two used to share one panel with a hairline
+ * divider; that read as one continuous task when it is really two: connect
+ * the clouds, then decide where each environment goes. Real whitespace
+ * between two distinct blocks (matching the cards' own floating-card
+ * treatment) reads clearer than either one shared box or a divider line.
  *
  * Two things this screen learned from a real tenant:
  *
@@ -164,7 +171,7 @@ export function EnvPairing({ session, onChange }: {
           {!env.accessible
             ? <Chip tone="bad">no access</Chip>
             : pair?.project && pair?.engine
-              ? <Chip tone="ok">paired</Chip>
+              ? <Chip tone="ok" icon={<IcoCheck s={9} />}>paired</Chip>
               : <Chip tone="you">not paired</Chip>}
         </span>
       </div>

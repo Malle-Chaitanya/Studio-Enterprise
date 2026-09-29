@@ -21,9 +21,10 @@ import {
 import { upsertAuthSession } from '../db/repos/authSessions.js';
 import { logger } from '../logger.js';
 import { startEltSweepInBackground } from '../services/eltSweep.js';
-import { completeUserConsent, peekUserConsent } from '../services/userConnectorAuth.js';
+import { completeUserConsent, peekUserConsent, startUserConsent, supportsUserAuth } from '../services/userConnectorAuth.js';
 import { getConnectorCredential } from '../db/repos/connectorCredentials.js';
 import { getEntraSecret } from '../services/secretManager.js';
+import { connectorCredentialScope } from '../services/connectorCredentials.js';
 
 export const authRouter = Router();
 
@@ -658,6 +659,78 @@ authRouter.post('/disconnect', async (req, res) => {
  * (/callback/microsoft, /callback/google) so existing OAuth app registrations
  * work without portal changes. Mounted at the app root.
  */
+/**
+ * POST /api/auth/connector-consent/start-deployed
+ * body: { appUserId, project, connectorId, userKey }
+ *
+ * The DEPLOYED AGENT's own way to ask for a consent link, months after the migration admin
+ * who set it up is gone from the picture. `/api/migrate/connector-consent/start` (the other
+ * start route) needs an active migration `session` — real during a migration run, meaningless
+ * for a container that has been live in production for weeks. This one needs only what the
+ * container already carries on its own connector spec (`appUserId`, `consentProject` — see
+ * connectorToolBuilder.ts's LiveConnectorSpec) plus the caller identity it already resolves
+ * per call (see adk_deploy.py's `_caller_var`).
+ *
+ * Open, deliberately, like the callback below: the container has no admin session to present,
+ * and the one thing this route can produce — a Microsoft sign-in URL — is inert without a real
+ * person completing it, at which point `completeUserConsent`'s id_token check refuses to file
+ * the result under anyone but whoever Microsoft itself just authenticated. Still gated by the
+ * same real checks the session-based route uses: the connector must support a delegated flow,
+ * and a credential record must already exist for this exact (appUserId, connectorId) — an
+ * unconfigured pair gets a plain refusal, not a URL.
+ */
+authRouter.post('/connector-consent/start-deployed', async (req, res) => {
+  const body = req.body as {
+    appUserId?: string; project?: string; connectorId?: string; userKey?: string;
+  };
+  const appUserId = (body.appUserId ?? '').trim();
+  const project = (body.project ?? '').trim();
+  const connectorId = (body.connectorId ?? '').trim();
+  const userKey = (body.userKey ?? '').trim();
+  if (!appUserId || !project || !connectorId || !userKey) {
+    return void res.status(400).json({ error: 'missing_fields' });
+  }
+  if (!supportsUserAuth(connectorId)) {
+    return void res.status(400).json({ error: 'connector_not_delegable' });
+  }
+
+  const record = await getConnectorCredential(appUserId, connectorId);
+  if (!record) {
+    return void res.status(400).json({ error: 'connector_not_configured' });
+  }
+
+  try {
+    const saToken = await google.getSaToken();
+    const fields: Record<string, string> = {};
+    for (const field of ['client_id', 'tenant_id', 'subdomain', 'base_url', 'org_url']) {
+      const secretId = record.secretIds[field];
+      if (!secretId) continue;
+      const got = await getEntraSecret(
+        saToken, `projects/${record.project}/secrets/${secretId}/versions/latest`,
+        { optional: true },
+      );
+      if (got.ok && got.plaintext) fields[field] = got.plaintext;
+    }
+
+    const { authorizeUrl } = startUserConsent({
+      appUserId,
+      tenantId: fields.tenant_id ?? '',
+      userKey,
+      connectorId,
+      ownerScope: connectorCredentialScope(connectorId),
+      project,
+      redirectUri: `${config.SERVER_ORIGIN}/api/auth/connector-consent/callback`,
+      fields,
+    });
+    logger.info(
+      { connectorId, appUserId }, 'user consent: issued an authorization url from a deployed agent',
+    );
+    res.json({ authorizeUrl });
+  } catch (err) {
+    res.status(400).json({ error: 'consent_start_failed', detail: (err as Error).message });
+  }
+});
+
 /**
  * GET /api/auth/connector-consent/callback?code=&state=
  *

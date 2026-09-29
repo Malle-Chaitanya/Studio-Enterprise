@@ -31,3 +31,41 @@ export function installAuthGuard(): void {
     return res;
   };
 }
+
+/**
+ * Sign out for real, and land somewhere that cannot bounce back in.
+ *
+ * Three things are needed and it used to be missing all three: end the session
+ * server-side, drop the client-side session ids so nothing can be resumed from
+ * them, and REPLACE the history entry so Back does not lead back in. Shared
+ * between the v1 header and the v2 topbar so there is one place this can go
+ * wrong, not two that can quietly drift apart.
+ */
+export async function signOut(
+  navigate: (path: string, opts: { replace: true }) => void,
+): Promise<void> {
+  const session = new URLSearchParams(window.location.search).get('session') ?? '';
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session }),
+    });
+    // Ending the CLOUD session is not the same as ending the SIGN-IN. Without this the
+    // auth cookie survives, so returning to the app skips the login screen entirely —
+    // which on a shared machine hands the next person the previous user's account.
+    await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+  } catch {
+    /* signing out must never strand someone on the page they are leaving */
+  }
+  // Wizard state is cached per session under csge_* keys — leaving it behind lets a
+  // later session pick up the previous user's selections.
+  try {
+    for (const key of Object.keys(sessionStorage)) {
+      if (key.startsWith('csge_')) sessionStorage.removeItem(key);
+    }
+  } catch {
+    /* private mode / storage disabled */
+  }
+  navigate('/', { replace: true });
+}

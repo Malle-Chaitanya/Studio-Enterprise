@@ -1,25 +1,17 @@
+/** Find any recent Gmail send-related error in the persisted migration logs, and try to
+ *  reproduce the actual auth failure live if none is found. Read-only where possible.
+ *  npx tsx src/spikes/_diag_check_gmail_send_error.ts */
 import 'dotenv/config';
-import { getSaToken } from '../auth/google.js';
+import { connectMongo } from '../db/mongo.js';
+import { getDb } from '../db/core.js';
 
-const PROJECT = 'agentmigrations';
-const SINCE = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-
-async function main() {
-  const saToken = await getSaToken();
-  const res = await fetch(`https://logging.googleapis.com/v2/entries:list`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      resourceNames: [`projects/${PROJECT}`],
-      filter: `timestamp>="${SINCE}" AND resource.type="aiplatform.googleapis.com/ReasoningEngine" AND (textPayload:"permission" OR textPayload:"Permission" OR textPayload:"insufficient" OR textPayload:"403" OR textPayload:"HttpError" OR textPayload:"gmail_" OR textPayload:"send_email")`,
-      orderBy: 'timestamp desc',
-      pageSize: 100,
-    }),
-  });
-  const json = (await res.json()) as { entries?: { timestamp: string; textPayload?: string }[] };
-  console.log('status:', res.status, 'entries:', json.entries?.length ?? 0);
-  for (const e of (json.entries ?? []).reverse()) {
-    console.log(e.timestamp, e.textPayload);
-  }
-}
-main().catch((e) => { console.error('FAILED:', e.message); if (e.cause) console.error('CAUSE:', e.cause); });
+await connectMongo();
+const rows = await getDb()
+  .collection('migrationLogs')
+  .find({ msg: { $regex: /gmail|unauthorized|auth failed/i } })
+  .sort({ $natural: -1 })
+  .limit(20)
+  .toArray();
+console.log(`${rows.length} matching log row(s):`);
+for (const r of rows) console.log(`  [${r.level}] ${r.ts?.toISOString?.() ?? r.ts} ${r.msg}`);
+process.exit(0);

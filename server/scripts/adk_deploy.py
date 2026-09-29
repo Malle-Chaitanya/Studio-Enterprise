@@ -319,6 +319,42 @@ def _build_live_connector_tool(conn: dict, project: str):
     # its empty `perUserFields` as "no per-user sign-in" makes every call fail closed for
     # everyone -- which is exactly what a live two-caller test caught.
     impersonating = bool(conn.get("perUser")) and conn.get("perUserMode") == "impersonate"
+    # Both server-populated ONLY on per-user specs (orchestrator.ts, alongside
+    # callerIdentityMap) -- see LiveConnectorSpec.appUserId / .consentServerOrigin.
+    app_user_id = conn.get("appUserId")
+    consent_server_origin = conn.get("consentServerOrigin")
+
+    def _request_consent_url(caller: str) -> str | None:
+        """Ask this tool's own server for a real Microsoft/Google sign-in link for `caller`.
+
+        Turns "there is no stored connection for you yet" from a dead end (the earlier
+        message pointed people at CloudFuze Studio Migrate, a tool an end user chatting in
+        Teams/Gemini has never seen and has no login for) into something the model can
+        actually relay: a real, clickable URL, the same way Copilot Studio's own "Connect to
+        continue" card works. Returns None on any failure -- the caller falls back to the
+        plain refusal rather than surface a broken partial message.
+        """
+        if not app_user_id or not consent_server_origin:
+            return None
+        try:
+            import json as _json
+            import urllib.request
+            req = urllib.request.Request(
+                f"{consent_server_origin}/api/auth/connector-consent/start-deployed",
+                data=_json.dumps({
+                    "appUserId": app_user_id,
+                    "project": project,
+                    "connectorId": conn.get("id"),
+                    "userKey": caller,
+                }).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return _json.loads(resp.read().decode("utf-8")).get("authorizeUrl")
+        except Exception as e:  # noqa: BLE001
+            print(f"[consent] {conn_name}: could not obtain a consent URL for {caller!r}: {e!r}")
+            return None
 
     def _secret(field: str) -> str:
         """Read one credential field from Secret Manager (latest version).
@@ -393,10 +429,18 @@ def _build_live_connector_tool(conn: dict, project: str):
             # turns a raw 404 in the model's context into an instruction it can relay.
             status = getattr(e, "code", None)
             if per_user and not impersonating and field in per_user_fields and status in (403, 404):
+                caller = _caller_var().get("")
+                consent_url = _request_consent_url(caller) if caller else None
+                if consent_url:
+                    raise RuntimeError(
+                        f"{conn_name}: this tool uses your own Microsoft account, and you "
+                        f"have not connected it yet. Sign in here to connect it, then ask "
+                        f"again: {consent_url}"
+                    ) from None
                 raise RuntimeError(
                     f"{conn_name}: this tool uses each person's own account, and there is "
-                    "no stored connection for you yet. Connect your account in CloudFuze "
-                    "Studio Migrate, then try again."
+                    "no stored connection for you yet. Ask your admin to enable account "
+                    "sign-in for this connector, then try again."
                 ) from None
             raise
         return base64.b64decode(payload["payload"]["data"]).decode("utf-8")
@@ -612,6 +656,14 @@ def _build_live_connector_tool(conn: dict, project: str):
 
     if kind in ("sharepointonline", "sharepoint", "onedrive"):
         from connector_tools.sharepoint import build_tools as _build
+        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+
+    # Word Online (Business): every captured operation is a Power Automate connectionId
+    # proxy, not a Graph path — see operationBinding.ts's shared_wordonlinebusiness entry
+    # and connector_tools/word_online.py's module docstring for what is and is not
+    # reproduced this way.
+    if kind == "wordonlinebusiness":
+        from connector_tools.word_online import build_tools as _build
         return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
     if kind == "googledrive":

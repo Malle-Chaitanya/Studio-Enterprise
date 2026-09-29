@@ -67,13 +67,29 @@ describe('applyPerUserAuth', () => {
     expect(out.perUserFields).toEqual([]);
   });
 
-  it('no connector currently takes the delegated path — say so out loud', () => {
-    // Every connector that has userAuth also has impersonation, so the consent branch is
-    // unreachable today. That is the intended outcome (consent expires and dies with this
-    // tool), but it means the branch is untested by the suite. If someone adds a
-    // consent-only connector, this fails and they will know to cover it.
+  it('names every connector that takes the delegated (consent) path — say so out loud', () => {
+    // Was `toEqual([])`: every connector with userAuth also had impersonation, so the
+    // consent branch was unreachable and untested. Planner, Power Platform for Admins V2
+    // and Microsoft Forms broke that (2026-09-24 — proven live: Copilot Studio ran these as
+    // 'invoker', and app-only credentials cannot reach them at all — Forms structurally,
+    // Planner/Power Platform Admin by authorization). Pinned to a real list, not just a
+    // non-empty check, so an accidental fourth addition is still visible in the diff.
     const delegatedOnly = CONNECTOR_REGISTRY.filter((c) => c.userAuth && !c.impersonation).map((c) => c.id);
-    expect(delegatedOnly).toEqual([]);
+    expect(delegatedOnly.sort()).toEqual(
+      ['shared_microsoftforms', 'shared_planner', 'shared_powerplatformadminv2'].sort(),
+    );
+  });
+
+  it('the delegated path actually rewrites auth to refresh-token, for a real consent-only connector', () => {
+    const out = applyPerUserAuth({
+      id: 'shared_planner',
+      authKind: 'oauth2-client-credentials',
+      scope: 'https://graph.microsoft.com/.default',
+    }) as Record<string, unknown>;
+    expect(out.perUserMode).toBe('delegated');
+    expect(out.authKind).toBe('oauth2-refresh-token');
+    expect(out.perUserFields).toEqual(['refresh_token']);
+    expect(out.scope).toContain('offline_access');
   });
 
   it('marks a connector with no delegated flow per-user with NO fields, so it fails closed', () => {

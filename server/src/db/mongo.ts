@@ -144,6 +144,25 @@ async function ensureCollections(): Promise<void> {
     { unique: true },
   );
 
+  // 11c. connectorCatalog — a pre-populated, PER-CONNECTOR (not per-customer) reference
+  //      catalog: what a connector can generally do, filled in ahead of time so a detected
+  //      connector can be matched immediately instead of waiting on a live per-environment
+  //      capture. No appUserId/scope: a connector's own operation list is not customer data.
+  //      See db/repos/connectorCatalog.ts.
+  await ensure('connectorCatalog');
+  await db.collection('connectorCatalog').createIndex({ connectorId: 1 }, { unique: true });
+
+  // 11d. connectors / connectorOperations — the CLEAN, normalized replacement for the
+  //      single-blob connectorCatalog above: one row per connector (identity + auth), and
+  //      one row PER OPERATION so operations are searchable/indexable across every
+  //      connector, not buried inside one nested field. See db/repos/connectorRegistry.ts.
+  await ensure('connectors');
+  await db.collection('connectors').createIndex({ connectorId: 1 }, { unique: true });
+  await db.collection('connectors').createIndex({ isMicrosoftOwnService: 1 });
+  await ensure('connectorOperations');
+  await db.collection('connectorOperations').createIndex({ connectorId: 1, operationId: 1 }, { unique: true });
+  await db.collection('connectorOperations').createIndex({ operationId: 1 });
+
   // 12. entraAppCredentials — per (customer, Microsoft tenant) reference to a
   //     Secret Manager-stored Entra app credential, so a NEW site under an
   //     already-onboarded tenant can auto-provision a connector without asking

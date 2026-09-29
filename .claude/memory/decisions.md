@@ -6,6 +6,53 @@ scaffold. Format: **date — decision — why — impact**.
 
 ---
 
+## 2026-09-25 — Design: Wave Creation phase, v2 wizard — additive `Session` fields only (Architect sign-off, design-only)
+
+- **Decision**: Approved design (implementation not yet started) for a new **Wave Creation**
+  v2-wizard phase, placed between **Select agents** and **Connectors** (new `PhaseId:
+  'wave-creation'` in `web/src/components/v2/PhaseRail.tsx`, new route `/v2/wave-creation`
+  rendering a new `WaveCreationV2.tsx`). A wave is a **client-visible organizational tag on
+  already-selected agents only** — `Session` (`server/src/sessionStore.ts`) gains two additive,
+  optional fields, `waves?: { id, name, createdAt }[]` and `waveAssignments?: Record<botid,
+  waveId>`, stored and read exactly like the existing `agentSelection` field (same collection,
+  `migrationSessions`, same `getSession`/`updateSession` mechanism, same `appUserId` scoping
+  inherited from the session document — no new Mongo collection). Full detail, UI/data shape,
+  and the new `/api/migrate/waves*` endpoints: see
+  [.claude/memory/wave-creation-design.md](wave-creation-design.md).
+- **The one real architectural finding, confirmed by reading `orchestrator.ts` rather than
+  assumed**: the orchestrator has **no batching/sequencing concept of any kind** today.
+  `execute()` flattens every selected agent across every environment into one work-list
+  (`plan.units.flatMap(...)`) and runs it through a bounded-concurrency pool
+  (`CONCURRENCY=5`/`INSERT_CONCURRENCY=3`) with no caller-controlled ordering. So in this
+  iteration, **Migrate is completely unchanged and wave tags have zero effect on execution
+  order** — real sequenced-wave execution (wave 1 fully completes before wave 2 starts) would
+  need a separate, materially larger orchestrator change and is explicitly named as deferred
+  future work, not designed here. A per-wave progress UI in Migrate was considered and
+  **rejected for this iteration** specifically because it would visually imply sequencing the
+  backend does not provide — exactly the "overclaim" failure mode this project's honesty rule
+  exists to prevent.
+- **Why no new collection**: a wave is per-migration planning state, the same category as the
+  already-shipped `agentSelection` field on the same document — inventing
+  `db/repos/waves.ts` would fragment one concept (what's in this run, and how it's organized)
+  across two stores for a distinction (a second field vs. a second collection) that buys
+  nothing today. Promote to a real collection only if a future iteration adds independent
+  per-wave scheduling/status that outlives the session-level plan.
+- **Correction surfaced while researching this design**: `.claude/memory/architecture.md`'s
+  collection table states `migrationSessions` has a **1h TTL**. Reading `db/mongo.ts:56-62`
+  shows the TTL was deliberately dropped in a prior change (a cloud connection persists until
+  explicit disconnect; the old `createdAt_1` TTL index is actively dropped on boot) — that
+  file's claim is stale and should be corrected in the same PR that implements this feature.
+- **Impact**: Purely additive to `Session` — no `AgentIR` shape change, no new collection, no
+  DB migration (sessions created before this ships simply lack the two fields and read as "no
+  waves created / every agent unassigned," the correct default). Two new adjacent-screen
+  navigation edits are required for the phase to sit correctly in the wizard flow (not just the
+  rail): `SelectAgentsV2.tsx`'s `onNext` target and `ConnectorsV2.tsx`'s `onBack` target both
+  move to point at `/v2/wave-creation` instead of each other — called out explicitly because
+  shipping the rail/route without these leaves a reachable-but-orphaned screen. Full
+  implementation sequence in the linked design doc.
+
+---
+
 ## 2026-09-08 — Design: Cloud SQL for PostgreSQL as the "full tenant cutover" target for live Dataverse connector tools (Architect sign-off, design-only)
 
 - **Decision**: Approved design (implementation not yet started) for a new, parallel migration
@@ -469,7 +516,7 @@ scaffold. Format: **date — decision — why — impact**.
 
 ## 2026-08-21 — Live-validated `ensureAgentAccess`/`shareAgent` end-to-end against three real migrated ADK agents, one per sharing shape
 
-- **Decision:** No code change. Ran the actual production functions from `services/gemini.ts`
+- **Decision:** Ran the actual production functions from `services/gemini.ts`
   (not raw fetch, not a throwaway test agent) against three real, already-migrated, `ENABLED`
   agents in the `studio-enterprise-migration` tenant — `ensureAgentAccess({users:[...]})` on
   "Teams Coordinator" (individual), `ensureAgentAccess({groups:[...]})` on "SharePoint
@@ -1124,7 +1171,6 @@ scaffold. Format: **date — decision — why — impact**.
   `CreateOutcome` shape, but hasn't been exercised against a real Standard/Plus project.
 
 ## 2026-08-03 — ADK agents can ground on locally-uploaded files (live-verified), wired end to end
-
 - **Decision**: ADK/Reasoning-Engine agents (`adkDeployer.ts`) previously reported every uploaded
   knowledge file as `status: 'lost'` — "ADK deployment path doesn't support agentFiles yet." That's
   still true (ADK agents have no `agentFiles` concept at all), but it no longer means the file is

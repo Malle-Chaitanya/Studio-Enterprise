@@ -146,6 +146,9 @@ export interface LiveConnectorSpec {
   operations?: Array<{ id: string; description?: string }>;
   baseUrlTemplate?: string;
   authHeaderTemplate?: string;
+  /** Header the credential value goes under; defaults to 'Authorization' in the container
+   *  when omitted — see registry.ts's ConnectorDef.authHeaderName. */
+  authHeaderName?: string;
   /** How the container obtains an Authorization header — see registry AuthKind. */
   authKind?: string;
   /** Token endpoint for the OAuth kinds, with {placeholders} the container resolves. */
@@ -159,6 +162,17 @@ export interface LiveConnectorSpec {
    * one typed function tool per operation instead of the generic path-guessing REST tool.
    */
   boundOperations?: BoundToolSpec[];
+  /**
+   * Who this deployed agent belongs to, and where its own server lives — carried ONLY on
+   * per-user (`perUser`) specs, by the orchestrator, alongside `callerIdentityMap`. Without
+   * these the container has no way to ask for a fresh consent link when a caller has not
+   * connected yet: it can name the missing connection, but not point anyone at a real URL
+   * to fix it (the destination GCP project is already a separate `--project` argument at
+   * deploy time, so only these two need to ride here). See adk_deploy.py's per-user
+   * secret-miss branch and routes/auth.ts's `/connector-consent/start-deployed`.
+   */
+  appUserId?: string;
+  consentServerOrigin?: string;
 }
 
 /**
@@ -271,6 +285,7 @@ export function buildLiveConnectorSpecsDetailed(
       secretIds,
       baseUrlTemplate: def.baseUrlTemplate,
       authHeaderTemplate: def.authHeaderTemplate,
+      authHeaderName: def.authHeaderName,
       // Auth strategy travels with the spec so the container can mint/refresh a token
       // (client_credentials, refresh_token, service-account JWT) or base64 a user:pass
       // pair itself. Only secret IDS cross this boundary — never a credential value.
@@ -303,6 +318,7 @@ function connectorCapabilityHint(kind: string): string {
   }
   if (k === 'confluence') return 'search live pages and read their current text';
   if (/sharepoint|onedrive/.test(k)) return 'list files in the connected folder and read a file\'s text';
+  if (k === 'wordonlinebusiness') return 'convert a Word document to PDF';
   return 'call its REST API to read data or perform an action on the user\'s behalf';
 }
 
