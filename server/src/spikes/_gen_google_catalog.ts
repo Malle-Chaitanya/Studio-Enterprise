@@ -127,11 +127,28 @@ function baseUrl(doc: Disc): string {
  * the per-app answer the admin has to paste into Workspace.
  */
 const CHOSEN_SCOPE: Record<string, string> = {
+  // The five below were chosen by a person. The five after them were PROPOSED by
+  // spikes/_probe_google_scope_rule.py and accepted: that rule groups an api's declared
+  // scopes by family, takes the family this app owns rather than one it borrows, and then the
+  // broadest scope inside it. It reproduces all four single-scope choices above exactly
+  // (gmail.modify, drive, calendar, contacts), which is why its proposals for the new apps
+  // are trusted. It does NOT reproduce Chat, and should not -- Chat needs two scopes and the
+  // rule emits one.
+  //
+  // The rule is what stops Sheets, Docs, Slides and Forms being granted auth/drive, which is
+  // what every simpler derivation produced: every file in the customer's Drive, to use a
+  // spreadsheet.
   shared_gmail: 'https://www.googleapis.com/auth/gmail.modify',
   shared_googledrive: 'https://www.googleapis.com/auth/drive',
   shared_googlecalendar: 'https://www.googleapis.com/auth/calendar',
   shared_googlecontacts: 'https://www.googleapis.com/auth/contacts',
   shared_googlechat: 'https://www.googleapis.com/auth/chat.messages https://www.googleapis.com/auth/chat.spaces',
+  shared_googlesheet: 'https://www.googleapis.com/auth/spreadsheets',
+  shared_googledocs: 'https://www.googleapis.com/auth/documents',
+  shared_googleslides: 'https://www.googleapis.com/auth/presentations',
+  shared_googletasks: 'https://www.googleapis.com/auth/tasks',
+  // Forms publishes no bare `auth/forms`; `forms.body` is the broadest it declares.
+  shared_googleforms: 'https://www.googleapis.com/auth/forms.body',
 };
 
 interface Row {

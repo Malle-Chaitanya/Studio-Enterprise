@@ -88,7 +88,7 @@ export const GOOGLE_APPS: GoogleAppRow[] = [
     icon: '📊',
     docsUrl: 'https://developers.google.com/workspace/sheets/',
     baseUrlTemplate: 'https://sheets.googleapis.com/v4',
-    scope: '',
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
   },
   {
     api: 'docs',
@@ -98,7 +98,7 @@ export const GOOGLE_APPS: GoogleAppRow[] = [
     icon: '📄',
     docsUrl: 'https://developers.google.com/workspace/docs/',
     baseUrlTemplate: 'https://docs.googleapis.com/v1',
-    scope: '',
+    scope: 'https://www.googleapis.com/auth/documents',
   },
   {
     api: 'slides',
@@ -108,7 +108,7 @@ export const GOOGLE_APPS: GoogleAppRow[] = [
     icon: '📑',
     docsUrl: 'https://developers.google.com/workspace/slides/',
     baseUrlTemplate: 'https://slides.googleapis.com/v1',
-    scope: '',
+    scope: 'https://www.googleapis.com/auth/presentations',
   },
   {
     api: 'tasks',
@@ -118,7 +118,7 @@ export const GOOGLE_APPS: GoogleAppRow[] = [
     icon: '✅',
     docsUrl: 'https://developers.google.com/workspace/tasks/',
     baseUrlTemplate: 'https://tasks.googleapis.com/tasks/v1',
-    scope: '',
+    scope: 'https://www.googleapis.com/auth/tasks',
   },
   {
     api: 'forms',
@@ -128,6 +128,6 @@ export const GOOGLE_APPS: GoogleAppRow[] = [
     icon: '📝',
     docsUrl: 'https://developers.google.com/workspace/forms/api',
     baseUrlTemplate: 'https://forms.googleapis.com/v1',
-    scope: '',
+    scope: 'https://www.googleapis.com/auth/forms.body',
   },
 ];
