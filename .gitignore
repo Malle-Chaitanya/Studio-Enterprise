@@ -41,3 +41,9 @@ server/adk_local_test/
 
 # Unrelated nested reference repo (has its own .git)
 content-trunk/
+
+# Connector catalogue captured from a CUSTOMER environment. Mostly Microsoft public
+# catalogue, but it also names their CUSTOM connectors, which are business-identifying
+# ("Get CRM objects from Hubspot"). Customer data does not go in git -- see
+# .claude/rules/security-rules.md "Handling customer data".
+docs/connector-api-index.json
