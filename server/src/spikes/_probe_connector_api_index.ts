@@ -111,6 +111,8 @@ interface IndexRow {
   /** Credential shapes the connector declares — what the customer would have to supply. */
   authTypes?: string[];
   samplePaths?: string[];
+  /** Why this row has no verdict. A transient failure is UNKNOWN, never "no operations". */
+  missReason?: string;
 }
 
 async function listConnectors(token: string): Promise<ApiRow[]> {
@@ -132,24 +134,54 @@ async function listConnectors(token: string): Promise<ApiRow[]> {
   return rows;
 }
 
-async function captureSwagger(connectorId: string, token: string): Promise<{ paths: string[]; auth: string[] } | null> {
+type CaptureResult =
+  | { ok: true; paths: string[]; auth: string[] }
+  | { ok: false; status: number; why: 'not-installed' | 'transient' | 'error' };
+
+/**
+ * One connector's swagger, retrying the failures that are about LOAD rather than the
+ * connector.
+ *
+ * The first version of this returned `null` for any non-200, which collapsed two completely
+ * different facts into one: a 404 ("not installed in this environment" -- real information)
+ * and a 502/504 ("the gateway gave up" -- says nothing at all). Under a pool of 8 the sweep
+ * took 706 of 1313 connectors as uncapturable and reported 92% vendor-path from what was
+ * left. Both numbers were wrong, and the error was not random: the BIGGEST connectors are the
+ * slowest to expand, so SharePoint (130 paths) and Office 365 (143) timed out while small
+ * ones succeeded -- and those are precisely the known proxy-only ones. Dropping them silently
+ * is what made the result look good. Asked one at a time afterwards, shared_googledrive and
+ * shared_sharepointonline both answer 200.
+ *
+ * So: retry 429/5xx with backoff, and report WHY a row is missing instead of discarding it.
+ */
+async function captureSwagger(connectorId: string, token: string): Promise<CaptureResult> {
   const url =
     `https://api.powerapps.com/providers/Microsoft.PowerApps/apis/${encodeURIComponent(connectorId)}` +
     `?api-version=2016-11-01&$filter=${encodeURIComponent(`environment eq '${ENVIRONMENT_ID}'`)}&$expand=swagger`;
-  try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return null; // 404 = not installed here; information, not an error
-    const body = (await res.json()) as { properties?: Record<string, unknown> };
-    const props = body.properties ?? {};
-    const sw = (props.swagger ?? {}) as { paths?: Record<string, unknown> };
-    const cp = (props.connectionParameters ?? {}) as Record<string, { type?: string }>;
-    return {
-      paths: Object.keys(sw.paths ?? {}),
-      auth: [...new Set(Object.values(cp).map((v) => v?.type).filter(Boolean) as string[])].sort(),
-    };
-  } catch {
-    return null; // never throw a sweep into a failure; a missing row is reported as such
+  let last = 0;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const body = (await res.json()) as { properties?: Record<string, unknown> };
+        const props = body.properties ?? {};
+        const sw = (props.swagger ?? {}) as { paths?: Record<string, unknown> };
+        const cp = (props.connectionParameters ?? {}) as Record<string, { type?: string }>;
+        return {
+          ok: true,
+          paths: Object.keys(sw.paths ?? {}),
+          auth: [...new Set(Object.values(cp).map((v) => v?.type).filter(Boolean) as string[])].sort(),
+        };
+      }
+      last = res.status;
+      if (res.status === 404) return { ok: false, status: 404, why: 'not-installed' };
+      if (res.status !== 429 && res.status < 500) return { ok: false, status: res.status, why: 'error' };
+    } catch {
+      last = 0; // network-level failure; same backoff applies
+    }
+    await new Promise((r) => setTimeout(r, 800 * 2 ** attempt + Math.random() * 400));
   }
+  return { ok: false, status: last, why: 'transient' };
 }
 
 const token = await clientCredsToken(TENANT_ID, POWERAPPS_AUDIENCE);
@@ -179,13 +211,21 @@ if (!argv.includes('--swagger')) {
 }
 
 const target = limit ? rows.slice(0, limit) : rows;
-console.log(`\ncapturing swagger for ${target.length} connectors (bounded pool of 8)...`);
+// Pool of 4, not 8. The earlier sweep at 8 produced 502/504 on more than half the catalogue;
+// a sweep that cannot read the biggest connectors measures the small ones and calls it a
+// census.
+console.log(`\ncapturing swagger for ${target.length} connectors (bounded pool of 4, retrying 5xx)...`);
 let done = 0;
-await mapPool(target, 8, async (row) => {
+const missed = { 'not-installed': 0, transient: 0, error: 0 };
+await mapPool(target, 4, async (row) => {
   const cap = await captureSwagger(row.connectorId, token);
   done++;
   if (done % 25 === 0) process.stderr.write(`\r  captured ${done}/${target.length}`);
-  if (!cap) return;
+  if (!cap.ok) {
+    missed[cap.why]++;
+    row.missReason = `${cap.why}${cap.status ? ` (${cap.status})` : ''}`;
+    return;
+  }
   const { verdict, proxyRatio } = classify(cap.paths);
   row.operationCount = cap.paths.length;
   row.verdict = verdict;
@@ -199,7 +239,12 @@ const judged = target.filter((r) => r.verdict);
 const tally = new Map<Verdict, number>();
 for (const r of judged) tally.set(r.verdict!, (tally.get(r.verdict!) ?? 0) + 1);
 
-console.log(`\n${'='.repeat(78)}\nMIGRATABILITY — ${judged.length} connectors captured of ${target.length} asked\n`);
+console.log(`\n${'='.repeat(78)}`);
+console.log(`COVERAGE — ${judged.length} of ${target.length} captured`);
+console.log(`  not-installed in this environment : ${missed['not-installed']}`);
+console.log(`  still failing after 4 tries       : ${missed.transient}   <- unknown, NOT absent`);
+console.log(`  other error                       : ${missed.error}`);
+console.log(`\nMIGRATABILITY — of the ${judged.length} actually read\n`);
 for (const v of ['vendor-path', 'proxy-only', 'uncertain', 'no-operations'] as Verdict[]) {
   const n = tally.get(v) ?? 0;
   console.log(`  ${v.padEnd(14)} ${String(n).padStart(4)}  ${judged.length ? ((n / judged.length) * 100).toFixed(0) : 0}%`);
