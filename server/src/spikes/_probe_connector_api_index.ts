@@ -100,6 +100,23 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (t: T, i: number) =>
 }
 
 /**
+ * The app-only token, re-minted on demand.
+ *
+ * A sweep of 1313 connectors outlives a client-credentials token (~1h), and the third run
+ * proved it in the clearest possible way: every connector up to catalogue index 893 captured,
+ * every one from 894 to 1312 returned 401. Perfectly contiguous. 419 rows -- the last third of
+ * the catalogue -- looked like "our app lacks permission on these" and were really "the token
+ * we minted an hour ago had expired". A 401 is normally a fact and correctly not retried,
+ * which is exactly why this one was invisible: the retry logic was right and the premise
+ * underneath it had gone stale.
+ */
+let cachedToken: string | undefined;
+async function freshToken(force = false): Promise<string> {
+  if (!cachedToken || force) cachedToken = await clientCredsToken(TENANT_ID, POWERAPPS_AUDIENCE);
+  return cachedToken;
+}
+
+/**
  * One GET, retrying only what retrying can fix.
  *
  * Shared by the catalogue listing and the per-connector capture ON PURPOSE. The retry was
@@ -110,13 +127,22 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (t: T, i: number) =>
  *
  * Returns the Response on success, or the last status (0 = network-level failure).
  */
-async function getWithRetry(url: string, token: string, tries = 5): Promise<Response | number> {
+async function getWithRetry(url: string, tries = 5): Promise<Response | number> {
   let last = 0;
+  let reminted = false;
   for (let attempt = 0; attempt < tries; attempt++) {
     try {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${await freshToken()}` } });
       if (res.ok) return res;
       last = res.status;
+      // A 401 part-way through a long sweep is an expired token far more often than a real
+      // permission boundary. Re-mint once and try again; if it 401s on a FRESH token it is a
+      // genuine authorization fact and reported as one.
+      if (res.status === 401 && !reminted) {
+        reminted = true;
+        await freshToken(true);
+        continue;
+      }
       // 404 and other 4xx are facts about the connector, not about load. Do not retry them.
       if (res.status !== 429 && res.status < 500) return res.status;
     } catch {
@@ -143,14 +169,14 @@ interface IndexRow {
   missReason?: string;
 }
 
-async function listConnectors(token: string): Promise<ApiRow[]> {
+async function listConnectors(): Promise<ApiRow[]> {
   const rows: ApiRow[] = [];
   let url: string | null =
     `https://api.powerapps.com/providers/Microsoft.PowerApps/apis?api-version=2016-11-01` +
     `&$filter=${encodeURIComponent(`environment eq '${ENVIRONMENT_ID}'`)}`;
   let page = 0;
   while (url) {
-    const res = await getWithRetry(url, token);
+    const res = await getWithRetry(url);
     if (typeof res === 'number') throw new Error(`catalog list failed after retries: ${res || 'network'}`);
     const json = (await res.json()) as { value?: ApiRow[]; nextLink?: string };
     rows.push(...(json.value ?? []));
@@ -182,11 +208,11 @@ type CaptureResult =
  *
  * So: retry 429/5xx with backoff, and report WHY a row is missing instead of discarding it.
  */
-async function captureSwagger(connectorId: string, token: string): Promise<CaptureResult> {
+async function captureSwagger(connectorId: string): Promise<CaptureResult> {
   const url =
     `https://api.powerapps.com/providers/Microsoft.PowerApps/apis/${encodeURIComponent(connectorId)}` +
     `?api-version=2016-11-01&$filter=${encodeURIComponent(`environment eq '${ENVIRONMENT_ID}'`)}&$expand=swagger`;
-  const res = await getWithRetry(url, token);
+  const res = await getWithRetry(url);
   if (typeof res === 'number') {
     if (res === 404) return { ok: false, status: 404, why: 'not-installed' };
     return { ok: false, status: res, why: res >= 500 || res === 429 || res === 0 ? 'transient' : 'error' };
@@ -202,10 +228,10 @@ async function captureSwagger(connectorId: string, token: string): Promise<Captu
   };
 }
 
-const token = await clientCredsToken(TENANT_ID, POWERAPPS_AUDIENCE);
+await freshToken();
 console.log(`environment ${ENVIRONMENT_ID}\n`);
 
-const listed = await listConnectors(token);
+const listed = await listConnectors();
 const limit = Number(argOf('--limit') ?? 0);
 const rows: IndexRow[] = listed.map((r) => ({
   connectorId: r.name ?? '',
@@ -236,7 +262,7 @@ console.log(`\ncapturing swagger for ${target.length} connectors (bounded pool o
 let done = 0;
 const missed = { 'not-installed': 0, transient: 0, error: 0 };
 await mapPool(target, 4, async (row) => {
-  const cap = await captureSwagger(row.connectorId, token);
+  const cap = await captureSwagger(row.connectorId);
   done++;
   if (done % 25 === 0) process.stderr.write(`\r  captured ${done}/${target.length}`);
   if (!cap.ok) {
