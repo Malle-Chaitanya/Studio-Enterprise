@@ -354,10 +354,66 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         exec(src, ns)  # noqa: S102 - generated from our own spec, never from model output
         fn = ns[fn_name]
 
+        # ── What the model is TOLD about each argument ──────────────────────────────
+        #
+        # ADK turns this docstring into the FunctionDeclaration the model sees, so every
+        # fact the swagger carries about an argument has to arrive here or it may as well
+        # not have been captured. Before the index carried descriptions, this loop fell
+        # through to `a.get("name")` on essentially every argument and the model was shown
+        # `$filter: $filter` -- a name, repeated, and nothing about what belongs in it.
+        #
+        # `default` is DESCRIBED, never applied. The generated signature keeps its empty
+        # default (see the signature loop above) because sending the vendor's default would
+        # make the migrated tool send a value the source agent did not send.
+        def _schema_lines(schema, pad):
+            """Field names of a body schema, two levels deep, as docstring lines.
+
+            Two levels is the readable limit: the model needs to know WHICH fields a body
+            takes and which are mandatory, and a full type expansion crowds out the rest of
+            the tool list. The deeper levels still travel in the spec for anything else that
+            wants them.
+            """
+            if not isinstance(schema, dict):
+                return ""
+            out = ""
+            props = schema.get("properties") or {}
+            req = set(schema.get("required") or [])
+            for fname, fschema in list(props.items())[:20]:
+                fschema = fschema if isinstance(fschema, dict) else {}
+                ftype = fschema.get("type") or "any"
+                line = pad + fname + ": " + str(ftype)
+                if fname in req:
+                    line += " (required)"
+                fdesc = fschema.get("description")
+                if fdesc:
+                    line += " - " + str(fdesc).replace("\n", " ")[:120]
+                out += line + "\n"
+                sub = fschema.get("properties") or {}
+                if sub and len(pad) < 12:
+                    for sname, sschema in list(sub.items())[:10]:
+                        sschema = sschema if isinstance(sschema, dict) else {}
+                        out += pad + "    " + sname + ": " + str(sschema.get("type") or "any") + "\n"
+            if len(props) > 20:
+                out += pad + "... and " + str(len(props) - 20) + " more field(s)\n"
+            # Honesty, same rule as everywhere else in this pipeline: a shape we cut short
+            # is announced as partial rather than presented as the whole thing, so the model
+            # does not report "that field does not exist" about a field we simply dropped.
+            if schema.get("truncated"):
+                out += pad + "(partial shape - the vendor's schema is larger than shown)\n"
+            return out
+
         arg_doc = ""
         for pn, a in unique_args:
             arg_doc += "    " + pn + ": " + str(a.get("description") or a.get("name") or "")
-            arg_doc += " (required)\n" if a.get("required") else "\n"
+            if a.get("required"):
+                arg_doc += " (required)"
+            choices = a.get("enum") or []
+            if choices:
+                arg_doc += " [one of: " + ", ".join(str(c) for c in choices[:20]) + "]"
+            if a.get("default") is not None:
+                arg_doc += " [omit to use the vendor default: " + str(a.get("default")) + "]"
+            arg_doc += "\n"
+            arg_doc += _schema_lines(a.get("schema"), "        ")
         pinned = ", ".join(k + "=" + str(v.get("value")) for k, v in fixed.items())
         doc = str(op.get("description") or op_id) + "\n\n"
         doc += "Calls " + conn_name + " (" + op_id + "). Migrated from Microsoft Copilot Studio.\n"

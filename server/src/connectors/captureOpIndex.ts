@@ -21,17 +21,164 @@ import { clientCredsToken } from '../auth/microsoft.js';
 import { loadOpIndex } from './opIndex.js';
 import { getCachedOpIndex, putCachedOpIndex } from '../db/repos/connectorOpIndex.js';
 import { loadFromRegistry } from '../db/repos/connectorRegistry.js';
-import type { ConnectorOpIndex, OpIndexOperation, OpIndexParameter, VendorAuth } from './operationBinding.js';
+import type {
+  ConnectorOpIndex,
+  OpIndexOperation,
+  OpIndexParameter,
+  OpIndexSchema,
+  VendorAuth,
+} from './operationBinding.js';
 
 export const POWERAPPS_AUDIENCE = 'https://service.powerapps.com';
 /** A connector's shape changes rarely; a fortnight keeps us current without re-fetching per run. */
 const CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
-/** Distil the Power Apps swagger into the index shape. Mirrors spikes/_dump_connector_op_index.ts. */
-function distil(connectorId: string, body: Record<string, unknown>): ConnectorOpIndex | null {
+/**
+ * How deep a `$ref` chain is expanded, and how many properties survive at each level.
+ *
+ * Both caps exist because real connector schemas are not trees. Jira's `IssueBean` reaches
+ * itself through `fields`, and Dataverse's entity schemas carry hundreds of columns — left
+ * unbounded, one body parameter expands until the process dies or the Mongo document blows
+ * past 16MB. Four levels is enough to describe what a caller actually fills in (the object,
+ * its fields, a nested object, its fields) and stops before the parts no model reads.
+ */
+const MAX_SCHEMA_DEPTH = 4;
+const MAX_SCHEMA_PROPERTIES = 40;
+/**
+ * The bound that actually binds. Depth and breadth alone permit 40^3 nodes from one body
+ * parameter — tens of megabytes into a Mongo document capped at 16 and into every
+ * deployment spec built from it. A whole-expansion budget is the only cap that holds
+ * regardless of how a vendor happens to nest its schema.
+ */
+const MAX_SCHEMA_NODES = 300;
+
+/** `#/definitions/IssueUpdateDetails` -> `IssueUpdateDetails`. Swagger 2.0 only — these
+ *  connector definitions are all 2.0, so an OpenAPI 3 `components/schemas` ref resolves to
+ *  nothing and is reported as unresolved rather than guessed at. */
+function refName(ref: string): string | undefined {
+  const m = /^#\/definitions\/(.+)$/.exec(ref);
+  return m ? decodeURIComponent(m[1].replace(/~1/g, '/').replace(/~0/g, '~')) : undefined;
+}
+
+/**
+ * Expand one swagger schema into the shape a consumer can read without the swagger.
+ *
+ * `seen` holds the ref names on the CURRENT branch, not every ref visited: a schema that
+ * legitimately uses the same sub-object in two sibling fields must expand in both, while a
+ * schema that reaches itself must stop. Tracking it globally silently blanked the second
+ * sibling, which looks exactly like a vendor that does not document its own field.
+ */
+function resolveSchema(
+  raw: Record<string, unknown> | undefined,
+  definitions: Record<string, Record<string, unknown>>,
+  depth = 0,
+  seen: ReadonlySet<string> = new Set(),
+  budget: { left: number } = { left: MAX_SCHEMA_NODES },
+): OpIndexSchema | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+
+  const ref = typeof raw.$ref === 'string' ? raw.$ref : undefined;
+  if (ref) {
+    const name = refName(ref);
+    // A cycle or an unresolvable ref both end the branch, and both say so. Returning
+    // `undefined` would present a body with a missing field as a body without one.
+    if (!name || seen.has(name) || !definitions[name]) {
+      return { type: 'object', truncated: true };
+    }
+    return resolveSchema(definitions[name], definitions, depth, new Set([...seen, name]), budget);
+  }
+
+  if (depth >= MAX_SCHEMA_DEPTH || budget.left <= 0) {
+    return { type: (raw.type as string) ?? 'object', truncated: true };
+  }
+  budget.left -= 1;
+
+  const out: OpIndexSchema = {};
+  if (typeof raw.type === 'string') out.type = raw.type;
+  if (typeof raw.description === 'string' && raw.description) out.description = raw.description;
+  if (Array.isArray(raw.required) && raw.required.length) {
+    out.required = (raw.required as unknown[]).map(String);
+  }
+  if (Array.isArray(raw.enum) && raw.enum.length) out.enum = (raw.enum as unknown[]).map(String);
+
+  const props = raw.properties as Record<string, Record<string, unknown>> | undefined;
+  if (props && typeof props === 'object') {
+    out.type ??= 'object';
+    const entries = Object.entries(props);
+    const kept = entries.slice(0, MAX_SCHEMA_PROPERTIES);
+    if (kept.length < entries.length) out.truncated = true;
+    const resolved: Record<string, OpIndexSchema> = {};
+    for (const [key, val] of kept) {
+      const child = resolveSchema(val, definitions, depth + 1, seen, budget);
+      if (child) resolved[key] = child;
+      if (child?.truncated) out.truncated = true;
+    }
+    if (Object.keys(resolved).length) out.properties = resolved;
+  }
+
+  const items = raw.items as Record<string, unknown> | undefined;
+  if (items) {
+    out.type ??= 'array';
+    const child = resolveSchema(items, definitions, depth + 1, seen, budget);
+    if (child) out.items = child;
+  }
+
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Read one operation's parameters, descriptions and body shapes included.
+ *
+ * ONE implementation for both swagger flavours on purpose. `distil()` (the Power Apps proxy
+ * document) and `distilOriginalSwagger()` (a custom connector's own upload) had two copies
+ * of this mapping, and two copies of a fact is how this codebase's worst bugs start — the
+ * copies drift, and the result is a confident wrong answer rather than an error. The two
+ * documents differ in their HOSTS and PATHS, never in how a parameter is written down.
+ */
+function readParameters(
+  raw: Array<Record<string, unknown>> | undefined,
+  definitions: Record<string, Record<string, unknown>>,
+): OpIndexParameter[] {
+  return (raw ?? []).map((p): OpIndexParameter => {
+    const where = (p.in as OpIndexParameter['in']) ?? 'query';
+    const schema = where === 'body' ? resolveSchema(p.schema as Record<string, unknown>, definitions) : undefined;
+    const param: OpIndexParameter = {
+      name: String(p.name ?? ''),
+      in: where,
+      required: p.required === true,
+      // The resolved schema knows better than the bare `object` fallback: a body that is
+      // really an array was being announced to the model as an object to fill.
+      type: (p.type as string) ?? schema?.type ?? ((p.schema as { type?: string })?.type ?? 'object'),
+      visibility: (p['x-ms-visibility'] as string) ?? undefined,
+    };
+    // Left unset rather than set to '' — an empty description reads as "documented as
+    // nothing", and the consumer's `||` fallback to the parameter name would never fire.
+    const description = (p.description as string) || schema?.description;
+    if (description) param.description = description;
+    const enumValues = Array.isArray(p.enum) ? (p.enum as unknown[]).map(String) : schema?.enum;
+    if (enumValues?.length) param.enum = enumValues;
+    const dflt = p.default;
+    if (typeof dflt === 'string' || typeof dflt === 'number' || typeof dflt === 'boolean') {
+      param.default = dflt;
+    }
+    if (schema) param.schema = schema;
+    return param;
+  });
+}
+
+/**
+ * Distil the Power Apps swagger into the index shape. Mirrors spikes/_dump_connector_op_index.ts.
+ *
+ * Exported for its tests, not for callers — every production path reaches it through
+ * `captureOpIndex()`. It is worth exporting because this is the document 99% of connectors
+ * arrive as, and the thing most worth asserting about it (that it hands `definitions` to
+ * the parameter reader, so `$ref` bodies resolve) is invisible from outside.
+ */
+export function distil(connectorId: string, body: Record<string, unknown>): ConnectorOpIndex | null {
   const props = (body.properties ?? {}) as Record<string, unknown>;
   const sw = (props.swagger ?? {}) as Record<string, unknown>;
   const paths = (sw.paths ?? {}) as Record<string, Record<string, Record<string, unknown>>>;
+  const definitions = (sw.definitions ?? {}) as Record<string, Record<string, unknown>>;
   const operations: Record<string, OpIndexOperation> = {};
   for (const [path, verbs] of Object.entries(paths)) {
     for (const [verb, op] of Object.entries(verbs ?? {})) {
@@ -41,13 +188,7 @@ function distil(connectorId: string, body: Record<string, unknown>): ConnectorOp
         method: verb.toUpperCase(),
         path,
         summary: (op.summary as string) ?? '',
-        parameters: ((op.parameters as Array<Record<string, unknown>>) ?? []).map((p): OpIndexParameter => ({
-          name: String(p.name ?? ''),
-          in: (p.in as OpIndexParameter['in']) ?? 'query',
-          required: p.required === true,
-          type: (p.type as string) ?? ((p.schema as { type?: string })?.type ?? 'object'),
-          visibility: (p['x-ms-visibility'] as string) ?? undefined,
-        })),
+        parameters: readParameters(op.parameters as Array<Record<string, unknown>>, definitions),
       };
     }
   }
@@ -117,6 +258,7 @@ export function distilOriginalSwagger(
   sw: Record<string, unknown>,
 ): { index: ConnectorOpIndex; refusal?: string } | null {
   const paths = (sw.paths ?? {}) as Record<string, Record<string, Record<string, unknown>>>;
+  const definitions = (sw.definitions ?? {}) as Record<string, Record<string, unknown>>;
   const operations: Record<string, OpIndexOperation> = {};
   for (const [path, verbs] of Object.entries(paths)) {
     for (const [verb, op] of Object.entries(verbs ?? {})) {
@@ -132,13 +274,7 @@ export function distilOriginalSwagger(
         // routes on, and it is the one thing the agent itself does not store, so taking
         // the summary instead would rebuild four tools the model cannot tell apart.
         summary: (op.description as string) || (op.summary as string) || '',
-        parameters: ((op.parameters as Array<Record<string, unknown>>) ?? []).map((p): OpIndexParameter => ({
-          name: String(p.name ?? ''),
-          in: (p.in as OpIndexParameter['in']) ?? 'query',
-          required: p.required === true,
-          type: (p.type as string) ?? ((p.schema as { type?: string })?.type ?? 'object'),
-          visibility: (p['x-ms-visibility'] as string) ?? undefined,
-        })),
+        parameters: readParameters(op.parameters as Array<Record<string, unknown>>, definitions),
       };
     }
   }

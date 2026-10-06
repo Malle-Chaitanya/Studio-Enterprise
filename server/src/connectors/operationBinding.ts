@@ -28,6 +28,32 @@
  * (`fixtures/<connectorId>.ops.json`) and returns a plan.
  */
 
+/**
+ * A JSON shape, resolved from the swagger's `$ref`s so the consumer never has to.
+ *
+ * Swagger 2.0 keeps body shapes in a separate `definitions` map and points at them with
+ * `$ref: '#/definitions/IssueUpdateDetails'`. A consumer handed the raw `$ref` has a
+ * pointer into a document it was not given, so every body parameter arrived as the bare
+ * word `object` — which is what a model is then asked to invent. Resolving at capture time
+ * means the shape travels with the operation and the Python side needs no swagger at all.
+ *
+ * Bounded on purpose (see MAX_SCHEMA_DEPTH / MAX_SCHEMA_PROPERTIES in captureOpIndex.ts):
+ * Jira's issue schema is recursive and would expand without end, and the index is stored in
+ * Mongo and shipped into a deployment spec. `truncated` says where a cut was made, so the
+ * docstring can admit the shape is partial rather than present a fragment as the whole.
+ */
+export interface OpIndexSchema {
+  type?: string;
+  description?: string;
+  /** Property names the vendor requires, as the schema itself declares them. */
+  required?: string[];
+  properties?: Record<string, OpIndexSchema>;
+  items?: OpIndexSchema;
+  enum?: string[];
+  /** Set where depth, breadth or a `$ref` cycle stopped the expansion. Never silent. */
+  truncated?: boolean;
+}
+
 /** One operation as distilled by `spikes/_dump_connector_op_index.ts`. */
 export interface OpIndexParameter {
   name: string;
@@ -36,6 +62,28 @@ export interface OpIndexParameter {
   type: string;
   /** Power Apps' own hint. `internal` means the proxy fills it, not the caller. */
   visibility?: string;
+  /**
+   * The vendor's own prose for this parameter.
+   *
+   * It is the single highest-value field in the index and was being dropped on the floor:
+   * a Copilot agent does not store a description per ARGUMENT (only per tool), so without
+   * this the model receives a parameter called `$filter` typed `string` and nothing else,
+   * and fills it by guessing OData it has never been shown. The swagger has carried the
+   * text all along.
+   */
+  description?: string;
+  /** The closed set of values the vendor accepts. Absent means any value of `type`. */
+  enum?: string[];
+  /**
+   * The vendor's documented default when the argument is omitted.
+   *
+   * REPORTED, never applied. Turning it into the generated Python default would make the
+   * migrated tool send a value the source agent did not send — a behaviour change dressed
+   * as fidelity. It belongs in the docstring so the model knows what omitting means.
+   */
+  default?: string | number | boolean;
+  /** Resolved shape of a `body` parameter. Only ever set for `in: 'body'`. */
+  schema?: OpIndexSchema;
 }
 
 export interface OpIndexOperation {
@@ -281,12 +329,23 @@ export const VENDOR_BINDINGS: Record<string, VendorBinding> = {
   },
 };
 
-/** A parameter the migrated tool must accept from the model at call time. */
+/**
+ * A parameter the migrated tool must accept from the model at call time.
+ *
+ * The descriptive half (`description`, `enum`, `default`, `schema`) rides along unchanged
+ * from the captured index. It never affects WHERE the call goes — only what the model is
+ * told it may put in the argument, which is the difference between a tool it can use and
+ * one it fills by guessing.
+ */
 export interface BoundParameter {
   name: string;
   in: 'path' | 'query' | 'header' | 'body' | 'formData';
   required: boolean;
   type: string;
+  description?: string;
+  enum?: string[];
+  default?: string | number | boolean;
+  schema?: OpIndexSchema;
 }
 
 export interface BoundOperation {
@@ -420,7 +479,19 @@ export function bindOperation(index: ConnectorOpIndex, operationId: string): Bin
     .filter((p) => p.name !== 'connectionId')
     .filter((p) => p.visibility !== 'internal')
     .filter((p) => !contextParams.has(p.name))
-    .map((p) => ({ name: p.name, in: p.in, required: p.required, type: p.type }));
+    .map((p) => ({
+      name: p.name,
+      in: p.in,
+      required: p.required,
+      type: p.type,
+      // Carried through rather than re-derived. The index is the one place these are read
+      // from the swagger; a second reading here is the duplicated-fact bug this codebase
+      // keeps paying for.
+      description: p.description,
+      enum: p.enum,
+      default: p.default,
+      schema: p.schema,
+    }));
 
   // Anything the model no longer supplies has to be supplied by us, so both kinds of
   // placeholder — unknown to the swagger, or known but tenant-scoped — are reported here.

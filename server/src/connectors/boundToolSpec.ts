@@ -19,7 +19,7 @@
  * an error, which is the worse failure.
  */
 import type { AgentIR, AgentToolIR, FidelityNote } from '../types.js';
-import { bindOperation, type VendorAuth } from './operationBinding.js';
+import { bindOperation, type OpIndexSchema, type VendorAuth } from './operationBinding.js';
 import { resolveOpIndex, type CaptureContext } from './captureOpIndex.js';
 
 /** One deployable operation: everything the container needs to make the call. */
@@ -35,8 +35,24 @@ export interface BoundToolSpec {
   description: string;
   /** Arguments the author pinned: name → { in, value }. Sent on every call. */
   fixedArgs: Record<string, { in: string; value: string }>;
-  /** Arguments the model supplies, i.e. the tool's signature. */
-  modelArgs: Array<{ name: string; in: string; required: boolean; type: string; description?: string }>;
+  /**
+   * Arguments the model supplies, i.e. the tool's signature.
+   *
+   * `description`, `enum`, `default` and `schema` are what the model is TOLD about each
+   * argument; none of them changes where the call goes. Without them a migrated tool
+   * presents `$filter: str` and the model invents OData, which is the single largest
+   * source of a tool that deploys cleanly and then answers wrongly.
+   */
+  modelArgs: Array<{
+    name: string;
+    in: string;
+    required: boolean;
+    type: string;
+    description?: string;
+    enum?: string[];
+    default?: string | number | boolean;
+    schema?: OpIndexSchema;
+  }>;
   /** Placeholders the container must resolve (`cloudId`, `dataverseOrgUrl`). */
   contextRequired: string[];
   /** Values for those placeholders that the SERVER already knows. */
@@ -214,11 +230,25 @@ export async function buildBoundToolSpecs(
     // Anything the author did not pin is the model's to supply.
     const modelArgs = op.parameters
       .filter((p) => !(p.name in fixedArgs))
-      // Body parameters need a schema the swagger does not always give us; a string body
-      // argument is honest and lets the model pass JSON when it has to.
       .map((p) => {
         const declared = (tool.inputs ?? []).find((i) => i.name === p.name && i.source === 'model');
-        return { name: p.name, in: p.in, required: p.required, type: p.type, description: declared?.description };
+        return {
+          name: p.name,
+          in: p.in,
+          required: p.required,
+          type: p.type,
+          // The AUTHOR's wording first: where a Copilot maker renamed or explained an
+          // argument for their own users, that text is what their agent behaved on. The
+          // connector's own description is the fallback, and it is the one that actually
+          // fires — a ConnectorTool row carries a per-argument description only rarely,
+          // which is why every migrated tool used to arrive with bare parameter names.
+          description: declared?.description || p.description,
+          enum: p.enum,
+          default: p.default,
+          // Only ever set for a body parameter. A body with a known shape stops being
+          // "pass an object" and becomes a field list the model can actually fill.
+          schema: p.schema,
+        };
       });
 
     const spec: BoundToolSpec = {

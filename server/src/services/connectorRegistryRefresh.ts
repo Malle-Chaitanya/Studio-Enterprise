@@ -1,7 +1,7 @@
 import { logger } from '../logger.js';
 import { config } from '../config.js';
 import { captureOpIndex, type CaptureContext } from '../connectors/captureOpIndex.js';
-import type { ConnectorOpIndex } from '../connectors/operationBinding.js';
+import type { ConnectorOpIndex, OpIndexParameter } from '../connectors/operationBinding.js';
 import {
   getConnector,
   listConnectorIdsOlderThan,
@@ -76,16 +76,33 @@ interface OpDiff {
  * `visibility: null` in storage, `visibility: undefined` (key omitted) fresh from
  * capture, and falsely flagged as changed until this normalization was added.
  */
-function normalizeParams(params: OpIndexParameterLike[]): OpIndexParameterLike[] {
-  return params.map((p) => ({ ...p, visibility: p.visibility ?? null }));
+function normalizeParams(params: OpIndexParameter[]): unknown[] {
+  return params.map((p) => canonical(p));
 }
 
-interface OpIndexParameterLike {
-  name: string;
-  in: string;
-  required: boolean;
-  type: string;
-  visibility?: string | null;
+/**
+ * Field-blind on purpose, and that is the whole point of it.
+ *
+ * The first version of this listed `visibility` by hand, which was correct until
+ * `OpIndexParameter` grew `description`, `enum`, `default` and `schema` — four more fields
+ * that are absent on most parameters and therefore four more ways for a stored row to
+ * differ from a fresh capture by nothing at all. A hand-listed normalizer is the same
+ * duplicated-fact bug it was written to fix, one release later.
+ *
+ * So: walk whatever is there. Every absent or `undefined` value becomes `null` (what BSON
+ * gives back), and keys are emitted in sorted order, because `JSON.stringify` compares key
+ * ORDER too and a parameter that gained a description now writes its keys in a different
+ * sequence from one that did not.
+ */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') {
+    const src = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(src).sort()) out[key] = canonical(src[key]);
+    return out;
+  }
+  return value === undefined ? null : value;
 }
 
 /** Same undefined-vs-null Mongo round-trip issue as normalizeParams, applied to an auth
