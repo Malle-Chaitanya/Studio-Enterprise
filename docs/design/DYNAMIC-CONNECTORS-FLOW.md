@@ -147,16 +147,27 @@ server/src/connectors/captureOpIndex.ts
 credential shape — straight from a custom connector's published definition. That is the
 no-code path working today, for the one case where the vendor's own swagger is reachable.
 
-**Gap — `distil()` discards what a generic tool needs.** Measured across 1,134 fixture
-operations: **385 (34%) have an untyped body**, and `OpIndexParameter` has no `description`
-field at all, so **0 of 4,174 parameters carry one**. The swagger holds `description`, `enum`,
-`default`, `x-ms-summary` and `definitions.$ref`; the index keeps `name`, `in`, `required`,
-`type`, `visibility`. There is also an asymmetry: `distilOriginalSwagger()` takes
-`description || summary`, `distil()` takes `summary` only.
+**DONE — `distil()` widening.** The gap this section used to describe: measured across
+1,134 fixture operations, **385 (34%) had an untyped body** and `OpIndexParameter` had no
+`description` field at all, so **0 of 4,174 parameters carried one**. The swagger held
+`description`, `enum`, `default` and `definitions.$ref` all along; the index kept only
+`name`, `in`, `required`, `type`, `visibility`.
 
-> **TO BUILD — `distil()` widening.** Add `description`, `enum`, `default` to
-> `OpIndexParameter`; resolve `schema.$ref` against `swagger.definitions` into a typed body.
-> Zero behaviour change, and every stage below is starved without it.
+`OpIndexParameter` now carries `description`, `enum`, `default` and a `$ref`-resolved
+`schema`, and one shared `readParameters()` serves both `distil()` and
+`distilOriginalSwagger()` — they had two copies of that mapping, which also explains the
+asymmetry that used to sit here (one took `description || summary`, the other `summary`
+only). Expansion is bounded at depth 4, 40 properties per level and 300 nodes overall;
+every cut sets `truncated`, so a shortened shape is announced as partial.
+
+`default` is reported in the tool's docstring, never applied as the generated Python
+default — sending the vendor's default would make the migrated tool send a value the source
+agent did not send.
+
+> **Still thin: the twelve committed fixtures.** They are already-distilled captures and
+> gain nothing until re-captured against a live environment. A customer's own live capture
+> carries the new fields immediately; the Mongo registry picks them up within its 14-day
+> refresh sweep.
 
 ---
 
@@ -378,13 +389,13 @@ reproducible — that measured **signatures**, which is the easy half.
 
 ## Build order
 
-| # | work | risk | unblocks |
-|---|---|---|---|
-| 1 | `distil()` widening (§2) | none | everything downstream |
-| 2 | `resolveVendorBaseUrl` + liveness (§3) | low | the 1,220 vendor-path connectors |
-| 3 | confirm store (§6) | none deployed | makes 4 safe |
-| 4 | per-operation dispatch (§5) | **medium** | removes the 12-branch fork |
-| 5 | delete the 6 redundant modules (§5) | low | — |
+| # | work | risk | unblocks | state |
+|---|---|---|---|---|
+| 1 | `distil()` widening (§2) | none | everything downstream | **done** |
+| 2 | `resolveVendorBaseUrl` + liveness (§3) | low | the 1,220 vendor-path connectors | to build |
+| 3 | confirm store (§6) | none deployed | makes 4 safe | to build |
+| 4 | per-operation dispatch (§5) | **medium** | removes the 12-branch fork | to build |
+| 5 | delete the 6 redundant modules (§5) | low | — | to build |
 
 Steps 1–3 deploy nothing. Step 4 is the only one that touches live dispatch, and it needs the
 shadow diff first — 51 hand-written tools work in production today.

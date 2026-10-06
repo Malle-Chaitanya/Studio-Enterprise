@@ -155,7 +155,7 @@ Ordered by what would bite first, each grounded in a measurement rather than a w
 | area | state |
 |---|---|
 | **connector dispatch** | 12 `if kind ==` branches early-return a fixed tool list; only `generic_rest.py` reads `boundOperations`. Six of the twelve are redundant. See the companion doc. |
-| **`distil()` discards** | 385 of 1,134 captured operations have an untyped body; 0 of 4,174 parameters carry a description. Everything downstream is starved. |
+| **`distil()` discards** | FIXED. `OpIndexParameter` now carries `description`, `enum`, `default` and a `$ref`-resolved body `schema`. The twelve committed fixtures stay thin until re-captured; live captures and the registry sweep gain it. |
 | **cross-vendor verified** | 25 of 71 equivalence rows have had a real call made. `verified` is the honesty gate and most rows are honestly `false`. |
 | **MCP** | `serverUrl` absent on 10/10 real bindings, so every MCP tool fails at deploy with "neither registryServerName nor serverUrl". 4 of 5 servers found are Microsoft-hosted and likely unreachable from a Google-deployed agent. |
 | **vendor base URL** | not present in any Power Platform field. Needs a resolver with a liveness check — `shared_googlecontacts` points at an API Google retired in 2022 and passes every automated check. |
