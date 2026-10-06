@@ -178,6 +178,26 @@ export const VENDOR_BINDINGS: Record<string, VendorBinding> = {
     auth: 'aad-token',
     aadResource: 'https://api.powerplatform.com',
   },
+  // Google Tasks, and the first Google connector that needs NO Python module of its own.
+  //
+  // Every other Google app here has a hand-written module in scripts/connector_tools/,
+  // because its connector paths are a Power Platform abstraction (Drive 57% dataset-shaped,
+  // Sheets 55%). Tasks is not: its captured paths ARE the Tasks v1 API verbatim —
+  // `/users/@me/lists`, `/lists/{taskListId}/tasks`, `/lists/{taskListId}/tasks/{taskId}` —
+  // so the bound-operation path in connector_tools/generic_rest.py reproduces it with no
+  // per-app code. There is deliberately no `if kind == "googletasks"` branch in
+  // adk_deploy.py; it falls through to the generic builder, which is the point.
+  //
+  // Auth needs nothing special either: the registry entry's `google-service-account` already
+  // routes through _mint_token's domain-wide-delegation branch, so an invoker agent acts as
+  // the caller here exactly as it does on Gmail.
+  //
+  // Five of its ten operations are polling triggers and are refused per-operation above.
+  shared_googletasks: {
+    baseUrl: 'https://tasks.googleapis.com/tasks/v1',
+    pathStyle: 'vendor-path',
+    auth: 'google-oauth',
+  },
   // Teams' paths are Graph paths verbatim (`/v1.0/me/joinedTeams`, `/beta/…`).
   shared_teams: {
     baseUrl: 'https://graph.microsoft.com',
@@ -364,6 +384,32 @@ export function bindOperation(index: ConnectorOpIndex, operationId: string): Bin
   }
 
   const vendorPath = stripConnectionId(op.path);
+
+  // A `/trigger<n>/` segment is Power Platform's POLLING-TRIGGER wrapper, not a vendor path.
+  // Measured on shared_googletasks, whose ten operations split exactly in half: five actions
+  // sit on real Google Tasks paths (`/users/@me/lists`, `/lists/{taskListId}/tasks`) and five
+  // triggers sit on `/trigger1/users/@me/lists` … `/trigger5/…`. The vendor has no such route,
+  // so binding one yields `https://tasks.googleapis.com/tasks/v1/trigger1/users/@me/lists`,
+  // which 404s at run time with an error no customer could trace back to us.
+  //
+  // This connector is still `vendor-path` and that verdict is right — it means the CONNECTOR's
+  // paths are the vendor's, never that every operation on it is bindable. Refused per
+  // operation rather than per connector, so the five real actions still bind. Reported as
+  // `proxy-only` because that is literally what it is: a Power Platform wrapper with no
+  // vendor route underneath, and every consumer already renders that verdict honestly.
+  const trigger = /^\/trigger\d*\//i.exec(vendorPath);
+  if (trigger) {
+    return {
+      status: 'proxy-only',
+      connectorId: index.connectorId,
+      operationId,
+      reason:
+        `${operationId} is a Power Platform polling trigger (its path begins ` +
+        `\`${trigger[0]}\`), not a vendor API call. A migrated agent calls tools on demand ` +
+        'and does not poll, so there is nothing on the vendor side to bind it to.',
+    };
+  }
+
   const urlTemplate = `${binding.baseUrl.replace(/\/$/, '')}${vendorPath}`;
   // `x-ms-visibility: internal` parameters are the proxy's own plumbing (connectionId,
   // the fixed `prefer`/`accept` headers). Passing them through would make the tool
