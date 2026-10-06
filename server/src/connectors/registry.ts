@@ -6,6 +6,7 @@
  * Template placeholders ({api_key}, {subdomain}, etc.) are replaced with
  * values from Secret Manager when building the agent instruction block.
  */
+import { googleConnectors } from './google.js';
 
 export interface CredentialField {
   key: string;
@@ -727,224 +728,11 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     authHeaderTemplate: 'Bearer {api_key}',
   },
 
-  {
-    id: 'shared_googledrive',
-    name: 'Google Drive',
-    category: 'storage',
-    icon: '📁',
-    docsUrl: 'https://developers.google.com/drive/api/reference/rest/v3',
-    requiredPermissions: ['https://www.googleapis.com/auth/drive'],
-    // Deliberately the CUSTOMER'S OWN service account, not CloudFuze's shared one — see
-    // docs/connector-architecture-decisions.md §12.4. A shared SA meant the migrated
-    // agent's live Drive tool kept depending on CloudFuze's account forever, past the
-    // migration itself; the customer revoking that trust (reasonably, once "the
-    // migration tool" looks done) would break Drive on an agent they already rely on.
-    // With their own SA there is nothing to revoke without breaking their own agent.
-    permissionsHint: 'Create this service account in your OWN Google Cloud project (not ours), then turn on domain-wide delegation for its Client ID in your Google Workspace admin console with this scope. One key covers every agent — WHICH person\'s Drive each agent uses is set per-agent, one screen further on, since different agents can belong to different people.',
-    // Deliberately just the key — NOT impersonate_email. One service account key is
-    // shared across the whole migration (DWD can impersonate anyone in the domain from
-    // the same key), but WHICH person's Drive a given agent should use is a per-agent
-    // fact, not a per-migration one (Erik's agent needs Erik's Drive, Alex's needs
-    // Alex's) — see docs/connector-architecture-decisions.md §12.5. That's collected on
-    // a separate per-agent screen (db/repos/agentConnectorIdentity.ts), not here.
-    credentials: [], // supplied by the google_service_account credential group
-    credentialGroup: 'google_service_account',
-    baseUrlTemplate: 'https://www.googleapis.com/drive/v3',
-    authHeaderTemplate: 'Bearer {access_token}',
-    // A pasted access token lasts ~1h and customers cannot mint one. The JSON key is
-    // durable: the runtime signs a JWT with it and gets a fresh token as needed.
-    authKind: 'google-service-account',
-    // 'drive' (not 'drive.readonly') on purpose — confirmed live 2026-08-10 that a
-    // Workspace admin authorizing DWD for 'drive' does NOT also authorize the
-    // separate 'drive.readonly' scope string (exact-match, not hierarchical), so a
-    // customer who only grants the broad scope still needs this to be the same one.
-    scope: 'https://www.googleapis.com/auth/drive',
-    // Applied only when the SOURCE Copilot connector ran in invoker mode. `impersonate_email`
-    // above pins one person per agent, which is right for a maker connector; an invoker one
-    // ran as whoever was asking, so the subject has to follow the caller instead. Every Drive
-    // tool inherits it from the token, including create/update/delete — a file the agent
-    // writes then lands in the asker's Drive rather than one shared account's.
-    impersonation: { header: '', resolve: 'google-dwd-subject' },
-  },
-
-  {
-    id: 'shared_gmail',
-    name: 'Gmail',
-    category: 'storage',
-    icon: '✉️',
-    docsUrl: 'https://developers.google.com/gmail/api/reference/rest',
-    requiredPermissions: ['https://www.googleapis.com/auth/gmail.modify'],
-    // CROSS-VENDOR. Every other entry in this registry is the destination for the SAME
-    // vendor's connector. This one is the Google destination for Microsoft's Office 365
-    // Outlook connector — a migrated agent that read Outlook mail gets these tools instead.
-    // The per-operation fidelity (folders vs labels, flags vs stars, what is simply lost) is
-    // in src/connectors/equivalence.ts, and the customer sees it in the report.
-    //
-    // Offered per agent, never applied automatically: whether an Outlook agent SHOULD read
-    // Gmail is the customer's call, and a mailbox is more sensitive than a file share.
-    permissionsHint:
-      'Uses the same service account key as your other Google connectors (see the Google Cloud ' +
-      'credential group). Authorize its Client ID for domain-wide delegation with THIS scope too ' +
-      '— NOTE: scope strings are matched EXACTLY, granting a broader scope such as mail.google.com ' +
-      'does NOT satisfy gmail.modify. WHICH mailbox each agent reads is set per-agent on the next screen.',
-    credentials: [], // supplied by the google_service_account credential group
-    credentialGroup: 'google_service_account',
-    baseUrlTemplate: 'https://gmail.googleapis.com/gmail/v1',
-    authHeaderTemplate: 'Bearer {access_token}',
-    authKind: 'google-service-account',
-    // `gmail.modify` covers read, drafts, labels, star, read-state, trash AND send — one
-    // scope for all 15 tools. `gmail.readonly` alone leaves the agent half working: the read
-    // tools succeed and every write fails at token-mint time, which reads as a code bug
-    // rather than a missing grant (confirmed live 2026-08-19).
-    // Deliberately NOT mail.google.com: that scope also permits PERMANENT deletion, which no
-    // tool here does or should.
-    scope: 'https://www.googleapis.com/auth/gmail.modify',
-    // See the Drive note above. This matters more here than anywhere else: `gmail.modify`
-    // includes SEND, so without the caller as subject a migrated invoker agent would send
-    // mail FROM the one impersonated account no matter who asked it to.
-    impersonation: { header: '', resolve: 'google-dwd-subject' },
-  },
-
-  {
-    id: 'shared_googlecalendar',
-    name: 'Google Calendar',
-    category: 'storage',
-    icon: '📅',
-    docsUrl: 'https://developers.google.com/workspace/calendar/api/v3/reference',
-    requiredPermissions: ['https://www.googleapis.com/auth/calendar'],
-    // CROSS-VENDOR, the third one after shared_gmail and shared_googlechat: the Google
-    // destination for Copilot's Office 365 Outlook Calendar operations. Confirmed officially
-    // 2026-08-31 (Google's own Calendar API v3 reference): events.insert/events.list/
-    // freebusy.query all exist and need nothing beyond this one scope — the gap this fills
-    // was purely an unbuilt module (connector_tools/calendar.py), never a platform limit.
-    //
-    // Same connector id (shared_office365) as Outlook mail on the SOURCE side, but a
-    // genuinely separate DECISION from mail — a customer may want mail kept on Microsoft
-    // while calendar moves to Google, or the reverse. See
-    // db/repos/agentSurfaceChoice.ts's `shared_office365:calendar` composite surface key.
-    permissionsHint:
-      'Uses the same service account key as your other Google connectors (see the Google Cloud ' +
-      'credential group). Authorize its Client ID for domain-wide delegation with THIS scope too. ' +
-      'WHICH calendar each agent acts as is set per-agent on the next screen.',
-    credentials: [], // supplied by the google_service_account credential group
-    credentialGroup: 'google_service_account',
-    baseUrlTemplate: 'https://www.googleapis.com/calendar/v3',
-    authHeaderTemplate: 'Bearer {access_token}',
-    authKind: 'google-service-account',
-    scope: 'https://www.googleapis.com/auth/calendar',
-  },
-
-  {
-    id: 'shared_googlecontacts',
-    name: 'Google Contacts',
-    category: 'storage',
-    icon: '📇',
-    docsUrl: 'https://developers.google.com/people/api/rest/v1/people',
-    requiredPermissions: ['https://www.googleapis.com/auth/contacts'],
-    // CROSS-VENDOR, the fourth after shared_gmail/shared_googlechat/shared_googlecalendar:
-    // the Google destination for Copilot's Office 365 Outlook Contacts operations.
-    // Confirmed officially 2026-09-01 (Google's own People API reference):
-    // people.connections.list/people.get/people.createContact/people.updateContact/
-    // contactGroups.list all exist and need nothing beyond this one scope — the gap this
-    // fills was purely an unbuilt module (connector_tools/contacts.py), never a platform
-    // limit. There is no Keep-Microsoft equivalent yet (no Graph contacts tools exist in
-    // connector_tools/outlook.py) — see db/repos/agentSurfaceChoice.ts's
-    // 'shared_office365:contacts' entry, which offers only this one target for now.
-    permissionsHint:
-      'Uses the same service account key as your other Google connectors (see the Google Cloud ' +
-      'credential group). Authorize its Client ID for domain-wide delegation with THIS scope too ' +
-      '— a SEPARATE grant from gmail.modify and calendar, even if this agent also uses those. ' +
-      'WHICH account\'s contacts each agent acts on is set per-agent on the next screen.',
-    credentials: [], // supplied by the google_service_account credential group
-    credentialGroup: 'google_service_account',
-    baseUrlTemplate: 'https://people.googleapis.com/v1',
-    authHeaderTemplate: 'Bearer {access_token}',
-    authKind: 'google-service-account',
-    scope: 'https://www.googleapis.com/auth/contacts',
-  },
-
-  {
-    id: 'shared_googlechat',
-    name: 'Google Chat',
-    category: 'messaging',
-    icon: '💬',
-    docsUrl: 'https://developers.google.com/workspace/chat/api/reference/rest',
-    requiredPermissions: [
-      // Required — the connector does not work without these two.
-      'https://www.googleapis.com/auth/chat.messages',
-      'https://www.googleapis.com/auth/chat.spaces',
-      // OPTIONAL, deliberately NOT in `scope`: each unlocks one tool, and including an
-      // ungranted one in the token request breaks every other tool. See the note on `scope`.
-      'https://www.googleapis.com/auth/chat.memberships.readonly (optional — enables listing space members)',
-      'https://www.googleapis.com/auth/chat.spaces.create (optional — enables creating spaces)',
-    ],
-    // CROSS-VENDOR, the second one after shared_gmail: the Google destination for Microsoft's
-    // Teams connector. Per-operation fidelity lives in src/connectors/equivalence.ts.
-    //
-    // Chat is a HARDER target than Gmail, and not because of the API surface:
-    //   - Chat is FLAT. A Team containing many Channels has no equivalent; both collapse to
-    //     one Space, so "which team is this channel in" stops having an answer.
-    //   - Chat has two identity models. A service account can act as a registered CHAT APP
-    //     (which must be a member of every space it touches), or impersonate a user through
-    //     domain-wide delegation. Whether DWD works for Chat is UNPROVEN here — Google
-    //     documents Chat auth differently from Gmail. The tools are written so the same code
-    //     serves both: impersonate_email set = act as that user; unset = act as the app.
-    //   - Interactive surfaces do not carry over at all. Posting a card works; a card the
-    //     user can click does not, because that needs an app receiving events, and a
-    //     deployed agent is a tool CALLER, not a hosted app.
-    // MEASURED 2026-08-20, not inferred: DWD reads work as the impersonated person, but
-    // message CREATION returns 404 "Google Chat app not found" until the Cloud project has a
-    // Chat app configured. Reading and writing therefore have different prerequisites, which
-    // the hint has to say or a customer grants the scopes and still cannot post.
-    permissionsHint:
-      'READING needs the service account Client ID authorized for domain-wide delegation with the scopes below, exactly as written — scope strings are matched EXACTLY. POSTING additionally needs a Chat app configured on the Cloud project (Google Cloud Console -> Chat API -> Configuration). Without it every send returns 404 "Google Chat app not found", however many scopes are granted. Note that once configured, the agent posts AS THE APP and everyone in the space sees that, rather than posting as a person.',
-    credentials: [
-      { key: 'service_account_json', label: 'Service Account JSON key (your own project)', type: 'password',
-        placeholder: '{"type":"service_account","project_id":...}',
-        hint: 'Google Cloud Console -> IAM & Admin -> Service Accounts -> Create Service Account -> Keys -> Add key (JSON). Paste the whole file. Enable the Google Chat API on that project.' },
-      // Which person the Chat tools act as, through domain-wide delegation. Unset = act as the
-      // app, which only sees spaces the app was added to.
-      { key: 'impersonate_email', label: 'Act as user (email)', type: 'text',
-        placeholder: 'person@yourcompany.com',
-        hint: 'The Workspace user whose Chat spaces and messages the agent reads.' },
-      // THE WRITE GATE. chat.py withholds chat_send_message, chat_reply_to_message,
-      // chat_send_card, chat_update_message and chat_create_space unless this reads true,
-      // because message creation returns 404 "Google Chat app not found" until the Cloud
-      // project has a Chat app configured (measured 2026-08-20) and a model handed a send tool
-      // that always 404s will retry, apologise, and report the failure as its own.
-      //
-      // The gate was unreachable: chat.py read `secret("chat_app_configured")` and no field
-      // declared it, so it could never be set and the five write tools could never appear.
-      // Since Microsoft forbids app-only message POSTs outside import, Google Chat is the ONLY
-      // path to a working send — which made this the single field standing between the product
-      // and any messaging write at all. Found 2026-08-22.
-      { key: 'chat_app_configured', label: 'Chat app configured? (true/false)', type: 'text',
-        placeholder: 'false',
-        hint: 'Set to "true" only after creating a Chat app in the same Google Cloud project (Google Chat API -> Configuration). Until then message-sending tools are withheld, because Chat answers 404 without one.' },
-    ],
-    baseUrlTemplate: 'https://chat.googleapis.com/v1',
-    authHeaderTemplate: 'Bearer {access_token}',
-    authKind: 'google-service-account',
-    // Read AND write in one grant, mirroring the gmail.modify decision: a half-scoped agent
-    // whose reads work and whose writes fail at token-mint time reads as a code bug rather
-    // than a missing grant. `chat.spaces` covers listing and creating spaces; `chat.messages`
-    // covers reading and posting. Deliberately NOT chat.delete: no tool here deletes a space.
-    // EXACTLY the two scopes the always-on tools need, and no more.
-    //
-    // This list was briefly four. Adding chat.spaces.create and chat.memberships.readonly —
-    // both real, both needed by one tool each — broke the connector ENTIRELY: domain-wide
-    // delegation refuses the WHOLE token request when any single scope in it is ungranted,
-    // so a deployed agent's chat_list_spaces failed with `unauthorized_client` even though
-    // its own scope was granted (measured on RE 1580263741172219904).
-    //
-    // The rule that follows: a connector's `scope` is the minimum its core tools need. An
-    // aspirational scope is not forward-looking, it is an outage for every customer who has
-    // not granted it yet. Optional capabilities go in requiredPermissions as optional, and
-    // their tools report the missing grant themselves.
-    scope:
-      'https://www.googleapis.com/auth/chat.messages ' +
-      'https://www.googleapis.com/auth/chat.spaces',
-  },
+  // The five Google connectors are BUILT, not typed — see connectors/google.ts. Typing them
+  // separately is what left shared_googlecalendar, shared_googlecontacts and
+  // shared_googlechat without an `impersonation` block, which silently broke every invoker
+  // agent on those three. All the per-app prose moved there verbatim; nothing was dropped.
+  ...googleConnectors(),
 
 
   {
@@ -1702,11 +1490,19 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     docsUrl: 'https://learn.microsoft.com/en-us/connectors/powerplatformforadmins/',
     credentials: [],
     credentialGroup: 'ms_graph',
-    baseUrlTemplate: 'https://api.powerplatform.com',
+    // `api.powerplatform.com` is a DIFFERENT, newer Microsoft host — its `/licensing/*` and
+    // `/appmanagement/*` paths 404 with RouteNotFound (confirmed live 2026-09-29,
+    // spikes/_diag_planner_powerplatform_admin_failures.ts). The connector's real admin
+    // operations (e.g. "Get Apps As Administrator") are served from the older
+    // `api.powerapps.com` host with the `service.powerapps.com` token audience, same as
+    // every other Power Apps admin connector in this registry — confirmed 200
+    // (spikes/_diag_reproduce_powerapps_correct_scope.ts). The wrong host/scope pair here
+    // is what a deployed agent's tool call surfaced as an "authentication error".
+    baseUrlTemplate: 'https://api.powerapps.com',
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'oauth2-client-credentials',
     tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
-    scope: 'https://api.powerplatform.com/.default',
+    scope: 'https://service.powerapps.com/.default',
   },
 
   {
