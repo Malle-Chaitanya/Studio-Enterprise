@@ -99,6 +99,34 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (t: T, i: number) =>
   return out;
 }
 
+/**
+ * One GET, retrying only what retrying can fix.
+ *
+ * Shared by the catalogue listing and the per-connector capture ON PURPOSE. The retry was
+ * added to the capture first and not the listing, and the very next run died on a 504 from
+ * the listing itself -- the same defect twice because the fix lived in one of the two places
+ * that needed it. Power Platform answers 502/504 under load on both calls; nothing about
+ * either makes it exempt.
+ *
+ * Returns the Response on success, or the last status (0 = network-level failure).
+ */
+async function getWithRetry(url: string, token: string, tries = 5): Promise<Response | number> {
+  let last = 0;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) return res;
+      last = res.status;
+      // 404 and other 4xx are facts about the connector, not about load. Do not retry them.
+      if (res.status !== 429 && res.status < 500) return res.status;
+    } catch {
+      last = 0;
+    }
+    await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt + Math.random() * 500));
+  }
+  return last;
+}
+
 interface IndexRow {
   connectorId: string;
   displayName: string;
@@ -122,8 +150,8 @@ async function listConnectors(token: string): Promise<ApiRow[]> {
     `&$filter=${encodeURIComponent(`environment eq '${ENVIRONMENT_ID}'`)}`;
   let page = 0;
   while (url) {
-    const res: Response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`catalog list failed: ${res.status} ${res.statusText}`);
+    const res = await getWithRetry(url, token);
+    if (typeof res === 'number') throw new Error(`catalog list failed after retries: ${res || 'network'}`);
     const json = (await res.json()) as { value?: ApiRow[]; nextLink?: string };
     rows.push(...(json.value ?? []));
     url = json.nextLink ?? null;
@@ -158,30 +186,20 @@ async function captureSwagger(connectorId: string, token: string): Promise<Captu
   const url =
     `https://api.powerapps.com/providers/Microsoft.PowerApps/apis/${encodeURIComponent(connectorId)}` +
     `?api-version=2016-11-01&$filter=${encodeURIComponent(`environment eq '${ENVIRONMENT_ID}'`)}&$expand=swagger`;
-  let last = 0;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) {
-        const body = (await res.json()) as { properties?: Record<string, unknown> };
-        const props = body.properties ?? {};
-        const sw = (props.swagger ?? {}) as { paths?: Record<string, unknown> };
-        const cp = (props.connectionParameters ?? {}) as Record<string, { type?: string }>;
-        return {
-          ok: true,
-          paths: Object.keys(sw.paths ?? {}),
-          auth: [...new Set(Object.values(cp).map((v) => v?.type).filter(Boolean) as string[])].sort(),
-        };
-      }
-      last = res.status;
-      if (res.status === 404) return { ok: false, status: 404, why: 'not-installed' };
-      if (res.status !== 429 && res.status < 500) return { ok: false, status: res.status, why: 'error' };
-    } catch {
-      last = 0; // network-level failure; same backoff applies
-    }
-    await new Promise((r) => setTimeout(r, 800 * 2 ** attempt + Math.random() * 400));
+  const res = await getWithRetry(url, token);
+  if (typeof res === 'number') {
+    if (res === 404) return { ok: false, status: 404, why: 'not-installed' };
+    return { ok: false, status: res, why: res >= 500 || res === 429 || res === 0 ? 'transient' : 'error' };
   }
-  return { ok: false, status: last, why: 'transient' };
+  const body = (await res.json()) as { properties?: Record<string, unknown> };
+  const props = body.properties ?? {};
+  const sw = (props.swagger ?? {}) as { paths?: Record<string, unknown> };
+  const cp = (props.connectionParameters ?? {}) as Record<string, { type?: string }>;
+  return {
+    ok: true,
+    paths: Object.keys(sw.paths ?? {}),
+    auth: [...new Set(Object.values(cp).map((v) => v?.type).filter(Boolean) as string[])].sort(),
+  };
 }
 
 const token = await clientCredsToken(TENANT_ID, POWERAPPS_AUDIENCE);
