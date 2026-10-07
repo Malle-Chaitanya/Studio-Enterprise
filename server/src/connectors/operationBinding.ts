@@ -54,6 +54,8 @@ export interface OpIndexSchema {
   truncated?: boolean;
 }
 
+import { GOOGLE_APPS } from './googleCatalog.js';
+
 /** One operation as distilled by `spikes/_dump_connector_op_index.ts`. */
 export interface OpIndexParameter {
   name: string;
@@ -141,6 +143,35 @@ export type VendorAuth =
   | 'aad-token' // Entra token for a named resource — we already mint these
   | 'google-oauth';
 
+/**
+ * One method a vendor PUBLISHES, from its own machine-readable API description.
+ *
+ * This is the evidence that turns a binding from a guess into a fact. The connector swagger
+ * says what Power Platform exposes; this says what the vendor actually serves. Where both
+ * exist, only their intersection is safe to call.
+ */
+export interface VendorApiMethod {
+  /** The vendor's own id, e.g. `calendar.events.list`. Quoted in the report, so a human can
+   *  look it up rather than take our word for it. */
+  id: string;
+  httpMethod: string;
+  /** Full URL with `{placeholders}` intact. */
+  url: string;
+}
+
+/**
+ * A vendor's published API surface, reduced to what a binding check needs.
+ *
+ * Passed IN rather than fetched: this module is pure, and keeping it so is what lets the
+ * whole binding path be unit-tested without a network. `services/vendorSpec.ts` does the
+ * I/O and hands the result here.
+ */
+export interface VendorApiSurface {
+  /** Which API this is, for refusal text: `calendar`, `people`. */
+  api: string;
+  methods: VendorApiMethod[];
+}
+
 export interface VendorBinding {
   /**
    * Vendor base URL. May contain `{placeholders}` that are NOT swagger parameters but
@@ -162,6 +193,19 @@ export interface VendorBinding {
   contextParams?: string[];
   /** Why a `proxy-only` connector cannot be reproduced — shown to the customer verbatim. */
   proxyReason?: string;
+  /**
+   * Refuse every operation unless the vendor's own API description confirms it.
+   *
+   * Set on bindings added AFTER vendor-spec verification existed. Those connectors were
+   * never safe on path shape alone — `shared_googlecalendar` publishes
+   * `GET /users/me/calendarList/1`, where the `1` is a Power Platform filter convention and
+   * not a path segment, so binding it verbatim fetches the calendar whose id is "1": a
+   * wrong answer rather than an error, which is the failure this codebase treats as worst.
+   *
+   * Deliberately opt-IN. Existing bindings keep their exact behaviour, so adding
+   * verification cannot regress a connector that works in production today.
+   */
+  requireVendorSpec?: boolean;
   /**
    * Operations on a `proxy-only` connector that ARE reproduced, by a hand-written tool in
    * `server/scripts/connector_tools/`, keyed operationId → what the migrated tool does.
@@ -188,7 +232,7 @@ export interface VendorBinding {
  * a base URL: a wrong host produces a tool that fails at run time with a confusing error,
  * which is worse than a clear "not supported yet".
  */
-export const VENDOR_BINDINGS: Record<string, VendorBinding> = {
+const HAND_WRITTEN_BINDINGS: Record<string, VendorBinding> = {
   // `/ex/confluence/{cloudId}/wiki/api/v2/pages` is Atlassian's own path, cloudId and all.
   shared_confluence: {
     baseUrl: 'https://api.atlassian.com',
@@ -330,6 +374,62 @@ export const VENDOR_BINDINGS: Record<string, VendorBinding> = {
 };
 
 /**
+ * A vendor binding for every Google app in the catalogue, derived rather than typed.
+ *
+ * `googleCatalog.ts` is GENERATED from Google's Discovery service and already states each
+ * app's base URL and DWD scope. A binding needs the same base URL. Typing it a second time
+ * here is the duplicated-fact bug this codebase keeps paying for: two tables holding one
+ * truth, drifting apart quietly until a connector points at the wrong host. So: one table
+ * states it, the other derives it. Adding a Google app to the generator's APPS list now
+ * gives it credentials, a DWD scope AND a binding, with no hand-written row anywhere.
+ *
+ * Every derived entry carries `requireVendorSpec`, which is what makes deriving them safe at
+ * all. A base URL from the catalogue is only a claim about where the vendor lives; it says
+ * nothing about whether a given OPERATION exists there, and Google's connectors are full of
+ * operations that do not — Power Platform filter conventions, polling triggers, and paths
+ * kept after Google retired the API behind them. Confirming each against Discovery is the
+ * difference between enabling ten apps and enabling ten apps' worth of tools that 404.
+ *
+ * The cost of that flag, stated plainly: if Discovery cannot be read at all, these
+ * connectors report every operation as unverified rather than binding on shape. That is the
+ * intended trade — an under-delivering migration is recoverable and loud, a tool that
+ * fetches the wrong calendar is neither.
+ */
+function googleVendorBindings(): Record<string, VendorBinding> {
+  const out: Record<string, VendorBinding> = {};
+  for (const app of GOOGLE_APPS) {
+    out[app.id] = {
+      baseUrl: app.baseUrlTemplate,
+      pathStyle: 'vendor-path',
+      auth: 'google-oauth',
+      requireVendorSpec: true,
+    };
+  }
+  return out;
+}
+
+/**
+ * Derived first, hand-written second — so a human verdict always beats a derived one.
+ *
+ * Two Google connectors are deliberately overridden below and must stay that way:
+ *
+ *   shared_googledrive  hand-verified `proxy-only`. Its paths are a Power Platform dataset
+ *                       abstraction, so a derived `vendor-path` entry would be wrong no
+ *                       matter what Discovery says about the Drive API itself.
+ *   shared_googletasks  proven live in production BEFORE this verification existed. It
+ *                       keeps its unverified binding so an outage at Google's documentation
+ *                       endpoint cannot stop a connector that already works.
+ *
+ * Any other connector a human has judged goes the same way: add it to HAND_WRITTEN_BINDINGS
+ * with the reason, and it wins.
+ */
+export const VENDOR_BINDINGS: Record<string, VendorBinding> = {
+  ...googleVendorBindings(),
+  ...HAND_WRITTEN_BINDINGS,
+};
+
+
+/**
  * A parameter the migrated tool must accept from the model at call time.
  *
  * The descriptive half (`description`, `enum`, `default`, `schema`) rides along unchanged
@@ -363,6 +463,22 @@ export interface BoundOperation {
    * nothing but the model's arguments and a credential.
    */
   contextRequired: string[];
+  /**
+   * HOW this binding was established — the difference between "we think" and "we checked".
+   *
+   * `heuristic`   the connector's path shape implies a vendor path. No vendor description
+   *               was available to confirm it. This is what every binding was before
+   *               verification existed, and it is still right for most connectors.
+   * `vendor-spec` the vendor's own API description lists this exact method at this exact
+   *               URL and verb.
+   *
+   * Reported rather than collapsed, because a regex guess and a confirmed method used to
+   * print the same word. An unproven claim that cannot be told apart from a proven one is
+   * how a wrong binding survives review.
+   */
+  provenance: 'heuristic' | 'vendor-spec';
+  /** The vendor's own id for the confirmed method, when `provenance` is `vendor-spec`. */
+  vendorMethodId?: string;
 }
 
 export type BindingResult =
@@ -370,11 +486,29 @@ export type BindingResult =
   | { status: 'unknown-connector'; connectorId: string; reason: string }
   | { status: 'unknown-operation'; connectorId: string; operationId: string; reason: string }
   | { status: 'proxy-only'; connectorId: string; operationId: string; reason: string }
-  | { status: 'custom-tool'; connectorId: string; operationId: string; reason: string };
+  | { status: 'custom-tool'; connectorId: string; operationId: string; reason: string }
+  /**
+   * The vendor does not publish this method. Separate from `proxy-only` because the cause is
+   * different and so is the fix: a proxy-only connector needs a mapping, while this one has
+   * an operation Power Platform invented, versioned or retired, and the vendor never served.
+   */
+  | { status: 'not-in-vendor-api'; connectorId: string; operationId: string; reason: string };
 
 /** `{connectionId}` is filled by the proxy, never by us — it is not part of a vendor call. */
 function stripConnectionId(path: string): string {
   return path.replace(/^\/\{connectionId\}/, '');
+}
+
+/** `/calendars/{calendarId}/events` -> ['calendars','{}','events']. Every placeholder
+ *  collapses so a connector's `{calendarId}` and a vendor's `{+name}` compare equal. */
+function pathSegments(path: string): string[] {
+  return path.replace(/\{[^}]*\}/g, '{}').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
+}
+
+/** Segment-wise equality, placeholders wild on either side. */
+function samePath(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((seg, i) => seg === '{}' || b[i] === '{}' || seg.toLowerCase() === b[i].toLowerCase());
 }
 
 /** Placeholders in a template that no operation parameter supplies. */
@@ -394,7 +528,16 @@ function contextPlaceholders(template: string, params: OpIndexParameter[]): stri
  * Every failure mode is named rather than thrown: the caller needs to REPORT why an
  * operation will not migrate, per operation, before the run starts.
  */
-export function bindOperation(index: ConnectorOpIndex, operationId: string): BindingResult {
+export function bindOperation(
+  index: ConnectorOpIndex,
+  operationId: string,
+  /**
+   * The vendor's own published API, when one could be fetched. Supplying it turns the
+   * verdict from a path-shape inference into a lookup, and the result says which happened
+   * via `provenance`. Omitting it preserves the previous behaviour exactly.
+   */
+  surface?: VendorApiSurface,
+): BindingResult {
   // A binding derived from the connector's own published definition outranks the table:
   // it came from the customer's actual environment, and for a custom connector there is no
   // table entry to outrank.
@@ -470,6 +613,84 @@ export function bindOperation(index: ConnectorOpIndex, operationId: string): Bin
   }
 
   const urlTemplate = `${binding.baseUrl.replace(/\/$/, '')}${vendorPath}`;
+
+  // ── Does the vendor actually serve this? ───────────────────────────────────────────────
+  //
+  // Everything above reasons about SHAPE: strip a prefix, recognise a pattern, infer that
+  // what remains is the vendor's path. Shape cannot tell a real endpoint from one Power
+  // Platform invented, versioned or kept after the vendor retired it — and all three are
+  // live in the catalogue today. Where the vendor publishes a machine-readable API, stop
+  // inferring and look.
+  let provenance: BoundOperation['provenance'] = 'heuristic';
+  let vendorMethodId: string | undefined;
+  if (surface) {
+    const base = binding.baseUrl.replace(/\/$/, '');
+    // Only the methods this base URL can reach. A base that reaches NONE is wrong, which is
+    // a different failure from an operation the vendor never had — and a real one:
+    // shared_googlecontacts' catalogue base ends in `/v1` while its own paths carry
+    // `people/v1`, so every People API operation on it addressed `/v1/people/v1/...`.
+    const reachable = surface.methods.filter((m) => m.url.startsWith(base + '/'));
+    if (!reachable.length) {
+      return {
+        status: 'not-in-vendor-api',
+        connectorId: index.connectorId,
+        operationId,
+        reason:
+          `${index.connectorId}'s base URL (${base}) prefixes none of the ` +
+          `${surface.methods.length} methods ${surface.api} publishes, so every operation ` +
+          'built on it would address something the vendor does not serve. The base URL is ' +
+          'wrong, not the operation.',
+      };
+    }
+    const want = pathSegments(vendorPath);
+    const relative = (m: VendorApiMethod) => pathSegments(m.url.slice(base.length));
+    const hit = reachable.find(
+      (m) => m.httpMethod.toUpperCase() === op.method.toUpperCase() && samePath(want, relative(m)),
+    );
+    if (hit) {
+      provenance = 'vendor-spec';
+      vendorMethodId = hit.id;
+    } else {
+      // Three ways to be absent, and they are worth telling apart: the reader's next move
+      // is different for each, and a single "not found" sends them to check the wrong thing.
+      const verbOnly = reachable.find((m) => samePath(want, relative(m)));
+      let prefixed: VendorApiMethod | undefined;
+      if (!verbOnly) {
+        prefixed = reachable.find((m) => {
+          const mine = relative(m);
+          for (let k = 1; k < want.length; k++) if (samePath(want.slice(k), mine)) return true;
+          return false;
+        });
+      }
+      const reason = verbOnly
+        ? `${surface.api} serves ${vendorPath} but as ${verbOnly.httpMethod} ` +
+          `(${verbOnly.id}); this connector declares ${op.method}. Calling it with the ` +
+          'declared verb would fail, so the operation is refused rather than rewritten.'
+        : prefixed
+          ? `${surface.api} does serve this capability, as ${prefixed.id}, but the connector ` +
+            `routes it through a Power Platform prefix (${vendorPath}) that is not part of ` +
+            'the vendor path. Stripping that prefix is a per-connector rewrite this version ' +
+            'does not have, and guessing it would produce a URL that answers with the wrong ' +
+            'resource rather than an error.'
+          : `${surface.api} publishes no method at ${vendorPath}. Power Platform exposes it, ` +
+            'the vendor does not serve it, so a tool built from it would fail at run time.';
+      return { status: 'not-in-vendor-api', connectorId: index.connectorId, operationId, reason };
+    }
+  } else if (binding.requireVendorSpec) {
+    // Opt-in, and the refusal is the point: this binding was only ever safe BECAUSE the
+    // vendor's API could be consulted. Falling back to shape here would quietly reintroduce
+    // exactly the operations the flag exists to catch.
+    return {
+      status: 'not-in-vendor-api',
+      connectorId: index.connectorId,
+      operationId,
+      reason:
+        `${index.connectorId} is bound only against the vendor's published API, and it could ` +
+        'not be read this run. The operation may well be fine — we cannot say so, and ' +
+        'reporting it as ready without checking is the failure this flag prevents.',
+    };
+  }
+
   // `x-ms-visibility: internal` parameters are the proxy's own plumbing (connectionId,
   // the fixed `prefer`/`accept` headers). Passing them through would make the tool
   // signature meaningless to the model, so they are dropped — except where they are
@@ -511,6 +732,8 @@ export function bindOperation(index: ConnectorOpIndex, operationId: string): Bin
       auth: binding.auth,
       aadResource: binding.aadResource,
       contextRequired: [...new Set(context)],
+      provenance,
+      vendorMethodId,
     },
   };
 }
@@ -532,12 +755,16 @@ export interface ConnectorReadiness {
   ready: boolean;
 }
 
-export function connectorReadiness(index: ConnectorOpIndex, usedOperations: string[]): ConnectorReadiness {
+export function connectorReadiness(
+  index: ConnectorOpIndex,
+  usedOperations: string[],
+  surface?: VendorApiSurface,
+): ConnectorReadiness {
   const bindable: string[] = [];
   const blocked: Array<{ operationId: string; reason: string }> = [];
   const customTool: Array<{ operationId: string; note: string }> = [];
   for (const opId of usedOperations) {
-    const r = bindOperation(index, opId);
+    const r = bindOperation(index, opId, surface);
     if (r.status === 'bindable') bindable.push(opId);
     else if (r.status === 'custom-tool') {
       bindable.push(opId);

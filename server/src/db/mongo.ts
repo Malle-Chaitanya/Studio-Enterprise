@@ -150,6 +150,13 @@ async function ensureCollections(): Promise<void> {
   //      capture. No appUserId/scope: a connector's own operation list is not customer data.
   //      See db/repos/connectorCatalog.ts.
   await ensure('connectorCatalog');
+  // 11c. vendorApiSurfaces - what a VENDOR publishes about its own API (Google Discovery
+  // today), used to CONFIRM a binding instead of inferring it from path shape. Keyed by api
+  // name and NOT by appUserId, deliberately: this is the vendor's public catalogue, identical
+  // for every tenant and holding nothing a customer gave us. See db/repos/vendorApiSurface.ts.
+  await ensure('vendorApiSurfaces');
+  await db.collection('vendorApiSurfaces').createIndex({ api: 1 }, { unique: true });
+
   await db.collection('connectorCatalog').createIndex({ connectorId: 1 }, { unique: true });
 
   // 11d. connectors / connectorOperations — the CLEAN, normalized replacement for the

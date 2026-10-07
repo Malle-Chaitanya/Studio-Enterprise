@@ -25,11 +25,36 @@ import { clientCredsToken } from '../auth/microsoft.js';
 import { listBots, extractAgent } from '../services/dataverse.js';
 import { resolveOpIndex, type CaptureContext } from '../connectors/captureOpIndex.js';
 import { bindOperation } from '../connectors/operationBinding.js';
+import { resolveVendorApiSurface } from '../connectors/vendorSpec.js';
 import type { AgentIR } from '../types.js';
 
-const TENANT_ID = '807d6772-847c-40e2-9bec-e2c930b3a42e';
-const ENV_URL = 'https://org32322095.crm.dynamics.com';
-const ENVIRONMENT_ID = '7f9f87cc-464e-e470-95bb-363b7f227200';
+/**
+ * Tenant, environment and scope come from the ENVIRONMENT, never from a literal.
+ *
+ * An earlier version of this probe hardcoded one tenant's GUIDs. That is fine for a one-off
+ * measurement and useless as an answer: a customer installs a different set of connectors,
+ * sometimes at different VERSIONS, which is exactly why captureOpIndex reads the swagger
+ * from the customer's own environment rather than shipping one capture of ours. A result
+ * from a hardcoded tenant is a sample, and reading it as a spec is how "9% bindable" becomes
+ * a number nobody can act on.
+ *
+ *   CSGE_TENANT_ID=<entra tenant guid>  *   CSGE_ENV_URL=https://orgNNNN.crm.dynamics.com  *   CSGE_ENVIRONMENT_ID=<power platform environment guid>  *     npx tsx src/spikes/<this file>
+ */
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) {
+    console.error(
+      `${name} is not set. This probe reports on a CUSTOMER's environment and must be told ` +
+      'which one; it has no default, deliberately. See the header for the three variables.',
+    );
+    process.exit(2);
+  }
+  return v;
+}
+
+const TENANT_ID = requireEnv('CSGE_TENANT_ID');
+const ENV_URL = requireEnv('CSGE_ENV_URL');
+const ENVIRONMENT_ID = requireEnv('CSGE_ENVIRONMENT_ID');
 const ctx: CaptureContext = { tenantId: TENANT_ID, environmentId: ENVIRONMENT_ID, scope: `ms-${TENANT_ID}` };
 
 const ALL = process.argv.includes('--all');
@@ -56,6 +81,7 @@ interface Row {
   url?: string;
   modelArgs?: number;
   described?: number;
+  provenance?: string;
 }
 
 const rows: Row[] = [];
@@ -99,7 +125,10 @@ for (const bot of bots) {
       rows.push(row);
       continue;
     }
-    const bound = bindOperation(index, tool.operationId);
+    // The PRODUCT's own path, not a probe-local reimplementation of it: same resolver,
+    // same binding call, same vendor-spec confirmation the migration will do.
+    const surface = await resolveVendorApiSurface(tool.connectorId!);
+    const bound = bindOperation(index, tool.operationId, surface);
     row.status = bound.status;
     if (bound.status === 'bindable') {
       row.method = bound.operation.method;
@@ -109,7 +138,10 @@ for (const bot of bots) {
       // model, how many carry a description it can act on? Zero means the tool deploys
       // and the model fills `$filter` by guessing.
       row.described = bound.operation.parameters.filter((p) => p.description).length;
-      row.reason = '';
+      row.provenance = bound.operation.provenance;
+      row.reason = bound.operation.provenance === 'vendor-spec'
+        ? `confirmed as ${bound.operation.vendorMethodId}`
+        : 'path shape only - the vendor publishes no API we can check against';
     } else {
       row.reason = (bound as { reason: string }).reason;
     }

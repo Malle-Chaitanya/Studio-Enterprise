@@ -21,6 +21,7 @@
 import type { AgentIR, AgentToolIR, FidelityNote } from '../types.js';
 import { bindOperation, type OpIndexSchema, type VendorAuth } from './operationBinding.js';
 import { resolveOpIndex, type CaptureContext } from './captureOpIndex.js';
+import { resolveVendorApiSurface } from './vendorSpec.js';
 
 /** One deployable operation: everything the container needs to make the call. */
 export interface BoundToolSpec {
@@ -170,7 +171,12 @@ export async function buildBoundToolSpecs(
       });
     }
 
-    const bound = bindOperation(index, tool.operationId);
+    // What the VENDOR says it serves, where the vendor publishes it. Cached per API and
+    // memoised per process, so an agent with twenty Google tools reads it once. `undefined`
+    // is the normal answer for most connectors and simply leaves the previous shape-based
+    // behaviour in charge, recorded as `provenance: 'heuristic'`.
+    const surface = await resolveVendorApiSurface(tool.connectorId);
+    const bound = bindOperation(index, tool.operationId, surface);
     if (bound.status !== 'bindable') {
       // The per-operation refusal is already reported by the orchestrator's readiness pass;
       // adding a second note here would double-count the same loss in the report.

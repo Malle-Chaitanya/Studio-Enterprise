@@ -69,7 +69,7 @@ const INDEX: ConnectorOpIndex = {
   },
 };
 
-function agent(tool: Partial<AgentIR['agentTools'][number]>): AgentIR {
+function agent(tool: Partial<NonNullable<AgentIR['agentTools']>[number]>): AgentIR {
   return {
     agentTools: [
       {
