@@ -1,4 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// The binder consults the VENDOR's published API to confirm a binding, which is a network
+// read. These tests are about agent SHAPES — that no mix of connectors makes the binder throw
+// — so the read is stubbed out: unit tests never reach a live vendor (testing-standard.md),
+// and leaving it in made every one of them wait on Google's documentation host.
+// `connectors/vendorSpec.test.ts` covers the resolution and failure behaviour itself.
+vi.mock('../connectors/vendorSpec.js', () => ({ resolveVendorApiSurface: async () => undefined }));
 import { classifyKnowledgeSource } from './knowledgeClassifier.js';
 import { buildBoundToolSpecs } from '../connectors/boundToolSpec.js';
 import { buildLiveConnectorSpecsDetailed, agentConnectorIds } from './connectorToolBuilder.js';

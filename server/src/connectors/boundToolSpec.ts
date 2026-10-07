@@ -175,7 +175,11 @@ export async function buildBoundToolSpecs(
     // memoised per process, so an agent with twenty Google tools reads it once. `undefined`
     // is the normal answer for most connectors and simply leaves the previous shape-based
     // behaviour in charge, recorded as `provenance: 'heuristic'`.
-    const surface = await resolveVendorApiSurface(tool.connectorId);
+    // The index is passed as EVIDENCE, not just for speed: a connector nobody curated
+    // is resolved to its API by matching its own captured paths against Google's
+    // published ones, so a customer using a Google app we never listed still gets a
+    // verified binding instead of silence.
+    const surface = await resolveVendorApiSurface(tool.connectorId, index);
     const bound = bindOperation(index, tool.operationId, surface);
     if (bound.status !== 'bindable') {
       // The per-operation refusal is already reported by the orchestrator's readiness pass;

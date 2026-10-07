@@ -156,6 +156,9 @@ async function ensureCollections(): Promise<void> {
   // for every tenant and holding nothing a customer gave us. See db/repos/vendorApiSurface.ts.
   await ensure('vendorApiSurfaces');
   await db.collection('vendorApiSurfaces').createIndex({ api: 1 }, { unique: true });
+  // Lookup by the connectors proven to resolve to an API, so resolution happens once
+  // ever rather than once per process. Sparse: most rows are curated and carry none.
+  await db.collection('vendorApiSurfaces').createIndex({ resolvedFor: 1 }, { sparse: true });
 
   await db.collection('connectorCatalog').createIndex({ connectorId: 1 }, { unique: true });
 
