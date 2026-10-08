@@ -5,7 +5,13 @@ import { describe, it, expect, vi } from 'vitest';
 // — so the read is stubbed out: unit tests never reach a live vendor (testing-standard.md),
 // and leaving it in made every one of them wait on Google's documentation host.
 // `connectors/vendorSpec.test.ts` covers the resolution and failure behaviour itself.
-vi.mock('../connectors/vendorSpec.js', () => ({ resolveVendorApiSurface: async () => undefined }));
+// Both entry points are stubbed: bindWithMap asks for a surface BY API when a map entry
+// targets one the connector did not resolve to. A mock missing either makes this suite fail
+// for a reason that has nothing to do with the agent shapes it exists to test.
+vi.mock('../connectors/vendorSpec.js', () => ({
+  resolveVendorApiSurface: async () => undefined,
+  vendorApiSurfaceFor: async () => undefined,
+}));
 import { classifyKnowledgeSource } from './knowledgeClassifier.js';
 import { buildBoundToolSpecs } from '../connectors/boundToolSpec.js';
 import { buildLiveConnectorSpecsDetailed, agentConnectorIds } from './connectorToolBuilder.js';

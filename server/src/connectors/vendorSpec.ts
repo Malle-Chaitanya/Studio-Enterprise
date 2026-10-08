@@ -326,6 +326,19 @@ function candidateApis(
 
 /** Fetch + flatten one API, preferring a cached copy and falling back to a STALE one rather
  *  than nothing. Returns undefined only when we have never successfully read it. */
+/**
+ * The published surface for a named API, independent of any connector.
+ *
+ * Exported because a connector can front MORE THAN ONE vendor API: shared_googlesheet
+ * carries Sheets' table operations AND the same Drive file operations every Power Platform
+ * file connector carries, so 25 of its 39 operations belong to `drive` and 14 to `sheets`.
+ * Resolving one surface per CONNECTOR cannot express that; a map entry names the API it
+ * targets and this fetches it.
+ */
+export async function vendorApiSurfaceFor(api: string): Promise<VendorApiSurface | undefined> {
+  return loadSurface(api);
+}
+
 async function loadSurface(api: string): Promise<VendorApiSurface | undefined> {
   const fresh = await getCachedVendorSurface(api, SURFACE_TTL_MS);
   // An in-date row captured by an older build is NOT usable as-is: it is missing fields a

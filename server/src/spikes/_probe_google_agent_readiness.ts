@@ -128,7 +128,7 @@ for (const bot of bots) {
     // The PRODUCT's own path, not a probe-local reimplementation of it: same resolver,
     // same binding call, same vendor-spec confirmation the migration will do.
     const surface = await resolveVendorApiSurface(tool.connectorId!, index);
-    const bound = bindWithMap(index, tool.operationId, surface);
+    const bound = await bindWithMap(index, tool.operationId, surface);
     row.status = bound.status;
     if (bound.status === 'bindable') {
       row.method = bound.operation.method;

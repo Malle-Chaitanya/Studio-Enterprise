@@ -212,3 +212,20 @@ export const GOOGLE_DRIVE_UNMAPPABLE: Record<string, string> = {
   ODataStylePatchItem: 'Power Platform table interface. Drive has no table concept.',
   ODataStyleDeleteItem: 'Power Platform table interface. Drive has no table concept.',
 };
+
+/**
+ * The same Drive file operations, for ANOTHER connector that carries them.
+ *
+ * Every Power Platform file connector inherits the same `/datasets/default/...` surface from
+ * the template, so `shared_googlesheet` ships 25 of these alongside its table operations —
+ * all backed by the real Google Drive API, exactly as here. Re-keying the one definition is
+ * the point: a second copy would drift from this one, and the two would come to disagree
+ * about `trashed` or `supportsAllDrives` without anything failing.
+ *
+ * An entry for an operation the target connector does not declare is harmless — verification
+ * reports `cannot-verify` and the binder falls through.
+ */
+export function driveFileOperations(connectorId: string): OperationMapEntry[] {
+  if (connectorId === 'shared_googledrive') return GOOGLE_DRIVE_MAP;
+  return GOOGLE_DRIVE_MAP.map((e) => ({ ...e, connectorId }));
+}

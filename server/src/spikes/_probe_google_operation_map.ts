@@ -68,7 +68,7 @@ for (const cid of CONNECTORS) {
   // by matching its own captured paths against Google's published ones.
   const surface = await resolveVendorApiSurface(cid, index);
   for (const [opId, op] of Object.entries(index.operations)) {
-    const r = bindWithMap(index, opId, surface);
+    const r = await bindWithMap(index, opId, surface);
     const row: Row = {
       connectorId: cid, operationId: opId, method: op.method,
       path: op.path.replace(/^\/\{connectionId\}/, ''),
@@ -96,7 +96,7 @@ for (const cid of CONNECTORS) {
   const mine = rows.filter((r) => r.connectorId === cid);
   if (!mine.length) continue;
   const ok = mine.filter((r) => r.verdict === 'bindable');
-  const confirmed = ok.filter((r) => r.provenance === 'vendor-spec').length;
+  const confirmed = ok.filter((r) => r.provenance !== 'heuristic').length;
   console.log(`=== ${cid}  ${ok.length}/${mine.length} bindable (${confirmed} vendor-confirmed)  [api: ${mine[0].api}]`);
   for (const r of mine) {
     console.log(`   ${r.verdict.padEnd(18)}${r.operationId.padEnd(30)}${r.method.padEnd(7)}${r.path}`);
@@ -110,7 +110,7 @@ for (const r of rows) by.set(r.verdict, (by.get(r.verdict) ?? 0) + 1);
 console.log('TOTALS across every operation:');
 for (const [v, n] of [...by].sort((a, b) => b[1] - a[1])) console.log(`  ${String(n).padStart(4)}  ${v}`);
 const b = rows.filter((r) => r.verdict === 'bindable');
-const vs = b.filter((r) => r.provenance === 'vendor-spec').length;
+const vs = b.filter((r) => r.provenance !== 'heuristic').length;
 console.log(`\nBINDABLE: ${b.length}/${rows.length} (${Math.round((b.length / rows.length) * 100)}%) ` +
   `across ${new Set(b.map((r) => r.connectorId)).size} connector(s); ${vs} confirmed against the vendor's own API`);
 process.exit(0);

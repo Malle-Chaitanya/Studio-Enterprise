@@ -2,6 +2,7 @@ import { bindOperation, VENDOR_BINDINGS } from './operationBinding.js';
 import type { BindingResult, ConnectorOpIndex, VendorApiSurface } from './operationBinding.js';
 import { buildMappedOperation, lookupMapEntry, verifyMapEntry } from './operationMap.js';
 import { OPERATION_MAP } from './maps/index.js';
+import { vendorApiSurfaceFor } from './vendorSpec.js';
 
 /**
  * The whole binding decision, in the order it must happen, in ONE place.
@@ -21,18 +22,23 @@ import { OPERATION_MAP } from './maps/index.js';
  * and offline, so the cost is nothing, and the alternative is a mapping that keeps being
  * used after the API it describes has changed.
  */
-export function bindWithMap(
+export async function bindWithMap(
   index: ConnectorOpIndex,
   operationId: string,
   surface: VendorApiSurface | undefined,
   /** Lossy-mapping notes from the entry, for the caller to turn into FidelityNotes. */
   sink?: string[],
-): BindingResult {
+): Promise<BindingResult> {
   const entry = lookupMapEntry(OPERATION_MAP, index.connectorId, operationId);
-  if (entry && surface && verifyMapEntry(entry, surface, index).status === 'verified') {
+  // An entry names the API it targets, which need not be the one this CONNECTOR resolved
+  // to - a file connector's file operations belong to Drive whatever else it fronts.
+  const target = entry && entry.api !== surface?.api
+    ? await vendorApiSurfaceFor(entry.api)
+    : surface;
+  if (entry && target && verifyMapEntry(entry, target, index).status === 'verified') {
     const mapped = buildMappedOperation(
       entry,
-      surface,
+      target,
       index,
       VENDOR_BINDINGS[index.connectorId]?.auth ?? 'google-oauth',
     );

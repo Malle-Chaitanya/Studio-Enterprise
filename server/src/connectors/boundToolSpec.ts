@@ -185,7 +185,7 @@ export async function buildBoundToolSpecs(
     // One shared decision path (tier 0 map, then path-shape binding) so this and the
     // readiness probes can never answer differently. See bindWithMap.ts.
     const mapNotes: string[] = [];
-    const bound = bindWithMap(index, tool.operationId, surface, mapNotes);
+    const bound = await bindWithMap(index, tool.operationId, surface, mapNotes);
     if (bound.status !== 'bindable') {
       // The per-operation refusal is already reported by the orchestrator's readiness pass;
       // adding a second note here would double-count the same loss in the report.
