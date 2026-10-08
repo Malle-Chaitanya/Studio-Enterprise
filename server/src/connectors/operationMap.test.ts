@@ -214,6 +214,47 @@ describe('verifyMapEntry — refuses an entry that is wrong but plausible', () =
   });
 });
 
+describe('verifyMapEntry — URL placeholders, not just declared names', () => {
+  // Discovery's flatPath renames as it spells out the templated path: People declares a
+  // parameter `resourceName` and writes the URL as `v1/people/{peopleId}/connections`.
+  // Checking declared names alone rejects the one correct mapping; checking them alone the
+  // other way accepts a URL shipped with a hole in it.
+  const PEOPLE: VendorApiSurface = {
+    api: 'people',
+    schemaVersion: 2,
+    methods: [{
+      id: 'people.people.connections.list',
+      httpMethod: 'GET',
+      url: 'https://people.googleapis.com/v1/people/{peopleId}/connections',
+      parameters: [
+        { name: 'resourceName', in: 'path', required: true, type: 'string' },
+        { name: 'personFields', in: 'query', required: false, type: 'string' },
+      ],
+      hasBody: false,
+    }],
+  };
+  const peopleEntry = (params: OperationMapEntry['steps'][number]['parameters']): OperationMapEntry => ({
+    connectorId: 'shared_googlecontacts', operationId: 'GetFileMetadata', api: 'people',
+    provenance: 'drafted', steps: [{ vendorMethodId: 'people.people.connections.list', parameters: params }],
+  });
+
+  it('accepts a path value addressed by the URL placeholder', () => {
+    const r = verifyMapEntry(peopleEntry([
+      { to: 'peopleId', in: 'path', template: 'me' },
+      { to: 'personFields', in: 'query', template: 'names' },
+    ]), PEOPLE, index);
+    expect(r.status).toBe('verified');
+  });
+
+  it('rejects an entry that leaves a URL placeholder unfilled', () => {
+    // Fails on every single call, so catching it offline is the whole point.
+    const r = verifyMapEntry(peopleEntry([
+      { to: 'personFields', in: 'query', template: 'names' },
+    ]), PEOPLE, index);
+    expect(kinds(r)).toContain('missing-required-parameter');
+  });
+});
+
 describe('verifyMapEntry — multi-step recipes', () => {
   const byPath: OperationMapEntry = {
     connectorId: 'shared_googledrive',

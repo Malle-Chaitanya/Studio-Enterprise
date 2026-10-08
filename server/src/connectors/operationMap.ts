@@ -197,6 +197,18 @@ export function verifyMapEntry(
       [...method.parameters, ...common].map((p) => [p.name, p]),
     );
     const filled = new Set<string>();
+    /**
+     * The placeholders the vendor's own URL actually contains.
+     *
+     * These need not be the DECLARED parameter names. Discovery's `flatPath` spells out what
+     * the templated `path` collapses, and renames as it goes: People's connections list
+     * declares a parameter `resourceName` and writes the URL as
+     * `v1/people/{peopleId}/connections`. Checking only declared names would reject the one
+     * correct mapping and accept a URL with an unfilled hole in it, so both are checked —
+     * names for what we SEND, placeholders for what the URL still NEEDS.
+     */
+    const urlTokens = new Set(placeholders(method.url));
+    const filledPath = new Set<string>();
 
     for (const param of step.parameters) {
       if (param.in === 'body') {
@@ -212,21 +224,24 @@ export function verifyMapEntry(
         }
       } else {
         const spec = declared.get(param.to);
-        if (!spec) {
+        if (!spec && !urlTokens.has(param.to)) {
           problems.push({
             step: i,
             kind: 'undeclared-parameter',
-            detail: `'${step.vendorMethodId}' does not declare a parameter named '${param.to}'`,
+            detail: `'${step.vendorMethodId}' does not declare a parameter named '${param.to}', and its URL has no '{${param.to}}'`,
           });
         } else {
-          filled.add(param.to);
-          const literal = literalValue(param.template);
-          if (literal !== undefined && spec.enum && !spec.enum.includes(literal)) {
-            problems.push({
-              step: i,
-              kind: 'enum-violation',
-              detail: `'${param.to}' = '${literal}' is not one of ${spec.enum.join(', ')}`,
-            });
+          if (param.in === 'path') filledPath.add(param.to);
+          if (spec) {
+            filled.add(param.to);
+            const literal = literalValue(param.template);
+            if (literal !== undefined && spec.enum && !spec.enum.includes(literal)) {
+              problems.push({
+                step: i,
+                kind: 'enum-violation',
+                detail: `'${param.to}' = '${literal}' is not one of ${spec.enum.join(', ')}`,
+              });
+            }
           }
         }
       }
@@ -250,12 +265,24 @@ export function verifyMapEntry(
       }
     }
 
+    // Required QUERY parameters are checked by name. Required PATH ones are not, because
+    // `flatPath` may have renamed them; the placeholder sweep below is the stronger check
+    // and the one that matters — a URL shipped with a hole in it fails on every call.
     for (const spec of method.parameters) {
-      if (spec.required && !filled.has(spec.name)) {
+      if (spec.required && spec.in !== 'path' && !filled.has(spec.name)) {
         problems.push({
           step: i,
           kind: 'missing-required-parameter',
           detail: `'${step.vendorMethodId}' requires '${spec.name}', which the entry never fills`,
+        });
+      }
+    }
+    for (const token of urlTokens) {
+      if (!filledPath.has(token)) {
+        problems.push({
+          step: i,
+          kind: 'missing-required-parameter',
+          detail: `'${step.vendorMethodId}' URL contains '{${token}}' and the entry never fills it`,
         });
       }
     }

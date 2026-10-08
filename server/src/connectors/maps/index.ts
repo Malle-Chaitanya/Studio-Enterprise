@@ -1,6 +1,7 @@
 import { indexOperationMap } from '../operationMap.js';
 import { GOOGLE_DRIVE_MAP } from './googledrive.js';
 import { GOOGLE_SHEET_MAP } from './googlesheet.js';
+import { GOOGLE_CONTACTS_MAP } from './googlecontacts.js';
 
 /**
  * Every stated connector->vendor equivalence, in one index.
@@ -12,4 +13,5 @@ import { GOOGLE_SHEET_MAP } from './googlesheet.js';
 export const OPERATION_MAP = indexOperationMap([
   ...GOOGLE_DRIVE_MAP,
   ...GOOGLE_SHEET_MAP,
+  ...GOOGLE_CONTACTS_MAP,
 ]);
