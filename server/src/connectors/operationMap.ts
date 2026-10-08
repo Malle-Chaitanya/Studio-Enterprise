@@ -1,6 +1,7 @@
 import type {
   BoundOperation,
   BoundParameter,
+  BoundStep,
   ConnectorOpIndex,
   VendorApiMethod,
   VendorApiParameter,
@@ -426,40 +427,45 @@ export function buildMappedOperation(
   index: ConnectorOpIndex,
   auth: BoundOperation['auth'],
 ): MappedBindResult {
-  if (entry.steps.length !== 1) {
-    return {
-      status: 'needs-runtime',
-      reason: `${entry.operationId} is a ${entry.steps.length}-step recipe; deploying it needs a step executor`,
-    };
-  }
-  const step = entry.steps[0];
-  const method = surface.methods.find((m) => m.id === step.vendorMethodId);
-  if (!method) return { status: 'invalid', reason: `${surface.api} publishes no '${step.vendorMethodId}'` };
   const sourceOp = index.operations[entry.operationId];
   if (!sourceOp) return { status: 'invalid', reason: `connector does not declare ${entry.operationId}` };
 
-  if (step.useUploadUrl && !method.uploadUrl) {
-    return { status: 'invalid', reason: `'${step.vendorMethodId}' publishes no media-upload host` };
-  }
-  let url = step.useUploadUrl ? method.uploadUrl! : method.url;
-  const query: string[] = [];
-  for (const p of step.parameters) {
-    if (p.in === 'path') url = url.replace(`{${p.to}}`, encodePreservingPlaceholders(p.template));
-    else query.push(`${encodeURIComponent(p.to)}=${encodePreservingPlaceholders(p.template)}`);
-  }
-  const urlTemplate = query.length ? `${url}?${query.join('&')}` : url;
+  const built: BoundStep[] = [];
+  const used = new Set<string>();
 
-  // Exactly the source arguments the templates interpolate — no more. The body template
-  // counts: its placeholders are arguments the model must still supply.
-  const used = new Set(
-    [
+  for (const step of entry.steps) {
+    const method = surface.methods.find((m) => m.id === step.vendorMethodId);
+    if (!method) return { status: 'invalid', reason: `${surface.api} publishes no '${step.vendorMethodId}'` };
+    if (step.useUploadUrl && !method.uploadUrl) {
+      return { status: 'invalid', reason: `'${step.vendorMethodId}' publishes no media-upload host` };
+    }
+    let url = step.useUploadUrl ? method.uploadUrl! : method.url;
+    const query: string[] = [];
+    for (const p of step.parameters) {
+      if (p.in === 'path') url = url.replace(`{${p.to}}`, encodePreservingPlaceholders(p.template));
+      else query.push(`${encodeURIComponent(p.to)}=${encodePreservingPlaceholders(p.template)}`);
+    }
+    built.push({
+      method: method.httpMethod,
+      urlTemplate: query.length ? `${url}?${query.join('&')}` : url,
+      bodyTemplate: step.bodyTemplate,
+      forwardBodyFrom: step.forwardBodyFrom,
+      contentType: step.contentType,
+      capture: step.capture,
+    });
+
+    // Exactly the source arguments the templates interpolate — no more. `{$var}` names a
+    // value an earlier step captured, not something the model supplies, so it is excluded.
+    for (const n of [
       ...step.parameters.flatMap((p) => placeholders(p.template)),
       ...(step.bodyTemplate ? placeholders(step.bodyTemplate) : []),
       // A forwarded body is an argument the model still supplies, even though no template
       // mentions it — without this the upload tool would take no content.
       ...(step.forwardBodyFrom ? [step.forwardBodyFrom] : []),
-    ].filter((n) => !n.startsWith('$')),
-  );
+    ]) {
+      if (!n.startsWith('$')) used.add(n);
+    }
+  }
   const parameters: BoundParameter[] = sourceOp.parameters
     .filter((p) => used.has(p.name))
     .map((p) => ({
@@ -479,16 +485,20 @@ export function buildMappedOperation(
     operation: {
       connectorId: entry.connectorId,
       operationId: entry.operationId,
-      method: method.httpMethod,
-      urlTemplate,
+      // The first step mirrored into the single-call fields, so every existing consumer
+      // still sees a coherent operation and a container that ignores `steps` makes the
+      // first call rather than something arbitrary.
+      method: built[0].method,
+      urlTemplate: built[0].urlTemplate,
       parameters,
       auth,
       contextRequired: [],
       provenance: 'vendor-map',
-      vendorMethodId: step.vendorMethodId,
-      bodyTemplate: step.bodyTemplate,
-      forwardBodyFrom: step.forwardBodyFrom,
-      contentType: step.contentType,
+      vendorMethodId: entry.steps[0].vendorMethodId,
+      bodyTemplate: built[0].bodyTemplate,
+      forwardBodyFrom: built[0].forwardBodyFrom,
+      contentType: built[0].contentType,
+      ...(built.length > 1 ? { steps: built } : {}),
     },
   };
 }

@@ -490,6 +490,24 @@ export interface BoundParameter {
   schema?: OpIndexSchema;
 }
 
+/**
+ * One call within a multi-step mapping.
+ *
+ * `{name}` in any template is a model argument; `{$name}` is a value an EARLIER step
+ * captured. That distinction is what makes a sequence expressible as data rather than code:
+ * the container needs no knowledge of Drive or Sheets, only how to fill a template and
+ * read a value out of a response.
+ */
+export interface BoundStep {
+  method: string;
+  urlTemplate: string;
+  bodyTemplate?: string;
+  forwardBodyFrom?: string;
+  contentType?: string;
+  /** `varName` -> dotted path into this step's JSON response, e.g. `files[0].id`. */
+  capture?: Record<string, string>;
+}
+
 export interface BoundOperation {
   connectorId: string;
   operationId: string;
@@ -539,6 +557,15 @@ export interface BoundOperation {
   forwardBodyFrom?: string;
   /** Content-Type for a forwarded body. Defaults to application/octet-stream. */
   contentType?: string;
+  /**
+   * The full call sequence, when reproducing this operation takes more than one.
+   *
+   * Present ONLY for a multi-step mapping. `method`/`urlTemplate` above mirror the first
+   * step so every existing consumer still sees a coherent single call; a container that
+   * understands `steps` runs them in order and one that does not would at least make the
+   * first call rather than something arbitrary.
+   */
+  steps?: BoundStep[];
 }
 
 export type BindingResult =

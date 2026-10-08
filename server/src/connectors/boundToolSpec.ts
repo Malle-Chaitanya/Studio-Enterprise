@@ -19,7 +19,7 @@
  * an error, which is the worse failure.
  */
 import type { AgentIR, AgentToolIR, FidelityNote } from '../types.js';
-import type { OpIndexSchema, VendorAuth } from './operationBinding.js';
+import type { BoundStep, OpIndexSchema, VendorAuth } from './operationBinding.js';
 import { resolveOpIndex, type CaptureContext } from './captureOpIndex.js';
 import { resolveVendorApiSurface } from './vendorSpec.js';
 import { bindWithMap } from './bindWithMap.js';
@@ -67,6 +67,8 @@ export interface BoundToolSpec {
   forwardBodyFrom?: string;
   /** Content-Type for a forwarded body. */
   contentType?: string;
+  /** The full call sequence when the mapping needs more than one; see BoundOperation.steps. */
+  steps?: BoundStep[];
 }
 
 export interface BoundToolBuild {
@@ -300,6 +302,7 @@ export async function buildBoundToolSpecs(
       ...(op.bodyTemplate ? { bodyTemplate: op.bodyTemplate } : {}),
       ...(op.forwardBodyFrom ? { forwardBodyFrom: op.forwardBodyFrom } : {}),
       ...(op.contentType ? { contentType: op.contentType } : {}),
+      ...(op.steps ? { steps: op.steps } : {}),
       modelArgs,
       contextRequired: op.contextRequired,
       contextValues: Object.fromEntries(

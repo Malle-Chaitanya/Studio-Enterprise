@@ -250,7 +250,8 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             token_cache[cache_key] = {"token": token, "expires_at": time.time() + int(payload.get("expires_in") or 3600)}
             return "Bearer " + token
 
-        def _invoke(**kwargs) -> dict:
+        def _one_step(step, captured, kwargs) -> dict:
+            m = step.get("method") or method
             try:
                 header = _aad_header() if op.get("auth") == "aad-token" else auth_header(fill)
             except Exception as e:  # noqa: BLE001
@@ -283,7 +284,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                 else:
                     query[a["name"]] = val
 
-            url = url_tpl
+            url = step.get("urlTemplate") or url_tpl
             try:
                 for c in ctx_required:
                     url = url.replace("{" + c + "}", _context(c, ctx_values))
@@ -291,7 +292,9 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                 return {"error": str(e)}
             for name, val in path_params.items():
                 url = url.replace("{" + name + "}", urllib.parse.quote(str(val), safe=""))
-            missing = _re.findall(r"\{(\w+)\}", url)
+            for _cv, _val in captured.items():
+                url = url.replace("{$" + _cv + "}", urllib.parse.quote(str(_val), safe=""))
+            missing = _re.findall(r"\{\$?(\w+)\}", url)
             if missing:
                 return {"error": "missing required value(s) for " + ", ".join(missing)}
             if query:
@@ -319,18 +322,22 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             # a parent ARRAY where the connector passes one destination. The template's
             # placeholders are replaced by the JSON ENCODING of each argument — which is why
             # they are written unquoted — so the result is valid JSON whatever the type.
-            body_tpl = op.get("bodyTemplate")
-            forward_from = op.get("forwardBodyFrom")
+            body_tpl = step.get("bodyTemplate")
+            forward_from = step.get("forwardBodyFrom")
             if body_tpl or forward_from:
-                arg_values = {n: m.get("value") for n, m in fixed.items()}
+                arg_values = {n: meta.get("value") for n, meta in fixed.items()}
                 for pn, a in unique_args:
                     v = kwargs.get(pn)
                     if v is not None:
                         arg_values[a["name"]] = v
+                # `{$name}` is a value an earlier step captured, never something the model
+                # supplied. Keyed with the $ so the two can never collide.
+                for _cv, _val in captured.items():
+                    arg_values["$" + _cv] = _val
             if body_tpl:
                 body_val = _re.sub(
-                    r"\{(\w+)\}",
-                    lambda m: _json.dumps(arg_values.get(m.group(1))),
+                    r"\{(\$?\w+)\}",
+                    lambda mo: _json.dumps(arg_values.get(mo.group(1))),
                     body_tpl,
                 )
             elif forward_from:
@@ -340,13 +347,13 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                 body_val = arg_values.get(forward_from)
 
             data = None
-            if body_val is not None and method in ("POST", "PUT", "PATCH"):
+            if body_val is not None and m in ("POST", "PUT", "PATCH"):
                 payload = body_val if isinstance(body_val, str) else _json.dumps(body_val)
                 data = payload.encode("utf-8")
                 req_headers["Content-Type"] = (
-                    op.get("contentType") or "application/octet-stream"
+                    step.get("contentType") or "application/octet-stream"
                 ) if forward_from else "application/json"
-            req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+            req = urllib.request.Request(url, data=data, headers=req_headers, method=m)
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     raw = resp.read().decode("utf-8")
@@ -363,6 +370,59 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                 except Exception:  # noqa: BLE001
                     detail = str(e)
                 return {"error": conn_name + " " + op_id + " failed: " + detail}
+
+        def _dig(obj, path: str):
+            """Read `files[0].id` out of a parsed response.
+
+            Deliberately tiny: a capture path addresses one value in a document the VENDOR
+            defines, and anything needing more expressiveness than this is a mapping that
+            should not have been written. Returns None rather than raising, so a shape that
+            does not match is reported as a missing value by the caller instead of killing
+            the tool.
+            """
+            cur = obj
+            for part in path.split("."):
+                key, idxs = part, _re.findall(r"\[(\d+)\]", part)
+                if idxs:
+                    key = part[: part.index("[")]
+                if key:
+                    if not isinstance(cur, dict):
+                        return None
+                    cur = cur.get(key)
+                for i in idxs:
+                    if not isinstance(cur, list) or int(i) >= len(cur):
+                        return None
+                    cur = cur[int(i)]
+            return cur
+
+        def _invoke(**kwargs) -> dict:
+            """One operation, which may be more than one vendor call.
+
+            Some Power Platform operations have no single vendor call behind them: Drive has
+            no path lookup, so "get the file at /a/b.txt" is a search followed by a fetch.
+            The sequence lives in the MAPPING as data; this only fills templates, reads
+            captured values out of responses, and stops at the first failure — it knows
+            nothing about Drive or Sheets.
+            """
+            steps = op.get("steps")
+            if not steps:
+                return _one_step(op, {}, kwargs)
+            captured: dict = {}
+            result: dict = {}
+            for n, s in enumerate(steps):
+                result = _one_step(s, captured, kwargs)
+                if "error" in result:
+                    return {"error": "step " + str(n + 1) + " of " + str(len(steps)) + ": " + str(result["error"])}
+                for var, path in (s.get("capture") or {}).items():
+                    val = _dig(result.get("body"), path)
+                    if val is None:
+                        # Stop rather than carry a hole forward. A later step would fill
+                        # {$var} with "None" and fetch a resource that does not exist, or
+                        # worse, one that does.
+                        return {"error": conn_name + " " + op_id + ": step " + str(n + 1)
+                                + " returned no value at '" + path + "' (nothing matched)"}
+                    captured[var] = val
+            return result
 
         # ADK describes a tool to the model from its SIGNATURE and docstring, so the
         # signature has to be real. Generated here rather than **kwargs, which ADK

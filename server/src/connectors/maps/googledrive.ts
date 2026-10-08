@@ -137,6 +137,32 @@ export const GOOGLE_DRIVE_MAP: OperationMapEntry[] = [
     + 'existing name, parents and mime type — the connector could change metadata in the same call.',
   ])),
 
+  entry('CreateFileV2', [
+    // Drive separates a file's METADATA from its bytes. A single multipart upload can carry
+    // both, but multipart is not a JSON body and this build cannot express it — two calls
+    // can, and say plainly what they do.
+    {
+      vendorMethodId: 'drive.files.create',
+      parameters: [ALL_DRIVES],
+      bodyTemplate: '{"name": {name}, "parents": [{folderId}]}',
+      capture: { fid: 'id' },
+    },
+    {
+      vendorMethodId: 'drive.files.update',
+      useUploadUrl: true,
+      parameters: [
+        { to: 'fileId', in: 'path', template: '{$fid}' },
+        { to: 'uploadType', in: 'query', template: 'media' },
+        ALL_DRIVES,
+      ],
+      forwardBodyFrom: 'body',
+    },
+  ], [
+    'Created as two calls — metadata, then content. If the second fails the file exists and is '
+    + 'empty, where the connector either created it whole or not at all.',
+    'Drive infers the mime type from the content; the connector took it from the file name.',
+  ]),
+
   // ---- folder listings -----------------------------------------------------------------
   ...withLegacyAlias(entry('ListFolder', [{
     vendorMethodId: 'drive.files.list',
@@ -209,7 +235,6 @@ export const GOOGLE_DRIVE_MAP: OperationMapEntry[] = [
  */
 export const GOOGLE_DRIVE_UNMAPPABLE: Record<string, string> = {
   CreateFile: 'Drive uploads content to a different host (upload/drive/v3) that this build does not yet read from Discovery.',
-  CreateFileV2: 'Drive uploads content to a different host (upload/drive/v3) that this build does not yet read from Discovery.',
   CreateFile_Old: 'Drive uploads content to a different host (upload/drive/v3) that this build does not yet read from Discovery.',
   UpdateFile: 'Content update uses Drive\'s upload host, not yet captured.',
   UpdateFile_Old: 'Content update uses Drive\'s upload host, not yet captured.',

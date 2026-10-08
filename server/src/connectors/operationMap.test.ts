@@ -438,3 +438,38 @@ describe('verifyMapEntry — content upload on a different host', () => {
     expect(kinds(r).includes('unknown-source-argument')).toBe(true);
   });
 });
+
+describe('buildMappedOperation — multi-step', () => {
+  it('emits every step, and mirrors the first into the single-call fields', async () => {
+    const { buildMappedOperation } = await import('./operationMap.js');
+    const e: OperationMapEntry = {
+      connectorId: 'shared_googledrive', operationId: 'GetFileContent', api: 'drive',
+      provenance: 'drafted',
+      steps: [
+        {
+          vendorMethodId: 'drive.files.list',
+          parameters: [{ to: 'q', in: 'query', template: "name = '{id}'" }],
+          capture: { fid: 'files[0].id' },
+        },
+        {
+          vendorMethodId: 'drive.files.get',
+          parameters: [
+            { to: 'fileId', in: 'path', template: '{$fid}' },
+            { to: 'alt', in: 'query', template: 'media' },
+          ],
+        },
+      ],
+    };
+    const r = buildMappedOperation(e, DRIVE, index, 'google-oauth');
+    expect(r.status).toBe('bindable');
+    if (r.status !== 'bindable') return;
+    expect(r.operation.steps).toHaveLength(2);
+    expect(r.operation.steps![0].capture).toEqual({ fid: 'files[0].id' });
+    // The second step addresses a CAPTURED value, which the model never supplies.
+    expect(r.operation.steps![1].urlTemplate).toContain('{$fid}');
+    // Mirrored, so a consumer that ignores steps still sees a coherent first call.
+    expect(r.operation.urlTemplate).toBe(r.operation.steps![0].urlTemplate);
+    // `{$fid}` must NOT become a tool argument — only what the model really supplies.
+    expect(r.operation.parameters.map((p) => p.name)).toEqual(['id']);
+  });
+});
