@@ -259,9 +259,40 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
 
             path_params, query, headers = {}, {}, {}
             body_val = None
+
+            url = step.get("urlTemplate") or url_tpl
+            try:
+                for c in ctx_required:
+                    url = url.replace("{" + c + "}", _context(c, ctx_values))
+            except Exception as e:  # noqa: BLE001
+                return {"error": str(e)}
+
+            def _place(name, val):
+                """Put {name} into the URL when the mapping put the placeholder there.
+
+                A map entry may interpolate a model argument INSIDE another parameter's
+                template: Drive's path lookup builds q="name = '{path}' and trashed =
+                false", so `path` is declared `in: query` yet its placeholder lives in the
+                URL. Routing it only by its declared `in` left `{path}` literal in the URL
+                AND sent a stray `path=` parameter, so every ByPath operation failed at the
+                FIRST step with "missing required value(s) for path".
+
+                Found by executing it, not by verifying it. The structural check sees a
+                placeholder filled by a declared argument and is satisfied -- the name was
+                right, only the mechanics were wrong, and no offline check can see that.
+                """
+                nonlocal url
+                token = "{" + str(name) + "}"
+                if token not in url:
+                    return False
+                url = url.replace(token, urllib.parse.quote(str(val), safe=""))
+                return True
+
             for name, meta in fixed.items():
                 where = meta.get("in") or "query"
                 val = meta.get("value")
+                if where != "body" and _place(name, val):
+                    continue
                 if where == "path":
                     path_params[name] = val
                 elif where == "header":
@@ -275,6 +306,8 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                 if val is None or val == "" or val == 0 or val is False:
                     continue
                 where = a.get("in") or "query"
+                if where != "body" and _place(a["name"], val):
+                    continue
                 if where == "path":
                     path_params[a["name"]] = val
                 elif where == "header":
@@ -284,15 +317,10 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                 else:
                     query[a["name"]] = val
 
-            url = step.get("urlTemplate") or url_tpl
-            try:
-                for c in ctx_required:
-                    url = url.replace("{" + c + "}", _context(c, ctx_values))
-            except Exception as e:  # noqa: BLE001
-                return {"error": str(e)}
             for name, val in path_params.items():
                 url = url.replace("{" + name + "}", urllib.parse.quote(str(val), safe=""))
             for _cv, _val in captured.items():
+                url = url.replace("{$" + _cv + "}", urllib.parse.quote(str(_val), safe=""))
                 url = url.replace("{$" + _cv + "}", urllib.parse.quote(str(_val), safe=""))
             missing = _re.findall(r"\{\$?(\w+)\}", url)
             if missing:
