@@ -508,12 +508,16 @@ export interface BoundOperation {
    *               verification existed, and it is still right for most connectors.
    * `vendor-spec` the vendor's own API description lists this exact method at this exact
    *               URL and verb.
+   * `vendor-map`  a STATED equivalence from `operationMap.ts` — the connector's path is a
+   *               Power Platform abstraction with no vendor path in it, so the vendor call
+   *               was declared and verified rather than derived. Strongest of the three,
+   *               and the only one that can reach a proxy-only connector at all.
    *
    * Reported rather than collapsed, because a regex guess and a confirmed method used to
    * print the same word. An unproven claim that cannot be told apart from a proven one is
    * how a wrong binding survives review.
    */
-  provenance: 'heuristic' | 'vendor-spec';
+  provenance: 'heuristic' | 'vendor-spec' | 'vendor-map';
   /** The vendor's own id for the confirmed method, when `provenance` is `vendor-spec`. */
   vendorMethodId?: string;
 }

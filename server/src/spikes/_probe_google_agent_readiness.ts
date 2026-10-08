@@ -24,7 +24,7 @@ import 'dotenv/config';
 import { clientCredsToken } from '../auth/microsoft.js';
 import { listBots, extractAgent } from '../services/dataverse.js';
 import { resolveOpIndex, type CaptureContext } from '../connectors/captureOpIndex.js';
-import { bindOperation } from '../connectors/operationBinding.js';
+import { bindWithMap } from '../connectors/bindWithMap.js';
 import { resolveVendorApiSurface } from '../connectors/vendorSpec.js';
 import type { AgentIR } from '../types.js';
 
@@ -128,7 +128,7 @@ for (const bot of bots) {
     // The PRODUCT's own path, not a probe-local reimplementation of it: same resolver,
     // same binding call, same vendor-spec confirmation the migration will do.
     const surface = await resolveVendorApiSurface(tool.connectorId!, index);
-    const bound = bindOperation(index, tool.operationId, surface);
+    const bound = bindWithMap(index, tool.operationId, surface);
     row.status = bound.status;
     if (bound.status === 'bindable') {
       row.method = bound.operation.method;

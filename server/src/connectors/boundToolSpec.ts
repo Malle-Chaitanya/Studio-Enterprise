@@ -19,9 +19,10 @@
  * an error, which is the worse failure.
  */
 import type { AgentIR, AgentToolIR, FidelityNote } from '../types.js';
-import { bindOperation, type OpIndexSchema, type VendorAuth } from './operationBinding.js';
+import type { OpIndexSchema, VendorAuth } from './operationBinding.js';
 import { resolveOpIndex, type CaptureContext } from './captureOpIndex.js';
 import { resolveVendorApiSurface } from './vendorSpec.js';
+import { bindWithMap } from './bindWithMap.js';
 
 /** One deployable operation: everything the container needs to make the call. */
 export interface BoundToolSpec {
@@ -180,13 +181,24 @@ export async function buildBoundToolSpecs(
     // published ones, so a customer using a Google app we never listed still gets a
     // verified binding instead of silence.
     const surface = await resolveVendorApiSurface(tool.connectorId, index);
-    const bound = bindOperation(index, tool.operationId, surface);
+
+    // One shared decision path (tier 0 map, then path-shape binding) so this and the
+    // readiness probes can never answer differently. See bindWithMap.ts.
+    const mapNotes: string[] = [];
+    const bound = bindWithMap(index, tool.operationId, surface, mapNotes);
     if (bound.status !== 'bindable') {
       // The per-operation refusal is already reported by the orchestrator's readiness pass;
       // adding a second note here would double-count the same loss in the report.
       continue;
     }
     const op = bound.operation;
+    for (const note of mapNotes) {
+      notes.push({
+        component: `tool:${tool.name}`,
+        status: 'needs-review',
+        detail: `${tool.operationId} is reproduced by a stated mapping to the vendor API. ${note}`,
+      });
+    }
 
     const fixedArgs: Record<string, { in: string; value: string }> = {};
     const paramByName = new Map(op.parameters.map((p) => [p.name, p]));

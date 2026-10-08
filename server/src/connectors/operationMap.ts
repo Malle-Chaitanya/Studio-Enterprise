@@ -1,4 +1,6 @@
 import type {
+  BoundOperation,
+  BoundParameter,
   ConnectorOpIndex,
   VendorApiMethod,
   VendorApiParameter,
@@ -264,6 +266,102 @@ export function verifyMapEntry(
 
   if (problems.length) return { status: 'rejected', problems };
   return { status: 'verified', checks };
+}
+
+/** Percent-encode a template's literal text while leaving `{placeholders}` intact, so
+ *  `'{id}' in parents and trashed = false` survives into a URL as a real query value and
+ *  still has somewhere for the model's argument to land. */
+function encodePreservingPlaceholders(template: string): string {
+  return template
+    .split(/(\{\$?[^}]+\})/)
+    .map((part) => (/^\{\$?[^}]+\}$/.test(part) ? part : encodeURIComponent(part)))
+    .join('');
+}
+
+export type MappedBindResult =
+  | { status: 'bindable'; operation: BoundOperation; notes: string[] }
+  /**
+   * The entry is valid but this build cannot DEPLOY it yet. Separate from an invalid entry
+   * because the fix is ours and known: a multi-step recipe needs something at run time to
+   * execute the steps, and a body template needs the container to build a payload shape
+   * rather than forward the connector's. Reported so the gap is visible per operation
+   * instead of looking like a mapping nobody wrote.
+   */
+  | { status: 'needs-runtime'; reason: string }
+  | { status: 'invalid'; reason: string };
+
+/**
+ * Turn a verified map entry into the same `BoundOperation` the path-shape binder produces,
+ * so everything downstream — tool specs, the deployer, the report — is unchanged.
+ *
+ * Only the model's own arguments are exposed as parameters: a mapping decides the rest, and
+ * surfacing a vendor parameter the mapping already fixed would invite the model to override
+ * the thing that makes the call correct.
+ */
+export function buildMappedOperation(
+  entry: OperationMapEntry,
+  surface: VendorApiSurface,
+  index: ConnectorOpIndex,
+  auth: BoundOperation['auth'],
+): MappedBindResult {
+  if (entry.steps.length !== 1) {
+    return {
+      status: 'needs-runtime',
+      reason: `${entry.operationId} is a ${entry.steps.length}-step recipe; deploying it needs a step executor`,
+    };
+  }
+  const step = entry.steps[0];
+  const method = surface.methods.find((m) => m.id === step.vendorMethodId);
+  if (!method) return { status: 'invalid', reason: `${surface.api} publishes no '${step.vendorMethodId}'` };
+  if (step.parameters.some((p) => p.in === 'body')) {
+    return {
+      status: 'needs-runtime',
+      reason: `${entry.operationId} sends a request body whose shape differs from the connector's; needs body-template support`,
+    };
+  }
+  const sourceOp = index.operations[entry.operationId];
+  if (!sourceOp) return { status: 'invalid', reason: `connector does not declare ${entry.operationId}` };
+
+  let url = method.url;
+  const query: string[] = [];
+  for (const p of step.parameters) {
+    if (p.in === 'path') url = url.replace(`{${p.to}}`, encodePreservingPlaceholders(p.template));
+    else query.push(`${encodeURIComponent(p.to)}=${encodePreservingPlaceholders(p.template)}`);
+  }
+  const urlTemplate = query.length ? `${url}?${query.join('&')}` : url;
+
+  // Exactly the source arguments the templates interpolate — no more.
+  const used = new Set(
+    step.parameters.flatMap((p) => placeholders(p.template)).filter((n) => !n.startsWith('$')),
+  );
+  const parameters: BoundParameter[] = sourceOp.parameters
+    .filter((p) => used.has(p.name))
+    .map((p) => ({
+      name: p.name,
+      in: p.in,
+      required: p.required,
+      type: p.type,
+      description: p.description,
+      enum: p.enum,
+      default: p.default,
+      schema: p.schema,
+    }));
+
+  return {
+    status: 'bindable',
+    notes: entry.notes ?? [],
+    operation: {
+      connectorId: entry.connectorId,
+      operationId: entry.operationId,
+      method: method.httpMethod,
+      urlTemplate,
+      parameters,
+      auth,
+      contextRequired: [],
+      provenance: 'vendor-map',
+      vendorMethodId: step.vendorMethodId,
+    },
+  };
 }
 
 /** Index a map for lookup. Later entries win, so a reviewed override can sit after a draft. */

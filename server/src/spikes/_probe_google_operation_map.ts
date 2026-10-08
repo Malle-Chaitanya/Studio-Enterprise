@@ -25,7 +25,7 @@ import 'dotenv/config';
 import { writeFileSync } from 'node:fs';
 import { resolveOpIndex, type CaptureContext } from '../connectors/captureOpIndex.js';
 import { resolveVendorApiSurface } from '../connectors/vendorSpec.js';
-import { bindOperation } from '../connectors/operationBinding.js';
+import { bindWithMap } from '../connectors/bindWithMap.js';
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -68,7 +68,7 @@ for (const cid of CONNECTORS) {
   // by matching its own captured paths against Google's published ones.
   const surface = await resolveVendorApiSurface(cid, index);
   for (const [opId, op] of Object.entries(index.operations)) {
-    const r = bindOperation(index, opId, surface);
+    const r = bindWithMap(index, opId, surface);
     const row: Row = {
       connectorId: cid, operationId: opId, method: op.method,
       path: op.path.replace(/^\/\{connectionId\}/, ''),
