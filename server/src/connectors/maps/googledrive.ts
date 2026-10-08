@@ -21,11 +21,14 @@ import type { OperationMapEntry, MappedStep } from '../operationMap.js';
  * So the ceiling here is 28 operations (17 + 11 aliases), not 42, and the 14 table
  * operations are not a gap we can close — there is nothing on the other side.
  *
- * WHAT IS STILL MISSING, stated rather than faked: Drive splits content upload onto a
- * different host (`https://www.googleapis.com/upload/drive/v3/...`), which Discovery
- * describes under `mediaUpload` and `flatten()` does not yet capture. Until it does,
- * CreateFile / CreateFileV2 / UpdateFile / AppendFile cannot be expressed and are absent
- * here rather than guessed at. Download is fine — that is `alt=media` on the normal host.
+ * WHAT IS STILL MISSING, stated rather than faked: one capability, not a list of
+ * operations. Drive splits content upload onto a different host
+ * (`https://www.googleapis.com/upload/drive/v3/...`); `flatten()` now reads that from
+ * Discovery's `mediaUpload`, so CreateFileV2 and UpdateFile are expressed here as two calls
+ * (metadata, then bytes). What remains unexpressible is LOCAL COMPUTATION: ExtractFolderV2
+ * unpacks an archive, which is Power Platform doing work no vendor endpoint does. A map
+ * expresses an API CALL; it cannot express a loop, a filter or an unzip. That is the one
+ * gap left on this connector, and closing it needs a local step kind, not another entry.
  *
  * Every entry is `drafted` until a gate promotes it. The structural gate runs offline; the
  * behavioral gate diffs against the live connector. Neither has run on these yet.
@@ -226,6 +229,70 @@ export const GOOGLE_DRIVE_MAP: OperationMapEntry[] = [
       ],
     },
   ], [NOTE_PATH_LOOKUP])),
+
+  // A folder is an ordinary file carrying Drive's folder mime type, so this is the path
+  // recipe above plus one create. It stopped being unmappable the moment that recipe
+  // existed -- no new capability was needed, only noticing.
+  entry('CreateFolder', [
+    {
+      vendorMethodId: 'drive.files.list',
+      parameters: [
+        { to: 'q', in: 'query', template: "name = '{folderPath}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false" },
+        ALL_DRIVES,
+        FROM_ALL_DRIVES,
+      ],
+      capture: { pid: 'files[0].id' },
+    },
+    {
+      vendorMethodId: 'drive.files.create',
+      parameters: [ALL_DRIVES],
+      bodyTemplate: '{"name": {name}, "mimeType": "application/vnd.google-apps.folder", "parents": [{$pid}]}',
+    },
+  ], [
+    NOTE_PATH_LOOKUP,
+    'The parent is resolved by searching for a FOLDER of that name, so only the last segment '
+    + 'of a nested folderPath is honoured.',
+    'Creating at the drive root does not work: the parent lookup finds nothing, and the '
+    + 'operation stops rather than silently creating the folder somewhere else.',
+  ]),
+
+  // The old CreateFile addresses its parent by PATH where CreateFileV2 takes a folder id, so
+  // it is CreateFolder's parent lookup followed by CreateFileV2's two calls. Three steps, no
+  // capability this build did not already have -- it was listed unmappable on the strength of
+  // an upload-host limitation that stopped being true.
+  ...withLegacyAlias(entry('CreateFile', [
+    {
+      vendorMethodId: 'drive.files.list',
+      parameters: [
+        { to: 'q', in: 'query', template: "name = '{folderPath}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false" },
+        ALL_DRIVES,
+        FROM_ALL_DRIVES,
+      ],
+      capture: { pid: 'files[0].id' },
+    },
+    {
+      vendorMethodId: 'drive.files.create',
+      parameters: [ALL_DRIVES],
+      bodyTemplate: '{"name": {name}, "parents": [{$pid}]}',
+      capture: { fid: 'id' },
+    },
+    {
+      vendorMethodId: 'drive.files.update',
+      useUploadUrl: true,
+      parameters: [
+        { to: 'fileId', in: 'path', template: '{$fid}' },
+        { to: 'uploadType', in: 'query', template: 'media' },
+        ALL_DRIVES,
+      ],
+      forwardBodyFrom: 'body',
+    },
+  ], [
+    NOTE_PATH_LOOKUP,
+    'Three calls where the connector made one. A failure after the second leaves an empty file '
+    + 'behind, which the connector would never have created.',
+    'Creating at the drive root does not work: the parent lookup finds nothing and the operation '
+    + 'stops.',
+  ])),
 ];
 
 /**
@@ -234,12 +301,7 @@ export const GOOGLE_DRIVE_MAP: OperationMapEntry[] = [
  * at — the difference between a known limit and an oversight.
  */
 export const GOOGLE_DRIVE_UNMAPPABLE: Record<string, string> = {
-  CreateFile: 'Drive uploads content to a different host (upload/drive/v3) that this build does not yet read from Discovery.',
-  CreateFile_Old: 'Drive uploads content to a different host (upload/drive/v3) that this build does not yet read from Discovery.',
-  UpdateFile: 'Content update uses Drive\'s upload host, not yet captured.',
-  UpdateFile_Old: 'Content update uses Drive\'s upload host, not yet captured.',
   AppendFile: 'Drive has no append; it would be a read-modify-write through the upload host.',
-  CreateFolder: 'Takes a folder PATH, which Drive cannot resolve; needs the path recipe plus a create.',
   ExtractFolderV2: 'Unpacks an archive server-side. Drive has no equivalent — this is Power Platform doing the work, not the vendor.',
   ExtractFolder_Old: 'Unpacks an archive server-side. Drive has no equivalent.',
   GetDataSets: 'Power Platform metadata about the connection itself, not a Drive resource.',
