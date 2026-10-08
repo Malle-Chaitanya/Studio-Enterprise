@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { lookupMapEntry } from '../operationMap.js';
 import { OPERATION_MAP, OPERATION_UNMAPPABLE } from './index.js';
 
 /**
@@ -13,7 +14,11 @@ describe('operation map integrity', () => {
     const contradictions: string[] = [];
     for (const [connectorId, reasons] of Object.entries(OPERATION_UNMAPPABLE)) {
       for (const operationId of Object.keys(reasons)) {
-        if (OPERATION_MAP.get(`${connectorId}:${operationId}`)) {
+        // Via the real accessor, never by rebuilding the key here: the first version of
+        // this test spelled it with one colon instead of `::`, matched nothing, and so
+        // passed no matter how far the two tables drifted -- a test that proves nothing
+        // is worse than no test, because it is counted as cover.
+        if (lookupMapEntry(OPERATION_MAP, connectorId, operationId)) {
           contradictions.push(`${connectorId}:${operationId}`);
         }
       }
