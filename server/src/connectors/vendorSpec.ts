@@ -64,7 +64,13 @@ import {
   putCachedVendorSurface,
   recordResolvedApi,
 } from '../db/repos/vendorApiSurface.js';
-import type { ConnectorOpIndex, VendorApiMethod, VendorApiSurface } from './operationBinding.js';
+import { SURFACE_SCHEMA_VERSION } from './operationBinding.js';
+import type {
+  ConnectorOpIndex,
+  VendorApiMethod,
+  VendorApiParameter,
+  VendorApiSurface,
+} from './operationBinding.js';
 
 /** Google publishes breaking changes as new API versions, not in place, so a month is safe
  *  and keeps a migration from re-reading the same public document all day. */
@@ -200,6 +206,30 @@ async function discoveryDirectory(): Promise<Map<string, { url: string; title: s
  * Comparing bare paths refuses Google Tasks, which works in production. Methods nest under
  * `resources` (drive.files.list, gmail.users.messages.get), so the walk has to recurse.
  */
+/**
+ * Discovery's parameter block -> our shape.
+ *
+ * `location` is Discovery's own word for where the value goes, and it only ever says `path`
+ * or `query` — a Discovery method's body is described separately, by `request`. Anything
+ * else is treated as a query parameter rather than dropped, because dropping it would make
+ * the verifier call a real parameter invented.
+ */
+function readVendorParams(block: unknown): VendorApiParameter[] {
+  const out: VendorApiParameter[] = [];
+  if (!block || typeof block !== 'object') return out;
+  for (const [name, raw] of Object.entries(block as Record<string, unknown>)) {
+    const p = (raw ?? {}) as Record<string, unknown>;
+    out.push({
+      name,
+      in: p.location === 'path' ? 'path' : 'query',
+      required: p.required === true,
+      type: String(p.type ?? 'string'),
+      ...(Array.isArray(p.enum) ? { enum: (p.enum as unknown[]).map(String) } : {}),
+    });
+  }
+  return out;
+}
+
 function flatten(api: string, doc: Record<string, unknown>): VendorApiSurface {
   const base = String(doc.baseUrl ?? doc.rootUrl ?? '').replace(/\/$/, '');
   const methods: VendorApiMethod[] = [];
@@ -213,6 +243,8 @@ function flatten(api: string, doc: Record<string, unknown>): VendorApiSurface {
         id: String(m.id ?? ''),
         httpMethod: String(m.httpMethod ?? 'GET'),
         url: `${base}/${path.replace(/^\//, '')}`,
+        parameters: readVendorParams(m.parameters),
+        hasBody: Boolean(m.request),
       });
     }
     for (const sub of Object.values((node.resources ?? {}) as Record<string, Record<string, unknown>>)) {
@@ -220,7 +252,12 @@ function flatten(api: string, doc: Record<string, unknown>): VendorApiSurface {
     }
   };
   walk(doc);
-  return { api, methods };
+  return {
+    api,
+    methods,
+    commonParameters: readVendorParams(doc.parameters),
+    schemaVersion: SURFACE_SCHEMA_VERSION,
+  };
 }
 
 /** Placeholders collapse to `{}` so a connector's `{calendarId}` and a vendor's `{+name}`
@@ -285,7 +322,12 @@ function candidateApis(
  *  than nothing. Returns undefined only when we have never successfully read it. */
 async function loadSurface(api: string): Promise<VendorApiSurface | undefined> {
   const fresh = await getCachedVendorSurface(api, SURFACE_TTL_MS);
-  if (fresh) return fresh;
+  // An in-date row captured by an older build is NOT usable as-is: it is missing fields a
+  // newer consumer needs (declared parameters, today), and those come back as `undefined`,
+  // which reads as "the vendor declares none" rather than "we never looked". Treat it as a
+  // miss so it refetches. The stale path below still accepts it, because for plain binding
+  // an old surface is complete.
+  if (fresh && (fresh.schemaVersion ?? 0) >= SURFACE_SCHEMA_VERSION) return fresh;
 
   const dir = await discoveryDirectory();
   const docUrl = dir?.get(api)?.url;

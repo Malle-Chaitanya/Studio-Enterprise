@@ -150,6 +150,14 @@ export type VendorAuth =
  * says what Power Platform exposes; this says what the vendor actually serves. Where both
  * exist, only their intersection is safe to call.
  */
+export interface VendorApiParameter {
+  name: string;
+  in: 'path' | 'query';
+  required: boolean;
+  type: string;
+  enum?: string[];
+}
+
 export interface VendorApiMethod {
   /** The vendor's own id, e.g. `calendar.events.list`. Quoted in the report, so a human can
    *  look it up rather than take our word for it. */
@@ -157,6 +165,18 @@ export interface VendorApiMethod {
   httpMethod: string;
   /** Full URL with `{placeholders}` intact. */
   url: string;
+  /**
+   * The parameters the vendor DECLARES for this method.
+   *
+   * `undefined` and `[]` mean different things and must not be collapsed. `[]` is "the
+   * vendor says this method takes no parameters"; `undefined` is "this surface was captured
+   * before we read parameters, so we do not know". A verifier that treats the second as the
+   * first rejects every mapping it checks against an old cache row — which is why surfaces
+   * carry `schemaVersion` and an under-versioned row is refetched rather than trusted.
+   */
+  parameters?: VendorApiParameter[];
+  /** Whether the vendor declares a request body. Same undefined-vs-false distinction. */
+  hasBody?: boolean;
 }
 
 /**
@@ -170,7 +190,24 @@ export interface VendorApiSurface {
   /** Which API this is, for refusal text: `calendar`, `people`. */
   api: string;
   methods: VendorApiMethod[];
+  /**
+   * Parameters every method of this API accepts — Discovery's top-level `parameters`
+   * (`alt`, `fields`, `key`, `prettyPrint`). A mapping that sends `alt=media` to fetch file
+   * content is sending a real, declared parameter; without these the verifier would call it
+   * invented and refuse a correct mapping.
+   */
+  commonParameters?: VendorApiParameter[];
+  /**
+   * Capture format version. A surface persisted by an older build lacks fields a newer
+   * verifier needs, and the difference is invisible at the type level once it comes back
+   * from Mongo as `undefined`. Bumping this invalidates those rows so they are refetched
+   * instead of quietly failing every check they are asked to answer.
+   */
+  schemaVersion?: number;
 }
+
+/** Bump whenever `flatten()` captures a field a consumer depends on. */
+export const SURFACE_SCHEMA_VERSION = 2;
 
 export interface VendorBinding {
   /**
