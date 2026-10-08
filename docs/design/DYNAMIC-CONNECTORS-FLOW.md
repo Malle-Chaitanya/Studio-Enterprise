@@ -25,7 +25,10 @@ Measured against the live catalogue on 2026-10-06: **1,313 connectors offered, 1
   │  §2 captureOpIndex.ts   resolveOpIndex()      name → the connector's       │
   │                           distil() | distilOriginalSwagger()   swagger     │
   │                                      │                                     │
-  │  §3 operationBinding.ts bindOperation()       swagger → a real vendor URL  │
+  │  §3 bindWithMap.ts      bindWithMap()         swagger → a real vendor URL  │
+  │     tier 0  operationMap  lookupMapEntry() + verifyMapEntry()              │
+  │             maps/*.ts     a STATED equivalence, re-verified every call     │
+  │     tier 1  operationBinding.ts bindOperation()   path-shape binding       │
   │        VENDOR_BINDINGS  ├─ 'bindable'      ───────────────┐                │
   │                         ├─ 'proxy-only'    ──→ §6 resolver│ (3% of         │
   │                         ├─ 'custom-tool'                  │  connectors)   │
@@ -173,13 +176,43 @@ agent did not send.
 
 ## 3. BIND — name + definition → a real vendor call
 
+**One decision point, two tiers.** Every tool and every probe goes through `bindWithMap()`;
+nothing calls `bindOperation()` directly any more. A probe with its own copy of the order
+answers a different question than the product does, and this codebase has paid for that twice.
+
 ```
-server/src/connectors/operationBinding.ts
-    VENDOR_BINDINGS                          hand-typed table, 15 entries
-    bindOperation(index, operationId)        → BindingResult
-        'bindable' | 'unknown-connector' | 'unknown-operation'
-        | 'proxy-only' | 'custom-tool'
+server/src/connectors/bindWithMap.ts
+    bindWithMap(index, operationId, surface)     → BindingResult
+
+    tier 0  connectors/maps/*.ts        a STATED equivalence: this operation IS this call
+            lookupMapEntry()            keyed `connectorId::operationId`
+            verifyMapEntry()            checked against the vendor's CURRENT description,
+                                        on every call — pure, offline, free
+            → provenance 'vendor-map'
+
+    tier 1  operationBinding.ts
+            VENDOR_BINDINGS             hand-typed table, 15 entries
+            bindOperation()             path-shape binding
+            → 'bindable' | 'proxy-only' | 'custom-tool' | 'unknown-*'
 ```
+
+Tier 0 is tried first because it is the only tier that reaches a connector whose paths are a
+Power Platform abstraction with no vendor path inside them. **A map entry that no longer
+verifies is refused and falls through to tier 1** — it never sends the stale call. That is
+what makes a literal mapping safe against an API somebody else owns and can change
+(`bindWithMap.test.ts` pins it for a renamed method, a newly required parameter, and
+Discovery being unreachable).
+
+The vendor's description comes from `vendorSpec.ts`, which resolves a connector to a
+published API by scoring the connector's **own captured paths** against Google's Discovery
+directory. That is why a connector nobody has written anything for still binds: `shared_googletasks`
+has no file anywhere in `maps/` and binds 5 of its 10 operations.
+
+**Freshness, so "dynamic" is a window and not a word:** the connector index is re-captured
+from the customer's environment every **14 days** (`captureOpIndex.ts`), the vendor surface
+re-read from Discovery every **30** (`vendorSpec.ts`). An entry is therefore routinely
+verified against a description newer than itself — which is the case tier 0's refusal exists
+to handle.
 
 `bindOperation` prefers `index.vendorBinding` (derived at capture) over `VENDOR_BINDINGS`
 (hand-typed), strips `{connectionId}`, refuses `/trigger<n>/` paths per operation, drops
@@ -296,10 +329,35 @@ Two findings that shaped it, both worth not relearning:
   (`/datasets/{d}/tables/{t}/items/{i}` is Microsoft's tabular contract, shared by Excel, SQL
   and Dataverse — not a Google fact).
 
-> **TO BUILD — the confirm store.** Resolution is **not per-customer**: Microsoft's connector
-> definition and the vendor's API are the same for everyone. One confirm pass per connector,
-> checked in, serves every customer forever (~9 rows for Drive). Refuse by default; only
-> high-confidence rows auto-wire; every refusal becomes a `FidelityNote`.
+### BUILT — the confirm store is `connectors/maps/`
+
+The store described above exists. It is checked into the repo rather than seeded into Mongo,
+for the reason given above — Microsoft's definition and the vendor's API are the same for
+every customer — plus one more: a mapping that can change without a commit is a mapping
+nobody can audit after it returns the wrong rows.
+
+```
+src/connectors/operationMap.ts      the schema + verifyMapEntry (the structural gate)
+src/connectors/maps/googledrive.ts  42 operations
+src/connectors/maps/googlesheet.ts  39 — re-keys the Drive map for its file half
+src/connectors/maps/googlecontacts.ts
+src/connectors/maps/index.ts        OPERATION_MAP + OPERATION_UNMAPPABLE
+```
+
+An entry is **data, not code**: which vendor method, which parameter is called what, where it
+goes, what is lost. Multi-step where one Power Platform operation has no single vendor call
+(`GetFileContentByPath` is a search, then a fetch keyed on `files[0].id`), and one optional
+`fallback` for a refusal that is about the resource rather than the request (`alt=media` on a
+Google Doc → `files.export`).
+
+`OPERATION_UNMAPPABLE` is the other half of the same fact: why an operation will NOT migrate.
+An operation is mapped or it is explained, never both and never neither —
+`operationMapIntegrity.test.ts` fails on a contradiction.
+
+**Measured, live, 72 of 115 Google operations bind with no hand-written code.** The refusals
+are honest: Power Platform polling triggers (no vendor route exists), the table interface on
+a connector whose vendor has no tables, and local computation — an unzip or a read-modify-write
+is not an API call and a map cannot express one.
 
 ---
 
@@ -387,18 +445,108 @@ reproducible — that measured **signatures**, which is the easy half.
 
 ---
 
+## 9. The two gates
+
+A mapping is a claim about somebody else's API. Two independent checks, and they catch
+different things — the second exists because the first provably cannot see the failure that
+matters most.
+
+| gate | where | cost | catches | cannot catch |
+|---|---|---|---|---|
+| **structural** | `verifyMapEntry()`, every bind | free, offline | unknown method, undeclared parameter, unfilled URL placeholder, malformed body, enum violation, `{$var}` nothing captured | a well-formed call that returns the **wrong rows** |
+| **behavioral** | `_probe_behavioral_gate.ts`, run against a live tenant | one real call | wrong rows, wrong defaults, a call that never leaves the process | anything not executed — writes are still GET-only |
+
+The behavioral gate drives **both real code paths** rather than imitating either:
+`buildBoundToolSpecs()` emits the specs exactly as the orchestrator does, and that payload is
+what `generic_rest.py` consumes, so the runner executes the product's own tool code. A
+TypeScript re-implementation of the executor would agree with itself and prove nothing.
+
+Its first run paid for itself twice, and both defects were invisible to the structural gate
+because the mapping was right and the **mechanics** were wrong:
+
+- every path-based operation failed at its first step and never issued a request — a model
+  argument interpolated into another parameter's template (`q="name = '{path}'"`) was routed
+  by its declared `in` instead of being substituted into the URL
+- every binary download died after a successful fetch, decoding a PDF as UTF-8
+
+`supportsAllDrives` is the standing example of what only this gate can see: omit it and Drive
+silently drops every shared-drive file, with a 200 and no error.
+
+---
+
+## 10. Next phase — where an LLM goes, and where it must not
+
+The prototype in §6 already tried automated resolution by scoring: **11 of 23 Drive operations
+correct, 3 confidently wrong, 4 ambiguous, 5 refused.** Roughly half automatic and wrong about
+one time in eight. That number is the whole argument. It is too good to ignore and far too
+unreliable to trust — so the proposer is not the thing that has to be trustworthy; the gate is.
+
+An LLM replaces the scorer. It does not replace the gate, and it never writes to `maps/`.
+
+```
+  a connector arrives, tier 1 refuses it (proxy-only)
+         │
+         ├── resolveOpIndex()        what the operation takes      ← exists
+         ├── vendorApiSurfaceFor()   what the vendor publishes     ← exists
+         │
+         ├── LLM proposes an OperationMapEntry (JSON)              ← THE NEW PART
+         │
+         ├── verifyMapEntry()        offline, deterministic        ← exists
+         │      rejected → feed `MapProblem[]` back, propose again
+         │      MapProblem is already { step, kind, detail } — repair feedback, by design
+         │
+         └── behavioral gate         execute against the live vendor   ← exists
+                provenance:  drafted → structurally-verified → behaviorally-verified
+```
+
+**Everything except the middle box exists and is tested.** The client exists too:
+`INSTRUCTION_LLM_PROVIDER` (`gemini` | `anthropic`), `_API_KEY`, `_MODEL` in `config.ts`,
+already used by `mapper.ts` for instruction refinement.
+
+Why this is safe here specifically, and would not be elsewhere:
+
+1. **An entry is data.** The LLM emits JSON. It never touches the executor, the auth path, or
+   the dispatch. The blast radius of a bad proposal is one refused entry.
+2. **The checker is machine, not human.** This was the requirement from the start — nobody
+   should have to review a mapping to trust it. `verifyMapEntry` checks against both sides'
+   real published schemas, so a wrong proposal fails in CI, not in production.
+3. **Rejection is already structured for a retry loop.** `MapProblem` carries kind, step index
+   and detail. That is repair feedback, not just an error message.
+
+What an LLM must **not** be allowed to decide:
+
+- **Semantic equivalence.** A perfectly-formed entry can still return the wrong rows, and no
+  schema check and no model can see it. Only the behavioral gate can. An LLM-proposed entry
+  that has not executed is `drafted`, the same as a human's.
+- **Anything in the executor.** Both defects the behavioral gate found were in `generic_rest.py`,
+  not in any entry. A perfect proposer writing perfect entries would have shipped both.
+- **Its own promotion.** Provenance is raised by a gate passing, never by the author claiming it.
+
+**Build order within this phase:** spec sources first (step 7) — converting Dropbox, Box and
+GitHub from `0/116` to automatic is a bigger win than LLM authoring and carries no model risk
+at all. The LLM is for the proxy-only tail that no spec source can reach, because there the
+answer is genuinely a judgement about what Microsoft's abstraction *means*.
+
+---
+
 ## Build order
 
 | # | work | risk | unblocks | state |
 |---|---|---|---|---|
 | 1 | `distil()` widening (§2) | none | everything downstream | **done** |
-| 2 | `resolveVendorBaseUrl` + liveness (§3) | low | the 1,220 vendor-path connectors | to build |
-| 3 | confirm store (§6) | none deployed | makes 4 safe | to build |
-| 4 | per-operation dispatch (§5) | **medium** | removes the 12-branch fork | to build |
-| 5 | delete the 6 redundant modules (§5) | low | — | to build |
+| 2 | vendor surface from Discovery (§3) | low | every Google connector | **done** |
+| 3 | confirm store = `maps/` (§6) | none deployed | makes 5 safe | **done** |
+| 4 | behavioral gate (§9) | none deployed | makes 5 safe | **done** |
+| 5 | per-operation dispatch (§5) | **medium** | removes the 11-branch fork | blocked on `unzip` |
+| 6 | delete the redundant modules (§5) | low | — | after 5 |
+| 7 | spec sources for non-Google vendors (§10) | low | ~1,200 connectors | to build |
+| 8 | LLM entry proposal (§10) | low *behind the gates* | the proxy-only tail | to build |
 
-Steps 1–3 deploy nothing. Step 4 is the only one that touches live dispatch, and it needs the
-shadow diff first — 51 hand-written tools work in production today.
+Steps 1–4 deploy nothing and are done. **Step 5 is the only one that touches live dispatch**,
+and it is blocked on one capability, not on confidence: of the 11 Drive operations the live
+agents actually use, 10 are mapped and `ExtractFolderV2` is not — an unzip is computation, and
+`google_drive.py` does it today. Removing the interception before that exists trades 3 working
+tools for 30 dynamic ones, which is not a trade worth making silently.
 
 **What never generates:** media upload (`supportsMediaUpload` — Discovery names the protocol,
 not the framing), MIME assembly (Gmail `raw`), and request-object APIs (Sheets deletes a row
