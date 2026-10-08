@@ -6,6 +6,8 @@ description: Drive a new CS_GE feature end-to-end through the project pipeline, 
 
 Take the feature described in `$ARGUMENTS` from idea to PR, respecting the extract→map→create→
 verify→report pipeline. This command orchestrates project steps and hands generic work to gstack.
+It is the **Full pipeline** path of [.claude/rules/aisdlc.md](../rules/aisdlc.md) — see that file
+for the full stage table and skip conditions.
 
 ## Flow
 

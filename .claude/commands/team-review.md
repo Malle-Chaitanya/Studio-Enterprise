@@ -10,6 +10,8 @@ description: CloudFuze Studio Migrate project-specific review checklist (renamed
 
 Review the current diff (or the file/area named in `$ARGUMENTS`) against **this project's**
 rules. Report findings grouped by severity. Do not fix silently — list, then fix on request.
+This is the project half of the Review stage in [.claude/rules/aisdlc.md](../rules/aisdlc.md) —
+run gstack `/review` first, this second.
 
 ## Checklist
 

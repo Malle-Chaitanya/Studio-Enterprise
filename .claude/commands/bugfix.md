@@ -5,6 +5,8 @@ description: Diagnose and fix a CS_GE bug (often a migration/extraction/quota/fi
 # /bugfix — fix a CS_GE bug
 
 Fix the bug in `$ARGUMENTS`. Most CS_GE bugs fall into a few buckets — check which one first.
+This is the **Fast path** of [.claude/rules/aisdlc.md](../rules/aisdlc.md), with Stage 1
+("reproduce & locate") replacing a written spec.
 
 ## 1. Reproduce & locate
 

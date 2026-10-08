@@ -47,3 +47,14 @@ content-trunk/
 # ("Get CRM objects from Hubspot"). Customer data does not go in git -- see
 # .claude/rules/security-rules.md "Handling customer data".
 docs/connector-api-index.json
+
+# Ad-hoc probe output left in server/ by the _probe_*/_diag_* spikes. Same rule as the
+# connector catalogue above: these name the customer's AGENTS and carry their Dataverse
+# GUIDs and deployed agent-engine ids, which is customer data. `de.json` is a 2.2MB
+# Discovery Engine spec dump -- a generated vendor artifact, re-fetchable, not source.
+server/agents_hub.txt
+server/bots.txt
+server/mcp_inv.txt
+server/re_inv.txt
+server/re_now.txt
+server/de.json

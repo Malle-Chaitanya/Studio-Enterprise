@@ -153,14 +153,20 @@ gstack is installed globally at `~/.claude/skills/gstack`. Use `/browse` from gs
 - **Safety:** `/careful`, `/freeze`, `/guard`, `/unfreeze`
 - **Learn & upgrade:** `/learn`, `/gstack-upgrade`
 
-## Recommended Workflow
+## AI-SDLC — Recommended Workflow
 
-- **New feature:** `/office-hours` → `/autoplan` → implement → `/review` → `/qa` → `/cso` → `/ship`
+Full seven-stage standard (spec → plan → implement → review → qa → security → ship),
+command mapping, and skip conditions: [.claude/rules/aisdlc.md](.claude/rules/aisdlc.md).
+Cheat sheet:
+
+- **New feature:** `/office-hours`/`/spec` → `/autoplan`/`/plan-eng-review` → implement
+  (`/scaffold`, `/feature`) → `/review` → `/team-review` → `/qa` → `/cso` → `/ship`
 - **Routine change:** implement → `/review` → `/qa` → `/ship`
-- **Bug fix:** `/investigate` → fix → `/review` → `/qa` → `/ship`
+- **Bug fix:** `/investigate` → fix (`/bugfix`) → `/review` → `/team-review` → `/qa` → `/ship`
 
 **Before every PR (never skip):**
 - `/review` — bugs CI won't catch
+- `/team-review` — CS_GE-specific conventions gstack doesn't know
 - `/qa <staging-url>` — real browser test
 - `/cso` — security audit (if security-sensitive)
 - `/ship` — opens PR
