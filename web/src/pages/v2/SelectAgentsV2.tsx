@@ -115,21 +115,37 @@ export default function SelectAgentsV2() {
     [rows, picked, selectedRows],
   );
 
-  const toggle = (botId: string): void => setChosen((prev) => {
+  /**
+   * Ticking a box IS the decision, so it has to be recorded when it happens.
+   *
+   * The selection used to persist only on "Continue to connectors". Every other way
+   * out of this screen — the phase rail, the back button, a bookmarked URL — dropped
+   * the change on the floor while leaving the PREVIOUS selection in place, so the run
+   * migrated the old list. Reported live: two agents ticked here, nineteen staged by
+   * the run, with nothing on screen or in the log saying which list was in force.
+   * Silent and wrong, which is the worst shape for a scope control.
+   *
+   * Only after a real interaction: the mount effect above pre-ticks everything when
+   * nothing is saved yet, and auto-saving THAT would record a 19-agent run as a
+   * decision the operator never made.
+   */
+  const [touched, setTouched] = useState(false);
+
+  const toggle = (botId: string): void => { setTouched(true); setChosen((prev) => {
     const next = new Set(prev);
     if (next.has(botId)) next.delete(botId); else next.add(botId);
     return next;
-  });
+  }); };
 
-  const toggleEnv = (env: string): void => setChosen((prev) => {
+  const toggleEnv = (env: string): void => { setTouched(true); setChosen((prev) => {
     const ids = rows.filter((r) => r.env === env).map((r) => r.botId);
     const all = ids.every((id) => prev.has(id));
     const next = new Set(prev);
     for (const id of ids) { if (all) next.delete(id); else next.add(id); }
     return next;
-  });
+  }); };
 
-  const save = async (): Promise<void> => {
+  const save = async (quiet = false): Promise<void> => {
     const selection = pairs.map((p) => ({
       env: p.env,
       botIds: rows.filter((r) => r.env === p.env && chosen.has(r.botId)).map((r) => r.botId),
@@ -144,9 +160,24 @@ export default function SelectAgentsV2() {
       window.setTimeout(() => setToast(''), 6000);
       return;
     }
+    // The debounced auto-save is not an event worth a toast on every click; the
+    // footer count already shows what is recorded. An explicit Continue still
+    // confirms, because that one IS a deliberate act.
+    if (quiet) return;
     setToast(`${selectedRows.length} agents locked in for this run.`);
     window.setTimeout(() => setToast(''), 2600);
   };
+
+  // Placed after `save` so it reads in the order it runs. See `touched` above for why
+  // this does not fire on the pre-ticked default.
+  useEffect(() => {
+    if (!touched || rows.length === 0) return;
+    // Debounced: narrowing nineteen agents to two is seventeen clicks, not seventeen POSTs.
+    const t = window.setTimeout(() => { void save(true); }, 400);
+    return () => window.clearTimeout(t);
+    // `save` closes over `chosen`/`rows`; re-running on those is exactly the point.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chosen, rows, touched]);
 
   const canvas = (
     <>
