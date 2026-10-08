@@ -363,3 +363,78 @@ describe('verifyMapEntry — body templates', () => {
     expect(kinds(verify(noBody)).includes('body-not-supported')).toBe(true);
   });
 });
+
+describe('verifyMapEntry — content upload on a different host', () => {
+  const UPLOADABLE: VendorApiSurface = {
+    api: 'drive',
+    schemaVersion: 2,
+    methods: [
+      {
+        id: 'drive.files.update', httpMethod: 'PATCH',
+        url: 'https://www.googleapis.com/drive/v3/files/{fileId}',
+        uploadUrl: 'https://www.googleapis.com/upload/drive/v3/files/{fileId}',
+        parameters: [
+          { name: 'fileId', in: 'path', required: true, type: 'string' },
+          { name: 'uploadType', in: 'query', required: false, type: 'string' },
+        ],
+        hasBody: true,
+      },
+      {
+        id: 'drive.files.get', httpMethod: 'GET',
+        url: 'https://www.googleapis.com/drive/v3/files/{fileId}',
+        parameters: [{ name: 'fileId', in: 'path', required: true, type: 'string' }],
+        hasBody: false,
+      },
+    ],
+  };
+  const upd = (step: Partial<OperationMapEntry['steps'][number]>): OperationMapEntry => ({
+    connectorId: 'shared_googledrive', operationId: 'UpdateFile', api: 'drive', provenance: 'drafted',
+    steps: [{
+      vendorMethodId: 'drive.files.update',
+      parameters: [{ to: 'fileId', in: 'path', template: '{id}' }],
+      ...step,
+    }],
+  });
+  const idx2: ConnectorOpIndex = {
+    ...driveIndex(),
+    operations: {
+      ...driveIndex().operations,
+      UpdateFile: {
+        method: 'PUT', path: '/x', summary: '',
+        parameters: [
+          { name: 'id', in: 'path', required: true, type: 'string' },
+          { name: 'body', in: 'body', required: true, type: 'string' },
+        ],
+      },
+    },
+  };
+
+  it('accepts an upload when the vendor publishes a media host for that method', () => {
+    const r = verifyMapEntry(upd({ useUploadUrl: true, forwardBodyFrom: 'body' }), UPLOADABLE, idx2);
+    expect(r.status).toBe('verified');
+  });
+
+  it('rejects an upload on a method with no media host', () => {
+    const e: OperationMapEntry = {
+      connectorId: 'shared_googledrive', operationId: 'UpdateFile', api: 'drive', provenance: 'drafted',
+      steps: [{
+        vendorMethodId: 'drive.files.get', useUploadUrl: true,
+        parameters: [{ to: 'fileId', in: 'path', template: '{id}' }],
+      }],
+    };
+    expect(kinds(verifyMapEntry(e, UPLOADABLE, idx2)).includes('no-upload-host')).toBe(true);
+  });
+
+  it('rejects an entry that both builds a body and forwards one', () => {
+    const r = verifyMapEntry(
+      upd({ useUploadUrl: true, forwardBodyFrom: 'body', bodyTemplate: '{"a": 1}' }),
+      UPLOADABLE, idx2,
+    );
+    expect(kinds(r).includes('conflicting-body')).toBe(true);
+  });
+
+  it('rejects forwarding an argument the operation does not have', () => {
+    const r = verifyMapEntry(upd({ useUploadUrl: true, forwardBodyFrom: 'content' }), UPLOADABLE, idx2);
+    expect(kinds(r).includes('unknown-source-argument')).toBe(true);
+  });
+});

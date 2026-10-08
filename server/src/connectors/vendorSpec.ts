@@ -230,6 +230,12 @@ function readVendorParams(block: unknown): VendorApiParameter[] {
   return out;
 }
 
+/** Discovery's simple (non-resumable) upload path for a method, if it has one. */
+function uploadPath(m: Record<string, unknown>): string | undefined {
+  const protocols = (m.mediaUpload as { protocols?: Record<string, { path?: string }> } | undefined)?.protocols;
+  return protocols?.simple?.path;
+}
+
 function flatten(api: string, doc: Record<string, unknown>): VendorApiSurface {
   const base = String(doc.baseUrl ?? doc.rootUrl ?? '').replace(/\/$/, '');
   const methods: VendorApiMethod[] = [];
@@ -251,6 +257,11 @@ function flatten(api: string, doc: Record<string, unknown>): VendorApiSurface {
         // moves to a newer one (shared_googlesheet declares the retired GData feeds scope
         // while the mapping targets Sheets v4).
         scopes: Array.isArray(m.scopes) ? (m.scopes as unknown[]).map(String) : undefined,
+        // Content upload lives on a DIFFERENT HOST, which the method's own url does not
+        // mention: Drive reads at www.googleapis.com/drive/v3/files/{id} and writes bytes
+        // at www.googleapis.com/upload/drive/v3/files/{id}. Discovery states it here, and
+        // not capturing it is why every upload operation was unmappable.
+        uploadUrl: uploadPath(m) ? `${String(doc.rootUrl ?? '').replace(/\/$/, '')}${uploadPath(m)}` : undefined,
       });
     }
     for (const sub of Object.values((node.resources ?? {}) as Record<string, Record<string, unknown>>)) {

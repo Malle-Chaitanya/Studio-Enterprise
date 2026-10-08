@@ -63,6 +63,10 @@ export interface BoundToolSpec {
   aadResource?: string;
   /** JSON body template from the operation map; see BoundOperation.bodyTemplate. */
   bodyTemplate?: string;
+  /** A model argument forwarded as the body verbatim (content upload). */
+  forwardBodyFrom?: string;
+  /** Content-Type for a forwarded body. */
+  contentType?: string;
 }
 
 export interface BoundToolBuild {
@@ -294,6 +298,8 @@ export async function buildBoundToolSpecs(
         `${index.displayName} ${tool.operationId}`,
       fixedArgs,
       ...(op.bodyTemplate ? { bodyTemplate: op.bodyTemplate } : {}),
+      ...(op.forwardBodyFrom ? { forwardBodyFrom: op.forwardBodyFrom } : {}),
+      ...(op.contentType ? { contentType: op.contentType } : {}),
       modelArgs,
       contextRequired: op.contextRequired,
       contextValues: Object.fromEntries(

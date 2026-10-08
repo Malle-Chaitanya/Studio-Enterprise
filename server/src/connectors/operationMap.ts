@@ -79,6 +79,22 @@ export interface MappedStep {
    */
   bodyTemplate?: string;
   /**
+   * Send the call to the method's CONTENT host instead of its normal one.
+   *
+   * Drive reads a file at `www.googleapis.com/drive/v3/files/{id}` and writes its bytes at
+   * `www.googleapis.com/upload/drive/v3/files/{id}`. Same method, different host, and the
+   * second is published only under Discovery's `mediaUpload`. Verified to exist before use.
+   */
+  useUploadUrl?: boolean;
+  /**
+   * A source argument sent as the request body VERBATIM — file content, not a document being
+   * reshaped. Mutually exclusive with `bodyTemplate`: one forwards a payload, the other
+   * builds one, and an entry doing both has not decided what it is sending.
+   */
+  forwardBodyFrom?: string;
+  /** Content-Type for a forwarded body. Defaults to application/octet-stream. */
+  contentType?: string;
+  /**
    * Values to lift out of this step's response for a later step, as `varName -> JSON path`.
    *
    * Multi-step exists because some Power Platform operations have no single vendor call
@@ -114,7 +130,9 @@ export interface MapProblem {
     | 'unknown-captured-variable'
     | 'enum-violation'
     | 'body-not-supported'
-    | 'malformed-body-template';
+    | 'malformed-body-template'
+    | 'no-upload-host'
+    | 'conflicting-body';
   detail: string;
 }
 
@@ -292,6 +310,28 @@ export function verifyMapEntry(
         });
       }
     }
+    if (step.useUploadUrl && !method.uploadUrl) {
+      problems.push({
+        step: i,
+        kind: 'no-upload-host',
+        detail: `'${step.vendorMethodId}' publishes no media-upload host; the entry asks to use one`,
+      });
+    }
+    if (step.bodyTemplate !== undefined && step.forwardBodyFrom !== undefined) {
+      problems.push({
+        step: i,
+        kind: 'conflicting-body',
+        detail: 'the entry both builds a body and forwards one; it has not decided what it sends',
+      });
+    }
+    if (step.forwardBodyFrom !== undefined && !sourceArgs.has(step.forwardBodyFrom)) {
+      problems.push({
+        step: i,
+        kind: 'unknown-source-argument',
+        detail: `forwardBodyFrom names '${step.forwardBodyFrom}', which is not an argument of ${entry.operationId}`,
+      });
+    }
+
     if (step.bodyTemplate !== undefined) {
       if (!method.hasBody) {
         problems.push({
@@ -398,7 +438,10 @@ export function buildMappedOperation(
   const sourceOp = index.operations[entry.operationId];
   if (!sourceOp) return { status: 'invalid', reason: `connector does not declare ${entry.operationId}` };
 
-  let url = method.url;
+  if (step.useUploadUrl && !method.uploadUrl) {
+    return { status: 'invalid', reason: `'${step.vendorMethodId}' publishes no media-upload host` };
+  }
+  let url = step.useUploadUrl ? method.uploadUrl! : method.url;
   const query: string[] = [];
   for (const p of step.parameters) {
     if (p.in === 'path') url = url.replace(`{${p.to}}`, encodePreservingPlaceholders(p.template));
@@ -412,6 +455,9 @@ export function buildMappedOperation(
     [
       ...step.parameters.flatMap((p) => placeholders(p.template)),
       ...(step.bodyTemplate ? placeholders(step.bodyTemplate) : []),
+      // A forwarded body is an argument the model still supplies, even though no template
+      // mentions it — without this the upload tool would take no content.
+      ...(step.forwardBodyFrom ? [step.forwardBodyFrom] : []),
     ].filter((n) => !n.startsWith('$')),
   );
   const parameters: BoundParameter[] = sourceOp.parameters
@@ -441,6 +487,8 @@ export function buildMappedOperation(
       provenance: 'vendor-map',
       vendorMethodId: step.vendorMethodId,
       bodyTemplate: step.bodyTemplate,
+      forwardBodyFrom: step.forwardBodyFrom,
+      contentType: step.contentType,
     },
   };
 }

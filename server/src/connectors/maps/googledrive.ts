@@ -118,6 +118,25 @@ export const GOOGLE_DRIVE_MAP: OperationMapEntry[] = [
     + 'folder id this entry is wrong and needs the path-resolution recipe.',
   ])),
 
+  // ---- content upload: same method, different host --------------------------------------
+  ...withLegacyAlias(entry('UpdateFile', [{
+    vendorMethodId: 'drive.files.update',
+    // Drive reads a file at /drive/v3/files/{id} and writes its bytes at
+    // /upload/drive/v3/files/{id}. Discovery publishes the second only under `mediaUpload`.
+    useUploadUrl: true,
+    parameters: [
+      { to: 'fileId', in: 'path', template: '{id}' },
+      { to: 'uploadType', in: 'query', template: 'media' },
+      ALL_DRIVES,
+    ],
+    // The body is the file's bytes, forwarded untouched. Encoding it as JSON would upload
+    // the quoted, escaped TEXT of the file instead of the file.
+    forwardBodyFrom: 'body',
+  }], [
+    'Replaces the file\'s content. uploadType=media sends bytes only, so the file keeps its '
+    + 'existing name, parents and mime type — the connector could change metadata in the same call.',
+  ])),
+
   // ---- folder listings -----------------------------------------------------------------
   ...withLegacyAlias(entry('ListFolder', [{
     vendorMethodId: 'drive.files.list',

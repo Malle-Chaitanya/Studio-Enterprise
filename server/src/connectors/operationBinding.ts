@@ -180,6 +180,8 @@ export interface VendorApiMethod {
   /** OAuth scopes the VENDOR says this method requires. The authoritative requirement for
    *  a mapped operation, which may target a different API than the connector itself uses. */
   scopes?: string[];
+  /** Where this method accepts CONTENT, when that is a different host from `url`. */
+  uploadUrl?: string;
 }
 
 /**
@@ -529,6 +531,14 @@ export interface BoundOperation {
    * connector's — the container sends this instead of forwarding an argument verbatim.
    */
   bodyTemplate?: string;
+  /**
+   * A source argument sent as the request body VERBATIM, for content upload — where the
+   * body is the file's bytes rather than a document being reshaped. Mutually exclusive with
+   * `bodyTemplate`: one builds a payload, the other forwards one.
+   */
+  forwardBodyFrom?: string;
+  /** Content-Type for a forwarded body. Defaults to application/octet-stream. */
+  contentType?: string;
 }
 
 export type BindingResult =

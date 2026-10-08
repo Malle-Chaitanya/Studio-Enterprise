@@ -102,8 +102,6 @@ export const GOOGLE_SHEET_UNMAPPABLE: Record<string, string> = {
   ODataStyleDeleteItem: 'Row identity (see GetItem).',
   CreateFile: "Drive uploads content to a different host (upload/drive/v3) this build does not yet read from Discovery.",
   CreateFile_Old: "Drive uploads content to a different host (upload/drive/v3) this build does not yet read from Discovery.",
-  UpdateFile: "Content update uses Drive's upload host, not yet captured.",
-  UpdateFile_Old: "Content update uses Drive's upload host, not yet captured.",
   ExtractFolderV2: 'Unpacks an archive server-side. No vendor API does this — Power Platform does the work itself.',
   ExtractFolder_Old: 'Unpacks an archive server-side. No vendor API does this.',
   GetDataSets: 'Power Platform metadata about the connection itself, not a vendor resource.',

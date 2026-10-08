@@ -320,23 +320,32 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             # placeholders are replaced by the JSON ENCODING of each argument — which is why
             # they are written unquoted — so the result is valid JSON whatever the type.
             body_tpl = op.get("bodyTemplate")
-            if body_tpl:
+            forward_from = op.get("forwardBodyFrom")
+            if body_tpl or forward_from:
                 arg_values = {n: m.get("value") for n, m in fixed.items()}
                 for pn, a in unique_args:
                     v = kwargs.get(pn)
                     if v is not None:
                         arg_values[a["name"]] = v
+            if body_tpl:
                 body_val = _re.sub(
                     r"\{(\w+)\}",
                     lambda m: _json.dumps(arg_values.get(m.group(1))),
                     body_tpl,
                 )
+            elif forward_from:
+                # Content upload: the body is the file's BYTES, so it goes out exactly as
+                # given. JSON-encoding it here would upload the quoted, escaped text of the
+                # file rather than the file.
+                body_val = arg_values.get(forward_from)
 
             data = None
             if body_val is not None and method in ("POST", "PUT", "PATCH"):
                 payload = body_val if isinstance(body_val, str) else _json.dumps(body_val)
                 data = payload.encode("utf-8")
-                req_headers["Content-Type"] = "application/json"
+                req_headers["Content-Type"] = (
+                    op.get("contentType") or "application/octet-stream"
+                ) if forward_from else "application/json"
             req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
