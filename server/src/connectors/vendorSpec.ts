@@ -245,6 +245,12 @@ function flatten(api: string, doc: Record<string, unknown>): VendorApiSurface {
         url: `${base}/${path.replace(/^\//, '')}`,
         parameters: readVendorParams(m.parameters),
         hasBody: Boolean(m.request),
+        // The vendor states which OAuth scopes ITS method needs. For a mapped operation
+        // that is the authoritative requirement - the connector's own declared scope
+        // describes the API MICROSOFT calls, which is a different API whenever the mapping
+        // moves to a newer one (shared_googlesheet declares the retired GData feeds scope
+        // while the mapping targets Sheets v4).
+        scopes: Array.isArray(m.scopes) ? (m.scopes as unknown[]).map(String) : undefined,
       });
     }
     for (const sub of Object.values((node.resources ?? {}) as Record<string, Record<string, unknown>>)) {

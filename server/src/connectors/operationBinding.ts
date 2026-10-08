@@ -177,6 +177,9 @@ export interface VendorApiMethod {
   parameters?: VendorApiParameter[];
   /** Whether the vendor declares a request body. Same undefined-vs-false distinction. */
   hasBody?: boolean;
+  /** OAuth scopes the VENDOR says this method requires. The authoritative requirement for
+   *  a mapped operation, which may target a different API than the connector itself uses. */
+  scopes?: string[];
 }
 
 /**
