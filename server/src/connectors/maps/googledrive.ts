@@ -105,9 +105,12 @@ export const GOOGLE_DRIVE_MAP: OperationMapEntry[] = [
     vendorMethodId: 'drive.files.copy',
     parameters: [
       { to: 'fileId', in: 'path', template: '{source}' },
-      { to: 'parents', in: 'body', template: '{destination}' },
       ALL_DRIVES,
     ],
+    // Drive wants a parent ARRAY where the connector passes one destination. The
+    // placeholder is unquoted: it is replaced by the JSON encoding of the argument, so a
+    // destination of `abc` becomes `["abc"]` and not `[abc]`.
+    bodyTemplate: '{"parents": [{destination}]}',
   }], [
     'The connector\'s `overwrite` argument has no Drive equivalent — Drive always creates a new '
     + 'file, so a copy onto an existing name yields two files rather than replacing one.',

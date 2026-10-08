@@ -326,3 +326,40 @@ describe('operation map lookup', () => {
     expect(lookupMapEntry(map, 'shared_googledrive', 'DeleteFile')).toBeUndefined();
   });
 });
+
+describe('verifyMapEntry — body templates', () => {
+  const copy = (bodyTemplate: string): OperationMapEntry => ({
+    connectorId: 'shared_googledrive', operationId: 'CopyFile', api: 'drive', provenance: 'drafted',
+    steps: [{
+      vendorMethodId: 'drive.files.copy',
+      parameters: [{ to: 'fileId', in: 'path', template: '{id}' }],
+      bodyTemplate,
+    }],
+  });
+
+  it('accepts a template whose placeholders sit in value position', () => {
+    // Unquoted on purpose: the placeholder is replaced by the JSON ENCODING of the argument,
+    // so a string destination arrives as ["abc"] rather than [abc].
+    expect(verify(copy('{"parents": [{destination}]}')).status).toBe('verified');
+  });
+
+  it('rejects a template that is not valid JSON once filled', () => {
+    expect(kinds(verify(copy('{"parents": [{destination}]'))).includes('malformed-body-template')).toBe(true);
+  });
+
+  it('rejects a body placeholder that is not an argument of the operation', () => {
+    expect(kinds(verify(copy('{"parents": [{folderId}]}'))).includes('unknown-source-argument')).toBe(true);
+  });
+
+  it('rejects a body sent to a method that declares none', () => {
+    const noBody: OperationMapEntry = {
+      connectorId: 'shared_googledrive', operationId: 'GetFileMetadata', api: 'drive', provenance: 'drafted',
+      steps: [{
+        vendorMethodId: 'drive.files.get',
+        parameters: [{ to: 'fileId', in: 'path', template: '{id}' }],
+        bodyTemplate: '{"x": 1}',
+      }],
+    };
+    expect(kinds(verify(noBody)).includes('body-not-supported')).toBe(true);
+  });
+});

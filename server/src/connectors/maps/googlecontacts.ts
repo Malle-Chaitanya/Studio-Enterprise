@@ -48,6 +48,19 @@ const LIST_CONNECTIONS: MappedStep = {
   ],
 };
 
+/** The connector's body for the People-API create variants is already a Person document, so
+ *  it carries through whole. `{body}` unquoted: it is replaced by the JSON encoding of the
+ *  argument, which for an object is the object. */
+const CREATE_CONTACT: MappedStep = {
+  vendorMethodId: 'people.people.createContact',
+  parameters: [{ to: 'personFields', in: 'query', template: CONTACT_FIELDS }],
+  bodyTemplate: '{body}',
+};
+
+const NOTE_CREATE_SHAPE =
+  'The connector\'s body is forwarded as a People v1 Person. Any field the connector accepted '
+  + 'that People v1 does not declare is rejected by the vendor rather than silently dropped.';
+
 const LIST_GROUPS: MappedStep = {
   vendorMethodId: 'people.contactGroups.list',
   parameters: [{ to: 'groupFields', in: 'query', template: 'name,groupType,memberCount' }],
@@ -63,12 +76,16 @@ export const GOOGLE_CONTACTS_MAP: OperationMapEntry[] = [
   contacts('ListContacts', [LIST_CONNECTIONS], [NOTE_GDATA, NOTE_FIELD_MASK]),
   contacts('ListContactsV2', [LIST_CONNECTIONS], [NOTE_GDATA, NOTE_FIELD_MASK]),
   contacts('ListGroups', [LIST_GROUPS], [NOTE_GDATA]),
+
+  // Creates. V2 and V3 are already People API operations, so the connector's body is already
+  // a Person — it passes straight through. The GData CreateContact is NOT: its body is a
+  // GData entry, a different document entirely, and it stays unmapped below.
+  contacts('PeopleApiCreateContactV2', [CREATE_CONTACT], [NOTE_CREATE_SHAPE]),
+  contacts('PeopleApiCreateContactV3', [CREATE_CONTACT], [NOTE_CREATE_SHAPE]),
 ];
 
 export const GOOGLE_CONTACTS_UNMAPPABLE: Record<string, string> = {
   CreateContact: 'People v1 createContact takes a Person body whose shape differs entirely from GData\'s; needs body-template support.',
-  PeopleApiCreateContactV2: 'People v1 createContact takes a Person body; needs body-template support.',
-  PeopleApiCreateContactV3: 'People v1 createContact takes a Person body; needs body-template support.',
   OnContactUpdated: 'A Power Platform polling trigger. No vendor API serves it — the platform polls and raises the event itself.',
   PeopleApiOnContactUpdatedV2: 'A Power Platform polling trigger; no vendor equivalent.',
   PeopleApiOnContactUpdatedV3: 'A Power Platform polling trigger; no vendor equivalent.',

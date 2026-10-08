@@ -61,6 +61,8 @@ export interface BoundToolSpec {
   contextValues: Record<string, string>;
   auth: VendorAuth;
   aadResource?: string;
+  /** JSON body template from the operation map; see BoundOperation.bodyTemplate. */
+  bodyTemplate?: string;
 }
 
 export interface BoundToolBuild {
@@ -291,6 +293,7 @@ export async function buildBoundToolSpecs(
         index.operations[tool.operationId]?.summary ||
         `${index.displayName} ${tool.operationId}`,
       fixedArgs,
+      ...(op.bodyTemplate ? { bodyTemplate: op.bodyTemplate } : {}),
       modelArgs,
       contextRequired: op.contextRequired,
       contextValues: Object.fromEntries(

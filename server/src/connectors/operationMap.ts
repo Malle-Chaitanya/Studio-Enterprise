@@ -65,6 +65,20 @@ export interface MappedStep {
   vendorMethodId: string;
   parameters: MappedParameter[];
   /**
+   * The request body, as a JSON template.
+   *
+   * A placeholder is replaced by the JSON ENCODING of its argument, never by raw text, so
+   * it is written WITHOUT surrounding quotes and the encoding supplies them:
+   *
+   *     {"parents": [{destination}]}   with destination = "abc"  ->  {"parents": ["abc"]}
+   *     {"values": [{item}]}           with item an object       ->  {"values": [{...}]}
+   *
+   * A template rather than a field list because the reshaping is the point: Sheets takes a
+   * positional row where the connector takes an object keyed by column, and Drive's copy
+   * wants a parent ARRAY where the connector passes one destination. Neither is a rename.
+   */
+  bodyTemplate?: string;
+  /**
    * Values to lift out of this step's response for a later step, as `varName -> JSON path`.
    *
    * Multi-step exists because some Power Platform operations have no single vendor call
@@ -99,7 +113,8 @@ export interface MapProblem {
     | 'unknown-source-argument'
     | 'unknown-captured-variable'
     | 'enum-violation'
-    | 'body-not-supported';
+    | 'body-not-supported'
+    | 'malformed-body-template';
   detail: string;
 }
 
@@ -115,14 +130,14 @@ export type MapVerification =
 
 /** Every `{name}` / `{$name}` a template interpolates. */
 function placeholders(template: string): string[] {
-  return [...template.matchAll(/\{(\$?[^}]+)\}/g)].map((m) => m[1]);
+  return [...template.matchAll(/\{(\$?\w+)\}/g)].map((m) => m[1]);
 }
 
 /** A template with no placeholders is a constant, and a constant can be enum-checked.
  *  Built fresh rather than shared with the matcher above: `.test()` on a `/g` regex advances
  *  `lastIndex`, so a shared one answers differently every other call. */
 function literalValue(template: string): string | undefined {
-  return /\{\$?[^}]+\}/.test(template) ? undefined : template;
+  return /\{\$?\w+\}/.test(template) ? undefined : template;
 }
 
 function findMethod(surface: VendorApiSurface, id: string): VendorApiMethod | undefined {
@@ -277,6 +292,46 @@ export function verifyMapEntry(
         });
       }
     }
+    if (step.bodyTemplate !== undefined) {
+      if (!method.hasBody) {
+        problems.push({
+          step: i,
+          kind: 'body-not-supported',
+          detail: `'${step.vendorMethodId}' declares no request body, but the entry sends one`,
+        });
+      }
+      // A template that is not valid JSON once filled fails on every call, and the failure
+      // surfaces as the vendor rejecting the payload rather than as a bad entry. Checked
+      // here by substituting `null` for every placeholder, which is the shape-preserving
+      // stand-in: it occupies a value position exactly as the real encoding will.
+      try {
+        JSON.parse(step.bodyTemplate.replace(/\{\$?\w+\}/g, 'null'));
+      } catch (e) {
+        problems.push({
+          step: i,
+          kind: 'malformed-body-template',
+          detail: `body template is not valid JSON once filled: ${(e as Error).message}`,
+        });
+      }
+      for (const name of placeholders(step.bodyTemplate)) {
+        if (name.startsWith('$')) {
+          if (!captured.has(name.slice(1))) {
+            problems.push({
+              step: i,
+              kind: 'unknown-captured-variable',
+              detail: `body template interpolates '${name}', which no earlier step captures`,
+            });
+          }
+        } else if (!sourceArgs.has(name)) {
+          problems.push({
+            step: i,
+            kind: 'unknown-source-argument',
+            detail: `body template interpolates '{${name}}', which is not an argument of ${entry.operationId}`,
+          });
+        }
+      }
+    }
+
     for (const token of urlTokens) {
       if (!filledPath.has(token)) {
         problems.push({
@@ -300,8 +355,8 @@ export function verifyMapEntry(
  *  still has somewhere for the model's argument to land. */
 function encodePreservingPlaceholders(template: string): string {
   return template
-    .split(/(\{\$?[^}]+\})/)
-    .map((part) => (/^\{\$?[^}]+\}$/.test(part) ? part : encodeURIComponent(part)))
+    .split(/(\{\$?\w+\})/)
+    .map((part) => (/^\{\$?\w+\}$/.test(part) ? part : encodeURIComponent(part)))
     .join('');
 }
 
@@ -340,12 +395,6 @@ export function buildMappedOperation(
   const step = entry.steps[0];
   const method = surface.methods.find((m) => m.id === step.vendorMethodId);
   if (!method) return { status: 'invalid', reason: `${surface.api} publishes no '${step.vendorMethodId}'` };
-  if (step.parameters.some((p) => p.in === 'body')) {
-    return {
-      status: 'needs-runtime',
-      reason: `${entry.operationId} sends a request body whose shape differs from the connector's; needs body-template support`,
-    };
-  }
   const sourceOp = index.operations[entry.operationId];
   if (!sourceOp) return { status: 'invalid', reason: `connector does not declare ${entry.operationId}` };
 
@@ -357,9 +406,13 @@ export function buildMappedOperation(
   }
   const urlTemplate = query.length ? `${url}?${query.join('&')}` : url;
 
-  // Exactly the source arguments the templates interpolate — no more.
+  // Exactly the source arguments the templates interpolate — no more. The body template
+  // counts: its placeholders are arguments the model must still supply.
   const used = new Set(
-    step.parameters.flatMap((p) => placeholders(p.template)).filter((n) => !n.startsWith('$')),
+    [
+      ...step.parameters.flatMap((p) => placeholders(p.template)),
+      ...(step.bodyTemplate ? placeholders(step.bodyTemplate) : []),
+    ].filter((n) => !n.startsWith('$')),
   );
   const parameters: BoundParameter[] = sourceOp.parameters
     .filter((p) => used.has(p.name))
@@ -387,6 +440,7 @@ export function buildMappedOperation(
       contextRequired: [],
       provenance: 'vendor-map',
       vendorMethodId: step.vendorMethodId,
+      bodyTemplate: step.bodyTemplate,
     },
   };
 }

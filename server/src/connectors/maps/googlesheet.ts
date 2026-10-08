@@ -83,11 +83,10 @@ export const GOOGLE_SHEET_MAP: OperationMapEntry[] = [
       { to: 'spreadsheetId', in: 'path', template: '{dataset}' },
       { to: 'range', in: 'path', template: '{table}' },
       { to: 'valueInputOption', in: 'query', template: 'USER_ENTERED' },
-      // Sheets takes { values: [[...]] }; the connector takes an object keyed by column.
-      // Reshaping that needs the body template the runtime does not have yet, so this entry
-      // verifies but reports `needs-runtime` instead of binding.
-      { to: 'values', in: 'body', template: '{item}' },
     ],
+    // Sheets appends a LIST of rows, each row a list of cell values. The connector sends one
+    // row as an object keyed by column; `{item}` carries it through as the single row.
+    bodyTemplate: '{"values": [{item}]}',
   }], [
     'The connector posts an object keyed by column name; Sheets takes a positional row, so the '
     + "destination sheet's column order decides where values land.",

@@ -523,6 +523,12 @@ export interface BoundOperation {
   provenance: 'heuristic' | 'vendor-spec' | 'vendor-map';
   /** The vendor's own id for the confirmed method, when `provenance` is `vendor-spec`. */
   vendorMethodId?: string;
+  /**
+   * A JSON request body built by the mapping, placeholders replaced by the JSON ENCODING of
+   * each argument. Present only for a mapped operation whose body shape differs from the
+   * connector's — the container sends this instead of forwarding an argument verbatim.
+   */
+  bodyTemplate?: string;
 }
 
 export type BindingResult =

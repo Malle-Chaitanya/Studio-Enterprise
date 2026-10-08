@@ -295,7 +295,10 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             if missing:
                 return {"error": "missing required value(s) for " + ", ".join(missing)}
             if query:
-                url = url + "?" + urllib.parse.urlencode(query)
+                # A MAPPED operation's url_tpl already carries the query the mapping fixed
+                # (`...files/{id}?supportsAllDrives=true`), so a second "?" here would build
+                # a URL no server parses. Join on "&" once one is present.
+                url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(query)
 
             req_headers = {"Accept": "application/json"}
             req_headers.update(headers)
@@ -311,6 +314,24 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                 # served the application's view would answer one person's question with
                 # everybody's data, and nothing on screen would say so.
                 return {"error": str(e)}
+            # A MAPPED operation may build its body rather than forward an argument: Sheets
+            # appends a list of rows where the connector sends one object, Drive's copy wants
+            # a parent ARRAY where the connector passes one destination. The template's
+            # placeholders are replaced by the JSON ENCODING of each argument — which is why
+            # they are written unquoted — so the result is valid JSON whatever the type.
+            body_tpl = op.get("bodyTemplate")
+            if body_tpl:
+                arg_values = {n: m.get("value") for n, m in fixed.items()}
+                for pn, a in unique_args:
+                    v = kwargs.get(pn)
+                    if v is not None:
+                        arg_values[a["name"]] = v
+                body_val = _re.sub(
+                    r"\{(\w+)\}",
+                    lambda m: _json.dumps(arg_values.get(m.group(1))),
+                    body_tpl,
+                )
+
             data = None
             if body_val is not None and method in ("POST", "PUT", "PATCH"):
                 payload = body_val if isinstance(body_val, str) else _json.dumps(body_val)
