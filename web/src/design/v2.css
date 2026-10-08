@@ -1377,6 +1377,19 @@
   border-bottom: 1px solid var(--v2-edge);
 }
 .v2-dec:last-child { border-bottom: 0; }
+
+/* The agent a group of decisions belongs to, named once above its own rows.
+   Replaces repeating the name on every row across two separate lists, where an
+   agent needing both a surface choice and a Drive account appeared twice and the
+   customer had to reassemble the set themselves. */
+.v2-dec-grp:not(:last-child) { border-bottom: 1px solid var(--v2-edge); }
+.v2-dec-grp .v2-dec:last-child { border-bottom: 0; }
+/* The agent's own name reads as a heading, not as the muted summary line a
+   fold title is elsewhere on this screen. */
+.v2-dec-grp .v2-fold > .hd .tl { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+/* Indented under their agent so the grouping is visible without a box per agent. */
+.v2-dec-grp .v2-dec { padding-left: 28px; border-bottom: 0; }
+.v2-dec-grp .v2-fold .bd { padding: 0; }
 .v2-dec .nmw { min-width: 0; }
 .v2-dec .nm { display: block; font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
 .v2-dec .kind {

@@ -231,7 +231,16 @@ export default function ConnectorsV2() {
                   title={g.name}
                 >
                   <span className="cf-connector-tile-mark">
-                    <ConnectorMark connectorId={row.connectorId} name={g.name} emojiHint={row.req?.icon} />
+                    {/* A group of several connectors gets the GROUP's mark, not the
+                        first member's: one credential standing for Drive, Sheets,
+                        Tasks, Calendar and Contacts wearing Calendar's logo read as
+                        "Calendar is all we found". Single-connector groups are
+                        unchanged -- there the member IS the group. */}
+                    <ConnectorMark
+                      connectorId={g.rows.length > 1 ? g.id : row.connectorId}
+                      name={g.name}
+                      emojiHint={row.req?.icon}
+                    />
                   </span>
                   <span className="cf-connector-tile-nm">{shortName}</span>
                 </button>

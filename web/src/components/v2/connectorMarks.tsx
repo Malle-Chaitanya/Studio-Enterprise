@@ -259,12 +259,44 @@ const EMOJI_TINT: Record<string, string> = {
  *  a hand-approximated (but real-color) mark for the handful of enterprise
  *  brands it doesn't carry, otherwise a tinted initials tile so nothing ever
  *  renders blank. */
+/**
+ * Marks for a CREDENTIAL GROUP, not a connector.
+ *
+ * A group tile stands for every connector one credential unlocks, so wearing one
+ * member's logo misreads as "that is all we found". The Google group tile showed
+ * Calendar's official mark purely because Calendar sorted first and is the only
+ * Google connector in OFFICIAL_MARKS -- an agent with 10 Drive, 6 Sheets, 5 Tasks
+ * and 4 Calendar tools looked Calendar-only on this screen. Keyed by the registry
+ * group id (registry.ts CREDENTIAL_GROUPS), reusing primitives.tsx's CloudMark
+ * paths so the platform reads the same everywhere.
+ */
+const GROUP_MARKS: Record<string, () => ReactNode> = {
+  google_service_account: () => (
+    <svg viewBox="0 0 24 24" role="img" aria-label="Google">
+      <path d="M12 2.5 13.9 9 20.5 12 13.9 15 12 21.5 10.1 15 3.5 12 10.1 9Z" fill="#4285f4" />
+      <path d="M12 2.5 13.9 9 12 12Z" fill="#ea4335" />
+      <path d="M20.5 12 13.9 15 12 12Z" fill="#fbbc04" />
+      <path d="M12 21.5 10.1 15 12 12Z" fill="#34a853" />
+    </svg>
+  ),
+  ms_graph: () => (
+    <svg viewBox="0 0 24 24" role="img" aria-label="Microsoft">
+      <rect x="1" y="1" width="10" height="10" fill="#f25022" />
+      <rect x="13" y="1" width="10" height="10" fill="#7fba00" />
+      <rect x="1" y="13" width="10" height="10" fill="#00a4ef" />
+      <rect x="13" y="13" width="10" height="10" fill="#ffb900" />
+    </svg>
+  ),
+};
+
 export function ConnectorMark({ connectorId, name, emojiHint }: {
   connectorId: string;
   name: string;
   /** The registry's own `icon` field (an emoji) — used only to tint the fallback. */
   emojiHint?: string;
 }) {
+  const Group = GROUP_MARKS[connectorId];
+  if (Group) return <Group />;
   const official = OFFICIAL_MARKS[connectorId];
   if (official) {
     return (
