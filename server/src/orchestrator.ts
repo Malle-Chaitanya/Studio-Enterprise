@@ -929,12 +929,25 @@ async function execute(
   const durableConnectorRecords = [...bestByConnector.values()];
   if (destProject) {
     const strays = durableConnectorRecords.filter((c) => c.project && c.project !== destProject);
-    if (strays.length) {
+    const strayFrom = [...new Set(strays.map((c) => c.project))].join(', ');
+    // A DRY RUN HOLDS NO TOKEN. The service-account block above is itself behind
+    // `!plan.dryRun`, so `saToken` is still '' here — and this sync ran anyway, sending an
+    // empty bearer. Secret Manager answered
+    //   401 "Request is missing required authentication credential"
+    // once per connector, which reads as a broken Google grant and sent us looking at OAuth
+    // and IAM; both identities measured 200 against the target project. It was this.
+    // A dry run must also not WRITE a customer's credential into the deploy project at all —
+    // copying secrets is exactly the side effect "dry" excludes. Say what a real run would
+    // copy; copy nothing.
+    if (strays.length && plan.dryRun) {
       emitLog(
         'info',
-        `Bringing ${strays.length} connector credential(s) into ${destProject} from `
-        + `${[...new Set(strays.map((c) => c.project))].join(', ')}`,
+        `Would bring ${strays.length} connector credential(s) into ${destProject} from ${strayFrom} `
+        + '— dry run, nothing copied',
       );
+    }
+    if (strays.length && !plan.dryRun) {
+      emitLog('info', `Bringing ${strays.length} connector credential(s) into ${destProject} from ${strayFrom}`);
       // The SA's OWN identity for the source read. `saToken` impersonates the customer admin
       // (DWD), which is 403 on our project by design — see ensureSecretInProject.
       const ownSaToken = await getSaToken().catch(() => saToken);
@@ -1184,9 +1197,24 @@ async function execute(
       const ksAuto = ir.knowledgeSources.filter((k) => k.classification?.automatable).length;
       const ksTotal = ir.knowledgeSources.length;
       const ts = topicsPlan.summary;
+      // Tools were missing from this line entirely, which made a tools-only agent -- no
+      // instructions, no topics, 27 connector tools -- read as "nothing was captured".
+      // The per-connector split is what answers "did my Sheets tools come across?", so it
+      // belongs here and not only in the report nobody reads mid-run.
+      const agentTools = ir.agentTools ?? [];
+      const toolsByConnector = agentTools.reduce<Record<string, number>>((acc, t) => {
+        const id = (t.connectorId || t.kind || 'unknown').replace(/^shared_/, '');
+        acc[id] = (acc[id] ?? 0) + 1;
+        return acc;
+      }, {});
+      const toolSplit = Object.entries(toolsByConnector)
+        .sort((a, b) => b[1] - a[1])
+        .map(([id, n]) => `${id}:${n}`)
+        .join(' ');
       emitLog(
         ir.thinContent ? 'warn' : 'ok',
         `  staged: ${item.bot.name} · src-instr=${ir.instructions.length}ch · desc=${ir.description.length}ch · topics=${ir.topics.length}` +
+          (agentTools.length ? ` · tools=${agentTools.length} (${toolSplit})` : '') +
           (ts.capabilities ? ` · caps=${ts.capabilities} (${ts.byFidelity.full}✓/${ts.byFidelity.high}~/${ts.byFidelity.partial}!) review=${ts.needsReview} detTools=${ts.deterministicTools}` : '') +
           (ksTotal ? ` · knowledge=${ksAuto}/${ksTotal} auto` : '') +
           (ir.thinContent ? ' · ⚠ THIN (prebuilt/AI-Builder — needs manual authoring)' : ''),

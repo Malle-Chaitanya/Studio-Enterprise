@@ -2064,6 +2064,17 @@ export async function extractAgent(
       customTopics: customTopics.length,
       aiPromptsResolved: resolvedAiPrompts,
       ks: knowledgeSources.length,
+      // An agent can be ALL tools and nothing else -- no instructions, no topics -- and
+      // this line used to report that as zeros across the board, which reads as "nothing
+      // was extracted". Only `thinContent: false` hinted otherwise, and inferring tool
+      // count from a boolean is not a diagnostic. Counting them per connector is what
+      // answers "why does the UI show only <one connector>'s tools".
+      agentTools: agentTools.length,
+      toolsByConnector: agentTools.reduce<Record<string, number>>((acc, t) => {
+        const id = t.connectorId || t.kind || 'unknown';
+        acc[id] = (acc[id] ?? 0) + 1;
+        return acc;
+      }, {}),
       thinContent,
     },
     'extracted agent',
