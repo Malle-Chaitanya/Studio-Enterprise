@@ -32,6 +32,16 @@ const DRIVE: VendorApiSurface = {
       hasBody: false,
     },
     {
+      id: 'drive.files.export',
+      httpMethod: 'GET',
+      url: 'https://www.googleapis.com/drive/v3/files/{fileId}/export',
+      parameters: [
+        { name: 'fileId', in: 'path', required: true, type: 'string' },
+        { name: 'mimeType', in: 'query', required: true, type: 'string' },
+      ],
+      hasBody: false,
+    },
+    {
       id: 'drive.files.list',
       httpMethod: 'GET',
       url: 'https://www.googleapis.com/drive/v3/files',
@@ -471,5 +481,116 @@ describe('buildMappedOperation — multi-step', () => {
     expect(r.operation.urlTemplate).toBe(r.operation.steps![0].urlTemplate);
     // `{$fid}` must NOT become a tool argument — only what the model really supplies.
     expect(r.operation.parameters.map((p) => p.name)).toEqual(['id']);
+  });
+});
+
+/**
+ * A fallback is a SECOND mapping claim, so it is verified like the first.
+ *
+ * It exists for one shape of refusal: the vendor saying no because of what the resource IS,
+ * not because the request was wrong. Drive answers 403 to `alt=media` on a Google Doc, which
+ * has no bytes; `files.export` serves the same capability for exactly those files. Left
+ * unverified it would be the one part of an entry nobody checked, which is where a wrong
+ * mapping would go to hide.
+ */
+describe('verifyMapEntry — fallback', () => {
+  const content = (fallback: unknown): OperationMapEntry => ({
+    connectorId: 'shared_googledrive',
+    operationId: 'GetFileContent',
+    api: 'drive',
+    steps: [{
+      vendorMethodId: 'drive.files.get',
+      parameters: [
+        { to: 'fileId', in: 'path', template: '{id}' },
+        { to: 'alt', in: 'query', template: 'media' },
+      ],
+      ...(fallback ? { fallback } : {}),
+    } as never],
+    provenance: 'drafted',
+  });
+
+  it('accepts a fallback that fills the alternative call completely', () => {
+    const r = verify(content({
+      whenStatus: [403],
+      step: {
+        vendorMethodId: 'drive.files.export',
+        parameters: [
+          { to: 'fileId', in: 'path', template: '{id}' },
+          { to: 'mimeType', in: 'query', template: 'application/pdf' },
+        ],
+      },
+    }));
+    expect(r.status).toBe('verified');
+  });
+
+  it('rejects a fallback that leaves the vendor requiring something', () => {
+    // mimeType is required on export. Omitting it fails on every Workspace document, which
+    // is precisely when the fallback is the only thing running.
+    const r = verify(content({
+      whenStatus: [403],
+      step: {
+        vendorMethodId: 'drive.files.export',
+        parameters: [{ to: 'fileId', in: 'path', template: '{id}' }],
+      },
+    }));
+    expect(kinds(r)).toContain('missing-required-parameter');
+  });
+
+  it('rejects a fallback naming a method the vendor does not publish', () => {
+    const r = verify(content({
+      whenStatus: [403],
+      step: { vendorMethodId: 'drive.files.convert', parameters: [] },
+    }));
+    expect(kinds(r)).toContain('unknown-vendor-method');
+  });
+
+  it('rejects a fallback with no status to select it', () => {
+    const r = verify(content({
+      whenStatus: [],
+      step: {
+        vendorMethodId: 'drive.files.export',
+        parameters: [
+          { to: 'fileId', in: 'path', template: '{id}' },
+          { to: 'mimeType', in: 'query', template: 'application/pdf' },
+        ],
+      },
+    }));
+    expect(kinds(r)).toContain('invalid-fallback');
+  });
+
+  it('rejects a fallback that captures, since a later step cannot know which call ran', () => {
+    const r = verify(content({
+      whenStatus: [403],
+      step: {
+        vendorMethodId: 'drive.files.export',
+        parameters: [
+          { to: 'fileId', in: 'path', template: '{id}' },
+          { to: 'mimeType', in: 'query', template: 'application/pdf' },
+        ],
+        capture: { x: 'id' },
+      },
+    }));
+    expect(kinds(r)).toContain('invalid-fallback');
+  });
+
+  it('emits steps for a SINGLE call carrying a fallback, or it would be dropped', async () => {
+    const { buildMappedOperation } = await import('./operationMap.js');
+    const r = buildMappedOperation(content({
+      whenStatus: [403],
+      step: {
+        vendorMethodId: 'drive.files.export',
+        parameters: [
+          { to: 'fileId', in: 'path', template: '{id}' },
+          { to: 'mimeType', in: 'query', template: 'application/pdf' },
+        ],
+      },
+    }), DRIVE, index, 'google-oauth');
+    expect(r.status).toBe('bindable');
+    if (r.status !== 'bindable') return;
+    // One step, but `steps` must still be present: the mirrored single-call fields have
+    // nowhere to carry an alternative.
+    expect(r.operation.steps).toHaveLength(1);
+    expect(r.operation.steps![0].fallback?.whenStatus).toEqual([403]);
+    expect(r.operation.steps![0].fallback?.step.urlTemplate).toContain('/export');
   });
 });

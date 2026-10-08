@@ -384,7 +384,46 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             req = urllib.request.Request(url, data=data, headers=req_headers, method=m)
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
-                    raw = resp.read().decode("utf-8")
+                    payload_bytes = resp.read()
+                    try:
+                        raw = payload_bytes.decode("utf-8")
+                    except UnicodeDecodeError:
+                        # NOT TEXT. A file's bytes -- a PDF from export, an image, an
+                        # archive -- are a normal answer here, and this used to assume
+                        # otherwise: every binary download died with "utf-8 codec can't
+                        # decode byte", after a successful fetch. Decoding with
+                        # errors="replace" would be worse, handing back mojibake nothing
+                        # downstream could tell from real content.
+                        import base64 as _b64
+
+                        ctype = ""
+                        try:
+                            ctype = resp.headers.get("Content-Type", "") or ""
+                        except Exception:  # noqa: BLE001
+                            pass
+                        encoded = _b64.b64encode(payload_bytes).decode("ascii")
+                        if len(encoded) > RESULT_CHAR_BUDGET:
+                            # Truncating base64 yields a string that does not decode, so the
+                            # content is omitted and said to be omitted -- the one option
+                            # that cannot be mistaken for the file itself.
+                            return {
+                                "status": resp.status,
+                                "contentType": ctype,
+                                "bytes": len(payload_bytes),
+                                "note": (
+                                    "Binary content of " + str(len(payload_bytes))
+                                    + " bytes was returned and is too large to include. It is "
+                                    "OMITTED, not truncated: a partial base64 string would not "
+                                    "decode. Do not describe the contents."
+                                ),
+                            }
+                        return {
+                            "status": resp.status,
+                            "contentType": ctype,
+                            "bytes": len(payload_bytes),
+                            "encoding": "base64",
+                            "body": encoded,
+                        }
                     try:
                         parsed = _json.loads(raw)
                     except Exception:  # noqa: BLE001
@@ -397,7 +436,15 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                     detail = e.read().decode("utf-8")[:500]  # type: ignore[attr-defined]
                 except Exception:  # noqa: BLE001
                     detail = str(e)
-                return {"error": conn_name + " " + op_id + " failed: " + detail}
+                failure = {"error": conn_name + " " + op_id + " failed: " + detail}
+                # The status has to survive the failure: it is what selects a fallback, and
+                # without it the only alternative is retrying on ANY error -- which is how a
+                # narrow "this resource needs the other call" becomes a blanket retry that
+                # hides real faults.
+                code = getattr(e, "code", None)
+                if isinstance(code, int):
+                    failure["status"] = code
+                return failure
 
         def _dig(obj, path: str):
             """Read `files[0].id` out of a parsed response.
@@ -440,7 +487,15 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             for n, s in enumerate(steps):
                 result = _one_step(s, captured, kwargs)
                 if "error" in result:
-                    return {"error": "step " + str(n + 1) + " of " + str(len(steps)) + ": " + str(result["error"])}
+                    # A mapping may name ONE alternative call for a refusal that is about
+                    # what the resource is rather than about the request -- Drive answers
+                    # 403 for `alt=media` on a Google Doc, which has no bytes to return and
+                    # must be exported instead. Only the declared statuses select it.
+                    alt = s.get("fallback") or {}
+                    if alt.get("step") and result.get("status") in (alt.get("whenStatus") or []):
+                        result = _one_step(alt["step"], captured, kwargs)
+                    if "error" in result:
+                        return {"error": "step " + str(n + 1) + " of " + str(len(steps)) + ": " + str(result["error"])}
                 for var, path in (s.get("capture") or {}).items():
                     val = _dig(result.get("body"), path)
                     if val is None:

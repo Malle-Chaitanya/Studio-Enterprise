@@ -104,6 +104,30 @@ export interface MappedStep {
    * the operation, and the instruction here was to cover all of them.
    */
   capture?: Record<string, string>;
+  /**
+   * An alternative call for when this one is refused because of WHAT THE RESOURCE IS,
+   * rather than because the request was wrong.
+   *
+   * Drive is the case that forced it. `files.get?alt=media` returns the bytes of a file --
+   * unless the file is a Google Doc, Sheet or Slide, which have no bytes and must go
+   * through `files.export`. Neither call serves both, and no single mapping can choose
+   * between them: the file's type is not known until the vendor answers. Copilot's
+   * connector returned a converted file either way, so without this the migrated tool is
+   * strictly worse than the one it replaces for every Workspace document.
+   *
+   * This is deliberately NOT a general conditional. It is one alternative, chosen by the
+   * status the vendor returned, so the mapping stays a statement about two APIs rather
+   * than becoming a program. A fallback may not capture a value (it stands IN FOR a step,
+   * so a later step cannot depend on which of the two ran) and may not nest.
+   */
+  fallback?: StepFallback;
+}
+
+/** The alternative call and the statuses that select it. See `MappedStep.fallback`. */
+export interface StepFallback {
+  /** Vendor statuses that mean "try the other call", e.g. `[403]`. Never a blanket retry. */
+  whenStatus: number[];
+  step: MappedStep;
 }
 
 export interface OperationMapEntry {
@@ -133,6 +157,7 @@ export interface MapProblem {
     | 'body-not-supported'
     | 'malformed-body-template'
     | 'no-upload-host'
+    | 'invalid-fallback'
     | 'conflicting-body';
   detail: string;
 }
@@ -210,7 +235,32 @@ export function verifyMapEntry(
   // use what an EARLIER step captured — a forward reference is a bug, not a feature.
   const captured = new Set<string>();
 
+  // A fallback is verified exactly like the step it replaces, and BEFORE it: it runs
+  // INSTEAD of that step, so it may see what earlier steps captured but never what the step
+  // it stands in for would have.
+  const walk: Array<[number, MappedStep]> = [];
   for (const [i, step] of entry.steps.entries()) {
+    if (step.fallback) {
+      if (step.fallback.step.capture || step.fallback.step.fallback) {
+        problems.push({
+          step: i,
+          kind: 'invalid-fallback',
+          detail: 'a fallback may not capture a value or declare a fallback of its own',
+        });
+      }
+      if (!step.fallback.whenStatus.length) {
+        problems.push({
+          step: i,
+          kind: 'invalid-fallback',
+          detail: 'a fallback declares no status that selects it, so it could never run',
+        });
+      }
+      walk.push([i, step.fallback.step]);
+    }
+    walk.push([i, step]);
+  }
+
+  for (const [i, step] of walk) {
     const method = findMethod(surface, step.vendorMethodId);
     if (!method) {
       problems.push({
@@ -433,11 +483,13 @@ export function buildMappedOperation(
   const built: BoundStep[] = [];
   const used = new Set<string>();
 
-  for (const step of entry.steps) {
+  /** One step's HTTP shape, or a reason it has none. Shared so a fallback is built by the
+   *  same code as the step it replaces -- two builders would drift. */
+  const shape = (step: MappedStep): BoundStep | string => {
     const method = surface.methods.find((m) => m.id === step.vendorMethodId);
-    if (!method) return { status: 'invalid', reason: `${surface.api} publishes no '${step.vendorMethodId}'` };
+    if (!method) return `${surface.api} publishes no '${step.vendorMethodId}'`;
     if (step.useUploadUrl && !method.uploadUrl) {
-      return { status: 'invalid', reason: `'${step.vendorMethodId}' publishes no media-upload host` };
+      return `'${step.vendorMethodId}' publishes no media-upload host`;
     }
     let url = step.useUploadUrl ? method.uploadUrl! : method.url;
     const query: string[] = [];
@@ -445,24 +497,39 @@ export function buildMappedOperation(
       if (p.in === 'path') url = url.replace(`{${p.to}}`, encodePreservingPlaceholders(p.template));
       else query.push(`${encodeURIComponent(p.to)}=${encodePreservingPlaceholders(p.template)}`);
     }
-    built.push({
+    return {
       method: method.httpMethod,
       urlTemplate: query.length ? `${url}?${query.join('&')}` : url,
       bodyTemplate: step.bodyTemplate,
       forwardBodyFrom: step.forwardBodyFrom,
       contentType: step.contentType,
       capture: step.capture,
-    });
+    };
+  };
 
-    // Exactly the source arguments the templates interpolate — no more. `{$var}` names a
-    // value an earlier step captured, not something the model supplies, so it is excluded.
-    for (const n of [
-      ...step.parameters.flatMap((p) => placeholders(p.template)),
-      ...(step.bodyTemplate ? placeholders(step.bodyTemplate) : []),
-      // A forwarded body is an argument the model still supplies, even though no template
-      // mentions it — without this the upload tool would take no content.
-      ...(step.forwardBodyFrom ? [step.forwardBodyFrom] : []),
-    ]) {
+  /** Exactly the source arguments a step's templates interpolate — no more. `{$var}` names a
+   *  value an earlier step captured, not something the model supplies, so it is excluded. */
+  const argsOf = (step: MappedStep): string[] => [
+    ...step.parameters.flatMap((p) => placeholders(p.template)),
+    ...(step.bodyTemplate ? placeholders(step.bodyTemplate) : []),
+    // A forwarded body is an argument the model still supplies, even though no template
+    // mentions it — without this the upload tool would take no content.
+    ...(step.forwardBodyFrom ? [step.forwardBodyFrom] : []),
+  ];
+
+  for (const step of entry.steps) {
+    const shaped = shape(step);
+    if (typeof shaped === 'string') return { status: 'invalid', reason: shaped };
+    if (step.fallback) {
+      const alt = shape(step.fallback.step);
+      if (typeof alt === 'string') return { status: 'invalid', reason: `fallback: ${alt}` };
+      shaped.fallback = { whenStatus: step.fallback.whenStatus, step: alt };
+    }
+    built.push(shaped);
+
+    // The fallback's own templates count too: whichever call runs, the model must have been
+    // given every argument it interpolates.
+    for (const n of [...argsOf(step), ...(step.fallback ? argsOf(step.fallback.step) : [])]) {
       if (!n.startsWith('$')) used.add(n);
     }
   }
@@ -498,7 +565,10 @@ export function buildMappedOperation(
       bodyTemplate: built[0].bodyTemplate,
       forwardBodyFrom: built[0].forwardBodyFrom,
       contentType: built[0].contentType,
-      ...(built.length > 1 ? { steps: built } : {}),
+      // `steps` is also emitted for a SINGLE call that carries a fallback: the mirrored
+      // single-call fields have nowhere to put an alternative, so omitting it would drop
+      // the fallback silently and the operation would simply fail the way it used to.
+      ...(built.length > 1 || built.some((b) => b.fallback) ? { steps: built } : {}),
     },
   };
 }

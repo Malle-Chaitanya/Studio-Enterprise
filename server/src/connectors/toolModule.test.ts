@@ -60,7 +60,10 @@ describe('tool-module detection tracks the Python dispatch', () => {
     // The premise of the whole module. If a dedicated module starts reading boundOperations,
     // this file's assumption is wrong and the filter must be revisited rather than trusted.
     const dir = resolve('scripts/connector_tools');
-    for (const f of readdirSync(dir).filter((x) => x.endsWith('.py'))) {
+    // Tests are not dispatch targets: `adk_deploy.py` never routes a connector to a
+    // `test_*.py`, so one naming `boundOperations` to exercise the executor says nothing
+    // about the dispatch premise this guard protects.
+    for (const f of readdirSync(dir).filter((x) => x.endsWith('.py') && !x.startsWith('test_'))) {
       const src = readFileSync(resolve(dir, f), 'utf8');
       if (f === 'generic_rest.py') {
         expect(src, 'generic_rest.py no longer reads boundOperations').toContain('boundOperations');

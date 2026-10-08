@@ -506,6 +506,11 @@ export interface BoundStep {
   contentType?: string;
   /** `varName` -> dotted path into this step's JSON response, e.g. `files[0].id`. */
   capture?: Record<string, string>;
+  /**
+   * An alternative call for when this one is refused for a reason about the RESOURCE, not
+   * the request — Drive's `alt=media` on a Google Doc. See `MappedStep.fallback`.
+   */
+  fallback?: { whenStatus: number[]; step: BoundStep };
 }
 
 export interface BoundOperation {

@@ -52,6 +52,10 @@ const NOTE_PATH_LOOKUP =
   'Drive v3 has no path lookup. Resolved by searching the file NAME, so a path like /A/report.docx '
   + 'matches report.docx in any folder. Where names repeat, the first match wins and may not be the '
   + 'file Copilot returned.';
+const NOTE_EXPORT_FALLBACK =
+  'A Google Doc, Sheet or Slide has no bytes to download, so it is EXPORTED as PDF instead. '
+  + 'The connector returned its own converted format; a caller that expected the original file '
+  + 'type gets a PDF. Ordinary files are unaffected and come back byte for byte.';
 const NOTE_PAGINATION =
   'Drive pages at 100 items by default where the connector returned the full set; callers must follow nextPageToken.';
 
@@ -90,11 +94,21 @@ export const GOOGLE_DRIVE_MAP: OperationMapEntry[] = [
       { to: 'alt', in: 'query', template: 'media' },
       ALL_DRIVES,
     ],
+      fallback: {
+        whenStatus: [403],
+        step: {
+          vendorMethodId: 'drive.files.export',
+          parameters: [
+            { to: 'fileId', in: 'path', template: '{id}' },
+            // PDF is the one format every Workspace type exports to; picking per source type
+            // would need a branch, and the file's type is not known until Drive answers.
+            { to: 'mimeType', in: 'query', template: 'application/pdf' },
+          ],
+        },
+      },
   }], [
     NOTE_SHARED_DRIVES,
-    'Google Workspace documents (Docs/Sheets/Slides) cannot be downloaded with alt=media and need '
-    + 'drive.files.export with a target mimeType; this entry returns an error for them where the '
-    + 'connector returned a converted file.',
+    NOTE_EXPORT_FALLBACK,
   ])),
 
   ...withLegacyAlias(entry('DeleteFile', [{
@@ -227,8 +241,20 @@ export const GOOGLE_DRIVE_MAP: OperationMapEntry[] = [
         { to: 'alt', in: 'query', template: 'media' },
         ALL_DRIVES,
       ],
+      fallback: {
+        whenStatus: [403],
+        step: {
+          vendorMethodId: 'drive.files.export',
+          parameters: [
+            { to: 'fileId', in: 'path', template: '{$fid}' },
+            // PDF is the one format every Workspace type exports to; picking per source type
+            // would need a branch, and the file's type is not known until Drive answers.
+            { to: 'mimeType', in: 'query', template: 'application/pdf' },
+          ],
+        },
+      },
     },
-  ], [NOTE_PATH_LOOKUP])),
+  ], [NOTE_PATH_LOOKUP, NOTE_EXPORT_FALLBACK])),
 
   // A folder is an ordinary file carrying Drive's folder mime type, so this is the path
   // recipe above plus one create. It stopped being unmappable the moment that recipe
