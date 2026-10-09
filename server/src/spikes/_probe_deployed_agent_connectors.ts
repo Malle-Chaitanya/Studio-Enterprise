@@ -14,7 +14,30 @@ import { chatWithAdkAgent, createAdkSession } from '../services/adkAgentChat.js'
 import { connectMongo } from '../db/mongo.js';
 
 const PROJECT = process.env.CSGE_PROJECT ?? 'agentmigrations';
-const ENGINE = process.env.CSGE_ENGINE ?? '4985854498283978752';
+const LOCATION = process.env.CSGE_LOCATION ?? 'us-central1';
+const AGENT = process.env.CSGE_AGENT ?? 'Google Connectors';
+
+// DISCOVER the engine; never hardcode one. A hardcoded id made this probe report on a
+// 2-hour-old engine built from code that predated the fix under test, which reads as "the
+// fix did not work" when nothing had been redeployed yet. The create time is printed with
+// the id for the same reason: a verdict about deployed code is meaningless without knowing
+// WHICH build answered.
+async function newestEngine(token: string): Promise<{ id: string; created: string }> {
+  const pinned = process.env.CSGE_ENGINE;
+  if (pinned) return { id: pinned, created: '(pinned via CSGE_ENGINE)' };
+  const res = await fetch(
+    `https://${LOCATION}-aiplatform.googleapis.com/v1beta1/projects/${PROJECT}/locations/${LOCATION}/reasoningEngines?pageSize=100`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const j = (await res.json()) as {
+    reasoningEngines?: { name: string; displayName?: string; createTime?: string }[];
+  };
+  const mine = (j.reasoningEngines ?? [])
+    .filter((e) => (e.displayName ?? '') === AGENT)
+    .sort((a, b) => ((a.createTime ?? '') < (b.createTime ?? '') ? 1 : -1));
+  if (!mine.length) throw new Error(`no reasoning engine named "${AGENT}" in ${PROJECT}`);
+  return { id: mine[0].name.split('/').pop()!, created: mine[0].createTime ?? '(unknown)' };
+}
 const USER = process.env.CSGE_USER ?? 'admin@migrationn.com';
 
 // A SHEET THE CALLER CAN ACTUALLY OPEN, discovered via Drive rather than hardcoded.
@@ -63,7 +86,8 @@ const TESTS: Array<{ connector: string; path: string; q: string }> = [
 ];
 
 const saToken = await getSaToken();
-console.log(`engine ${ENGINE}  project ${PROJECT}  as ${USER}\n`);
+const { id: ENGINE, created } = await newestEngine(saToken);
+console.log(`engine ${ENGINE}  built ${created}  project ${PROJECT}  as ${USER}\n`);
 const sessionId = await createAdkSession(PROJECT, saToken, ENGINE, USER);
 console.log(sessionId ? `session ${sessionId}\n` : 'no session — running sessionless\n');
 

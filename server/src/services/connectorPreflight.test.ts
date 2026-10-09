@@ -3,6 +3,24 @@ import { readFileSync } from 'node:fs';
 import { reasoningEngineServiceAgent, preflightConnectors } from './connectorPreflight.js';
 import { REGISTRY_BY_ID } from '../connectors/registry.js';
 
+const { authorize, jwtArgs } = vi.hoisted(() => ({
+  authorize: vi.fn(),
+  jwtArgs: [] as { subject?: string; scopes?: string[] }[],
+}));
+vi.mock('google-auth-library', () => ({
+  JWT: class {
+    opts: { subject?: string; scopes?: string[] };
+    constructor(opts: { subject?: string; scopes?: string[] }) {
+      this.opts = opts;
+      jwtArgs.push(opts);
+    }
+    authorize() {
+      return authorize(this.opts);
+    }
+  },
+}));
+
+
 /**
  * The property these lock is the one the product depends on: this gate must work for a
  * connector NOBODY HAS WRITTEN YET. A per-connector branch here would mean every new
@@ -202,5 +220,111 @@ describe('every registered connector is checkable by this gate', () => {
         `${def.id} wants credentials but declares no field and no group`,
       ).toBe(true);
     }
+  });
+});
+
+/**
+ * Google answers `unauthorized_client` for TWO different problems — this one scope was
+ * never added, and this client id has no delegation in that domain at all. Measured
+ * 2026-10-09: the same service-account key and the same ten scopes read ungranted for one
+ * address and granted for another. Reporting the second as the first sends a customer to
+ * add scopes that are already there, while the real cause (wrong person, or no delegation
+ * entry) goes unnamed — and blocks a migration that would have worked.
+ */
+describe('a DWD failure names the cause it can actually prove', () => {
+  const SA_KEY = JSON.stringify({
+    client_email: 'connectors@example.iam.gserviceaccount.com',
+    private_key: 'PRIVATE',
+    client_id: '116522083449752032780',
+  });
+
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    fetchMock.mockReset();
+    authorize.mockReset();
+    jwtArgs.length = 0;
+    vi.stubGlobal('fetch', fetchMock);
+    // Project-wide secret access granted; every secret read returns its own value so the
+    // assertions do not depend on the order fields happen to be iterated in.
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes(':getIamPolicy')) {
+        return {
+          ok: true,
+          json: async () => ({
+            bindings: [
+              {
+                role: 'roles/secretmanager.secretAccessor',
+                members: ['serviceAccount:service-1@gcp-sa-aiplatform-re.iam.gserviceaccount.com'],
+              },
+            ],
+          }),
+          text: async () => '',
+        };
+      }
+      const value = String(url).includes('sa-key') ? SA_KEY : 'owner@customer.com';
+      return {
+        ok: true,
+        json: async () => ({ payload: { data: Buffer.from(value).toString('base64') } }),
+        text: async () => '',
+      };
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const googleTargets = [
+    {
+      connectorId: 'shared_googlesheet',
+      name: 'Google Sheets',
+      secretIds: { service_account_json: 'sa-key-1', impersonate_email: 'subj-1' },
+    },
+    {
+      connectorId: 'shared_googletasks',
+      name: 'Google Tasks',
+      secretIds: { service_account_json: 'sa-key-2', impersonate_email: 'subj-2' },
+    },
+  ];
+
+  it('blames the delegation when NO scope mints for that person', async () => {
+    authorize.mockRejectedValue(new Error('unauthorized_client: Client is unauthorized'));
+    const out = await preflightConnectors('tok', 'proj', '1', googleTargets, 'admin@connected.com');
+    expect(out).toHaveLength(2);
+    for (const r of out) {
+      expect(r.ok).toBe(false);
+      expect(r.blocker).toBe('dwd_not_authorized');
+      // It must NOT tell them to add a scope string — nothing here proves one is missing.
+      expect(r.detail).not.toContain('EXACT scope string');
+    }
+  });
+
+  it('blames the one scope when another scope mints for the same person', async () => {
+    authorize.mockImplementation(async (opts: { scopes?: string[] }) => {
+      if (opts.scopes?.[0]?.endsWith('/tasks')) return { access_token: 't' };
+      throw new Error('unauthorized_client: Client is unauthorized');
+    });
+    const out = await preflightConnectors('tok', 'proj', '1', googleTargets, 'admin@connected.com');
+    const sheets = out.find((r) => r.connectorId === 'shared_googlesheet')!;
+    const tasks = out.find((r) => r.connectorId === 'shared_googletasks')!;
+    expect(tasks.ok).toBe(true);
+    expect(sheets.ok).toBe(false);
+    expect(sheets.blocker).toBe('dwd_scope_not_granted');
+    expect(sheets.detail).toContain('auth/spreadsheets');
+    expect(sheets.detail).toContain('116522083449752032780');
+  });
+
+  it('impersonates the identity stored with the connector, not the connected admin', async () => {
+    // The deployed tool mints for the stored person. A DWD grant is per-domain, so probing
+    // the signed-in admin instead reports every scope of a working grant as missing.
+    authorize.mockResolvedValue({ access_token: 't' });
+    await preflightConnectors('tok', 'proj', '1', googleTargets, 'admin@connected.com');
+    expect(jwtArgs.length).toBeGreaterThan(0);
+    for (const a of jwtArgs) expect(a.subject).toBe('owner@customer.com');
+  });
+
+  it('falls back to the connected admin when the connector stores no identity', async () => {
+    authorize.mockResolvedValue({ access_token: 't' });
+    await preflightConnectors('tok', 'proj', '1', [
+      { connectorId: 'shared_googlesheet', name: 'Google Sheets', secretIds: { service_account_json: 'sa-key-1' } },
+    ], 'admin@connected.com');
+    expect(jwtArgs.map((a) => a.subject)).toContain('admin@connected.com');
   });
 });

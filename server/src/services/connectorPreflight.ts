@@ -41,6 +41,9 @@ export type PreflightBlocker =
   /** The service account key is fine, but the domain has not authorized its client id
    *  for the scope this connector declares. */
   | 'dwd_scope_not_granted'
+  /** The client id could not impersonate this person for ANY scope, so the delegation
+   *  itself -- or the person -- is wrong, not one scope string. */
+  | 'dwd_not_authorized'
   /** We could not READ the IAM policy, so we cannot say whether the grant is there. */
   | 'grant_unverifiable';
 
@@ -206,6 +209,17 @@ export async function preflightConnectors(
   logger.info({ project, projectNumber, member, projectWide: projectWideState }, 'preflight: secret-grant scope');
 
   const results: ConnectorPreflight[] = [];
+  /** Has this (client id, subject) pair minted ANY scope at all? Proof the grant exists. */
+  const grantReachable = new Map<string, boolean>();
+  /** Scope failures whose cause is only decidable once every connector has been tried. */
+  const deferredScopeFailures: {
+    base: { connectorId: string; name: string; secretIds: string[] };
+    name: string;
+    declaredScope: string;
+    clientId?: string;
+    subject: string;
+    probeKey: string;
+  }[] = [];
   for (const target of targets) {
     const secretIds = Object.values(target.secretIds ?? {});
     const base = { connectorId: target.connectorId, name: target.name, secretIds };
@@ -282,27 +296,36 @@ export async function preflightConnectors(
     // authorized for its declared scope cannot authenticate at all, so a provider-side
     // credential probe would report a confusing second-order failure for it.
     //
-    // Only runs when all three inputs exist. `subject` is the connected admin, which is
-    // who a migration impersonates; an invoker connector resolves a different person per
-    // call, but the GRANT is domain-wide, so proving it for one real user proves it.
+    // The subject is the identity stored WITH the connector, not the connected admin. The
+    // tool mints its token for that person, and a DWD grant is per-DOMAIN: probing an admin
+    // who signed in from a different domain reports EVERY scope as missing. Measured
+    // 2026-10-09 -- the same key and the same ten scopes read ungranted for one address and
+    // granted for another. The connected admin is only the fallback.
     const declaredScope = REGISTRY_BY_ID.get(target.connectorId)?.scope;
     const saJson = values.service_account_json;
-    if (saJson && declaredScope && subject) {
-      const grant = await dwdScopeGranted(saJson, declaredScope, subject);
-      if (grant && !grant.ok) {
-        results.push({
-          ...base,
-          ok: false,
-          blocker: 'dwd_scope_not_granted',
-          detail:
-            `${target.name} declares ${declaredScope}, but this service account is not ` +
-            'authorized for it in your Google Workspace, so every call would fail to ' +
-            'authenticate. Add that EXACT scope string for client id ' +
-            `${grant.clientId ?? '(see the service account key)'} under Admin console -> ` +
-            'Security -> API controls -> Domain-wide delegation. Scope strings are matched ' +
-            'exactly, so a broader scope you already granted does not cover this one.',
-        });
-        continue;
+    const dwdSubject = values.impersonate_email?.trim() || subject;
+    if (saJson && declaredScope && dwdSubject) {
+      const grant = await dwdScopeGranted(saJson, declaredScope, dwdSubject);
+      if (grant) {
+        // Google answers `unauthorized_client` for two different problems: this one scope
+        // was never added, and this client id has no delegation in that domain at all. One
+        // mint cannot tell them apart, so the verdict waits until the run has tried every
+        // connector -- a scope that DID mint for the same (client id, subject) pair is the
+        // proof that the delegation itself works and the failure really is per-scope.
+        const probeKey = `${grant.clientId ?? ''}|${dwdSubject}`;
+        if (grant.ok) {
+          grantReachable.set(probeKey, true);
+        } else {
+          deferredScopeFailures.push({
+            base,
+            name: target.name,
+            declaredScope,
+            clientId: grant.clientId,
+            subject: dwdSubject,
+            probeKey,
+          });
+          continue;
+        }
       }
     }
 
@@ -322,6 +345,40 @@ export async function preflightConnectors(
     // `unverified` and `unreachable` pass. We could not test it, which is not the same as it
     // being broken, and blocking on our own missing coverage would be the worse error.
     results.push({ ...base, ok: true, validation: validation.code });
+  }
+
+  for (const f of deferredScopeFailures) {
+    const delegationWorks = grantReachable.get(f.probeKey) === true;
+    const clientId = f.clientId ?? '(see the service account key)';
+    results.push(
+      delegationWorks
+        ? {
+            ...f.base,
+            ok: false,
+            blocker: 'dwd_scope_not_granted',
+            detail:
+              `${f.name} declares ${f.declaredScope}, but this service account is not ` +
+              'authorized for it in your Google Workspace, so every call would fail to ' +
+              `authenticate. Other scopes DO work for ${f.subject}, so the delegation ` +
+              `itself is fine -- add that EXACT scope string for client id ${clientId} ` +
+              'under Admin console -> Security -> API controls -> Domain-wide delegation. ' +
+              'Scope strings are matched exactly, so a broader scope you already granted ' +
+              'does not cover this one.',
+          }
+        : {
+            ...f.base,
+            ok: false,
+            blocker: 'dwd_not_authorized',
+            detail:
+              `${f.name} could not authenticate as ${f.subject}: client id ${clientId} ` +
+              'minted no scope at all for that address, so this is the delegation or the ' +
+              'address, not one missing scope. Either that user is not in the Workspace ' +
+              'where the delegation was authorized (a grant is per-domain), or client id ' +
+              `${clientId} has no Domain-wide delegation entry there yet. Check Admin ` +
+              `console -> Security -> API controls -> Domain-wide delegation, signed in to ` +
+              `${f.subject.split('@')[1] ?? 'that domain'}.`,
+          },
+    );
   }
 
   const blocked = results.filter((r) => !r.ok);
