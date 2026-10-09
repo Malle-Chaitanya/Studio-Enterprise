@@ -634,6 +634,26 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             # systemusers lookup must run against the SAME environment as the call.
             api_root = url.split("/api/data/")[0] + "/api/data/v9.2"
             return _impersonation_headers(api_root, auth)
+        if kind_ == "google-dwd-subject":
+            # NOTHING TO SEND, and that is not the same as "no impersonation".
+            #
+            # Google names the person at TOKEN MINT time -- adk_deploy.py's _mint_token
+            # calls creds.with_subject(caller) -- so by the time a request is built the
+            # identity is already inside the bearer token and there is no act-as header to
+            # add. The registry declares `header: ''` for exactly this reason
+            # (src/connectors/google.ts).
+            #
+            # Falling through to the raise below cost the ENTIRE generic path for Google.
+            # Sheets and Tasks are the only two Google connectors that reach this module --
+            # every other one is intercepted in adk_deploy.py and mints its own token -- so
+            # a deployed agent answered "this connector has no way to act as another person
+            # (google-dwd-subject)" on every Sheets and Tasks call, while Drive, Calendar
+            # and Contacts worked. Confirmed live 2026-10-08 against a deployed agent.
+            #
+            # Still fails CLOSED: _mint_token refuses to mint at all when the caller is
+            # unknown, so returning {} here can never produce an app-identity request --
+            # the enforcement point is the token, which is where Google put it.
+            return {}
         raise RuntimeError(
             (conn.get("name") or "this tool")
             + ": ran under each user's own credentials in Copilot Studio, but this connector"
