@@ -11,13 +11,51 @@
 import 'dotenv/config';
 import { getSaToken } from '../auth/google.js';
 import { chatWithAdkAgent, createAdkSession } from '../services/adkAgentChat.js';
+import { connectMongo } from '../db/mongo.js';
 
 const PROJECT = process.env.CSGE_PROJECT ?? 'agentmigrations';
 const ENGINE = process.env.CSGE_ENGINE ?? '4985854498283978752';
 const USER = process.env.CSGE_USER ?? 'admin@migrationn.com';
 
+// A SHEET THE CALLER CAN ACTUALLY OPEN, discovered via Drive rather than hardcoded.
+//
+// The first version of this asked "list the spreadsheets you can see", which no Sheets
+// operation can answer -- listing files is Drive's job, and the six Sheets ops
+// (GetTables, GetItems, GetItem, PostItem, PatchItem, DeleteItem) all require a
+// spreadsheet id. The model correctly declined to call anything and the probe recorded
+// "NO TOOL CALLED", which reads as a broken tool and was a broken question.
+const CONTACTS_SCOPE = 'https://www.googleapis.com/auth/drive';
+async function findSpreadsheet(): Promise<{ id: string; name: string } | null> {
+  const { JWT } = await import('google-auth-library');
+  const { getDb } = await import('../db/core.js');
+  const { getEntraSecret } = await import('../services/secretManager.js');
+  const row: any = await getDb().collection('connectorCredentials').findOne({ connectorId: 'shared_googlecalendar' });
+  if (!row?.secretIds?.service_account_json) return null;
+  const got = await getEntraSecret(await getSaToken(), `projects/${row.project}/secrets/${row.secretIds.service_account_json}/versions/latest`, { optional: true });
+  if (!got.ok || !got.plaintext) return null;
+  const key = JSON.parse(got.plaintext);
+  const c = new JWT({ email: key.client_email, key: key.private_key, scopes: [CONTACTS_SCOPE], subject: USER });
+  const { access_token: t } = await c.authorize();
+  const r = await fetch(
+    "https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application%2Fvnd.google-apps.spreadsheet'&pageSize=1&fields=files(id,name)",
+    { headers: { Authorization: `Bearer ${t}` } },
+  );
+  const j: any = await r.json();
+  const f = (j.files ?? [])[0];
+  return f ? { id: f.id, name: f.name } : null;
+}
+// The credential lookup reads Mongo, so connect before using it.
+await connectMongo();
+const sheet = await findSpreadsheet();
+console.log(sheet
+  ? 'sheet under test: ' + sheet.name + ' (' + sheet.id + ')'
+  : 'no spreadsheet reachable - the Sheets row will be inconclusive');
+console.log('');
+
 const TESTS: Array<{ connector: string; path: string; q: string }> = [
-  { connector: 'Google Sheets',   path: 'MAP', q: 'What Google Sheets tools do you have? Use one to list what you can reach.' },
+  { connector: 'Google Sheets',   path: 'MAP', q: sheet
+      ? `In the Google Sheet with id ${sheet.id}, list the worksheets/tabs it contains.`
+      : 'What Google Sheets tools do you have?' },
   { connector: 'Google Tasks',    path: 'MAP', q: 'Show me my task lists.' },
   { connector: 'Google Drive',    path: 'built', q: 'List the files in my Google Drive.' },
   { connector: 'Google Calendar', path: 'built', q: 'What calendars do I have?' },

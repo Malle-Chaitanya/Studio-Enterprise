@@ -1,6 +1,7 @@
 import { logger } from '../logger.js';
 import { validateConnectorCredentials, type ConnectorValidationCode } from './connectorValidator.js';
 import { getEntraSecret } from './secretManager.js';
+import { REGISTRY_BY_ID } from '../connectors/registry.js';
 
 /**
  * Will the DEPLOYED agent actually be able to use its connectors?
@@ -37,6 +38,9 @@ export type PreflightBlocker =
   | 'secret_unreadable'
   | 'engine_cannot_read_secret'
   | 'credentials_rejected'
+  /** The service account key is fine, but the domain has not authorized its client id
+   *  for the scope this connector declares. */
+  | 'dwd_scope_not_granted'
   /** We could not READ the IAM policy, so we cannot say whether the grant is there. */
   | 'grant_unverifiable';
 
@@ -129,6 +133,51 @@ export interface PreflightTarget {
 }
 
 /**
+ * Can this service account actually be this person, for this scope?
+ *
+ * The rest of the preflight proves the credential EXISTS and is READABLE. Neither says
+ * the customer's Workspace admin authorized its client id for the scope the connector
+ * declares -- and domain-wide delegation matches scope strings EXACTLY, so a granted
+ * `auth/drive` does nothing for a connector declaring `auth/spreadsheets`.
+ *
+ * Without this the gap is invisible until someone asks the agent a question: the engine
+ * is already built, the tool is wired, and the only symptom is the model apologising.
+ * Found live 2026-10-09 -- Google Sheets deployed cleanly, reported 5/5 passed, and every
+ * call failed with `unauthorized_client` because `auth/spreadsheets` was never granted
+ * while `auth/drive`, `auth/calendar`, `auth/contacts` and `auth/tasks` all were.
+ *
+ * Returns undefined when the question does not apply (not a Google key, no declared
+ * scope, no subject to impersonate) -- an unanswerable check must not become a failure.
+ */
+async function dwdScopeGranted(
+  serviceAccountJson: string,
+  scope: string,
+  subject: string,
+): Promise<{ ok: boolean; clientId?: string; detail?: string } | undefined> {
+  let key: { client_email?: string; private_key?: string; client_id?: string };
+  try {
+    key = JSON.parse(serviceAccountJson) as typeof key;
+  } catch {
+    return undefined; // not a service-account key; another check owns that
+  }
+  if (!key.client_email || !key.private_key) return undefined;
+  try {
+    const { JWT } = await import('google-auth-library');
+    const c = new JWT({ email: key.client_email, key: key.private_key, scopes: [scope], subject });
+    const { access_token: token } = await c.authorize();
+    return token ? { ok: true, clientId: key.client_id } : { ok: false, clientId: key.client_id };
+  } catch (e) {
+    const m = String((e as Error).message).split(String.fromCharCode(10))[0];
+    // Three outcomes, not two. `invalid_grant` means the SUBJECT cannot be resolved at
+    // all -- a wrong address or a domain with no Workspace -- which is a different fix
+    // from a missing scope, and reporting both as "scope missing" sends people to the
+    // wrong console page.
+    if (/invalid_grant/i.test(m)) return undefined;
+    return { ok: false, clientId: key.client_id, detail: m.slice(0, 160) };
+  }
+}
+
+/**
  * Run the full check for every connector an agent will wire.
  *
  * Reads secret VALUES because step 4 cannot run without them. They go to the validator and
@@ -140,6 +189,8 @@ export async function preflightConnectors(
   project: string,
   projectNumber: string,
   targets: PreflightTarget[],
+  /** The connected admin. Without it the DWD scope check is skipped, not failed. */
+  subject?: string,
 ): Promise<ConnectorPreflight[]> {
   if (targets.length === 0) return [];
   const member = `serviceAccount:${reasoningEngineServiceAgent(projectNumber)}`;
@@ -222,6 +273,34 @@ export async function preflightConnectors(
             `credential(s) for ${target.name}, so every call would fail with PERMISSION_DENIED. ` +
             'The deploy grants this automatically; if it keeps failing, grant it once for the ' +
             `project: roles/secretmanager.secretAccessor to ${reasoningEngineServiceAgent(projectNumber)}.`,
+        });
+        continue;
+      }
+    }
+
+    // DWD SCOPE, before the provider check: a connector whose client id was never
+    // authorized for its declared scope cannot authenticate at all, so a provider-side
+    // credential probe would report a confusing second-order failure for it.
+    //
+    // Only runs when all three inputs exist. `subject` is the connected admin, which is
+    // who a migration impersonates; an invoker connector resolves a different person per
+    // call, but the GRANT is domain-wide, so proving it for one real user proves it.
+    const declaredScope = REGISTRY_BY_ID.get(target.connectorId)?.scope;
+    const saJson = values.service_account_json;
+    if (saJson && declaredScope && subject) {
+      const grant = await dwdScopeGranted(saJson, declaredScope, subject);
+      if (grant && !grant.ok) {
+        results.push({
+          ...base,
+          ok: false,
+          blocker: 'dwd_scope_not_granted',
+          detail:
+            `${target.name} declares ${declaredScope}, but this service account is not ` +
+            'authorized for it in your Google Workspace, so every call would fail to ' +
+            'authenticate. Add that EXACT scope string for client id ' +
+            `${grant.clientId ?? '(see the service account key)'} under Admin console -> ` +
+            'Security -> API controls -> Domain-wide delegation. Scope strings are matched ' +
+            'exactly, so a broader scope you already granted does not cover this one.',
         });
         continue;
       }

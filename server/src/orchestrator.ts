@@ -2914,6 +2914,9 @@ If the request is outside "${name}", say so briefly so the main assistant takes 
                     name: c.name ?? c.id,
                     secretIds: c.secretIds ?? {},
                   })),
+                  // The connected admin: who the DWD grant is proven against. A domain-wide
+                  // grant is domain-wide, so one real user settles it for every caller.
+                  session.gEmail,
                 );
                 for (const check of checks.filter((c) => !c.ok)) {
                   emitLog(
