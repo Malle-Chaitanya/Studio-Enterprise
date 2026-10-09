@@ -22,7 +22,11 @@ import { GOOGLE_APPS } from '../connectors/googleCatalog.js';
 const PROJECT = process.env.CSGE_SECRET_PROJECT ?? 'agentmigrations';
 const WANT_CLIENT_ID = process.env.CSGE_DWD_CLIENT_ID ?? '116522083449752032780';
 
-const saToken = await getSaToken();
+// A key file can be tested BEFORE it is stored anywhere: the whole point of checking a
+// credential is to find out whether it works before a migration depends on it.
+const KEY_FILE = process.env.CSGE_SA_KEY_FILE;
+
+const saToken = KEY_FILE ? '' : await getSaToken();
 
 async function sm<T>(path: string): Promise<T | null> {
   const res = await fetch(`https://secretmanager.googleapis.com/v1/${path}`, {
@@ -33,8 +37,17 @@ async function sm<T>(path: string): Promise<T | null> {
 }
 
 // 1. Find the service account key whose client_id is the one the admin authorised.
+//    A file given on the command line short-circuits the Secret Manager scan.
+type SaKeyFile = { client_email: string; private_key: string; client_id?: string };
+let fileKey: SaKeyFile | null = null;
+if (KEY_FILE) {
+  const { readFileSync } = await import('node:fs');
+  fileKey = JSON.parse(readFileSync(KEY_FILE, 'utf8')) as SaKeyFile;
+}
+
 type SecretList = { secrets?: { name: string }[]; nextPageToken?: string };
 const names: string[] = [];
+if (!fileKey) {
 let page = '';
 for (;;) {
   const list = await sm<SecretList>(
@@ -45,15 +58,16 @@ for (;;) {
   if (!list.nextPageToken) break;
   page = list.nextPageToken;
 }
-console.log(`project ${PROJECT}: ${names.length} secret(s)`);
+}
+if (!fileKey) console.log(`project ${PROJECT}: ${names.length} secret(s)`);
 
 const saCandidates = names.filter((n) => /service-account-json$/.test(n));
 const subjCandidates = names.filter((n) => /impersonate-email$/.test(n));
 
 type SaKey = { client_email: string; private_key: string; client_id?: string };
-let sa: SaKey | null = null;
-let saFrom = '';
-for (const n of saCandidates) {
+let sa: SaKey | null = fileKey;
+let saFrom = KEY_FILE ? 'key file given on the command line' : '';
+for (const n of fileKey ? [] : saCandidates) {
   const got = await sm<{ payload?: { data?: string } }>(
     `projects/${PROJECT}/secrets/${n}/versions/latest:access`,
   );
@@ -68,7 +82,7 @@ if (!sa) { console.log(`no readable service-account secret in ${PROJECT}. Stoppi
 
 // 2. Resolve the subject to impersonate.
 let subject = process.env.CSGE_IMPERSONATE ?? '';
-if (!subject) {
+if (!subject && !fileKey) {
   for (const n of subjCandidates) {
     const got = await sm<{ payload?: { data?: string } }>(
       `projects/${PROJECT}/secrets/${n}/versions/latest:access`,
