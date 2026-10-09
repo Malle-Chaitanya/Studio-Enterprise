@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
@@ -60,10 +60,22 @@ export default function SelectAgentsV2() {
   const syncing = paired.syncing || agents.syncing;
   const error = !session ? 'no_session' : paired.error || agents.error;
 
+  /**
+   * Pre-tick ONCE per session, never again.
+   *
+   * This used to re-run whenever `rows` changed identity -- which a background sync
+   * does on its own -- and its guard was `prev.size > 0`. An empty selection is
+   * indistinguishable from "not seeded yet" under that guard, so pressing Clear and
+   * waiting for the next sync silently re-ticked every agent. Reported live: one
+   * agent wanted, eighteen selected. Clearing is a decision; a refetch must not
+   * overrule it.
+   */
+  const seeded = useRef('');
   // The saved selection wins over "everything": a selection is a decision, and a
   // remount is not a reason to throw a decision away.
   useEffect(() => {
-    if (rows.length === 0) return;
+    if (rows.length === 0 || seeded.current === session) return;
+    seeded.current = session;
     setChosen((prev) => {
       if (prev.size > 0) return prev;
       try {
@@ -217,8 +229,11 @@ export default function SelectAgentsV2() {
             </span>
           }
         >
-          <Btn onClick={() => setChosen(new Set(rows.map((r) => r.botId)))}>Select all</Btn>
-          <Btn onClick={() => setChosen(new Set())}>Clear</Btn>
+          {/* Both mark the selection touched: pressing one IS a decision, and without
+              it the debounced save never fired, so the server kept the previous
+              run's list while the screen showed the new one. */}
+          <Btn onClick={() => { setTouched(true); setChosen(new Set(rows.map((r) => r.botId))); }}>Select all</Btn>
+          <Btn onClick={() => { setTouched(true); setChosen(new Set()); }}>Clear</Btn>
           <Btn onClick={() => { paired.sync(); agents.sync(); }} disabled={syncing} title="Re-read agents from the source side">
             <span className="v2-ico-lb">
               <IcoRefresh s={13} spinning={syncing} />
