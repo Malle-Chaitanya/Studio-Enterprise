@@ -76,6 +76,21 @@ import {
 } from './services/identityMap.js';
 import type { AgentIR, AgentToolIR, FidelityNote, GeminiDestination, IdentityMapOverrides, KnowledgeSourceIR, MigrationResult, PermissionResolution, ProgressEvent, ResolvedPlan, ResolvedPrincipal } from './types.js';
 
+/**
+ * Name a few, count the rest.
+ *
+ * The registry carries ~120 connectors, so any log line that joined the whole list ran to
+ * several thousand characters and buried every line around it -- the run log became
+ * unreadable exactly where an operator goes to find out what happened. The COUNT is the
+ * fact worth reading; the names are a sample to make it concrete, and the full set is in
+ * the report either way.
+ */
+function nameSample(names: string[], cap = 6): string {
+  if (names.length <= cap) return names.join(', ');
+  return `${names.slice(0, cap).join(', ')} + ${names.length - cap} more`;
+}
+
+
 /** Strip extension + OneDrive/Windows dedup suffixes (" -1)", " (1)") and lowercase, for name comparison only. */
 function normalizeForNameCompare(name: string): string {
   return name
@@ -1016,7 +1031,7 @@ async function execute(
       })
     : [];
   if (resolvedConnectors.length) {
-    emitLog('info', `Connector credentials resolved: ${resolvedConnectors.map((c) => c.name).join(', ')}`);
+    emitLog('info', `Connector credentials resolved: ${resolvedConnectors.length} - ${nameSample(resolvedConnectors.map((c) => c.name))}`);
   }
 
   // Live API tools for the ADK deployment. Built from the saved connector IDS and
@@ -1045,7 +1060,7 @@ async function execute(
   const { specs: liveConnectorSpecs, unsupported: unsupportedConnectorIds } =
     buildLiveConnectorSpecsDetailed(savedConnectors, secretIdOpts, customConnectorIds, customConnectorNames);
   if (liveConnectorSpecs.length) {
-    emitLog('info', `Live connector tools to wire: ${liveConnectorSpecs.map((c) => c.name).join(', ')}`);
+    emitLog('info', `Live connector tools to wire: ${liveConnectorSpecs.length} - ${nameSample(liveConnectorSpecs.map((c) => c.name))}`);
   }
   // A connector we have no registry entry for cannot become a tool. Say so loudly here
   // and as a per-agent FidelityNote below — dropping it with only a server-log warning
@@ -2392,7 +2407,7 @@ async function execute(
             if (droppedConnectors.length) {
               emitLog(
                 'info',
-                `    ${row.name}: ${applicable.length} connector(s) apply to this agent; not wiring ${droppedConnectors.join(', ')} (configured, but this agent does not reference them).`,
+                `    ${row.name}: ${applicable.length} connector(s) apply to this agent; ${droppedConnectors.length} other configured connector(s) are not referenced by it (${nameSample(droppedConnectors, 4)}).`,
               );
             }
 
