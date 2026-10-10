@@ -5,10 +5,11 @@ import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { EnvPairing } from '../../components/v2/EnvPairing.tsx';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
-  Btn, Chip, CloudMark, Inspector, InspectorHead, InspectorSection, KeyValue, Note, Panel,
-  PanelHead, WizardFooter,
+  Btn, Chip, CloudMark, Inspector, InspectorHead, InspectorSection, KeyValue, Note,
+  WizardFooter,
 } from '../../components/v2/primitives.tsx';
 import { useSource, type CloudLink, type ConnectState } from '../../v2/data/index.ts';
+import { IcoRefresh, IcoTrash } from '../../icons.tsx';
 
 const EMPTY: ConnectState = {
   source: { platform: 'microsoft', connected: false },
@@ -17,16 +18,22 @@ const EMPTY: ConnectState = {
 
 /** One cloud. Everything shown is read back from the server, never assumed from
  *  the fact that a popup closed. */
-function CloudCard({ role, title, link, busy, onConnect, onDisconnect }: {
+function CloudCard({ role, title, link, busy, refreshing, onConnect, onDisconnect, onRefresh }: {
   role: string;
   title: string;
   link: CloudLink;
   busy: boolean;
+  refreshing: boolean;
   onConnect: () => void;
   onDisconnect: () => void;
+  /** Re-reads just this card's own state — no page-level "Re-check" any more. */
+  onRefresh: () => void;
 }) {
   return (
-    <div className={`v2-card${link.connected ? ' live' : ''}`} data-agent-target={`cloud:${link.platform}`}>
+    <div
+      className={`v2-card v2-card--${role.toLowerCase()}${link.connected ? ' live' : ''}`}
+      data-agent-target={`cloud:${link.platform}`}
+    >
       <div className="role">{role}</div>
       <div className="hd">
         <CloudMark platform={link.platform} />
@@ -40,15 +47,32 @@ function CloudCard({ role, title, link, busy, onConnect, onDisconnect }: {
           {link.problem && <div className="det" style={{ color: 'var(--v2-fail)' }}>{link.problem}</div>}
           <div className="foot">
             <Chip tone={link.problem ? 'bad' : 'ok'}>{link.problem ? 'needs attention' : 'connected'}</Chip>
-            <Btn onClick={onDisconnect} disabled={busy}>Disconnect</Btn>
+            <div className="v2-card-row-act">
+              <Btn
+                className="v2-card-icon-btn"
+                onClick={onRefresh}
+                disabled={refreshing}
+              >
+                <IcoRefresh s={13} spinning={refreshing} />
+                <span className="v2-icon-tip" role="tooltip">Refresh</span>
+              </Btn>
+              <Btn
+                className="v2-card-icon-btn v2-card-icon-btn--danger"
+                onClick={onDisconnect}
+                disabled={busy}
+              >
+                <IcoTrash s={13} />
+                <span className="v2-icon-tip" role="tooltip">Remove</span>
+              </Btn>
+            </div>
           </div>
         </>
       ) : (
         <>
           <div className="det">
             {link.platform === 'microsoft'
-              ? 'Sign in as a Power Platform admin. We read agents from Dataverse with an app-only token — no delegated Dynamics consent.'
-              : 'Sign in as a Google Workspace admin. Our service account then needs Discovery Engine access to your project.'}
+              ? 'Sign in as a Microsoft365 Admin Account'
+              : 'Sign in as a Google Workspace admin Account'}
           </div>
           <div className="foot">
             <Btn tone="blue" onClick={onConnect} disabled={busy}>
@@ -85,6 +109,11 @@ export default function ConnectV2() {
 
   const load = useCallback(async (): Promise<void> => {
     if (!session) { setLoading(false); return; }
+    // Every call sets this, not just the first — otherwise a refresh click
+    // after the initial mount leaves `loading` stuck at false the whole time,
+    // so the button never disables or spins and the click reads as inert even
+    // though it really did re-fetch.
+    setLoading(true);
     try {
       setState(await source.connect.read(session));
       setError('');
@@ -167,102 +196,105 @@ export default function ConnectV2() {
 
   const canvas = (
     <>
-      <Panel>
-        <PanelHead
-          title="Connect both clouds"
-          actions={<Btn onClick={() => void load()} disabled={loading}>{loading ? 'Checking…' : 'Re-check'}</Btn>}
-        />
-        <div style={{ padding: 16 }}>
-          <div className="v2-cards">
-            <CloudCard
-              role="Source"
-              title="Microsoft Copilot Studio"
-              link={state.source}
-              busy={busy === 'microsoft'}
-              onConnect={() => void connect('microsoft')}
-              onDisconnect={() => void disconnect('microsoft')}
-            />
-            <CloudCard
-              role="Destination"
-              title="Google Gemini Enterprise"
-              link={state.destination}
-              busy={busy === 'google'}
-              onConnect={() => void connect('google')}
-              onDisconnect={() => void disconnect('google')}
-            />
-          </div>
+      {/* No enclosing panel here on purpose — matching the reference pattern,
+          the cards float directly on the canvas as their own distinct blocks
+          rather than living inside one more wrapping box. A plain heading
+          does what PanelHead used to, without the border+shadow around
+          everything beneath it. */}
+      <div className="v2-canvas-h">
+        <h2>Connect Clouds</h2>
+        <div className="sub">Connect your source and destination clouds to get started.</div>
+      </div>
 
-          {/* The direction, stated where you just connected — not on a screen of
-              its own asking you to confirm the only possible answer. */}
-          {both && (
-            <div className="v2-dir" data-agent-target="direction">
-              <span className="side">
-                <CloudMark platform="microsoft" />
-                <span className="txt">
-                  Copilot Studio
-                  <span className="sub">{state.source.account ?? '—'}</span>
-                </span>
-              </span>
-              <span className="to" aria-hidden="true">→</span>
-              <span className="side">
-                <CloudMark platform="google" />
-                <span className="txt">
-                  Gemini Enterprise
-                  <span className="sub">{state.destination.account ?? '—'}</span>
-                </span>
-              </span>
-              {state.found && (
-                <span className="found">
-                  <span>
-                    <span className="n">{state.found.environments}</span>
-                    <label>Environments</label>
-                  </span>
-                  <span>
-                    <span className="n">{state.found.agents}</span>
-                    <label>Agents</label>
-                  </span>
-                  <span>
-                    <span className="n">{state.found.topics}</span>
-                    <label>Topics</label>
-                  </span>
-                </span>
-              )}
-            </div>
-          )}
-
-          {connectError && (
-            <div className="v2-test bad" style={{ marginTop: 14 }}>
-              <span aria-hidden="true">!</span>
-              <span>{connectError}</span>
-            </div>
-          )}
-
-          {/* A dead session id is NOT an error the customer caused, and nothing about
-              their clouds is broken when it happens — the connections live in their
-              own durable record. The shell drops the id and resumes, so this says
-              what is happening rather than shouting about a failed read. */}
-          {error === 'session_not_found' && (
-            <div className="v2-test" style={{ marginTop: 14 }}>
-              <span aria-hidden="true">i</span>
+      {/* The direction, stated once both sides are live — its own small strip,
+          not glued to the cards above or below it. */}
+      {both && (
+        <div className="v2-dir" data-agent-target="direction">
+          <span className="v2-dir-label">This migration</span>
+          <span className="v2-dir-pill">
+            <span className="k">Source:</span> Microsoft Copilot Studio
+          </span>
+          <span className="to" aria-hidden="true">→</span>
+          <span className="v2-dir-pill">
+            <span className="k">Destination:</span> Google Gemini Enterprise
+          </span>
+          {state.found && (
+            <span className="found">
               <span>
-                That session link is no longer valid, so we are starting a fresh one. Your
-                connected clouds are unaffected — anything already connected stays connected.
+                <span className="n">{state.found.environments}</span>
+                <label>Environments</label>
               </span>
-            </div>
-          )}
-
-          {error && error !== 'session_not_found' && (
-            <div className="v2-test bad" style={{ marginTop: 14 }}>
-              <span aria-hidden="true">!</span>
-              <span>Could not read the session: {error}</span>
-            </div>
+              <span>
+                <span className="n">{state.found.agents}</span>
+                <label>Agents</label>
+              </span>
+              <span>
+                <span className="n">{state.found.topics}</span>
+                <label>Topics</label>
+              </span>
+            </span>
           )}
         </div>
-      </Panel>
+      )}
 
-      {/* Pairing, inline. It used to be a phase of its own asking a question with
-          one shape of answer; it is the same panel, one screen earlier. */}
-      {both && <EnvPairing session={session} onChange={onPairChange} />}
+      <div className="v2-cards">
+        <CloudCard
+          role="Source"
+          title="Microsoft Copilot Studio"
+          link={state.source}
+          busy={busy === 'microsoft'}
+          refreshing={loading}
+          onConnect={() => void connect('microsoft')}
+          onDisconnect={() => void disconnect('microsoft')}
+          onRefresh={() => void load()}
+        />
+        <CloudCard
+          role="Destination"
+          title="Google Gemini Enterprise"
+          link={state.destination}
+          busy={busy === 'google'}
+          refreshing={loading}
+          onConnect={() => void connect('google')}
+          onDisconnect={() => void disconnect('google')}
+          onRefresh={() => void load()}
+        />
+      </div>
+
+      {connectError && (
+        <div className="v2-test bad" style={{ marginTop: 14 }}>
+          <span aria-hidden="true">!</span>
+          <span>{connectError}</span>
+        </div>
+      )}
+
+      {/* A dead session id is NOT an error the customer caused, and nothing about
+          their clouds is broken when it happens — the connections live in their
+          own durable record. The shell drops the id and resumes, so this says
+          what is happening rather than shouting about a failed read. */}
+      {error === 'session_not_found' && (
+        <div className="v2-test" style={{ marginTop: 14 }}>
+          <span aria-hidden="true">i</span>
+          <span>
+            That session link is no longer valid, so we are starting a fresh one. Your
+            connected clouds are unaffected — anything already connected stays connected.
+          </span>
+        </div>
+      )}
+
+      {error && error !== 'session_not_found' && (
+        <div className="v2-test bad" style={{ marginTop: 14 }}>
+          <span aria-hidden="true">!</span>
+          <span>Could not read the session: {error}</span>
+        </div>
+      )}
+
+      {/* Its own distinct block below, with real space from the cards above —
+          not merged into one shared panel, not just a divider line. */}
+      {both && (
+        <div style={{ marginTop: 20 }}>
+          <EnvPairing session={session} onChange={onPairChange} />
+        </div>
+      )}
 
       <WizardFooter
         onNext={() => navigate(`/v2/map-users?${params.toString()}`)}

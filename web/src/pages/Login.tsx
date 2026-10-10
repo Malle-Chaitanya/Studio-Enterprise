@@ -65,57 +65,66 @@ export function Login() {
     <div className="login">
       <div className="login-left">
         <div className="login-logo">
-          <img src="/assets/logo.png" alt="CloudFuze" style={{ height: 34, objectFit: 'contain' }} />
+          <img src="/assets/logo.png" alt="CloudFuze" style={{ height: 48, objectFit: 'contain' }} />
           <div className="login-logo-divider" />
           <span className="login-logo-text">CloudFuze AI Migrations</span>
         </div>
         <div className="login-content">
           <div className="login-tag">Enterprise AI Agent Migration</div>
           <div className="login-title">
-            <span>CloudFuze</span>
+            Move your agents to Gemini Enterprise
             <br />
-            AI Migrations
+            <span>without losing how they work.</span>
           </div>
           <div className="login-desc">
-            Migrate AI agents from Microsoft Copilot Studio to Google Gemini Enterprise — fully
-            automated, faithfully mapped, with a fidelity report for every agent.
+            CloudFuze moves your agents from Microsoft Copilot Studio to Google Gemini
+            Enterprise automatically, so you don't have to rebuild them by hand.
           </div>
           <div className="login-bullets">
             <div className="login-bullet">
               <div className="login-bullet-icon">{CHECK}</div>
-              Extract agents, topics, and knowledge from Copilot Studio
+              Every agent, topic, and knowledge source moves automatically
             </div>
             <div className="login-bullet">
               <div className="login-bullet-icon">{CHECK}</div>
-              Faithfully map instructions, tools, and behavior into Gemini
+              Instructions and behavior carry over as-is, not rebuilt from scratch
             </div>
             <div className="login-bullet">
               <div className="login-bullet-icon">{CHECK}</div>
-              Per-agent assessment — what migrates automatically vs. needs review
+              A clear report for every agent — what moved cleanly, what needs a look
             </div>
           </div>
         </div>
-        <div className="login-footer">CloudFuze © 2026. All rights reserved.</div>
+        <div className="login-footer">
+          <span>CloudFuze © 2026. All rights reserved.</span>
+          <a href="https://www.cloudfuze.com/terms-of-use/" target="_blank" rel="noopener noreferrer">Terms of Use</a>
+          <span aria-hidden="true">|</span>
+          <a href="https://www.cloudfuze.com/privacy-policy/" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+          <span aria-hidden="true">|</span>
+          <span>Help</span>
+        </div>
       </div>
 
       <div className="login-right">
         <div className="login-card">
           <div className="login-card-logo">
-            <img src="/assets/CloudFuze blue.png" alt="CloudFuze" style={{ height: 72, objectFit: 'contain' }} />
+            <img src="/assets/CloudFuze blue.png" alt="CloudFuze" style={{ height: 68, objectFit: 'contain' }} />
           </div>
           <div className="login-card-title">Welcome back</div>
           <div className="login-card-sub">Sign in to access the migration tool</div>
 
           {error && (
-            <div className="login-error">
-              <span>{error}</span>
+            <div className="cf-alert cf-alert--danger" style={{ marginBottom: 16 }} role="alert">
+              <div className="cf-alert__desc">{error}</div>
             </div>
           )}
 
           <form onSubmit={submit}>
-            <div className="login-field">
-              <label>Email</label>
+            <div className="cf-field">
+              <label className="cf-label" htmlFor="login-email">Email</label>
               <input
+                className="cf-input"
+                id="login-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -124,9 +133,11 @@ export function Login() {
                 required
               />
             </div>
-            <div className="login-field">
-              <label>Password</label>
+            <div className="cf-field">
+              <label className="cf-label" htmlFor="login-password">Password</label>
               <input
+                className="cf-input"
+                id="login-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -135,8 +146,16 @@ export function Login() {
                 required
               />
             </div>
-            <button type="submit" className="login-submit" disabled={busy}>
+            <button
+              type="submit"
+              className="cf-btn cf-btn--primary"
+              style={{ width: '100%', justifyContent: 'space-between', borderRadius: 10, padding: '14px 20px' }}
+              disabled={busy}
+            >
               {busy ? 'Signing in…' : 'Sign In'}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
             </button>
           </form>
         </div>

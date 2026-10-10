@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchSession, resumeSession } from './api.ts';
+import { signOut } from './authGuard.ts';
 import { AgentChat } from './components/AgentChat.tsx';
 import { WizardProvider } from './context/WizardContext.tsx';
 import { IcoLogout } from './icons.tsx';
@@ -26,47 +27,14 @@ import { SourceProvider, resolveSource } from './v2/data/index.ts';
 
 function AppHeader() {
   const navigate = useNavigate();
-  /**
-   * Sign out for real.
-   *
-   * This used to POST `/api/logout` — an endpoint that does not exist — swallow the
-   * 404, and then PUSH `/` onto history. So the session stayed alive, the wizard pages
-   * stayed in history, and Back landed on a fully working screen while Forward returned
-   * to the login page: the browser arrows bounced between signed-in and signed-out.
-   *
-   * Three things are needed and all three were missing: end the session server-side,
-   * drop the client-side session ids so nothing can be resumed from them, and REPLACE
-   * the history entry so Back does not lead back in.
-   */
-  const signOut = async () => {
-    const session = new URLSearchParams(window.location.search).get('session') ?? '';
-    try {
-      await fetch('/api/auth/logout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session }),
-      });
-      // Ending the CLOUD session is not the same as ending the SIGN-IN. Without this the
-      // auth cookie survives, so returning to the app skips the login screen entirely —
-      // which on a shared machine hands the next person the previous user's account.
-      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
-    } catch {
-      /* signing out must never strand someone on the page they are leaving */
-    }
-    // Wizard state is cached per session under csge_* keys — leaving it behind lets a
-    // later session pick up the previous user's selections.
-    try {
-      for (const key of Object.keys(sessionStorage)) {
-        if (key.startsWith('csge_')) sessionStorage.removeItem(key);
-      }
-    } catch {
-      /* private mode / storage disabled */
-    }
-    navigate('/', { replace: true });
-  };
   return (
     <header className="appheader">
-      <img src="/assets/logo.png" alt="CloudFuze" className="hlogo-img" onClick={() => navigate('/home')} />
+      <span
+        className="hlogo-img"
+        role="img"
+        aria-label="CloudFuze"
+        onClick={() => navigate('/home')}
+      />
       <span className="hdivider" />
       <span className="applogo" style={{ cursor: 'pointer' }} onClick={() => navigate('/home')}>
         CloudFuze <span>AI Migrations</span>
@@ -76,7 +44,7 @@ function AppHeader() {
         Online
         <span className="hdivider" style={{ margin: '0 2px' }} />
         <span className="havatar">CF</span>
-        <button className="hsignout" onClick={signOut}>
+        <button className="hsignout" onClick={() => void signOut(navigate)}>
           <IcoLogout s={13} />
           Sign out
         </button>
@@ -420,7 +388,9 @@ function V2Shell() {
             durable record — only the migration session doc is gone. This shell
             recovers instead: the dead id is dropped and a live session resumed, and
             if there genuinely is none, the "no session" state below says so. */}
-        <AppHeader />
+        {/* No global AppHeader here: v2 renders its own topbar inside V2Layout,
+            to the right of the sidebar, matching the brand's product shell —
+            the logo lives in the sidebar now, not a page-wide banner above it. */}
         {!source.isFixture && !hasSession && !isConnectPhase ? (
           // No session, said out loud. A blank "not connected" card is a lie when
           // the truth is that this page does not know which migration it is on.

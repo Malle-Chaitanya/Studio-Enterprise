@@ -1,16 +1,25 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 // Imported by the shell, not by each screen: every v2 phase renders inside this,
 // so the stylesheet arrives exactly once no matter how many screens exist.
 import '../../design/v2.css';
 import { AgentDock } from '../agent/AgentDock.tsx';
 import { DrivingLayer } from '../agent/DrivingLayer.tsx';
 import type { AgentDriverState } from '../../agent/driver.ts';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSource } from '../../v2/data/index.ts';
 import { useResource } from '../../v2/data/cache.ts';
 import { fetchSelection } from '../../api.ts';
+import { signOut } from '../../authGuard.ts';
+import { IcoChevronDown, IcoLogout, IcoUser } from '../../icons.tsx';
 import { derivePhaseStatus } from './phaseState.ts';
 import { PhaseRail, type PhaseId, type PhaseStatus } from './PhaseRail.tsx';
+
+/** Persisted so the rail does not snap back open on every page navigation. */
+const RAIL_COLLAPSED_KEY = 'csge_v2_rail_collapsed';
+
+function readCollapsed(): boolean {
+  try { return localStorage.getItem(RAIL_COLLAPSED_KEY) === '1'; } catch { return false; }
+}
 
 /**
  * The v2 shell: rail, work area, inspector, agent dock and takeover chrome.
@@ -75,9 +84,29 @@ export function V2Layout({
   toast?: string;
 }) {
   const source = useSource();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const session = params.get('session') ?? '';
   const waiting = !quiet && agent.mode === 'waiting';
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggleCollapsed = () => setCollapsed((v) => {
+    const next = !v;
+    try { localStorage.setItem(RAIL_COLLAPSED_KEY, next ? '1' : '0'); } catch { /* private mode */ }
+    return next;
+  });
+
+  // Account menu: a dropdown, not a direct-click button — "Log out" lives inside
+  // it so a stray click on the avatar can't sign anyone out by accident.
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!accountOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (accountRef.current && !accountRef.current.contains(e.target as Node)) setAccountOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [accountOpen]);
 
   // Read once for the whole shell, cached like everything else, so the rail can
   // tick Map users on EVERY screen instead of only on the one that saved it. One
@@ -91,13 +120,55 @@ export function V2Layout({
   useResource(`sel:${session}`, () => fetchSelection(session), Boolean(session) && !source.isFixture);
 
   return (
-    <div className={`v2${waiting ? ' waiting' : ''}`}>
+    <div
+      className={`v2${waiting ? ' waiting' : ''}${collapsed ? ' rail-collapsed' : ''}`}
+      style={{ '--v2-rail-w': collapsed ? '68px' : '232px' } as CSSProperties}
+    >
       <div className="v2-frame">
         {/* Derived first, then the screen's own claims on top: the rail must read
             the same on every screen, so a screen may refine it but not contradict
             what the cached state already proves. */}
-        <PhaseRail current={phase} status={mergeStatus(derivePhaseStatus(session, phase), phaseStatus)} />
+        <PhaseRail
+          current={phase}
+          status={mergeStatus(derivePhaseStatus(session, phase), phaseStatus)}
+          collapsed={collapsed}
+          onToggleCollapsed={toggleCollapsed}
+        />
         <div className="v2-work">
+          {/* The sidebar now carries the logo, so this bar is deliberately slim:
+              status + sign out, sitting only beside the rail, not above it. */}
+          <header className="v2-topbar">
+            <h1 className="v2-topbar-title">Agents Migration</h1>
+            <span className="v2-topbar-sp" />
+            <span className="v2-topbar-status">
+              <span className="statusdot" />
+              Online
+            </span>
+            <div className="v2-account" ref={accountRef}>
+              <button
+                className="v2-account-trigger"
+                aria-expanded={accountOpen}
+                aria-haspopup="menu"
+                onClick={() => setAccountOpen((v) => !v)}
+              >
+                <span className="v2-account-avatar"><IcoUser s={14} /></span>
+                <span className="v2-account-label">CF</span>
+                <IcoChevronDown s={12} />
+              </button>
+              {accountOpen && (
+                <div className="v2-account-menu" role="menu">
+                  <button
+                    className="v2-account-item"
+                    role="menuitem"
+                    onClick={() => void signOut(navigate)}
+                  >
+                    <IcoLogout s={13} />
+                    Log out
+                  </button>
+                </div>
+              )}
+            </div>
+          </header>
           {/* `.v2-canvas`'s default bottom padding reserves room for the floating
               AgentDock. `manual` screens never render that dock, so the reserve was
               150px of dead space at the foot of every page - exactly what forced an

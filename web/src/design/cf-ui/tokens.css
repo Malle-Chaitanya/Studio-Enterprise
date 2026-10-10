@@ -1,0 +1,108 @@
+/*
+  CloudFuze UI Design Tokens
+  Source of truth for color, type, spacing, radius, shadow and motion values.
+  Derived from brand_guide.md (CloudFuze Brand Guidelines V1 + March 2026 Pitch Deck).
+  Do not hardcode hex values in component CSS — reference these tokens instead.
+*/
+
+:root {
+  /* ---------- Brand color ---------- */
+  --cf-color-primary: #0129AC;       /* Brand Blue — CTAs, headings, accents */
+  --cf-color-primary-deep: #0C18D4;  /* Deep Blue — gradients, deep emphasis */
+  --cf-color-primary-light: #809EFC; /* Light Blue — icon backgrounds, highlights */
+  --cf-color-header-bar: #0029AB;    /* Header bar fill */
+  --cf-color-royal-blue: #4169E1;    /* Links, chart accents */
+
+  /* ---------- Neutrals / text ---------- */
+  --cf-color-navy: #1A1F36;          /* Card titles, headings on white */
+  --cf-color-navy-dark: #0B1D3A;     /* Dark backgrounds */
+  --cf-color-black: #000000;
+  --cf-color-body: #2E2E2E;          /* Paragraph body text */
+  --cf-color-muted: #707070;         /* Tertiary text */
+  --cf-color-secondary-gray: #7A8BA6;/* Descriptions, secondary labels */
+  --cf-color-slate-gray: #64748B;    /* Alternate muted text */
+  --cf-color-footer-gray: #AABBCC;   /* Footer / source citation text */
+
+  /* ---------- Backgrounds ---------- */
+  --cf-color-bg: #FFFFFF;
+  --cf-color-bg-alt: #F6F6F6;        /* Light gray section background */
+  --cf-color-bg-near-white: #F7F8FC; /* Card / badge subtle background */
+  --cf-color-bg-ice: #E1ECFF;        /* Ice blue callout background */
+  --cf-color-bg-wash: #DBEAFE;       /* Subtle light-blue fill */
+  --cf-color-bg-stat-label: #CADCFC; /* Stat labels on blue backgrounds */
+
+  /* ---------- Semantic / status ---------- */
+  --cf-color-success: #0ED380;
+  --cf-color-success-bg: #E7FBF2;
+  --cf-color-warning: #FFB020;
+  --cf-color-warning-bg: #FFF6E5;
+  --cf-color-danger: #DC2626;
+  --cf-color-danger-bg: #FDECEC;
+  --cf-color-info: #4169E1;
+  --cf-color-info-bg: #EAF0FF;
+
+  /* ---------- Borders ---------- */
+  --cf-color-border: #E2E8F0;
+  --cf-color-border-strong: #CBD5E1;
+
+  /* ---------- Typography ---------- */
+  --cf-font-family: 'Poppins', Arial, Helvetica, sans-serif;
+  --cf-font-weight-light: 300;
+  --cf-font-weight-regular: 400;
+  --cf-font-weight-medium: 500;
+  --cf-font-weight-semibold: 600;
+  --cf-font-weight-bold: 700;
+
+  --cf-font-size-xs: 0.75rem;   /* 12px */
+  --cf-font-size-sm: 0.8125rem; /* 13px */
+  --cf-font-size-base: 0.875rem;/* 14px */
+  --cf-font-size-md: 1rem;      /* 16px */
+  --cf-font-size-lg: 1.125rem;  /* 18px */
+  --cf-font-size-xl: 1.25rem;   /* 20px */
+  --cf-font-size-h6: 1.25rem;   /* 20px */
+  --cf-font-size-h5: 1.5rem;    /* 24px */
+  --cf-font-size-h4: 1.75rem;   /* 28px */
+  --cf-font-size-h3: 2rem;      /* 32px */
+  --cf-font-size-h2: 2.25rem;   /* 36px */
+  --cf-font-size-h1: 2.875rem;  /* 46px */
+
+  --cf-line-height-tight: 1.2;
+  --cf-line-height-base: 1.5;
+  --cf-line-height-heading: 1.4;
+
+  /* ---------- Spacing (4px base scale) ---------- */
+  --cf-space-1: 4px;
+  --cf-space-2: 8px;
+  --cf-space-3: 12px;
+  --cf-space-4: 16px;
+  --cf-space-5: 20px;
+  --cf-space-6: 24px;
+  --cf-space-8: 32px;
+  --cf-space-10: 40px;
+  --cf-space-12: 48px;
+  --cf-space-16: 64px;
+
+  /* ---------- Radius ---------- */
+  --cf-radius-sm: 4px;   /* buttons, per brand guidelines */
+  --cf-radius-md: 8px;   /* cards, inputs */
+  --cf-radius-lg: 12px;  /* panels, modals */
+  --cf-radius-pill: 999px;
+
+  /* ---------- Shadow ---------- */
+  --cf-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --cf-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --cf-shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.14);
+  --cf-shadow-focus: 0 0 0 3px rgba(1, 41, 172, 0.25);
+
+  /* ---------- Motion ---------- */
+  --cf-transition-fast: 120ms ease;
+  --cf-transition-base: 200ms ease;
+
+  /* ---------- Z-index scale ---------- */
+  --cf-z-dropdown: 1000;
+  --cf-z-sticky: 1100;
+  --cf-z-modal-backdrop: 1200;
+  --cf-z-modal: 1210;
+  --cf-z-tooltip: 1300;
+  --cf-z-toast: 1400;
+}

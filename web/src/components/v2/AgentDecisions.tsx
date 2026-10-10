@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Btn, Chip, Note, NoteRow, Panel, PanelHead, Select, SkeletonRows } from './primitives.tsx';
+import { Btn, Chip, Fold, Note, NoteRow, Panel, PanelHead, Select, SkeletonRows } from './primitives.tsx';
 import {
   fetchDriveIdentities, fetchSelection, fetchSurfaceEquivalences,
   saveDriveIdentity, saveSurfaceDecision,
@@ -114,8 +114,8 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
     return (
       <div className="v2-dec" key={key}>
         <span className="nmw">
-          <span className="nm">{s.agentName}</span>
-          <span className="kind">uses {s.sourceName} · {noun}</span>
+          <span className="nm">uses {s.sourceName}</span>
+          <span className="kind">{noun}</span>
         </span>
         <span className="ctl">
           <Select
@@ -185,10 +185,9 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
     return (
       <div className="v2-dec" key={key}>
         <span className="nmw">
-          <span className="nm">{d.name}</span>
+          <span className="nm">Drive acts as</span>
           <span className="kind">
-            Drive acts as
-            {d.suggestion && !confirmed ? ` · suggested: ${d.suggestion.email}` : ''}
+            {d.suggestion && !confirmed ? `suggested: ${d.suggestion.email}` : 'Google account this agent uses'}
           </span>
         </span>
         <span className="ctl">
@@ -242,6 +241,41 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
   const undecided = surfaces.filter((s) => s.decision === null).length;
   const unwired = driveRows.filter((d) => d.current?.status !== 'confirmed').length;
 
+  /**
+   * One block per AGENT, not one flat list per decision KIND.
+   *
+   * Surfaces and Drive identities used to render as two separate lists, so an agent
+   * needing both appeared twice -- its name repeated on every row -- and the customer
+   * had to reassemble "what do I have to decide about THIS agent" by scanning two
+   * lists for the same name. The decisions belong to the agent; the kind is a detail
+   * of each one. Grouping also makes the real unit of work countable: N agents need
+   * you, not N rows scattered across two sections.
+   *
+   * Agents with something outstanding sort first -- this panel is a queue of work,
+   * same ordering rule as the connector tiles.
+   */
+  const byAgent = (() => {
+    const m = new Map<string, {
+      sourceId: string;
+      name: string;
+      surfaces: Array<SurfaceEquivalence & { env: string }>;
+      drives: Array<DriveIdentityStatus & { env: string; name: string }>;
+    }>();
+    const slot = (sourceId: string, name: string) => {
+      const e = m.get(sourceId) ?? { sourceId, name, surfaces: [], drives: [] };
+      // A name resolved anywhere beats a blank one: the two endpoints do not always
+      // resolve the same agent's name, and a header reading "" helps nobody.
+      if (!e.name && name) e.name = name;
+      m.set(sourceId, e);
+      return e;
+    };
+    for (const x of surfaces) slot(x.sourceId, x.agentName).surfaces.push(x);
+    for (const d of driveRows) slot(d.sourceId, d.name).drives.push(d);
+    const pending = (a: { surfaces: typeof surfaces; drives: typeof driveRows }): number =>
+      a.surfaces.some((x) => x.decision === null) || a.drives.some((d) => d.current?.status !== 'confirmed') ? 0 : 1;
+    return [...m.values()].sort((a, b) => pending(a) - pending(b) || a.name.localeCompare(b.name));
+  })();
+
   // Only truly silent when a successful read found nothing AND nothing failed. Any
   // other combination has something to say.
   if (!loading && !error && !surfaceError && !driveError
@@ -273,20 +307,38 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
           decision gets no tools for that service at all — not a default, nothing.
         </NoteRow>
       )}
-      {surfaces.map(surfaceRow)}
-
-      {driveRows.length > 0 && (
-        <>
-          {unwired > 0 && (
-            <NoteRow tone="you">
-              {unwired} agent{unwired > 1 ? 's' : ''} would deploy without the Drive tool. There is
-              no &ldquo;skip&rdquo; to record here: leaving it empty IS the skip, and the run
-              reports it as a loss rather than a choice.
-            </NoteRow>
-          )}
-          {driveRows.map(driveRow)}
-        </>
+      {!loading && unwired > 0 && (
+        <NoteRow tone="you">
+          {unwired} agent{unwired > 1 ? 's' : ''} would deploy without the Drive tool. There is
+          no &ldquo;skip&rdquo; to record here: leaving it empty IS the skip, and the run
+          reports it as a loss rather than a choice.
+        </NoteRow>
       )}
+
+      {byAgent.map((a) => {
+        const open = a.surfaces.filter((x) => x.decision === null).length
+          + a.drives.filter((d) => d.current?.status !== 'confirmed').length;
+        const total = a.surfaces.length + a.drives.length;
+        return (
+          // Collapsed once everything is recorded, open while anything is not: an
+          // agent with ten connectors is ten rows, and ten finished agents is 100
+          // rows of nothing to do burying the one that still needs a decision.
+          // `open` is an initial state, so an agent stays put while you work in it
+          // instead of folding shut under you on the reload after each save.
+          <div className="v2-dec-grp" key={a.sourceId}>
+            <Fold
+              title={a.name || a.sourceId}
+              note={open > 0
+                ? `${open} of ${total} still need${open === 1 ? 's' : ''} you`
+                : `${total} decision${total > 1 ? 's' : ''} · all recorded`}
+              open={open > 0}
+            >
+              {a.surfaces.map(surfaceRow)}
+              {a.drives.map(driveRow)}
+            </Fold>
+          </div>
+        );
+      })}
 
       {!loading && units && units.length === 0 && (
         <Note>No agents in the server-side plan yet, so there is nothing to decide.</Note>

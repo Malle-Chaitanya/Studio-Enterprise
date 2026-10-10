@@ -49,19 +49,25 @@
   --v2-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
   --v2-dock-h: 58px;
 
-  /* Poppins carries EVERY word on screen — it is the product's voice, and the
-     v2 layer is a reskin, not a rebrand. The other two faces are allowed to
-     touch numbers only: Instrument Serif for the instrument readouts, JetBrains
-     Mono for ids and values that must line up digit-per-digit. No prose in either. */
+  /* Poppins carries EVERY word AND number on screen — the brand guidelines name
+     it as the only approved face, full stop. The instrument readouts used to
+     lean on Instrument Serif as a stylistic accent; that was off-brand and has
+     been dropped. JetBrains Mono still touches ids/values that must line up
+     digit-per-digit — that is a tabular-alignment need, not brand voice. */
   font-family: 'Poppins', var(--font), system-ui, sans-serif;
   background: var(--v2-canvas);
   color: var(--v2-ink);
   font-size: 14px;
   line-height: 1.55;
-  /* .appheader is position:fixed, so the v2 shell has to offset for it exactly
-     like .console does — without this the instrument band hides behind the header. */
-  padding-top: var(--header-h);
+  /* No global .appheader here — the rail carries the logo and runs the full
+     viewport height, and .v2-topbar (inside .v2-work) is its own sticky bar
+     beside it. Nothing above this needs a header-height offset any more. */
   min-height: 100vh;
+  --v2-rail-w: 232px;
+  /* Overrides styles.css's shared --header-h (56px) for this subtree only — the
+     v2 topbar now carries the account dropdown menu, which needs a touch more
+     room than the old wizard's plain status/sign-out row ever did. */
+  --header-h: 64px;
 }
 
 .v2 *,
@@ -79,76 +85,269 @@
    migration at once is what separates a tool from a sequence of web pages. */
 .v2-frame {
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: var(--v2-rail-w) 1fr;
   align-items: start;
-}
-@media (max-width: 900px) {
-  .v2-frame { grid-template-columns: 1fr; }
-  .v2-rail { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--v2-edge); }
 }
 
 .v2-rail {
   position: sticky;
-  top: var(--header-h);
-  height: calc(100vh - var(--header-h));
-  overflow-y: auto;
+  top: 0;
+  height: 100vh;
+  /* `visible`, not `auto`/`hidden`: the collapsed-mode hover tooltip is an
+     absolutely-positioned child that has to escape the rail's right edge, and
+     either overflow value would clip it. Six fixed phases never need the rail
+     itself to scroll, so nothing is lost. */
+  overflow: visible;
   border-right: 1px solid var(--v2-edge);
   background: var(--v2-paper);
   padding-bottom: 24px;
-}
-.v2-rail-l {
-  padding: 16px 16px 7px; font-size: 9.5px; letter-spacing: .11em;
-  text-transform: uppercase; color: var(--v2-ink-4); font-weight: 600;
+  transition: width .15s ease;
+  /* Flex column so the collapse toggle can pin itself to the bottom with
+     margin-top: auto, instead of sitting wherever the phase list happens to
+     end. */
+  display: flex;
+  flex-direction: column;
 }
 
+/* ── rail brand block (logo), collapse toggle ─────────────────── */
+.v2-rail-brand {
+  /* Height pinned to the topbar's own height (not padding-driven) so the two
+     top zones share one seam across the page instead of the rail's edge
+     landing a few px below the topbar's. */
+  height: var(--header-h);
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 16px; cursor: pointer;
+}
+.v2-rail-mark {
+  /* logo.png is a wide wordmark-style mark (176x77), not a square icon — sizing
+     the box to a 34x34 square left `mask ... contain` shrinking it to a thin,
+     near-illegible sliver. Fix the real aspect ratio instead so it reads clearly. */
+  height: 32px; width: auto; aspect-ratio: 176 / 77; flex: 0 0 auto;
+  background: var(--v2-brand);
+  -webkit-mask: url('/assets/logo.png') center / contain no-repeat;
+  mask: url('/assets/logo.png') center / contain no-repeat;
+}
+.v2-rail-word { font-weight: 700; font-size: 16px; color: var(--v2-brand); white-space: nowrap; }
+/* Collapsed keeps the wordmark, it just stacks under the icon instead of
+   sitting beside it — same idea as the reference rail, where the brand still
+   reads even at icon-only width. */
+.rail-collapsed .v2-rail-brand {
+  /* Same fixed height as the expanded state (and the topbar) — only the
+     internal layout changes to stacked icon-over-word, not the block height. */
+  flex-direction: column; justify-content: center; gap: 4px; padding: 0 6px;
+}
+/* The mark is a wide wordmark shape (176:77), not a square icon — at the
+   expanded 32px height it's ~73px wide, wider than the whole 68px collapsed
+   rail. Shrink it explicitly here instead of letting it overflow. */
+.rail-collapsed .v2-rail-mark { height: 20px; }
+.rail-collapsed .v2-rail-word { font-size: 8.5px; letter-spacing: .01em; }
+
+.v2-rail-toggle {
+  appearance: none; cursor: pointer; width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  /* Pinned bottom-right: margin-top auto (rail is a flex column) pushes it
+     to the bottom, align-self flex-end + a right margin instead of centering
+     it puts it in the corner rather than mid-width. */
+  margin-top: auto;
+  align-self: flex-end;
+  margin-right: 12px;
+  border: 1px solid var(--v2-edge-2); border-radius: 8px;
+  background: var(--v2-paper); color: var(--v2-ink-3);
+}
+.rail-collapsed .v2-rail-toggle { align-self: center; margin-right: 0; }
+.v2-rail-toggle:hover { color: var(--v2-brand); border-color: var(--v2-brand-l); }
+
+.rail-collapsed .v2-phase { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; }
+
 .v2-phase {
-  appearance: none; cursor: pointer; font: inherit; text-align: left; width: 100%;
-  display: flex; align-items: center; gap: 10px; padding: 8px 16px;
-  background: none; border: 0; border-left: 2px solid transparent; color: var(--v2-ink-2);
+  position: relative; /* anchors .v2-phase-tip in collapsed mode */
+  appearance: none; cursor: pointer; font: inherit; text-align: left;
+  width: calc(100% - 20px); margin: 2px 10px;
+  display: flex; align-items: center; gap: 12px; padding: 8px 10px;
+  background: none; border: 0; border-radius: 12px; color: var(--v2-ink-2);
 }
-.v2-phase:hover { background: var(--v2-paper-2); }
+.v2-phase:hover { background: var(--v2-tint-2); }
+/* Pale ghost badge by default — ONLY current/done/needs-you/blocked earn a
+   solid fill below. A step nobody has touched yet should read as quiet, not
+   as heavy as the one that is actually happening. */
 .v2-phase .mk {
-  width: 18px; height: 18px; border-radius: 50%; flex: 0 0 auto; display: grid;
-  place-items: center; font-size: 10px; font-weight: 600;
-  border: 1px solid var(--v2-edge-2); color: var(--v2-ink-4); background: var(--v2-paper);
+  width: 32px; height: 32px; border-radius: 10px; flex: 0 0 auto; display: grid;
+  place-items: center; font-size: 14px; font-weight: 600;
+  color: var(--v2-ink-4); background: var(--v2-sand);
 }
-.v2-phase .lb { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.v2-phase .ct { margin-left: auto; font-size: 11px; color: var(--v2-ink-4); }
+.v2-phase .lb { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .v2-phase .bd {
   margin-left: auto; font-size: 8.5px; letter-spacing: .09em; font-weight: 700;
   color: var(--v2-ink-4);
 }
-.v2-phase.done .mk { background: var(--v2-ok); border-color: var(--v2-ok); color: #fff; }
-.v2-phase.current {
-  background: var(--v2-tint-2); border-left-color: var(--v2-brand); color: var(--v2-ink);
-}
-.v2-phase.current .lb { font-weight: 600; }
-.v2-phase.current .mk { background: var(--v2-brand); border-color: var(--v2-brand); color: #fff; }
+/* Brand blue, not the semantic "ok" green — the rail's own done/current marks
+   both read as "this cloud is connected" in the one brand colour, matching
+   the product's own guidelines rather than a generic status-green. */
+.v2-phase.done .mk { background: var(--v2-tint); color: var(--v2-brand); }
+/* Inset pill highlight — no edge-to-edge border accent, matching the clean
+   "floating" selected state rather than a rule line down the side. */
+.v2-phase.current { background: var(--v2-tint-2); color: var(--v2-ink); }
+.v2-phase.current .lb { font-weight: 700; }
+.v2-phase.current .mk { background: var(--v2-brand); color: #fff; }
 /* amber says "your turn" here exactly as it does everywhere else */
-.v2-phase.needs-you { border-left-color: var(--v2-amber); }
+.v2-phase.needs-you .mk { background: var(--v2-amber); color: #fff; }
 .v2-phase.needs-you .bd { color: #8a5600; }
+.v2-phase.blocked .mk { background: var(--v2-fail); color: #fff; }
 .v2-phase.blocked .bd { color: var(--v2-fail); }
 .v2-phase.not-built { color: var(--v2-ink-4); }
 .v2-phase.not-built .bd { color: var(--v2-ink-4); }
 
-/* Dev-only marker for canned data. Bottom-left so it never covers the band. */
+/* ── collapsed-mode hover tooltip ─────────────────────────────────────── */
+.v2-phase-tip {
+  position: absolute; left: 100%; top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  margin-left: 10px;
+  background: var(--v2-ink); color: #fff;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  padding: 7px 12px; border-radius: 8px;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .12s ease, transform .12s ease;
+  z-index: 60;
+}
+.v2-phase:hover .v2-phase-tip,
+.v2-phase:focus-visible .v2-phase-tip {
+  opacity: 1; visibility: visible; transform: translateY(-50%) translateX(0);
+}
+
+/* Declared AFTER every base rule it overrides (`.v2-rail`, `.v2-rail-brand`,
+   `.v2-rail-mark`, `.v2-phase`, `.v2-phase-tip`) on purpose: same specificity
+   throughout, so source order is the only thing deciding the winner, and this
+   must be the one that wins on narrow viewports. Putting this block any
+   earlier than the rules above is exactly the bug this comment exists to
+   prevent — the mobile logo height, phase sizing, and rail layout above all
+   silently lost to their desktop counterparts before this moved down here.
+   Below 900px the rail stops being a tall vertical list — six full-width rows
+   plus the logo block would eat 350-400px of screen before any page content
+   showed, which is what actually reads as "the UI breaks" on a phone. Instead
+   it becomes a compact horizontal icon strip pinned to the top, same idea as
+   the collapsed desktop rail but laid out as a row instead of a column. */
+@media (max-width: 900px) {
+  .v2-frame { grid-template-columns: 1fr; }
+  .v2-rail {
+    position: sticky; top: 0; z-index: 30;
+    height: auto; width: 100%;
+    flex-direction: row; align-items: center;
+    overflow-x: auto; overflow-y: visible;
+    border-right: 0; border-bottom: 1px solid var(--v2-edge);
+    padding-bottom: 0;
+  }
+  .v2-rail-brand { padding: 10px 12px; }
+  .v2-rail-word { display: none; }
+  .v2-rail-mark { height: 22px; }
+  /* Labels and status badges are dropped in the strip — same as the desktop
+     collapsed rail — so PhaseRail's own `collapsed` prop is not involved; this
+     is a pure CSS narrowing, not a state change, so the toggle button (which
+     only makes sense for a column) is hidden rather than repurposed. */
+  .v2-rail .lb, .v2-rail .bd, .v2-rail-toggle { display: none; }
+  .v2-phase {
+    width: auto; margin: 6px 4px; flex: 0 0 auto;
+    justify-content: center; gap: 0; padding: 6px; /* keeps the touch target near 44px */
+  }
+  .v2-phase-tip { display: none; } /* no hover on touch; would just hang open */
+}
+
+/* Dev-only marker for canned data. Bottom-left so it never covers the band —
+   true only on desktop, where `.v2-wizard` starts at `var(--v2-rail-w)` and
+   this sits under the rail instead. Below 900px the footer spans the full
+   width from x:0, the same territory this banner sits in, and z-index:99
+   let it paint straight over the footer's own Back button. */
 .v2-fixture {
   position: fixed; bottom: 10px; left: 12px; z-index: 99;
   background: var(--v2-ink); color: #fff; font-size: 10.5px; letter-spacing: .08em;
   text-transform: uppercase; padding: 4px 12px; border-radius: 999px;
+}
+@media (max-width: 900px) {
+  .v2-fixture { bottom: 100px; }
 }
 
 .v2-work {
   display: grid;
   grid-template-columns: 1fr 300px;
   align-items: start;
-  min-height: calc(100vh - var(--header-h));
+  /* Without this, the grid's default align-content stretches its two implicit
+     rows (topbar, canvas) to fill any leftover space from min-height: 100vh —
+     the topbar's OWN row grows even though the topbar itself stays 64px, which
+     opens a blank gap between it and the canvas below. Only visible once page
+     content is short enough to leave slack (e.g. a search that filters the
+     list down to one row or none), which is what made it look like searching
+     itself was causing the jump. */
+  align-content: start;
+  min-height: 100vh;
 }
+/* Slim topbar beside the rail (not above it) — the sidebar carries the logo,
+   so all this needs to hold is connection status and sign out. Spans both
+   work columns so it sits over canvas AND inspector, not just canvas. */
+.v2-topbar {
+  grid-column: 1 / -1;
+  position: sticky; top: 0; z-index: 20;
+  height: var(--header-h);
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 20px;
+  background: var(--v2-paper);
+  border-bottom: 1px solid var(--v2-edge);
+}
+/* Brand guide's Font Detailing spec: heading weight 600, colour #000 — the
+   h6 tier (20px) is the one built for a slim persistent bar, not the 46px h1
+   size meant for a full-page title. */
+.v2-topbar-title {
+  margin: 0; font-weight: 600; font-size: 20px; line-height: 1.4; color: #000;
+}
+.v2-topbar-status {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--v2-ink-3);
+}
+.v2-topbar-sp { margin-left: auto; }
+/* A real dropdown (trigger + menu), not a direct-click button — reusing
+   `.havatar`/`.hsignout` from styles.css would have pulled in the old
+   wizard's un-scoped look this file exists to avoid. */
+.v2-account { position: relative; }
+.v2-account-trigger {
+  appearance: none; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--v2-tint); color: var(--v2-brand);
+  border: 1px solid transparent; border-radius: 999px;
+  padding: 4px 12px 4px 4px;
+}
+.v2-account-trigger:hover,
+.v2-account-trigger[aria-expanded='true'] { background: var(--v2-tint-2); border-color: var(--v2-brand-l); }
+.v2-account-avatar {
+  width: 24px; height: 24px; border-radius: 50%; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--v2-tint-2); color: var(--v2-brand);
+}
+.v2-account-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 30;
+  min-width: 140px; background: var(--v2-paper); border: 1px solid var(--v2-edge);
+  border-radius: var(--v2-r-m); box-shadow: var(--v2-sh-l); padding: 6px;
+}
+.v2-account-item {
+  appearance: none; cursor: pointer; font: inherit; text-align: left; width: 100%;
+  display: flex; align-items: center; gap: 8px;
+  background: none; border: 0; border-radius: 8px; padding: 8px 10px;
+  font-size: 13px; font-weight: 600; color: var(--v2-ink);
+}
+.v2-account-item:hover { background: var(--v2-tint-2); color: var(--v2-brand); }
 .v2-canvas { padding: 18px 20px 150px; min-width: 0; }
 /* `manual` screens (every v2 screen today) never render the AgentDock, so the
    150px reserved for it above is dead space - the direct cause of an outer page
-   scroll a bounded-height list (`.v2-maprows`) should never need. */
-.v2-canvas.compact { padding-bottom: 24px; }
+   scroll a bounded-height list (`.v2-maprows`) should never need. 90px here,
+   not 24px: `.v2-wizard` (the Continue bar every manual screen ends with) is
+   now `position: fixed` over the viewport's bottom-right corner instead of
+   sitting inline in the canvas's own flow, so the canvas needs its own room
+   reserved or its last row scrolls in right underneath the floating bar. */
+.v2-canvas.compact { padding-bottom: 90px; }
+/* At <=480px `.v2-wizard`'s note drops to its own full-width row above the
+   button (see its own `@media (max-width: 480px)` rule), making the footer
+   taller than the 90px reserved above — without more room here, the last
+   row in a scrolled list peeked out from under the taller bar. */
+@media (max-width: 480px) {
+  .v2-canvas.compact { padding-bottom: 130px; }
+}
 /* A screen with nothing to inspect gets the width back. Without this the 300px
    track stays reserved and renders as a blank column, which reads as a panel that
    failed to load rather than one that was never there. */
@@ -164,6 +363,12 @@
   height: calc(100vh - var(--header-h));
   overflow-y: auto;
   padding-bottom: 130px;
+  /* Explicit and low on purpose: sticky elements form their own stacking
+     context regardless of z-index, and left at the default `auto` this
+     opaque, viewport-tall panel was painting over `.v2-wizard`'s fixed bar
+     wherever the two overlapped — the bar looked like it stopped dead at
+     the inspector's left edge instead of running underneath it. */
+  z-index: 1;
 }
 @media (max-width: 1100px) {
   .v2-work { grid-template-columns: 1fr; }
@@ -172,6 +377,10 @@
     border-left: 0; border-top: 1px solid var(--v2-edge);
     position: static; max-height: none; overflow: visible;
   }
+  /* The inspector stacks below the canvas here instead of sitting beside it,
+     so the 300px inset above no longer means anything — cancel it back to
+     the full canvas width. */
+  .v2-work:has(.v2-insp) .v2-wizard { right: 0; }
 }
 
 /* ── panel ──────────────────────────────────────────────────────────── */
@@ -183,11 +392,18 @@
   overflow: hidden;
 }
 .v2-panel + .v2-panel { margin-top: 14px; }
+/* A plain heading directly on the canvas, no enclosing panel — the cards and
+   the pairing block below are each their own distinct floating block, not
+   packed inside one shared box with this heading at the top of it. */
+.v2-canvas-h { padding: 4px 2px 18px; }
+.v2-canvas-h h2 { font-size: 20px; font-weight: 700; letter-spacing: -.01em; margin: 0; }
+.v2-canvas-h .sub { font-size: 13px; color: var(--v2-ink-3); margin-top: 4px; }
 .v2-panel-h {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 10px;
   padding: 13px 16px; border-bottom: 1px solid var(--v2-edge);
 }
 .v2-panel-h h2 { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.v2-panel-h h2.accent { color: var(--v2-brand); font-weight: 700; font-size: 15px; }
 .v2-panel-h .sub { font-size: 12px; color: var(--v2-ink-3); margin-top: 1px; }
 /* Same wrap-safety as `.v2-selbar .sp`: a header that now carries a whole toolbar
    (Map users' search/filter/rescan controls, moved up from their own row) must
@@ -208,8 +424,11 @@
   color: var(--v2-ink-4); font-weight: 600;
 }
 .v2-band .v {
-  display: block; font-family: 'Instrument Serif', Georgia, serif;
-  font-size: 27px; line-height: 1.2; letter-spacing: -.01em;
+  /* Brand guidelines name Poppins as the only approved face — the serif accent
+     this instrument band used to lean on for its numbers was an off-brand
+     stylistic choice, not a technical necessity. */
+  display: block; font-family: 'Poppins', var(--font), sans-serif;
+  font-weight: 600; font-size: 26px; line-height: 1.2; letter-spacing: -.01em;
 }
 .v2-band .v.ok { color: #12855a; }
 .v2-band .v.warn { color: var(--v2-brand); }
@@ -236,8 +455,11 @@
 }
 .v2-btn:hover:not(:disabled) { border-color: var(--v2-ink-4); }
 .v2-btn:disabled { opacity: .45; cursor: not-allowed; }
-.v2-btn.blue { background: var(--v2-brand); border-color: var(--v2-brand); color: #fff; }
-.v2-btn.blue:hover:not(:disabled) { background: var(--v2-brand-h); }
+/* #001a6f, not var(--v2-brand) (#0129ac) — sampled directly from the
+   reference screenshot's "Next" button pixels; the reference's primary
+   button is a darker, more indigo blue than our own brand token. */
+.v2-btn.blue { background: #001a6f; border-color: #001a6f; color: #fff; }
+.v2-btn.blue:hover:not(:disabled) { background: #001458; }
 .v2-btn.amber { background: #fff6e6; border-color: #f3d9a4; color: #8a5600; }
 .v2-btn.amber:hover:not(:disabled) { border-color: var(--v2-amber); }
 .v2-btn.wide { width: 100%; }
@@ -279,6 +501,11 @@
 .v2-row:last-child { border-bottom: 0; }
 .v2-row:hover { background: var(--v2-paper-2); }
 .v2-row.pick { background: var(--v2-tint-2); }
+/* Checked rows get the same soft tint wash as the reference — a checkbox
+   alone, on an otherwise plain white row, is what read as a bare, unstyled
+   control instead of a considered part of the row's own design. */
+.v2-row.checked { background: var(--v2-tint-2); }
+.v2-row.checked:hover { background: var(--v2-tint); }
 .v2-row .glyph {
   width: 28px; height: 28px; border-radius: 8px; background: var(--v2-sand);
   border: 1px solid var(--v2-edge); display: grid; place-items: center;
@@ -290,13 +517,40 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .v2-row .kind {
-  display: block; font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-4);
+  /* "N agents · M topics" is descriptive prose, not a column of digits that
+     needs monospace alignment — brand guidelines call for Poppins here too. */
+  display: block; font-family: 'Poppins', var(--font), sans-serif; font-size: 10.5px; color: var(--v2-ink-4);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .v2-row .why {
   flex: 1 1 auto; min-width: 140px; font-size: 12px; color: var(--v2-ink-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Map users' Destination column specifically: a real column, left-aligned,
+   sitting right after Source — NOT centered via auto margins. That was tried
+   and reverted: `flex: 0 0 300px` (flex-shrink 0) could not shrink when the
+   row had less room than usual (e.g. with the inspector panel open, this row
+   is only ~706px wide), so the fixed column plus the status chip literally
+   did not fit and the chip overflowed out from under the row, invisible
+   behind the inspector. `flex: 1 1 300px` here PREFERS 300px but can shrink
+   (down to `min-width`) when the row is tight, so the row's total content
+   can never exceed the row's own width — this is a correctness fix, not a
+   style preference: without it the chip can silently vanish off-row. */
+/* A fixed 40px nudge, not `auto` — `auto` is exactly what caused the earlier
+   overflow bug (it fights with `.st`'s own auto margin for the same leftover
+   space and collapses unpredictably under a tight row). A fixed value has no
+   such failure mode: `.why` can still shrink below its 300px preference
+   (flex-shrink stays 1) to make room for it, so the row can never overflow,
+   it just sits a bit further right than flush against Source. */
+.v2-row.mapuser .why { flex: 1 1 300px; min-width: 120px; text-align: left; margin-left: 80px; }
+/* Pins the chip to the row's true right edge with a single auto margin —
+   deliberately the ONLY auto margin on this line. Multiple auto margins
+   (why's + this one) fighting over the same space is what produced the
+   fragile, overflow-prone layout above; one auto margin degrades safely to
+   0 when the row is tight, instead of every box needing to renegotiate.
+   Scoped to `.mapuser`: the shared `.v2-row .st` chip is reused by every
+   other v2 screen's row (Select agents, Connectors, Migrate, Report...). */
+.v2-row.mapuser .st { margin-left: auto; }
 /* A `why` cell holding CONTROLS must not clip them — the ellipsis rules above are
    for prose. Selects and buttons live in `.why.ctl`. */
 .v2-row .why.ctl {
@@ -304,11 +558,7 @@
 }
 /* A NoteRow states a fact in full sentences. Truncating it to one ellipsised line
    would hide exactly the part that matters (what was lost, and why). */
-/* Map users' options read `Name - email`, which 190px cuts mid-address - and the
-   address is the half that disambiguates two people with the same name. That row's
-   only control is this select and the column has the room, so widen it here rather
-   than every select in the app. */
-.v2-row.mapuser .v2-select { max-width: none; width: 100%; }
+.muted { color: var(--v2-ink-4); font-style: normal; }
 /* A row list can run to 60+ items (Map users' people, Select agents' agents).
    Scrolling the whole page to reach Continue turned that into an endless scroll
    instead of a screen, so the rows scroll INSIDE this box - same trick `.v2-insp`
@@ -326,6 +576,27 @@
    220px budget above still overflowed the viewport by exactly that band's
    height. `.tight` is that same budget plus the band's own measured height. */
 .v2-scrollbox.tight { max-height: calc(100vh - var(--header-h) - 350px); }
+/* Map users' own budget: PanelHead + the search/actions toolbar + the column
+   header row + the pagination bar below all sit outside this box, on top of
+   the same wizard-footer reserve every `.v2-scrollbox` accounts for — tuned
+   against the actual rendered heights, not guessed. */
+.v2-usersbox {
+  max-height: calc(100vh - var(--header-h) - 360px); overflow-y: auto;
+  /* Whatever row lands right at the scroll boundary gets sliced mid-row, not
+     at a clean edge — with no visible scrollbar (thin/overlay style on most
+     platforms) that half-row read as the pagination bar overlapping the
+     table, not a scroll cut. Fading the last ~28px to transparent instead of
+     hard-clipping makes it unmistakably "more below, scroll for it" rather
+     than a rendering glitch. */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+}
+@media (max-width: 900px) {
+  .v2-usersbox {
+    max-height: none; overflow-y: visible;
+    mask-image: none; -webkit-mask-image: none;
+  }
+}
 @media (max-width: 900px) {
   /* Stacked layout is already one long page below 900px; forcing an inner scroll
      on top of that just traps the list in a box shorter than the finger scrolling it. */
@@ -339,25 +610,161 @@
    hover away, never lost - "minimum context", not zero context. */
 .v2-ico-lb { display: inline-flex; align-items: center; gap: 4px; }
 .v2-ico-lb svg { flex: 0 0 auto; color: var(--v2-ink-3); }
+/* Small count badge on a filter tab (e.g. "All users 405") — same shape as
+   the reference's tab counters. */
+.v2-tabcount {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; margin-left: 2px;
+  border-radius: 999px; font-size: 10.5px; font-weight: 700;
+  background: var(--v2-sand); color: var(--v2-ink-3);
+}
+
+/* ── filter dropdown (match-status) — one icon+label trigger, not two pill
+   tabs — same interaction as the reference's column-header filter: an icon,
+   a small menu, the active choice picked out in brand blue with a check. ── */
+.v2-fdd { position: relative; }
+.v2-fdd-trigger {
+  appearance: none; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 12px; border-radius: var(--v2-r-s);
+  background: var(--v2-paper); border: 1px solid var(--v2-edge-2); color: var(--v2-ink-2);
+}
+.v2-fdd-trigger svg { color: var(--v2-ink-4); }
+/* Active = a real filter is applied (not "All") — brand blue, same as every
+   other "this is the current choice" state in this file. */
+.v2-fdd-trigger.active {
+  background: var(--v2-tint); border-color: var(--v2-brand-l); color: var(--v2-brand);
+}
+.v2-fdd-trigger.active svg { color: var(--v2-brand); }
+.v2-fdd-trigger.active .v2-tabcount { background: var(--v2-brand); color: #fff; }
+.v2-fdd-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30;
+  min-width: 210px; background: var(--v2-paper); border: 1px solid var(--v2-edge);
+  border-radius: var(--v2-r-m); box-shadow: var(--v2-sh-l); padding: 6px;
+}
+.v2-fdd-item {
+  appearance: none; cursor: pointer; font: inherit; text-align: left; width: 100%;
+  display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  background: none; border: 0; border-radius: 8px; padding: 8px 10px;
+  font-size: 13px; font-weight: 500; color: var(--v2-ink);
+}
+.v2-fdd-item:hover { background: var(--v2-tint-2); }
+.v2-fdd-item.active { color: var(--v2-brand); font-weight: 600; }
+.v2-fdd-check {
+  width: 14px; height: 14px; flex: 0 0 auto; display: flex; align-items: center;
+  color: var(--v2-brand);
+}
 .v2-mapsearch {
   display: inline-flex; align-items: center; gap: 6px; height: 32px;
-  padding: 0 10px; width: 128px; border: 1px solid var(--v2-edge-2);
+  padding: 0 10px; width: 190px; border: 1px solid var(--v2-edge-2);
   border-radius: var(--v2-r-s); background: var(--v2-paper); color: var(--v2-ink-4);
 }
 .v2-mapsearch:focus-within { border-color: var(--v2-brand-l); box-shadow: 0 0 0 3px var(--v2-tint); }
 .v2-mapsearch svg { flex: 0 0 auto; }
+/* Select agents' own search box, longer than Map users' 190px — this toolbar
+   row has fewer other controls competing for width, so there's room to make
+   typing a name or owner more comfortable without wrapping the row. */
+.v2-mapsearch--wide { width: 320px; }
 .v2-mapsearch .v2-field {
   height: auto; width: 100%; border: 0; padding: 0; background: none;
   font-family: inherit; font-size: 12.5px; color: var(--v2-ink);
 }
 .v2-mapsearch .v2-field:focus { box-shadow: none; }
+/* Separates the data actions (Import CSV, Auto Map) from the selection
+   actions (Select all, Clear) in the toolbar — two different kinds of
+   action sitting in one unbroken button row read as one group. */
+.v2-toolbar-div { width: 1px; align-self: stretch; background: var(--v2-edge); margin: 0 2px; }
+/* Column headers over the row list, same shape as the reference's SOURCE /
+   DESTINATION header — widths mirror `.v2-row`'s own glyph(28) + gap(13) +
+   nmw(250) so "Destination" lines up exactly where `.why` starts below it. */
+.v2-rowhead {
+  display: flex; align-items: center; gap: 13px; padding: 8px 16px;
+  /* Brand blue tint, not the warm-neutral sand every other head row uses —
+     a faint gradient of the same two tokens the rest of the app already
+     uses for "this is active/brand-colored" (the tick focus ring, the
+     active filter pill), so it reads as blue-tinted, not a new color. */
+  background: linear-gradient(180deg, var(--v2-tint-2), var(--v2-tint));
+  font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  /* Grey labels on the blue-tinted bar, same as the reference — the tint is
+     what carries the brand color here, not the text itself. */
+  color: var(--v2-ink-4);
+}
+.v2-rowhead-src { flex: 0 0 291px; }
+/* Same `flex: 1 1 300px` (shrinkable, not rigid), the same fixed 40px nudge,
+   and the same left alignment as `.v2-row.mapuser .why` below it — both sit
+   the same distance after Source with no auto-margin centering, so their
+   LEFT edges always match exactly, at any viewport width or with the
+   inspector panel open or closed. Auto-margin centering was tried here too
+   and reverted along with the row's version: it only stays correct while
+   there happens to be leftover space, and broke (chip overflowing off-row)
+   the moment there wasn't. The tinted header background still spans the
+   full row — that comes from `.v2-rowhead` itself, not from this column
+   filling the width. */
+.v2-rowhead-dest {
+  flex: 1 1 300px; min-width: 120px; display: flex; align-items: center; gap: 6px;
+  margin-left: 80px;
+}
+/* Header and rows scroll together, in sync, as one unit — the alternative
+   (each squashing its own fixed-width columns to fit, or each scrolling
+   independently) is what let the destination/email/status columns clip off
+   the right edge on a phone, with no way to reach them. `.v2-rowhead` and
+   `.v2-row` both need the SAME min-width or the header and rows disagree on
+   how wide a "column" is once this wrapper's horizontal scroll kicks in. */
+.v2-tablewrap { overflow-x: auto; }
+.v2-tablewrap .v2-rowhead, .v2-tablewrap .v2-row { min-width: 560px; }
+/* Icon-only variant for a filter that lives ON the column header it filters,
+   rather than as a labelled pill off in the toolbar. */
+/* Plain icon, no box — it sits on the column header, not in the toolbar
+   with the other pill-shaped buttons, so it doesn't need their button
+   chrome. Still shows brand-blue when a filter is actually active. */
+.v2-fdd-trigger--icon {
+  width: 24px; height: 24px; padding: 0; justify-content: center;
+  background: none; border-color: transparent;
+}
+.v2-fdd-trigger--icon.active { background: none; border-color: transparent; }
+.v2-fdd-item .v2-tabcount { margin-left: auto; }
+/* The account-picker modal's search box wants the full modal width, not the
+   toolbar's fixed 190px. */
+.v2-acctpick-search { width: 100%; margin-bottom: 10px; }
+.v2-acctpick-list {
+  max-height: 320px; overflow-y: auto; border: 1px solid var(--v2-edge);
+  border-radius: var(--v2-r-m); padding: 6px;
+}
+/* ── CSV import dialog — same shape as the reference's own mapping-CSV
+   dialog: a click/drop zone, then required-columns + before-you-upload
+   boxes side by side. ── */
+.v2-csvdrop {
+  appearance: none; cursor: pointer; font: inherit; width: 100%;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 28px 16px; margin-bottom: 14px; border-radius: var(--v2-r-m);
+  border: 1.5px dashed var(--v2-brand-l); background: var(--v2-tint-2); color: var(--v2-ink);
+  text-align: center;
+}
+.v2-csvdrop:hover { background: var(--v2-tint); }
+.v2-csvdrop svg { color: var(--v2-brand); }
+.v2-csvdrop strong { font-size: 13.5px; font-weight: 600; }
+.v2-csvinfo { display: flex; gap: 10px; flex-wrap: wrap; }
+.v2-csvinfo-box {
+  flex: 1 1 200px; padding: 12px 14px; border-radius: var(--v2-r-m);
+  background: var(--v2-paper-2); border: 1px solid var(--v2-edge);
+}
+.v2-csvinfo-box h6 { font-size: 11px; font-weight: 700; color: var(--v2-ink-2); margin-bottom: 6px; }
+.v2-csvinfo-box p { font-size: 12.5px; color: var(--v2-ink-2); }
+.v2-csvinfo-box ul { margin: 0; padding-left: 16px; }
+.v2-csvinfo-box li { font-size: 12.5px; color: var(--v2-ink-3); margin-bottom: 4px; }
+.v2-csvinfo-box li:last-child { margin-bottom: 0; }
+.v2-csvinfo-link {
+  appearance: none; cursor: pointer; font: inherit; background: none; border: 0; padding: 0;
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 8px;
+  font-size: 12px; font-weight: 600; color: var(--v2-brand);
+}
+.v2-csvinfo-link:hover { text-decoration: underline; }
 .v2-row.note { align-items: flex-start; }
 .v2-row.note .why { overflow: visible; white-space: normal; text-overflow: clip; }
 /* One agent's findings, grouped so the agent name reads as a heading for them. */
 .v2-fid { padding: 4px 0 8px; border-bottom: 1px solid var(--v2-line-2, rgba(0,0,0,.06)); }
 .v2-fid:last-child { border-bottom: 0; }
 .v2-fid .v2-note:not(:first-child) { padding-left: 12px; }
-.v2-row .st { flex: 0 0 148px; display: flex; justify-content: flex-end; }
 .v2-row .act { flex: 0 0 118px; display: flex; justify-content: flex-end; }
 
 /* the element the agent is touching right now */
@@ -600,17 +1007,50 @@
 .v2-toast.on { opacity: 1; transform: translateX(-50%); }
 .v2-toast .m { color: var(--v2-ok); }
 
-/* ── wizard footer: the manual path. The agent is optional. ─────────── */
-.v2-wizard { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
-.v2-wizard .next { flex: 1; justify-content: center; padding: 11px 18px; font-size: 14px; }
-.v2-wizard .back { padding: 11px 18px; font-size: 14px; }
+/* ── wizard footer: the manual path. The agent is optional. ───────────
+   A flat bar fixed to the bottom of the viewport — not a floating rounded
+   pill, and not spanning under the inspector either: it belongs to the
+   canvas column, sitting BETWEEN the rail and the inspector, not across
+   both. `left: var(--v2-rail-w)` is the same live custom property the rail
+   sets on itself (232px expanded / 68px collapsed), so the bar's left edge
+   tracks the rail's own width with no separate state to keep in sync.
+   `right: 0` here is only the no-inspector fallback — `.v2-work:has(.v2-insp)`
+   below insets it by the inspector's own 300px width whenever one is
+   actually present, so the bar never runs underneath it. */
+.v2-wizard {
+  position: fixed; left: var(--v2-rail-w); right: 0; bottom: 0; z-index: 45;
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 24px; background: var(--v2-paper); border-top: 1px solid var(--v2-edge);
+  transition: left .15s ease, right .15s ease; /* mirrors the rail's own width transition */
+}
+.v2-work:has(.v2-insp) .v2-wizard { right: 300px; }
+.v2-wizard .next { flex: 0 0 auto; justify-content: center; padding: 11px 18px; font-size: 14px; }
+/* No box at rest — border/background only appear on hover, so it reads as a
+   plain link-like action next to the page rather than a boxed button sitting
+   beside the actual primary action (Next). */
+.v2-wizard .back {
+  padding: 7px 18px; font-size: 14px; color: var(--v2-ink-3);
+  background: none; border-color: transparent;
+}
+.v2-wizard .back:hover:not(:disabled) {
+  /* Brand-blue family only, both stops from the same light-tint tokens used
+     for "current" elsewhere in this file — not grey/sand. Text stays the
+     same muted tone as at rest; only the background changes. */
+  background: linear-gradient(180deg, var(--v2-tint-2), var(--v2-tint));
+  border-color: transparent;
+}
 .v2-wizard .note { font-size: 11.5px; color: var(--v2-ink-4); }
 .v2-wizard .note.blocked { color: #8a5600; }
+/* Below 900px the rail becomes a horizontal top strip, not a side column, so
+   the bar's left edge has nothing to align to — span the full width instead. */
+@media (max-width: 900px) {
+  .v2-wizard { left: 0; padding: 12px 16px; }
+}
 
 /* ── selection ───────────────────────────────────────────────────────── */
 .v2-tick {
-  width: 17px; height: 17px; border-radius: 4px; flex: 0 0 auto; cursor: pointer;
-  border: 1.5px solid var(--v2-edge-2); background: var(--v2-paper);
+  width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; cursor: pointer;
+  border: 1.1px solid var(--v2-edge-2); background: var(--v2-paper);
   display: grid; place-items: center; font-size: 10px; color: #fff; line-height: 1;
 }
 .v2-tick.on { background: var(--v2-brand); border-color: var(--v2-brand); }
@@ -624,9 +1064,48 @@
 .v2-select:focus { outline: 0; border-color: var(--v2-brand-l); box-shadow: 0 0 0 3px var(--v2-tint); }
 .v2-select:disabled { opacity: .5; cursor: not-allowed; }
 
+/* ── bottom stats + pagination bar ───────────────────────────────────── */
+/* A visibly different shade from the white table above it — not just a
+   border line — so it reads as its own footer strip (same zone as the
+   reference's), not another row of the table it happens to sit under. */
+.v2-pagebar {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: 12px; padding: 12px 16px; border-top: 1px solid var(--v2-edge);
+  background: var(--v2-paper-2);
+  font-size: 12.5px; color: var(--v2-ink-3);
+}
+/* Pulled out of the table's own panel and given a visible gap — plain text
+   strip, no card of its own, just enough separation to stop reading as the
+   table's last row under the scroll fade-out. */
+.v2-pagebar-standalone {
+  margin-top: 14px; border: 0;
+  background: none; padding-left: 0; padding-right: 0;
+}
+/* The card used to be capped at 900px here to hide the blank gap that a
+   `flex: 1 1 auto` Destination column left next to a short email. That
+   column now has its own fixed width (`.v2-row.mapuser .why`), which fixes
+   the actual gap directly — capping the whole card was the wrong layer for
+   that fix, and left the opposite problem: dead grey space beside a card
+   that could otherwise fill the canvas like every other panel does. */
+.v2-pagebar-stats { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.v2-pagebar-stats strong { color: var(--v2-ink); font-weight: 700; margin-left: 4px; }
+.v2-pagebar-ctl { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.v2-pagebar-of { white-space: nowrap; }
+.v2-pagebar-size {
+  display: flex; align-items: center; gap: 8px; white-space: nowrap;
+}
+.v2-pagebar-size .v2-select { height: 28px; min-width: 60px; max-width: 76px; }
+/* The prev/next buttons here reuse `.v2-card-icon-btn` for the same compact
+   square look the Connect card's refresh/delete buttons have, but that
+   class only carries a size when scoped under `.v2-card-row-act` — without
+   a size of its own here it fell back to the plain `.v2-btn` padding,
+   rendering as a noticeably bigger box than the pill it sits next to. */
+.v2-pagebar-ctl .v2-card-icon-btn { width: 28px; height: 28px; padding: 0; }
+
+/* No border/background of its own — it is a row inside a panel that already
+   has an edge, not a second boxed strip stacked on top of it. */
 .v2-selbar {
-  display: flex; align-items: center; gap: 10px; padding: 11px 16px;
-  border-bottom: 1px solid var(--v2-edge); background: var(--v2-paper-2);
+  display: flex; align-items: center; gap: 10px; padding: 14px 16px;
 }
 .v2-selbar .big { font-size: 13px; font-weight: 500; }
 /* `justify-content: flex-end` matters once this wraps: without it, whichever
@@ -642,9 +1121,13 @@
 .v2-grp:last-child { border-bottom: 0; }
 .v2-grp .grp-h {
   display: flex; align-items: center; gap: 11px; padding: 11px 16px;
-  background: var(--v2-paper-2); cursor: pointer;
+  /* Same light blue tint as Map users' Source/Destination header row —
+     one shared "this is a column/group header" tint across the app,
+     instead of the plain warm-neutral grey every other head row uses. */
+  background: linear-gradient(180deg, var(--v2-tint-2), var(--v2-tint));
+  cursor: pointer;
 }
-.v2-grp .grp-h:hover { background: var(--v2-sand); }
+.v2-grp .grp-h:hover { background: linear-gradient(180deg, var(--v2-tint), var(--v2-tint-2)); }
 .v2-grp .grp-h .nm { display: block; font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
 .v2-grp .grp-h .id { display: block; font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-4); }
 .v2-grp .grp-h .cnt { margin-left: auto; font-size: 11.5px; color: var(--v2-ink-3); }
@@ -656,44 +1139,136 @@
 /* ── connect cards + direction ───────────────────────────────────────── */
 .v2-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 800px) { .v2-cards { grid-template-columns: 1fr; } }
+/* Centered: big logo, bold title, status line, full-width action — the same
+   shape as the reference "connect a cloud" card, adapted to our fixed
+   source/destination pairing (one Microsoft, one Google, not an open-ended
+   multi-account picker) rather than copied literally. */
 .v2-card {
-  background: var(--v2-paper); border: 1px solid var(--v2-edge);
-  border-radius: var(--v2-r-l); box-shadow: var(--v2-sh-s); padding: 18px;
+  /* Relative so `.v2-card-row-act` (refresh/disconnect) can anchor to this
+     card's own top-right corner instead of the viewport's. */
+  position: relative;
+  /* No box-shadow — the tint + border already say "this is a unit", a drop
+     shadow on top of that just adds weight without adding meaning. */
+  background: var(--v2-tint-2); border: 1px solid var(--v2-edge);
+  border-radius: var(--v2-r-l); padding: 20px 22px;
+  text-align: center;
 }
-.v2-card.live { border-color: #cdeee0; }
+/* Source is always green, matching the DIY reference's role colour (source =
+   green, destination = blue) — a fixed role tint, not tied to connection
+   state, so it stays green whether or not Microsoft is connected yet.
+   `.v2-card--destination.live` (below) exists for the same reason: without
+   it, `.live`'s green (also 2 chained classes, same specificity, declared
+   later) silently painted the destination card green too the moment Google
+   connected, contradicting this comment's own "destination = blue" rule. */
+.v2-card--source { background: #eafaf4; border-color: #cdeee0; }
+.v2-card--destination.live { background: var(--v2-tint-2); border-color: var(--v2-edge); }
 .v2-card .role {
   font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
   color: var(--v2-ink-4); font-weight: 600;
 }
-.v2-card .hd { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
-.v2-card h3 { font-size: 17px; font-weight: 600; letter-spacing: -.02em; margin: 0; }
+.v2-card .hd { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: 10px 0 4px; }
+.v2-card h3 { font-size: 18px; font-weight: 700; letter-spacing: -.02em; margin: 0; color: var(--v2-brand); }
 /* Drawn, not fetched: a broken remote logo makes a working product look dead. */
 .v2-mark { width: 22px; height: 22px; flex: 0 0 auto; display: block; }
+.v2-card .hd .v2-mark { width: 40px; height: 40px; }
 .v2-card .acct { font-family: var(--v2-mono); font-size: 12px; color: var(--v2-ink-2); }
-.v2-card .det { font-size: 12px; color: var(--v2-ink-3); margin-top: 6px; line-height: 1.45; }
-.v2-card .foot { margin-top: 14px; display: flex; align-items: center; gap: 8px; }
+.v2-card .det {
+  /* Brand guide's paragraph colour (#2e2e2e), not the muted --v2-ink-3 grey —
+     this line is an instruction the admin has to actually read before signing
+     in, not a footnote, so it needs the same legibility as a real paragraph. */
+  font-size: 13px; color: #2e2e2e; margin: 6px auto 0; line-height: 1.5;
+  max-width: 300px;
+  /* Fixed to exactly two lines (13px * 1.5 line-height) so the source and
+     destination cards' Connect buttons land on the same row even when one
+     caption wraps to two lines and the other fits on one. */
+  min-height: 39px;
+}
+.v2-card .foot { margin-top: 20px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+/* `>` on purpose: both row-act buttons below are grandchildren of `.foot`
+   (via `.v2-card-row-act`), not direct children — without the child
+   combinator this rule's higher specificity (3 chained classes vs. the
+   row-act rules' 2) silently overrode `.v2-card-row-act .v2-card-icon-btn`'s
+   own width, stretching the refresh icon button to the full card width and
+   pushing Disconnect out past the card's edge. */
+.v2-card .foot > .v2-btn { width: 100%; justify-content: center; }
+/* The status chip stays a compact centered pill — only the button stretches
+   full-width, matching the reference's bordered full-width action. */
+.v2-card .foot .v2-chip { align-self: center; }
+/* Refresh + Disconnect side by side, both small square icon buttons, pinned
+   to the card's own top-right corner — same placement as the DIY reference,
+   rather than sitting under the "connected" chip in the card's own flow. */
+.v2-card-row-act { position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; }
+.v2-card-row-act .v2-card-icon-btn {
+  /* Equal width AND height on purpose — width alone (with padding:0 and no
+     explicit height) left the button's height sized to the 13px icon glyph,
+     so a 38px-wide, ~15px-tall box with border-radius rounded it into an
+     oval instead of the reference's small rounded square. */
+  position: relative; /* anchors .v2-icon-tip */
+  flex: 0 0 auto; width: 32px; height: 32px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+/* Danger hover for the trash button only — refresh stays neutral. */
+.v2-card-icon-btn--danger:hover:not(:disabled) {
+  background: #ffe9ec; border-color: #ffb3bd; color: var(--v2-fail);
+}
+/* Spins the refresh glyph itself while a refresh is in flight — clicking it
+   should visibly read as "refreshing", not just grey out the button. */
+@keyframes ico-spin { to { transform: rotate(360deg); } }
+.ico-spin { animation: ico-spin .8s linear infinite; }
+/* Same bubble-tooltip pattern as `.v2-phase-tip`, with a small pointed tail
+   added — these sit above a small icon button rather than beside a full-width
+   row, so a plain offset bubble alone read as floating and disconnected. */
+.v2-icon-tip {
+  position: absolute; bottom: calc(100% + 9px); left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: var(--v2-ink); color: #fff;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  padding: 6px 10px; border-radius: 8px;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .12s ease, transform .12s ease;
+  z-index: 40;
+}
+.v2-icon-tip::after {
+  content: ''; position: absolute; top: 100%; left: 50%;
+  width: 8px; height: 8px; margin-top: -4px;
+  background: var(--v2-ink); transform: translateX(-50%) rotate(45deg);
+}
+.v2-card-icon-btn:hover .v2-icon-tip,
+.v2-card-icon-btn:focus-visible .v2-icon-tip {
+  opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0);
+}
 
-/* The direction, stated once both sides are live. */
+/* The direction, stated once both sides are live — a plain summary line now,
+   not a third boxed pill-row nested inside cards that already say the same
+   thing. A hairline top border separates it from the cards; nothing else. */
+/* Its own small standalone strip — floating above the cards like the
+   reference's "THIS MIGRATION" bar, not glued to the cards it summarizes. */
 .v2-dir {
-  display: flex; align-items: center; justify-content: center; gap: 14px;
-  margin-top: 14px; padding: 14px 18px; background: var(--v2-paper);
+  display: flex; align-items: center; justify-content: flex-start; gap: 10px;
+  margin-bottom: 16px; padding: 14px 18px; background: var(--v2-paper);
   border: 1px solid var(--v2-edge); border-radius: var(--v2-r-l);
-  box-shadow: var(--v2-sh-s); flex-wrap: wrap;
+  flex-wrap: wrap;
 }
-.v2-dir .side {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 14px; font-weight: 600; letter-spacing: -.01em;
+.v2-dir-label {
+  font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+  font-weight: 600; color: var(--v2-ink-3);
 }
-/* The account email stacks under the title, not under the icon — a separate
-   column from the icon so the two lines share the same left edge. */
-.v2-dir .side .txt { display: flex; flex-direction: column; gap: 1px; }
-.v2-dir .side .sub { font-family: var(--v2-mono); font-size: 11px; font-weight: 400; color: var(--v2-ink-4); }
+.v2-dir-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--v2-sand); border-radius: 999px; padding: 6px 14px;
+  font-size: 13px; color: var(--v2-ink-2);
+}
+.v2-dir-pill .k { color: var(--v2-ink-3); }
+.v2-dir-pill strong { color: var(--v2-ink); font-weight: 700; }
 .v2-dir .to {
-  color: var(--v2-brand); font-size: 18px; padding: 0 4px;
+  color: var(--v2-ink-4); font-size: 15px; padding: 0 2px;
 }
 .v2-dir .found { margin-left: auto; display: flex; gap: 18px; }
 .v2-dir .found .n {
-  font-family: 'Instrument Serif', Georgia, serif; font-size: 22px; line-height: 1.1; display: block;
+  /* Same brand-compliance fix as .v2-band .v — Poppins is the only approved
+     face, so the serif accent goes even on these big instrument numbers. */
+  font-family: 'Poppins', var(--font), sans-serif; font-weight: 600;
+  font-size: 21px; line-height: 1.1; display: block;
 }
 .v2-dir .found label {
   font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase;
@@ -802,6 +1377,19 @@
   border-bottom: 1px solid var(--v2-edge);
 }
 .v2-dec:last-child { border-bottom: 0; }
+
+/* The agent a group of decisions belongs to, named once above its own rows.
+   Replaces repeating the name on every row across two separate lists, where an
+   agent needing both a surface choice and a Drive account appeared twice and the
+   customer had to reassemble the set themselves. */
+.v2-dec-grp:not(:last-child) { border-bottom: 1px solid var(--v2-edge); }
+.v2-dec-grp .v2-dec:last-child { border-bottom: 0; }
+/* The agent's own name reads as a heading, not as the muted summary line a
+   fold title is elsewhere on this screen. */
+.v2-dec-grp .v2-fold > .hd .tl { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+/* Indented under their agent so the grouping is visible without a box per agent. */
+.v2-dec-grp .v2-dec { padding-left: 28px; border-bottom: 0; }
+.v2-dec-grp .v2-fold .bd { padding: 0; }
 .v2-dec .nmw { min-width: 0; }
 .v2-dec .nm { display: block; font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
 .v2-dec .kind {
@@ -845,13 +1433,6 @@
 .v2 .v2-rep-banner strong { font-size: 15px; }
 .v2 .v2-rep-banner .sub { color: var(--v2-ink-3); font-size: 12.5px; margin-top: 2px; }
 
-/* The four numbers. This row is the answer to "what did I get". */
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
-  text-align: center; padding: 4px 0 2px;
-}
-/* An em dash means NOT RECORDED. It must never look like a measured zero, so it
-   is dimmed: a 0 next to "connectors wired" claims we wired nothing, which is a
-   false statement about a run whose data simply predates the field. */
 
 .v2 .v2-rep-agent { border-top: 1px solid var(--v2-edge); padding-top: 14px; }
 .v2 .v2-rep-agent > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -884,3 +1465,128 @@
 @media (max-width: 720px) {
   .v2 .v2-rep-checks { grid-template-columns: 1fr; }
 }
+
+/* ── thin scrollbars ──────────────────────────────────────────────────────
+   Every internal scroll box (the inspector, Select agents' env list, Map
+   users' row list, modal bodies, the account picker, the run log) was
+   falling back to Windows' full-width classic scrollbar with its own
+   up/down arrow buttons — chunky next to the rest of this UI. Chromium/Edge
+   only drop that in favor of a custom one once `::-webkit-scrollbar` is
+   actually styled; Firefox gets there with `scrollbar-width: thin` alone. */
+.v2-insp, .v2-scrollbox, .v2-usersbox, .v2-acctpick-list, .v2-modal-b, .v2-log {
+  scrollbar-width: thin;
+  scrollbar-color: var(--v2-edge-2) transparent;
+}
+.v2-insp::-webkit-scrollbar,
+.v2-scrollbox::-webkit-scrollbar,
+.v2-usersbox::-webkit-scrollbar,
+.v2-acctpick-list::-webkit-scrollbar,
+.v2-modal-b::-webkit-scrollbar,
+.v2-log::-webkit-scrollbar {
+  width: 8px;
+}
+.v2-insp::-webkit-scrollbar-track,
+.v2-scrollbox::-webkit-scrollbar-track,
+.v2-usersbox::-webkit-scrollbar-track,
+.v2-acctpick-list::-webkit-scrollbar-track,
+.v2-modal-b::-webkit-scrollbar-track,
+.v2-log::-webkit-scrollbar-track {
+  background: transparent;
+}
+.v2-insp::-webkit-scrollbar-thumb,
+.v2-scrollbox::-webkit-scrollbar-thumb,
+.v2-usersbox::-webkit-scrollbar-thumb,
+.v2-acctpick-list::-webkit-scrollbar-thumb,
+.v2-modal-b::-webkit-scrollbar-thumb,
+.v2-log::-webkit-scrollbar-thumb {
+  background: var(--v2-edge-2); border-radius: 999px;
+}
+.v2-insp::-webkit-scrollbar-thumb:hover,
+.v2-scrollbox::-webkit-scrollbar-thumb:hover,
+.v2-usersbox::-webkit-scrollbar-thumb:hover,
+.v2-acctpick-list::-webkit-scrollbar-thumb:hover,
+.v2-modal-b::-webkit-scrollbar-thumb:hover,
+.v2-log::-webkit-scrollbar-thumb:hover {
+  background: var(--v2-ink-4);
+}
+
+/* ── Connectors page — CloudFuze design system (cf-ui) ───────────────────
+   The rest of v2 uses the app's own --v2-* tokens; this page was rebuilt
+   directly against the cf-ui component set (tokens.css/base.css/
+   components.css) per the brand-guideline pass, so it reads a little
+   differently on purpose — these rules only ever target this one page's
+   own classes (`cf-connector-*`, `cf-credfoot`, `cf-btn--linklike`), never
+   the shared `cf-*` component classes themselves. */
+.cf-connector-row {
+  appearance: none; cursor: pointer; font: inherit; text-align: left; width: 100%;
+  display: flex; align-items: center; gap: 14px; padding: 14px 20px;
+  background: none; border: 0; border-top: 1px solid var(--cf-color-border);
+  transition: background 0.12s ease;
+}
+.cf-connector-row:hover { background: var(--cf-color-bg-near-white); }
+.cf-connector-row:hover .cf-connector-edit { border-color: var(--cf-color-primary); color: var(--cf-color-primary); }
+.cf-connector-row--dead { cursor: default; }
+.cf-connector-row--dead:hover { background: none; }
+.cf-connector-glyph {
+  width: 36px; height: 36px; border-radius: var(--cf-radius-md); flex: 0 0 auto;
+  background: var(--cf-color-bg-ice); color: var(--cf-color-primary);
+  display: grid; place-items: center; font-size: 13px; font-weight: 700; overflow: hidden;
+}
+.cf-connector-glyph svg { width: 100%; height: 100%; }
+.cf-connector-tx { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cf-connector-nm { font-size: 14px; font-weight: 600; color: var(--cf-color-navy); }
+.cf-connector-sb {
+  font-size: 12.5px; color: var(--cf-color-secondary-gray);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cf-connector-edit { flex: 0 0 auto; pointer-events: none; }
+
+/* Icon-tile grid — the "add applications" treatment: one square tile per
+   credential group, official brand mark + name, everything else left for
+   the modal a click opens. 115px tiles to match CloudFuze SaaS Management's
+   own "Add applications" card size. */
+.cf-connector-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(115px, 1fr)); gap: 14px;
+}
+.cf-connector-tile {
+  appearance: none; cursor: pointer; font: inherit; position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  aspect-ratio: 1 / 1; padding: 14px 10px; background: #fff; border: 1px solid var(--cf-color-border);
+  border-radius: var(--cf-radius-md);
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.cf-connector-tile:hover {
+  transform: scale(1.05); border-color: var(--cf-color-primary); box-shadow: var(--cf-shadow-md);
+  z-index: 1;
+}
+.cf-connector-tile-mark {
+  width: 56px; height: 56px; border-radius: var(--cf-radius-md); overflow: hidden; flex: 0 0 auto;
+}
+.cf-connector-tile-mark svg { width: 100%; height: 100%; }
+.cf-connector-tile-nm {
+  font-size: 12.5px; font-weight: 600; color: var(--cf-color-navy); text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+
+/* Link-styled button ("Replace it") sitting inline inside a `cf-hint` line —
+   the cf-ui kit has no bare-link button variant, so this is the one small
+   addition needed to match its type scale/color instead of introducing a
+   different link style. */
+.cf-btn--linklike {
+  appearance: none; cursor: pointer; font: inherit; background: none; border: 0; padding: 0;
+  font-size: inherit; font-weight: 600; color: var(--cf-color-primary); text-decoration: underline;
+}
+
+/* The credential form's own save/cancel row, styled and pinned like a modal
+   footer even though it renders inside `.cf-modal__body` (the form is shared
+   with a non-modal caller too, so it cannot assume a real footer slot exists). */
+.cf-credfoot {
+  position: sticky; bottom: -20px; margin: 16px -20px -20px; padding: 14px 20px;
+  background: #fff; border-top: 1px solid var(--cf-color-border);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.cf-credfoot__note {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--cf-color-secondary-gray);
+}
+.cf-credfoot__actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }

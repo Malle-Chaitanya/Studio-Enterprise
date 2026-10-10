@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { IcoArrowLeft, IcoCheck, IcoMinus } from '../../icons.tsx';
 
 /**
  * v2 primitives.
@@ -15,11 +16,19 @@ export function Panel({ children }: { children: ReactNode }) {
   return <div className="v2-panel">{children}</div>;
 }
 
-export function PanelHead({ title, sub, actions }: { title: string; sub?: ReactNode; actions?: ReactNode }) {
+export function PanelHead({ title, sub, actions, accent }: {
+  title: string;
+  sub?: ReactNode;
+  actions?: ReactNode;
+  /** Brand-blue bold title, same as the reference's per-destination card
+   *  heading (e.g. "Gmail") — opt-in so every other panel keeps its plain
+   *  black title. */
+  accent?: boolean;
+}) {
   return (
     <div className="v2-panel-h">
       <div>
-        <h2>{title}</h2>
+        <h2 className={accent ? 'accent' : undefined}>{title}</h2>
         {sub && <div className="sub">{sub}</div>}
       </div>
       {actions && <div className="sp">{actions}</div>}
@@ -113,10 +122,16 @@ export function Toggle<T extends string>({ value, options, onChange }: {
 /** `you` is the amber one: it means a human must act, and nothing else may use it. */
 export type ChipTone = 'plain' | 'ok' | 'warn' | 'run' | 'bad' | 'you';
 
-export function Chip({ children, tone = 'plain' }: { children: ReactNode; tone?: ChipTone }) {
+export function Chip({ children, tone = 'plain', icon }: {
+  children: ReactNode;
+  tone?: ChipTone;
+  /** Swaps the plain dot for a small icon (e.g. a tick for "paired") — only
+   *  where a caller opts in, so every other chip keeps its dot unchanged. */
+  icon?: ReactNode;
+}) {
   return (
     <span className={`v2-chip${tone === 'plain' ? '' : ` ${tone}`}`}>
-      <i />
+      {icon ?? <i />}
       {children}
     </span>
   );
@@ -345,7 +360,7 @@ export function InspectorActions({ children }: { children: ReactNode }) {
  * migration tool wastes someone's afternoon, so `blockedNote` is required
  * whenever `blocked` is set.
  */
-export function WizardFooter({ onBack, onNext, nextLabel, blocked, note, backLabel = 'Back' }: {
+export function WizardFooter({ onBack, onNext, nextLabel, blocked, note, backLabel = 'Previous' }: {
   onBack?: () => void;
   onNext?: () => void;
   /** Omitted on the LAST screen of the flow: a disabled Next that leads nowhere is
@@ -357,7 +372,11 @@ export function WizardFooter({ onBack, onNext, nextLabel, blocked, note, backLab
 }) {
   return (
     <div className="v2-wizard">
-      {onBack && <Btn className="back" onClick={onBack}>{backLabel}</Btn>}
+      {onBack && (
+        <Btn className="back" onClick={onBack}>
+          <span className="v2-ico-lb"><IcoArrowLeft s={14} />{backLabel}</span>
+        </Btn>
+      )}
       {/* Note BEFORE Next in DOM: `.note`'s margin-left:auto pushes itself and
           every sibling after it to the right edge as one group. With Next after
           it, that group is just the note; Next stayed stranded next to Back
@@ -423,7 +442,12 @@ export function Tick({ state, onToggle, label }: {
       onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle?.(); } }}
     >
-      {state === 'on' ? '✓' : state === 'mixed' ? '–' : ''}
+      {/* A real SVG glyph, not a Unicode "✓"/"–" — a plain text checkmark
+          renders inconsistently across fonts (too heavy, off-center) and was
+          the one place this control didn't match the rest of the app's
+          hand-tuned thin-stroke icon set. */}
+      {state === 'on' && <IcoCheck s={7} />}
+      {state === 'mixed' && <IcoMinus s={7} />}
     </span>
   );
 }

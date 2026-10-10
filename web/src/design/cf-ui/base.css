@@ -1,0 +1,69 @@
+/* CloudFuze UI — base reset & global typography. Depends on tokens.css. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body.cf-ui {
+  margin: 0;
+  font-family: var(--cf-font-family);
+  font-weight: var(--cf-font-weight-regular);
+  font-size: var(--cf-font-size-base);
+  line-height: var(--cf-line-height-base);
+  color: var(--cf-color-body);
+  background: var(--cf-color-bg);
+}
+
+.cf-ui h1, .cf-ui h2, .cf-ui h3, .cf-ui h4, .cf-ui h5, .cf-ui h6 {
+  margin: 0 0 0.4em 0;
+  font-weight: var(--cf-font-weight-semibold);
+  line-height: var(--cf-line-height-heading);
+  color: var(--cf-color-black);
+}
+.cf-ui h1 { font-size: var(--cf-font-size-h1); }
+.cf-ui h2 { font-size: var(--cf-font-size-h2); }
+.cf-ui h3 { font-size: var(--cf-font-size-h3); }
+.cf-ui h4 { font-size: var(--cf-font-size-h4); }
+.cf-ui h5 { font-size: var(--cf-font-size-h5); }
+.cf-ui h6 { font-size: var(--cf-font-size-h6); }
+
+.cf-ui p { margin: 0 0 1em 0; }
+.cf-ui a { color: var(--cf-color-royal-blue); text-decoration: none; font-weight: var(--cf-font-weight-medium); }
+.cf-ui a:hover { text-decoration: underline; }
+
+.cf-ui :focus-visible {
+  outline: none;
+  box-shadow: var(--cf-shadow-focus);
+}
+
+/* Layout utilities */
+.cf-container { max-width: 1200px; margin: 0 auto; padding: 0 var(--cf-space-6); }
+.cf-flex { display: flex; }
+.cf-flex-col { display: flex; flex-direction: column; }
+.cf-items-center { align-items: center; }
+.cf-justify-between { justify-content: space-between; }
+.cf-gap-1 { gap: var(--cf-space-1); }
+.cf-gap-2 { gap: var(--cf-space-2); }
+.cf-gap-3 { gap: var(--cf-space-3); }
+.cf-gap-4 { gap: var(--cf-space-4); }
+.cf-gap-6 { gap: var(--cf-space-6); }
+
+/* Text utilities */
+.cf-text-muted { color: var(--cf-color-muted); }
+.cf-text-secondary { color: var(--cf-color-secondary-gray); }
+.cf-text-sm { font-size: var(--cf-font-size-sm); }
+.cf-text-xs { font-size: var(--cf-font-size-xs); }
+.cf-font-medium { font-weight: var(--cf-font-weight-medium); }
+.cf-font-semibold { font-weight: var(--cf-font-weight-semibold); }
+.cf-font-bold { font-weight: var(--cf-font-weight-bold); }
+
+/* Visually hidden (accessibility) */
+.cf-sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

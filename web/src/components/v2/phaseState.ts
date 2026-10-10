@@ -1,6 +1,8 @@
 import { readCache, readProgress } from '../../v2/data/cache.ts';
-import type { PhaseId, PhaseStatus } from './PhaseRail.tsx';
+import { PHASES, type PhaseId, type PhaseStatus } from './PhaseRail.tsx';
 import type { ConnectorRow, EnvPair, UserRow } from '../../v2/data/index.ts';
+
+const ORDER = PHASES.map((p) => p.id);
 
 /**
  * One place that decides what the rail says.
@@ -98,6 +100,17 @@ export function derivePhaseStatus(
       ? { state: 'needs-you', count: need }
       : { state: 'done', count: scan.rows.length || undefined };
     if (need > 0) out.migrate = { state: 'blocked' };
+  }
+
+  // A phase ahead of where you are can be truthfully "done" from old cached
+  // data (a prior pass through this session, or leftover fixture state) and
+  // still be the wrong thing to show: sitting on Connect clouds, seeing Migrate
+  // already green reads as false progress, not honesty. So "done" / "needs-you"
+  // only surfaces for a phase you have actually reached or passed — anything
+  // further ahead stays a plain `pending` until you get there.
+  const currentIdx = ORDER.indexOf(current);
+  for (const id of ORDER) {
+    if (ORDER.indexOf(id) > currentIdx) delete out[id];
   }
 
   // The screen you are on is current, whatever else we derived about it.

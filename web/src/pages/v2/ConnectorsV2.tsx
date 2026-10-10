@@ -4,17 +4,18 @@ import type { ConnectorValidation } from '../../api.ts';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
-  Band, BandCell, BandRule, Btn, Chip, Inspector, InspectorActions, InspectorHead,
-  Fold, InspectorSection, KeyValue, Note, NoteRow, Panel, PanelHead, SkeletonRows, WizardFooter,
+  Btn, Chip, Inspector, InspectorActions, InspectorHead,
+  Fold, InspectorSection, KeyValue, Note, SkeletonRows, WizardFooter,
   type ChipTone,
 } from '../../components/v2/primitives.tsx';
 import { FidelityCard, FidelityDetail, useFidelity } from '../../components/v2/fidelity.tsx';
 import { AgentDecisions } from '../../components/v2/AgentDecisions.tsx';
+import { ConnectorMark } from '../../components/v2/connectorMarks.tsx';
 import {
-  clearStale, isStale, markProgress, readAgo, readProgress, useResource,
+  clearStale, isStale, markProgress, readProgress, useResource,
 } from '../../v2/data/cache.ts';
 import { useSource, type ConnectorRow } from '../../v2/data/index.ts';
-import { CredentialForm } from './CredentialModal.tsx';
+import { CredentialModal } from './CredentialModal.tsx';
 
 const STATE_LABEL: Record<ConnectorRow['state'], { text: string; chip: ChipTone }> = {
   'needs-you': { text: 'needs you', chip: 'you' },
@@ -23,17 +24,6 @@ const STATE_LABEL: Record<ConnectorRow['state'], { text: string; chip: ChipTone 
   ready: { text: 'connected', chip: 'ok' },
 };
 
-/** Why a connector is in this list at all — always drawn from what we detected. */
-function whyLine(row: ConnectorRow): string {
-  if (row.state === 'cannot-migrate') return 'Not in our registry — we cannot call this connector';
-  if (row.state === 'wrong-project') return 'Credentials exist, but not in the project this run targets';
-  if (row.agentNames.length) {
-    const head = row.agentNames.slice(0, 2).join(', ');
-    return `Used by ${head}${row.agentNames.length > 2 ? ` +${row.agentNames.length - 2}` : ''}`;
-  }
-  if (row.flowNames.length) return `Referenced by ${row.flowNames.length} flow(s)`;
-  return 'Detected in this migration scope';
-}
 
 /**
  * Connectors — the phase where the agent finds what the migration depends on,
@@ -80,7 +70,6 @@ export default function ConnectorsV2() {
     () => Object.fromEntries(fid.agents.map((a) => [a.botId, a.name])),
     [fid.agents],
   );
-  const envs = scanRes.data?.envs ?? [];
   const loading = scanRes.loading;
   const syncing = scanRes.syncing;
   const error = !session ? 'no_session' : scanRes.error;
@@ -140,10 +129,6 @@ export default function ConnectorsV2() {
     // Deliberately keyed on session alone: scanRes changes identity every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
-  const ready = rows.filter((r) => r.state === 'ready');
-  const impossible = rows.filter((r) => r.state === 'cannot-migrate');
-  const agentsBlocked = new Set(blocked.flatMap((r) => r.agentNames)).size;
-
   const flash = useCallback((msg: string): void => {
     setToast(msg);
     window.setTimeout(() => setToast(''), 3600);
@@ -178,163 +163,91 @@ export default function ConnectorsV2() {
 
   const canvas = (
     <>
-      <Panel>
-        <Band>
-          <BandCell label="Need you" value={blocked.length} note="connectors"
-            tone={blocked.length ? 'amber' : 'ok'} />
-          <BandCell label="Connected" value={ready.length} note={`of ${rows.length} connectors`} tone="ok" />
-          <BandCell label="Credentials" value={groups.length} note="entries, not connectors" />
-          <BandCell label="Cannot migrate" value={impossible.length} note="not in registry"
-            tone={impossible.length ? 'bad' : 'plain'} />
-          <BandCell label="Agents blocked" value={agentsBlocked} note="until these are set"
-            tone={agentsBlocked ? 'warn' : 'ok'} />
-          <BandCell
-            label="Will be lost"
-            value={fid.state === 'reading' ? '…' : fid.state === 'failed' ? '?' : fid.totals.lost || '—'}
-            note={fid.state === 'done' ? 'behaviours, before the run' : 'reading the source'}
-            tone={fid.totals.lost ? 'bad' : fid.state === 'failed' ? 'amber' : 'plain'}
-          />
-        </Band>
-        <BandRule pct={rows.length ? (ready.length / rows.length) * 100 : 0} />
-      </Panel>
+      {/* Outside the card, same treatment as every other v2 screen's own
+          heading (`.v2-canvas-h`): a plain page-level title + small
+          description sitting directly on the canvas, not tucked inside the
+          card's own header row. */}
+      <div className="v2-canvas-h">
+        <h2>Connectors</h2>
+        <div className="sub">
+          {loading ? 'Scanning your agents for connectors…' : 'One credential can unlock several connectors.'}
+        </div>
+      </div>
 
-      <Panel>
-        <PanelHead
-          title="Connectors"
-          sub={loading
-            ? 'Scanning the agents you selected for the connectors they depend on…'
-            : `Grouped by credential — one entry can unlock several connectors${envs.length > 1 ? ` across ${envs.length} environments` : ''}. Connect each one to unblock its agents · ${readAgo(scanRes.readAt)}`}
-          actions={
-            <>
-              {syncing && <Chip tone="run">syncing</Chip>}
-              <Btn onClick={reload} disabled={syncing || loading}>
-                {syncing ? 'Syncing…' : 'Sync'}
-              </Btn>
-            </>
-          }
-        />
+      <div className="cf-card">
+        <div className="cf-card__header">
+          <div />
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {syncing && <span className="cf-badge cf-badge--primary">syncing</span>}
+            <button type="button" className="cf-btn cf-btn--secondary cf-btn--sm" onClick={reload} disabled={syncing || loading}>
+              {syncing ? 'Syncing…' : 'Sync'}
+            </button>
+          </span>
+        </div>
 
         {error && (
-          <NoteRow tone="bad">
-            {error === 'no_session'
-              ? 'No connected session. Connect both clouds and choose your agents first.'
-              : `Could not scan for connectors: ${error}`}
-          </NoteRow>
+          <div className="cf-card__body">
+            <div className="cf-alert cf-alert--danger">
+              <span className="cf-alert__icon" aria-hidden="true">!</span>
+              <div><p className="cf-alert__desc">
+                {error === 'no_session'
+                  ? 'No connected session. Connect both clouds and choose your agents first.'
+                  : `Could not scan for connectors: ${error}`}
+              </p></div>
+            </div>
+          </div>
         )}
 
-        {loading && <SkeletonRows rows={4} />}
+        {loading && <div className="cf-card__body"><SkeletonRows rows={4} /></div>}
 
         {!loading && !error && rows.length === 0 && (
-          <NoteRow>None of the agents you selected use a connector. Nothing to configure here.</NoteRow>
+          <div className="cf-card__body">
+            <p className="cf-card__desc">None of the agents you selected use a connector. Nothing to configure here.</p>
+          </div>
         )}
 
-        {usableGroups.map((g, i) => {
-          // The row that still needs input, if any: that is the one whose fields
-          // are outstanding. Otherwise any member represents the group.
-          const row = g.rows.find((r) => r.state === 'needs-you') ?? g.rows[0];
-          const label = STATE_LABEL[row.state];
-          const open = expanded === g.id;
-          const dead = g.rows.every((r) => r.state === 'cannot-migrate');
-          const done = !dead && g.rows.every((r) => r.state === 'ready');
-          const agentsHere = new Set(g.rows.flatMap((r) => r.agentNames));
-          return (
-            <div
-              className={`v2-step${open ? ' open' : ''}${done ? ' done' : ''}${dead ? ' dead' : ''}`}
-              key={g.id}
-              data-agent-target={`conn:${row.connectorId}`}
-            >
-              <button
-                type="button"
-                className="hd"
-                aria-expanded={open}
-                onClick={() => {
-                  setPicked(row.connectorId);
-                  // Nothing to open for a connector we cannot call: an empty form
-                  // presented as a step reads as work you have to do.
-                  if (!dead) setExpanded(open ? null : g.id);
-                }}
-              >
-                <span className="n" aria-hidden="true">{done ? '✓' : dead ? '×' : i + 1}</span>
-                <span className="tx">
-                  <span className="nm">{g.name}</span>
-                  <span className="sb">
-                    {dead
-                      ? 'Not in our registry — we cannot call these'
-                      : g.rows.length > 1
-                        ? `One credential for ${g.rows.length} connectors: ${g.rows.map((r) => r.name).join(', ')}`
-                        : whyLine(row)}
-                    {agentsHere.size > 0 && !dead
-                      ? ` · ${agentsHere.size} agent${agentsHere.size > 1 ? 's' : ''} need${agentsHere.size > 1 ? '' : 's'} it`
-                      : ''}
+        {/* Icon-tile grid, same shape as CloudFuze's own SaaS Management
+            "Add applications" screen — one tile per credential group, official
+            brand mark, and name. Everything else (status, which connectors/
+            agents this unlocks, the fields, permissions) lives in the modal a
+            click opens, not on the tile itself. */}
+        <div className="cf-card__body">
+          <div className="cf-connector-grid">
+            {usableGroups.map((g) => {
+              // The row that still needs input, if any: that is the one whose
+              // fields are outstanding. Otherwise any member represents the group.
+              const row = g.rows.find((r) => r.state === 'needs-you') ?? g.rows[0];
+              // The tile shows the brand name only — "(one API token)" etc. is
+              // useful detail, but belongs on hover/in the modal, not squeezed
+              // (and ellipsised) into a 128px-wide tile label.
+              const shortName = g.name.replace(/\s*\([^)]*\)\s*$/, '');
+              return (
+                <button
+                  type="button"
+                  className="cf-connector-tile"
+                  key={g.id}
+                  data-agent-target={`conn:${row.connectorId}`}
+                  onClick={() => { setPicked(row.connectorId); setExpanded(g.id); }}
+                  title={g.name}
+                >
+                  <span className="cf-connector-tile-mark">
+                    {/* A group of several connectors gets the GROUP's mark, not the
+                        first member's: one credential standing for Drive, Sheets,
+                        Tasks, Calendar and Contacts wearing Calendar's logo read as
+                        "Calendar is all we found". Single-connector groups are
+                        unchanged -- there the member IS the group. */}
+                    <ConnectorMark
+                      connectorId={g.rows.length > 1 ? g.id : row.connectorId}
+                      name={g.name}
+                      emojiHint={row.req?.icon}
+                    />
                   </span>
-                </span>
-                <span className="st">
-                  <Chip tone={label.chip}>
-                    {label.text}
-                    {row.state === 'needs-you' && row.missingFields.length > 0
-                      ? ` · ${row.missingFields.length}`
-                      : ''}
-                  </Chip>
-                </span>
-                {/* Said out loud rather than implied by a chevron: a stored
-                    credential still needs an obvious way to be replaced when it
-                    is rotated or was entered wrong. */}
-                {!dead && (
-                  <span className="ed">{open ? 'Close' : done ? 'Edit' : 'Enter'}</span>
-                )}
-                {!dead && <span className="cv" aria-hidden="true">{open ? '▾' : '▸'}</span>}
-              </button>
-
-              {open && !dead && (
-                <div className="bd">
-                  {/* What breaks without it, stated once. The agents still migrate;
-                      it is their actions that do not work. */}
-                  {row.state === 'needs-you' && (
-                    <div className="v2-secnote" style={{ marginBottom: 14 }}>
-                      <span className="m" aria-hidden="true">!</span>
-                      <span>
-                        Without this, those agents still migrate — their actions do not work until
-                        the credential is in place.
-                      </span>
-                    </div>
-                  )}
-                  {row.detected?.confidence === 'heuristic' && (
-                    <div className="v2-secnote" style={{ marginBottom: 14 }}>
-                      <span className="m" aria-hidden="true">?</span>
-                      <span>
-                        Copilot Studio does not say exactly which service this is, so we guessed
-                        from the description. Skip it if this agent does not actually use it.
-                      </span>
-                    </div>
-                  )}
-                  {/* No agent hook on focus. Clicking into a credential field used to
-                      put the whole screen into the agent's "your turn" state — dimmed
-                      page, a YOUR TURN pill and a caption following the cursor — while
-                      someone was trying to paste a client secret. Nothing was driving
-                      anything; it was narration on top of a form. The one true thing it
-                      said (the value goes straight to Secret Manager and is never read
-                      back) is in the form itself, next to the field it applies to. */}
-                  <CredentialForm
-                    session={session}
-                    row={row}
-                    onSaved={(v) => { onSaved(v); setExpanded(null); }}
-                  />
-                  {row.saved && (
-                    <div className="v2-fld-f">
-                      <span className="v2-test">
-                        <span aria-hidden="true">i</span>
-                        <span>Stored earlier. Forgetting only drops our record — the Secret Manager secret stays.</span>
-                      </span>
-                      <span className="sp">
-                        <Btn onClick={() => void forget(row)}>Forget stored credentials</Btn>
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                  <span className="cf-connector-tile-nm">{shortName}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
         {/* Not in our registry: nothing to enter, nothing to fix here. Folded so
             the list is the work, not the work plus two dead ends. Kept reachable
             because "why is this agent's action missing" is answered here. */}
@@ -344,19 +257,32 @@ export default function ConnectorsV2() {
             note="not in our registry — their actions will not be reproduced"
           >
             {deadGroups.map((g) => (
-              <div className="v2-row" key={g.id}>
-                <span className="glyph" aria-hidden="true">×</span>
-                <span className="nmw">
-                  <span className="nm">{g.name}</span>
-                  <span className="kind">{g.rows.map((r) => r.connectorId).join(', ')}</span>
+              <div className="cf-connector-row cf-connector-row--dead" key={g.id}>
+                <span className="cf-connector-glyph" aria-hidden="true">×</span>
+                <span className="cf-connector-tx">
+                  <span className="cf-connector-nm">{g.name}</span>
+                  <span className="cf-connector-sb">{g.rows.map((r) => r.connectorId).join(', ')}</span>
                 </span>
-                <span className="why">Not in our registry, so we cannot authenticate or call it</span>
-                <span className="st"><Chip tone="bad">cannot migrate</Chip></span>
+                <span className="cf-badge cf-badge--danger">cannot migrate</span>
               </div>
             ))}
           </Fold>
         )}
-      </Panel>
+      </div>
+
+      {picked && expanded && (() => {
+        const openRow = rows.find((r) => r.connectorId === picked);
+        if (!openRow) return null;
+        return (
+          <CredentialModal
+            session={session}
+            row={openRow}
+            onClose={() => setExpanded(null)}
+            onSaved={(v) => onSaved(v)}
+            onForget={openRow.saved ? () => void forget(openRow) : undefined}
+          />
+        );
+      })()}
 
       {/* The per-agent decisions the orchestrator will not guess. Placed above the
           fidelity card on purpose: this is the panel that PREVENTS two of the losses
