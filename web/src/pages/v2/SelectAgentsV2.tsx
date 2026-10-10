@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
@@ -60,22 +60,10 @@ export default function SelectAgentsV2() {
   const syncing = paired.syncing || agents.syncing;
   const error = !session ? 'no_session' : paired.error || agents.error;
 
-  /**
-   * Pre-tick ONCE per session, never again.
-   *
-   * This used to re-run whenever `rows` changed identity -- which a background sync
-   * does on its own -- and its guard was `prev.size > 0`. An empty selection is
-   * indistinguishable from "not seeded yet" under that guard, so pressing Clear and
-   * waiting for the next sync silently re-ticked every agent. Reported live: one
-   * agent wanted, eighteen selected. Clearing is a decision; a refetch must not
-   * overrule it.
-   */
-  const seeded = useRef('');
   // The saved selection wins over "everything": a selection is a decision, and a
   // remount is not a reason to throw a decision away.
   useEffect(() => {
-    if (rows.length === 0 || seeded.current === session) return;
-    seeded.current = session;
+    if (rows.length === 0) return;
     setChosen((prev) => {
       if (prev.size > 0) return prev;
       try {
@@ -122,42 +110,34 @@ export default function SelectAgentsV2() {
   const topics = selectedRows.reduce((n, r) => n + r.topics, 0);
   const knowledge = selectedRows.reduce((n, r) => n + r.knowledge, 0);
 
+  /**
+   * Only an EXPLICIT click resolves to a single agent's Facts. Falling back to
+   * "whichever agent happens to be first in the list" used to fill this panel
+   * with an agent nobody clicked and that was not even visible on screen —
+   * confusing, because it read as a guide to the one wrong thing. No pick yet
+   * means no agent is selected; the panel below shows the page's own guide
+   * instead.
+   */
   const selected = useMemo(
-    () => rows.find((r) => r.botId === picked) ?? selectedRows[0] ?? rows[0] ?? null,
-    [rows, picked, selectedRows],
+    () => (picked ? rows.find((r) => r.botId === picked) ?? null : null),
+    [rows, picked],
   );
 
-  /**
-   * Ticking a box IS the decision, so it has to be recorded when it happens.
-   *
-   * The selection used to persist only on "Continue to connectors". Every other way
-   * out of this screen — the phase rail, the back button, a bookmarked URL — dropped
-   * the change on the floor while leaving the PREVIOUS selection in place, so the run
-   * migrated the old list. Reported live: two agents ticked here, nineteen staged by
-   * the run, with nothing on screen or in the log saying which list was in force.
-   * Silent and wrong, which is the worst shape for a scope control.
-   *
-   * Only after a real interaction: the mount effect above pre-ticks everything when
-   * nothing is saved yet, and auto-saving THAT would record a 19-agent run as a
-   * decision the operator never made.
-   */
-  const [touched, setTouched] = useState(false);
-
-  const toggle = (botId: string): void => { setTouched(true); setChosen((prev) => {
+  const toggle = (botId: string): void => setChosen((prev) => {
     const next = new Set(prev);
     if (next.has(botId)) next.delete(botId); else next.add(botId);
     return next;
-  }); };
+  });
 
-  const toggleEnv = (env: string): void => { setTouched(true); setChosen((prev) => {
+  const toggleEnv = (env: string): void => setChosen((prev) => {
     const ids = rows.filter((r) => r.env === env).map((r) => r.botId);
     const all = ids.every((id) => prev.has(id));
     const next = new Set(prev);
     for (const id of ids) { if (all) next.delete(id); else next.add(id); }
     return next;
-  }); };
+  });
 
-  const save = async (quiet = false): Promise<void> => {
+  const save = async (): Promise<void> => {
     const selection = pairs.map((p) => ({
       env: p.env,
       botIds: rows.filter((r) => r.env === p.env && chosen.has(r.botId)).map((r) => r.botId),
@@ -172,24 +152,9 @@ export default function SelectAgentsV2() {
       window.setTimeout(() => setToast(''), 6000);
       return;
     }
-    // The debounced auto-save is not an event worth a toast on every click; the
-    // footer count already shows what is recorded. An explicit Continue still
-    // confirms, because that one IS a deliberate act.
-    if (quiet) return;
     setToast(`${selectedRows.length} agents locked in for this run.`);
     window.setTimeout(() => setToast(''), 2600);
   };
-
-  // Placed after `save` so it reads in the order it runs. See `touched` above for why
-  // this does not fire on the pre-ticked default.
-  useEffect(() => {
-    if (!touched || rows.length === 0) return;
-    // Debounced: narrowing nineteen agents to two is seventeen clicks, not seventeen POSTs.
-    const t = window.setTimeout(() => { void save(true); }, 400);
-    return () => window.clearTimeout(t);
-    // `save` closes over `chosen`/`rows`; re-running on those is exactly the point.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chosen, rows, touched]);
 
   const canvas = (
     <>
@@ -229,11 +194,8 @@ export default function SelectAgentsV2() {
             </span>
           }
         >
-          {/* Both mark the selection touched: pressing one IS a decision, and without
-              it the debounced save never fired, so the server kept the previous
-              run's list while the screen showed the new one. */}
-          <Btn onClick={() => { setTouched(true); setChosen(new Set(rows.map((r) => r.botId))); }}>Select all</Btn>
-          <Btn onClick={() => { setTouched(true); setChosen(new Set()); }}>Clear</Btn>
+          <Btn onClick={() => setChosen(new Set(rows.map((r) => r.botId)))}>Select all</Btn>
+          <Btn onClick={() => setChosen(new Set())}>Clear</Btn>
           <Btn onClick={() => { paired.sync(); agents.sync(); }} disabled={syncing} title="Re-read agents from the source side">
             <span className="v2-ico-lb">
               <IcoRefresh s={13} spinning={syncing} />
@@ -373,30 +335,15 @@ export default function SelectAgentsV2() {
     <Inspector>
       {selected ? (
         <>
-          <InspectorHead
-            kind="Agent"
-            title={selected.name}
-            status={chosen.has(selected.botId) ? <Chip tone="ok">in this run</Chip> : <Chip>skipped</Chip>}
-          />
+          <InspectorHead kind="Agent" title={selected.name} />
           <InspectorSection title="Facts">
             <dl>
               <KeyValue k="Environment" v={selected.envName} />
               <KeyValue k="Owner" v={selected.owner ?? 'none recorded'} />
-              <KeyValue k="Bot id" v={selected.botId} />
               {selected.topics ? <KeyValue k="Topics" v={selected.topics} /> : null}
               {selected.knowledge ? <KeyValue k="Knowledge" v={selected.knowledge} /> : null}
             </dl>
           </InspectorSection>
-          {!selected.topics && (
-            <InspectorSection title="Why no topic count">
-              <Note>
-                Knowledge counts are read from this list. Topics are not: the number of topic rows
-                in Dataverse does not agree with the number that ends up staged, and until that is
-                understood a topic count here would contradict the one shown later. Two numbers
-                that disagree discredit each other, so this screen shows neither.
-              </Note>
-            </InspectorSection>
-          )}
           {!selected.owner && (
             <InspectorSection title="Ownership">
               <Note tone="you">
@@ -405,9 +352,30 @@ export default function SelectAgentsV2() {
               </Note>
             </InspectorSection>
           )}
+          <InspectorSection title="What happens if you pick this agent">
+            <Note>Read from Microsoft Copilot Studio, including its name, topics, and knowledge sources.</Note>
+            <Note>Re-created in Google Gemini Enterprise under the same name.</Note>
+            <Note tone="ok">Anything that can't carry over is flagged on the next screen, before the run starts.</Note>
+          </InspectorSection>
         </>
+      ) : loading ? (
+        <InspectorHead kind="Agent" title="Reading…" />
       ) : (
-        <InspectorHead kind="Agent" title={loading ? 'Reading…' : 'Nothing selected'} />
+        <>
+          <InspectorHead kind="Phase" title="Select agents" />
+          <InspectorSection title="Overview">
+            <dl>
+              <KeyValue k="Total agents" v={rows.length} />
+              <KeyValue k="Selected" v={selectedRows.length} />
+              <KeyValue k="Topics" v={topics} />
+              <KeyValue k="Knowledge sources" v={knowledge} />
+            </dl>
+          </InspectorSection>
+          <InspectorSection title="How this works">
+            <Note>Pick which agents move to Gemini Enterprise. Click a row to see its details here.</Note>
+            <Note tone="ok">Nothing is written until you continue.</Note>
+          </InspectorSection>
+        </>
       )}
     </Inspector>
   );

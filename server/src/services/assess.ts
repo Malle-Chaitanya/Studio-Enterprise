@@ -112,7 +112,7 @@ export function assessAgent(ir: AgentIR): AgentAssessment {
           component: 'System instructions',
           kind: 'instructions',
           compatibility: 'manual',
-          note: 'No explicit instructions in source; behavior derived from topics only — review recommended.',
+          note: 'No instructions were set on the source agent. Its behavior comes only from its topics, so this is worth reviewing.',
         },
   );
 
@@ -239,7 +239,7 @@ export function assessAgent(ir: AgentIR): AgentAssessment {
         component: label,
         kind: 'tool (flow)',
         compatibility: 'manual',
-        note: 'Invokes an Agent Flow, but its definition was not extracted — re-run extraction to preview it.',
+        note: 'Invokes an Agent Flow, but its definition was not extracted. Re-run extraction to preview it.',
       });
       continue;
     }
@@ -250,11 +250,11 @@ export function assessAgent(ir: AgentIR): AgentAssessment {
       note:
         tool.kind === 'connector'
           ? tool.connectorId?.startsWith('shared_commondataserviceforapps')
-            ? `Calls Microsoft Dataverse${tool.operationId ? ` (${tool.operationId})` : ''} — on the Connectors step, choose "Keep Dataverse" to rebuild this as a direct API call (needs that connector's credentials), or "Use Cloud SQL" to copy this table into Cloud SQL for PostgreSQL instead (no credentials needed for this connector) — use that only if Dataverse itself will stop existing after this migration.`
-            : `Calls ${tool.connectorId ?? 'an unidentified connector'}${tool.operationId ? ` (${tool.operationId})` : ''} — rebuilt as a direct API call once that connector's credentials are supplied.`
+            ? `Calls Microsoft Dataverse${tool.operationId ? ` (${tool.operationId})` : ''}. On the Connectors step, choose "Keep Dataverse" to rebuild this as a direct API call using that connector's credentials, or "Use Cloud SQL" to copy this table into Cloud SQL for PostgreSQL instead, which needs no credentials. Only use Cloud SQL if Dataverse itself will stop existing after this migration.`
+            : `Calls ${tool.connectorId ?? 'an unidentified connector'}${tool.operationId ? ` (${tool.operationId})` : ''}. Rebuilt as a direct API call once that connector's credentials are supplied.`
           : tool.kind === 'ai-builder'
-            ? 'Uses an AI Builder prompt/model. The prompt text is folded into the instruction where available; the model itself is not migrated.'
-            : 'Tool of a kind with no Gemini equivalent yet — preserved in the extraction, not recreated.',
+            ? 'Uses an AI Builder prompt or model. The prompt text is carried into the instructions when available, but the model itself is not migrated.'
+            : 'This type of tool has no Gemini equivalent yet. It is preserved in the extraction but not recreated.',
     });
     needCredential(tool.connectorId);
   }

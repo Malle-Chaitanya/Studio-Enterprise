@@ -138,12 +138,7 @@ export function V2Layout({
           {/* The sidebar now carries the logo, so this bar is deliberately slim:
               status + sign out, sitting only beside the rail, not above it. */}
           <header className="v2-topbar">
-            <h1 className="v2-topbar-title">Agents Migration</h1>
             <span className="v2-topbar-sp" />
-            <span className="v2-topbar-status">
-              <span className="statusdot" />
-              Online
-            </span>
             <div className="v2-account" ref={accountRef}>
               <button
                 className="v2-account-trigger"
@@ -151,8 +146,7 @@ export function V2Layout({
                 aria-haspopup="menu"
                 onClick={() => setAccountOpen((v) => !v)}
               >
-                <span className="v2-account-avatar"><IcoUser s={14} /></span>
-                <span className="v2-account-label">CF</span>
+                <span className="v2-account-avatar"><IcoUser s={20} /></span>
                 <IcoChevronDown s={12} />
               </button>
               {accountOpen && (

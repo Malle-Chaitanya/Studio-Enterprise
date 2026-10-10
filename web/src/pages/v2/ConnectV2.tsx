@@ -5,8 +5,8 @@ import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { EnvPairing } from '../../components/v2/EnvPairing.tsx';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
-  Btn, Chip, CloudMark, Inspector, InspectorHead, InspectorSection, KeyValue, Note,
-  WizardFooter,
+  Btn, Chip, CloudMark, GuideStep, GuideSteps, Inspector, InspectorHead,
+  InspectorSection, WizardFooter,
 } from '../../components/v2/primitives.tsx';
 import { useSource, type CloudLink, type ConnectState } from '../../v2/data/index.ts';
 import { IcoRefresh, IcoTrash } from '../../icons.tsx';
@@ -206,37 +206,6 @@ export default function ConnectV2() {
         <div className="sub">Connect your source and destination clouds to get started.</div>
       </div>
 
-      {/* The direction, stated once both sides are live — its own small strip,
-          not glued to the cards above or below it. */}
-      {both && (
-        <div className="v2-dir" data-agent-target="direction">
-          <span className="v2-dir-label">This migration</span>
-          <span className="v2-dir-pill">
-            <span className="k">Source:</span> Microsoft Copilot Studio
-          </span>
-          <span className="to" aria-hidden="true">→</span>
-          <span className="v2-dir-pill">
-            <span className="k">Destination:</span> Google Gemini Enterprise
-          </span>
-          {state.found && (
-            <span className="found">
-              <span>
-                <span className="n">{state.found.environments}</span>
-                <label>Environments</label>
-              </span>
-              <span>
-                <span className="n">{state.found.agents}</span>
-                <label>Agents</label>
-              </span>
-              <span>
-                <span className="n">{state.found.topics}</span>
-                <label>Topics</label>
-              </span>
-            </span>
-          )}
-        </div>
-      )}
-
       <div className="v2-cards">
         <CloudCard
           role="Source"
@@ -292,7 +261,7 @@ export default function ConnectV2() {
           not merged into one shared panel, not just a divider line. */}
       {both && (
         <div style={{ marginTop: 20 }}>
-          <EnvPairing session={session} onChange={onPairChange} />
+          <EnvPairing session={session} onChange={onPairChange} found={state.found} />
         </div>
       )}
 
@@ -313,29 +282,37 @@ export default function ConnectV2() {
 
   const inspector = (
     <Inspector>
-      <InspectorHead
-        kind="Phase"
-        title="Connect clouds"
-        status={<Chip tone={both ? 'ok' : 'you'}>{both ? 'ready' : 'needs you'}</Chip>}
-      />
-      <InspectorSection title="What we hold">
-        <dl>
-          <KeyValue k="Microsoft" v={state.source.account ?? 'not connected'} />
-          <KeyValue k="Google" v={state.destination.account ?? 'not connected'} />
-        </dl>
-      </InspectorSection>
-      <InspectorSection title="How access works">
-        <Note>
-          Dataverse is read with an app-only token, so no user is impersonated on the
-          Microsoft side.
-        </Note>
-        <Note>
-          Gemini is written by our service account — either granted directly on your
-          project, or delegated by your admin.
-        </Note>
-        <Note tone="ok">
-          No credential value is ever stored in this app. Secrets live in Secret Manager.
-        </Note>
+      <InspectorHead kind="Phase" title="Connect clouds" />
+      <InspectorSection title="Setup steps">
+        <GuideSteps>
+          <GuideStep
+            n={1}
+            title="Sign in to Microsoft 365"
+            state={state.source.connected ? 'done' : 'active'}
+          >
+            {state.source.connected
+              ? `Connected as ${state.source.account ?? 'your admin account'}`
+              : 'Connect as an admin — we never see your password.'}
+          </GuideStep>
+          <GuideStep
+            n={2}
+            title="Sign in to Google Workspace"
+            state={!state.source.connected ? 'pending' : state.destination.connected ? 'done' : 'active'}
+          >
+            {state.destination.connected
+              ? `Connected as ${state.destination.account ?? 'your admin account'}`
+              : 'Connect as an admin, or have your admin authorize us.'}
+          </GuideStep>
+          <GuideStep
+            n={3}
+            title="Choose where each environment goes"
+            state={!both ? 'pending' : paired.done > 0 ? 'done' : 'active'}
+          >
+            {paired.total
+              ? `${paired.done} of ${paired.total} environments ready to migrate`
+              : 'Pick a Gemini app for at least one environment below.'}
+          </GuideStep>
+        </GuideSteps>
       </InspectorSection>
     </Inspector>
   );

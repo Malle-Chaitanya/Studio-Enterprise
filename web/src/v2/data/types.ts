@@ -67,6 +67,16 @@ export interface ConnectorsSource {
   ): Promise<{ validation?: ConnectorValidation }>;
   /** Forget our record of a connector. Leaves the secrets themselves untouched. */
   forget(session: string, connectorId: string): Promise<void>;
+  /**
+   * Ask ONE named person (by email) to authorize this connector for themselves. Returns a
+   * provider consent URL to open in a popup — empty when the flow already resolved without
+   * one (the fixture source short-circuits this way; the real one never does).
+   */
+  startConsent(session: string, connectorId: string, userKey: string): Promise<{ authorizeUrl: string }>;
+  /** Whether this person has already connected their own account for this connector. */
+  consentStatus(
+    session: string, connectorId: string, userKey: string,
+  ): Promise<{ connected: boolean | null; delegable: boolean }>;
 }
 
 /**

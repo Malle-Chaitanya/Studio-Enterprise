@@ -35,8 +35,8 @@ const MS_GROUP = {
   name: 'Microsoft 365 (one App Registration)',
   setupUrl: 'https://portal.azure.com/',
   setupHint:
-    'Create ONE app registration for all Microsoft connectors. Add the permissions listed ' +
-    'below as APPLICATION permissions, then click Grant admin consent.',
+    'Create one app registration for all Microsoft connectors. Add the permissions listed ' +
+    'below as Application permissions, then click Grant admin consent.',
   siblings: ['shared_onedrive', 'shared_teams', 'shared_office365'],
 };
 
@@ -155,6 +155,8 @@ function toRow(id: string): ConnectorRow {
   };
 }
 
+const CONSENTED = new Set<string>();
+
 const connectors: ConnectorsSource = {
     scan: async (): Promise<ConnectorScan> => wait({
       rows: sortRows(Object.keys(REQS).map(toRow)),
@@ -187,6 +189,18 @@ const connectors: ConnectorsSource = {
       if (req?.fields) req.fields = req.fields.map((f) => ({ ...f, supplied: false }));
       await wait(null);
     },
+    // Real delegated consent needs an actual round trip through Microsoft's own sign-in
+    // page — nothing a fixture can fake with a popup. Instead this resolves AS IF that
+    // round trip already succeeded (empty authorizeUrl tells the caller there is no popup
+    // to open), the same shortcut `connect.status` above takes for the admin-level OAuth.
+    startConsent: async (_session, connectorId, userKey) => {
+      CONSENTED.add(`${connectorId}::${userKey.toLowerCase()}`);
+      return wait({ authorizeUrl: '' });
+    },
+    consentStatus: async (_session, connectorId, userKey) => wait({
+      connected: CONSENTED.has(`${connectorId}::${userKey.toLowerCase()}`),
+      delegable: !!REQS[connectorId]?.userAuth?.supported,
+    }),
   };
 
 // ── the rest of the phases ──────────────────────────────────────────────────

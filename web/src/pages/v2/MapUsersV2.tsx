@@ -624,33 +624,23 @@ export default function MapUsersV2() {
 
   const inspector = (
     <Inspector>
-      <InspectorHead
-        kind="Phase"
-        title="Map users"
-        status={<Chip tone={unmatched === 0 ? 'ok' : 'you'}>{unmatched === 0 ? 'all matched' : 'needs you'}</Chip>}
-      />
-      <InspectorSection title="What we hold">
+      <InspectorHead kind="Phase" title="Map users" />
+      <InspectorSection title="Overview">
         <dl>
-          <KeyValue k="Directory" v={`${people.length} people`} />
+          <KeyValue k="Total people" v={people.length} />
           <KeyValue k="Matched" v={matched} />
           <KeyValue k="Unmatched" v={unmatched} />
           <KeyValue k="Selected" v={chosen.size} />
         </dl>
       </InspectorSection>
       <InspectorSection title="How matching works">
-        <Note>
-          Each source person is matched automatically to a licensed Google account by
-          name or email — click any row to fix a wrong or missing match.
-        </Note>
+        <Note>We match people by name or email. Click a row to fix one.</Note>
         {dir.filter?.licenceCheck === 'unavailable' && (
           <Note tone="you">
-            Licence seats could not be read, so the candidate list is unfiltered — check
-            a match actually has a Gemini seat before continuing.
+            We couldn't check license seats — confirm each match has one before continuing.
           </Note>
         )}
-        <Note tone="ok">
-          Nothing is written until you continue — corrections stay local until then.
-        </Note>
+        <Note tone="ok">Nothing is saved until you click Continue.</Note>
       </InspectorSection>
     </Inspector>
   );

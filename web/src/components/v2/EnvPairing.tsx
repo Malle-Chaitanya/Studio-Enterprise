@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Chip, Fold, NoteRow, Panel, PanelHead, Select, SkeletonRows,
+  Chip, NoteRow, Panel, PanelHead, Select, SkeletonRows,
 } from './primitives.tsx';
 import { invalidateCache, markStale, primeResource, useResource } from '../../v2/data/cache.ts';
 import { useSource, type DestOption, type EnvPair, type EnvRow } from '../../v2/data/index.ts';
@@ -15,19 +15,23 @@ import { IcoCheck } from '../../icons.tsx';
  * between two distinct blocks (matching the cards' own floating-card
  * treatment) reads clearer than either one shared box or a divider line.
  *
- * Two things this screen learned from a real tenant:
+ * One thing this screen learned from a real tenant:
  *
- *  - Environments with no Dataverse access are real but useless: they report 0
- *    agents and cannot be paired at all. They are folded away rather than listed
- *    first, because a list should be about what you can act on. Never removed —
- *    an environment silently missing from the list is a support ticket.
  *  - Nothing is re-read on mount. Walking back to this screen used to re-scan
  *    Dataverse and flicker a pairing you had just made back to "Choose project".
  *    Cached values render immediately; `Sync` is the only thing that re-reads.
+ *
+ * Environments with no Dataverse access (not real Copilot Studio environments —
+ * nothing to extract from them) are filtered out entirely rather than shown
+ * folded away: a list should be about what you can actually act on.
  */
-export function EnvPairing({ session, onChange }: {
+export function EnvPairing({ session, onChange, found }: {
   session: string;
   onChange?: (paired: number, total: number) => void;
+  /** Counts discovered on Connect — shown in this panel's header now that the
+   *  "This migration" summary strip above the cards is gone; there is nowhere
+   *  else left to say how much was found. */
+  found?: { environments: number; agents: number; topics: number };
 }) {
   const source = useSource();
 
@@ -65,7 +69,11 @@ export function EnvPairing({ session, onChange }: {
   );
 
   const mapped = pairs.filter((p) => p.project && p.engine);
-  useEffect(() => { onChange?.(mapped.length, envList.length); }, [mapped.length, envList.length, onChange]);
+  // Denominator is accessible environments only — one without Dataverse access
+  // can never be paired, so counting it here would leave "X of Y" permanently
+  // short of Y with no row left on screen to explain why.
+  const pairable = envList.filter((e) => e.accessible).length;
+  useEffect(() => { onChange?.(mapped.length, pairable); }, [mapped.length, pairable, onChange]);
 
   // Saved on every edit: this panel has no footer of its own, so a Save button
   // would be a button whose absence loses the pairing on navigation.
@@ -117,6 +125,9 @@ export function EnvPairing({ session, onChange }: {
   const envsError = envs.error;
   const destsError = dests.error;
 
+  // Only ever called with accessible environments now — inaccessible ones are
+  // filtered out before rendering, never shown folded away (see the file doc
+  // comment above).
   const row = (env: EnvRow): JSX.Element => {
     const pair = pairs.find((p) => p.env === env.url);
     const project = destList.find((d) => d.project === pair?.project);
@@ -127,65 +138,70 @@ export function EnvPairing({ session, onChange }: {
           <span className="nm" title={env.name}>{env.name}</span>
           <span className="kind">{env.agents} agents · {env.topics} topics</span>
         </span>
-        <span className="why ctl">
-          {env.accessible ? (
-            <>
-              <Select
-                agentTarget={`env-project:${env.url}`}
-                value={pair?.project ?? ''}
-                // Say which thing is still being read. A disabled picker with no
-                // reason reads as broken.
-                placeholder={destsPending ? 'Reading projects…' : 'Choose project'}
-                disabled={destsPending}
-                // Only projects that actually have a Gemini app are real choices here —
-                // a project with none is not a disabled option worth scrolling past, it
-                // is not a destination at all. Filtering it out of the list (rather than
-                // greying it in) is the difference between "14 things to read before you
-                // find the 3 that matter" and "3 things to read."
-                options={destList.filter((d) => d.engines.length > 0).map((d) => ({
-                  id: d.project,
-                  // Seat count is undefined (not 0) when it couldn't be read — that must
-                  // not be said out loud as "no seats" when it just means "couldn't verify".
-                  label: d.licenseCount === undefined
-                    ? (d.name ?? d.project)
-                    : `${d.name ?? d.project} — ${d.licenseCount} seat${d.licenseCount === 1 ? '' : 's'}`,
-                }))}
-                onChange={(id) => set(env.url, { project: id, engine: undefined })}
-              />
-              <Select
-                agentTarget={`env-engine:${env.url}`}
-                value={pair?.engine ?? ''}
-                placeholder={project ? 'Choose app' : 'Project first'}
-                disabled={!project || project.engines.length === 0}
-                options={(project?.engines ?? []).map((e) => ({ id: e.id, label: e.displayName }))}
-                onChange={(id) => set(env.url, { engine: id })}
-              />
-            </>
-          ) : (
-            <span style={{ fontSize: 12, color: 'var(--v2-ink-3)' }}>
-              No Dataverse access — nothing to migrate here.
-            </span>
-          )}
+        <span className="why ctl envpair-ctl">
+          <Select
+            agentTarget={`env-project:${env.url}`}
+            value={pair?.project ?? ''}
+            // Say which thing is still being read. A disabled picker with no
+            // reason reads as broken.
+            placeholder={destsPending ? 'Reading projects…' : 'Choose project'}
+            disabled={destsPending}
+            // Only projects that actually have a Gemini app are real choices here —
+            // a project with none is not a disabled option worth scrolling past, it
+            // is not a destination at all. Filtering it out of the list (rather than
+            // greying it in) is the difference between "14 things to read before you
+            // find the 3 that matter" and "3 things to read."
+            options={destList.filter((d) => d.engines.length > 0).map((d) => ({
+              id: d.project,
+              // Seat count is undefined (not 0) when it couldn't be read — that must
+              // not be said out loud as "no seats" when it just means "couldn't verify".
+              label: d.licenseCount === undefined
+                ? (d.name ?? d.project)
+                : `${d.name ?? d.project} — ${d.licenseCount} seat${d.licenseCount === 1 ? '' : 's'}`,
+            }))}
+            onChange={(id) => set(env.url, { project: id, engine: undefined })}
+          />
+          <Select
+            agentTarget={`env-engine:${env.url}`}
+            value={pair?.engine ?? ''}
+            placeholder={project ? 'Choose app' : 'Project first'}
+            disabled={!project || project.engines.length === 0}
+            options={(project?.engines ?? []).map((e) => ({ id: e.id, label: e.displayName }))}
+            onChange={(id) => set(env.url, { engine: id })}
+          />
         </span>
         <span className="st">
-          {!env.accessible
-            ? <Chip tone="bad">no access</Chip>
-            : pair?.project && pair?.engine
-              ? <Chip tone="ok" icon={<IcoCheck s={9} />}>paired</Chip>
-              : <Chip tone="you">not paired</Chip>}
+          {pair?.project && pair?.engine
+            ? <Chip tone="ok" icon={<IcoCheck s={9} />}>paired</Chip>
+            : <Chip tone="you">not paired</Chip>}
         </span>
       </div>
     );
   };
 
   const usable = envList.filter((e) => e.accessible);
-  const blocked = envList.filter((e) => !e.accessible);
 
   return (
     <Panel>
       <PanelHead
         title="Point each environment at a Gemini app"
         sub={loading ? 'Reading environments…' : undefined}
+        actions={found && (
+          <span className="found">
+            <span>
+              <span className="n">{found.environments}</span>
+              <label>Environments</label>
+            </span>
+            <span>
+              <span className="n">{found.agents}</span>
+              <label>Agents</label>
+            </span>
+            <span>
+              <span className="n">{found.topics}</span>
+              <label>Topics</label>
+            </span>
+          </span>
+        )}
       />
 
       {envsError && (
@@ -205,19 +221,13 @@ export function EnvPairing({ session, onChange }: {
       {!loading && !envsError && envList.length === 0 && (
         <NoteRow>No Copilot Studio environments were visible to this admin.</NoteRow>
       )}
+      {!loading && !envsError && envList.length > 0 && usable.length === 0 && (
+        <NoteRow>
+          {`${envList.length} environment${envList.length > 1 ? 's were' : ' was'} found, but none have Dataverse access — nothing to migrate.`}
+        </NoteRow>
+      )}
 
       {usable.map(row)}
-
-      {/* True, but not actionable. Folded, never dropped. */}
-      {blocked.length > 0 && (
-        <Fold
-          title={`${blocked.length} environment${blocked.length > 1 ? 's' : ''} without Dataverse access`}
-          note="cannot be read, so cannot be migrated"
-          count={undefined}
-        >
-          {blocked.map(row)}
-        </Fold>
-      )}
     </Panel>
   );
 }

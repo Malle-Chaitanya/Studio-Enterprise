@@ -24,6 +24,25 @@ import {
   type DriveIdentityStatus,
 } from '../api.ts';
 
+/** Real official connector icon (`iconUrl`, from Microsoft's own catalog) when present,
+ *  falling back to the registry's emoji otherwise — same fallback discipline as
+ *  ConnectorMark (components/v2/connectorMarks.tsx), just sized for this page's plain
+ *  <span> icon slots rather than a tile grid. */
+function IconGlyph({ icon, iconUrl, size }: { icon?: string; iconUrl?: string; size: number }) {
+  const [failed, setFailed] = useState(false);
+  if (iconUrl && !failed) {
+    return (
+      <img
+        src={iconUrl}
+        alt=""
+        style={{ width: size, height: size, objectFit: 'contain', borderRadius: 3 }}
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return <span style={{ fontSize: size }}>{icon}</span>;
+}
+
 /** Merge per-environment scan results into one list, summing flowCount and
  *  de-duplicating flowNames for connectors detected in more than one environment. */
 function mergeDetectedConnectors(perEnvResults: DetectedConnector[][]): DetectedConnector[] {
@@ -61,14 +80,16 @@ const MS_NATIVE_FIELDS = [
   { key: 'client_secret', label: 'Client Secret',   type: 'password' as const, hint: 'Azure Portal → App registrations → Certificates & secrets → New client secret' },
 ];
 
-const MS_CONNECTOR_LABELS: Record<string, { icon: string; name: string }> = {
-  shared_teams:           { icon: '🟣', name: 'Microsoft Teams' },
-  shared_office365:       { icon: '📧', name: 'Office 365 / Exchange' },
-  shared_sharepointonline:{ icon: '📂', name: 'SharePoint Online' },
-  shared_onedrive:        { icon: '☁️', name: 'OneDrive' },
-  shared_dynamicscrmonline:{ icon: '💎', name: 'Dynamics 365 / Dataverse' },
-  shared_planner:         { icon: '📋', name: 'Microsoft Planner' },
-  shared_excelonline:     { icon: '📊', name: 'Excel Online' },
+// iconUrl values are Microsoft's own real official icons (api.powerapps.com connector
+// catalog, confirmed 2026-10-07) — same source as the registry's own `iconUrl` field.
+const MS_CONNECTOR_LABELS: Record<string, { icon: string; iconUrl: string; name: string }> = {
+  shared_teams:           { icon: '🟣', name: 'Microsoft Teams', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1829/1.0.1829.5052/teams/icon.png' },
+  shared_office365:       { icon: '📧', name: 'Office 365 / Exchange', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1819/1.0.1819.4795/office365/icon.png' },
+  shared_sharepointonline:{ icon: '📂', name: 'SharePoint Online', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1827/1.0.1827.4913/sharepointonline/icon.png' },
+  shared_onedrive:        { icon: '☁️', name: 'OneDrive', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1827/1.0.1827.4902/onedriveforbusiness/icon.png' },
+  shared_dynamicscrmonline:{ icon: '💎', name: 'Dynamics 365 / Dataverse', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1823/1.0.1823.4837/dynamicscrmonline/icon.png' },
+  shared_planner:         { icon: '📋', name: 'Microsoft Planner', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1825/1.0.1825.4855/planner/icon.png' },
+  shared_excelonline:     { icon: '📊', name: 'Excel Online', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1819/1.0.1819.4795/excelonline/icon.png' },
 };
 
 function MsNativeSection({ session, detectedMsIds, reqs }: {
@@ -197,7 +218,11 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
           <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4, lineHeight: 1.5 }}>
             {detectedMsIds.map((id) => {
               const m = MS_CONNECTOR_LABELS[id];
-              return m ? <span key={id} style={{ marginRight: 8 }}>{m.icon} {m.name}</span> : null;
+              return m ? (
+                <span key={id} style={{ marginRight: 8, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <IconGlyph icon={m.icon} iconUrl={m.iconUrl} size={14} /> {m.name}
+                </span>
+              ) : null;
             })}
           </div>
         </div>
@@ -680,7 +705,7 @@ function ConnectorCard({ c, session, alreadySaved, req, onSaved }: ConnectorCard
         className="card"
         style={{ padding: '10px 16px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}
       >
-        <span style={{ fontSize: 16 }}>{def.icon}</span>
+        <IconGlyph icon={def.icon} iconUrl={def.iconUrl} size={16} />
         <strong style={{ fontSize: 13, flex: 1 }}>{def.name}</strong>
         <span style={{ fontSize: 12, fontWeight: 600, color: bad ? '#dc2626' : 'var(--ok)', whiteSpace: 'nowrap' }}>
           {bad ? 'Saved, but not working' : 'Saved'}
@@ -697,7 +722,7 @@ function ConnectorCard({ c, session, alreadySaved, req, onSaved }: ConnectorCard
   return (
     <div className="card" style={{ padding: '18px 20px', marginBottom: 12, opacity: skipped ? 0.5 : 1, transition: 'opacity 0.2s' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <span style={{ fontSize: 24 }}>{def.icon}</span>
+        <IconGlyph icon={def.icon} iconUrl={def.iconUrl} size={24} />
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <strong style={{ fontSize: 15 }}>{def.name}</strong>
@@ -973,7 +998,7 @@ function GroupSection({ session, members, reqs }: GroupSectionProps) {
   return (
     <div className="card" style={{ padding: '18px 20px', marginBottom: 12, opacity: saved ? 0.7 : 1, transition: 'opacity 0.2s' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
-        <span style={{ fontSize: 22 }}>{members[0].def.icon}</span>
+        <IconGlyph icon={members[0].def.icon} iconUrl={members[0].def.iconUrl} size={22} />
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <strong style={{ fontSize: 15 }}>{group?.name ?? members.map((m) => m.def.name).join(' + ')}</strong>
@@ -1365,7 +1390,7 @@ export function ConnectorConfig() {
         let flowConnectors: DetectedConnector[] = [];
         try {
           const flowResults = await Promise.all(
-            envsWithAgents.map((sel) => fetchThirdPartyConnectors(session, sel.env)),
+            envsWithAgents.map((sel) => fetchThirdPartyConnectors(session, sel.env, sel.botIds)),
           );
           flowConnectors = mergeDetectedConnectors(flowResults);
         } catch {

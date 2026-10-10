@@ -46,6 +46,8 @@ export interface ConnectorDef {
   name: string;
   category: string;
   icon: string;
+  /** Real official connector icon (PNG), straight from Microsoft's own connector catalog. */
+  iconUrl?: string;
   docsUrl?: string;
   credentials: CredentialField[];
   baseUrlTemplate: string;
@@ -159,6 +161,8 @@ export interface CredentialGroupDef {
   id: string;
   name: string;
   credentials: CredentialField[];
+  /** Official brand mark for the one tile this whole group collapses to in the UI. */
+  iconUrl?: string;
   /** Where the customer creates the app/token. */
   setupUrl?: string;
   setupHint?: string;

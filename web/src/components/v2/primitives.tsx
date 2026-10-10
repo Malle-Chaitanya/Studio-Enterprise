@@ -60,7 +60,17 @@ export function Band({ children, aside }: { children: ReactNode; aside?: ReactNo
   return (
     <div className="v2-band">
       {children}
-      {aside && <div className="cell grow">{aside}</div>}
+      {aside && (
+        <div className="cell grow">
+          {/* An invisible label, not a magic padding-top: the real cells' content
+              starts below THEIR label's own rendered line box, and a hardcoded
+              pixel guess for that height drifts the moment the label's font or
+              line-height changes. Reusing the exact same element and CSS rule
+              guarantees the two rows start at the same Y regardless. */}
+          <label aria-hidden="true" className="ghost">.</label>
+          <div className="grow-row">{aside}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -223,16 +233,20 @@ export function SkeletonRows({ rows = 4, controls }: { rows?: number; controls?:
 
 /** A collapsed group of rows that are true but not actionable — kept reachable
  *  so nothing is hidden, kept shut so the list is about what you can do. */
-export function Fold({ title, note, count, children, open: initial = false }: {
+export function Fold({ title, note, count, children, open: initial = false, padded }: {
   title: string;
   note?: string;
   count?: number;
   children: ReactNode;
   open?: boolean;
+  /** The body is prose (e.g. `Note`s), not `Row`s that already carry their own
+   *  edge-to-edge padding — without this the text sits flush against the panel
+   *  border. */
+  padded?: boolean;
 }) {
   const [open, setOpen] = useState(initial);
   return (
-    <div className={`v2-fold${open ? ' open' : ''}`}>
+    <div className={`v2-fold${open ? ' open' : ''}${padded ? ' pad' : ''}`}>
       <button type="button" className="hd" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <span className="cv" aria-hidden="true">{open ? '▾' : '▸'}</span>
         <span className="tl">{title}{count !== undefined ? ` (${count})` : ''}</span>
@@ -338,10 +352,12 @@ export function KeyValue({ k, v }: { k: string; v: ReactNode }) {
 }
 
 export function Note({ children, tone }: { children: ReactNode; tone?: 'you' | 'bad' | 'ok' }) {
-  const mark = tone === 'you' ? '?' : tone === 'bad' ? '!' : tone === 'ok' ? '✓' : '•';
+  // One marker for every note, regardless of tone — a dot next to a check next to a
+  // question mark on adjacent lines read as inconsistent, not meaningful. The tone still
+  // colors the dot (amber/red/green via the CSS class below), so the signal isn't lost.
   return (
     <div className={`v2-note${tone ? ` ${tone}` : ''}`}>
-      <span className="m" aria-hidden="true">{mark}</span>
+      <span className="m" aria-hidden="true">•</span>
       <span>{children}</span>
     </div>
   );
@@ -349,6 +365,32 @@ export function Note({ children, tone }: { children: ReactNode; tone?: 'you' | '
 
 export function InspectorActions({ children }: { children: ReactNode }) {
   return <div className="v2-insp-act">{children}</div>;
+}
+
+/**
+ * A plain checklist of what to do, not a status readout: a title phrased as an
+ * instruction, one line saying why/what happens, and a dot that tells you which
+ * single step is the one to act on right now — `active`, not just "not done yet".
+ */
+export function GuideSteps({ children }: { children: ReactNode }) {
+  return <div className="v2-guide">{children}</div>;
+}
+
+export function GuideStep({ n, state = 'pending', title, children }: {
+  n: number;
+  state?: 'pending' | 'active' | 'done';
+  title: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className={`v2-guide-step${state !== 'pending' ? ` ${state}` : ''}`}>
+      <span className="n" aria-hidden="true">{state === 'done' ? <IcoCheck s={10} /> : n}</span>
+      <span className="tx">
+        <span className="tl">{title}</span>
+        {children && <span className="sb">{children}</span>}
+      </span>
+    </div>
+  );
 }
 
 // ── wizard footer ───────────────────────────────────────────────────────────
@@ -399,7 +441,7 @@ export function Modal({ label, glyph, title, sub, onClose, body, footer }: {
   sub?: ReactNode;
   onClose: () => void;
   body: ReactNode;
-  footer: ReactNode;
+  footer?: ReactNode;
 }) {
   return (
     <>
@@ -414,7 +456,7 @@ export function Modal({ label, glyph, title, sub, onClose, body, footer }: {
           <button type="button" className="x" onClick={onClose} aria-label="Close">×</button>
         </div>
         <div className="v2-modal-b">{body}</div>
-        <div className="v2-modal-f">{footer}</div>
+        {footer && <div className="v2-modal-f">{footer}</div>}
       </div>
     </>
   );

@@ -82,6 +82,72 @@ export function connectViaPopup(
     }, 500);
   });
 }
+/**
+ * Open an ALREADY-RESOLVED authorize URL (Microsoft's own consent page, not one of our own
+ * `/start` routes) in a popup and resolve on the same postMessage convention as
+ * `connectViaPopup` above. Separate from it because this URL must be used exactly as the
+ * server built it — appending our own `?popup=1` convention to a provider's OAuth URL would
+ * be sent to Microsoft as a stray, meaningless query parameter.
+ */
+export function openAuthorizeUrlPopup(
+  authorizeUrl: string,
+  successType: string,
+  errorType: string,
+): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const popup = window.open(authorizeUrl, 'cfconsent', 'width=520,height=720,left=280,top=80');
+    let settled = false;
+    const finish = (r: { ok: boolean; error?: string }): void => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('message', onMsg);
+      clearInterval(closeCheck);
+      resolve(r);
+    };
+    const onMsg = (e: MessageEvent): void => {
+      const d = e.data as { type?: string; error?: string } | null;
+      if (!d || typeof d.type !== 'string') return;
+      if (d.type === successType) finish({ ok: true });
+      else if (d.type === errorType) finish({ ok: false, error: d.error });
+    };
+    window.addEventListener('message', onMsg);
+    const closeCheck = setInterval(() => {
+      if (popup && popup.closed) finish({ ok: false, error: 'closed' });
+    }, 500);
+  });
+}
+
+/**
+ * Ask ONE named person to authorize ONE connector for themselves. Returns the Microsoft (or
+ * other provider) consent URL to send them to — open it with `openAuthorizeUrlPopup`, never
+ * navigate the main window to it.
+ */
+export async function startConnectorConsent(
+  session: string, connectorId: string, userKey: string,
+): Promise<{ authorizeUrl: string }> {
+  const res = await fetch('/api/migrate/connector-consent/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, connectorId, userKey }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { authorizeUrl?: string; error?: string; detail?: string };
+  if (!res.ok || !body.authorizeUrl) throw new Error(body.detail || body.error || 'consent_start_failed');
+  return { authorizeUrl: body.authorizeUrl };
+}
+
+/**
+ * Whether this person has already connected their own account — reads existence of the
+ * per-user secret only, never its value.
+ */
+export async function connectorConsentStatus(
+  session: string, connectorId: string, userKey: string,
+): Promise<{ connected: boolean | null; delegable: boolean }> {
+  const q = new URLSearchParams({ session, connectorId, userKey });
+  const res = await fetch(`/api/migrate/connector-consent/status?${q.toString()}`);
+  if (!res.ok) throw new Error('consent_status_failed');
+  return (await res.json()) as { connected: boolean | null; delegable: boolean };
+}
+
 export const migrateStreamUrl = (session: string) => `/api/migrate/stream?session=${session}`;
 
 /** Is a run live for this session? `{ run: null }` when nothing is going. */
@@ -606,6 +672,8 @@ export interface ConnectorDef {
   name: string;
   category: string;
   icon: string;
+  /** Real official connector icon (PNG), straight from Microsoft's own connector catalog. */
+  iconUrl?: string;
   docsUrl?: string;
   credentials: CredentialField[];
 }
@@ -654,9 +722,20 @@ export interface DetectedConnector {
   confidence?: 'certain' | 'heuristic';
 }
 
-/** Scan Power Automate flows for third-party connector references in ONE environment. */
-export async function fetchThirdPartyConnectors(session: string, envUrl: string): Promise<DetectedConnector[]> {
-  const res = await fetch(`/api/migrate/third-party-connectors?session=${session}&envUrl=${encodeURIComponent(envUrl)}`);
+/**
+ * Scan Power Automate flows for third-party connector references in ONE environment.
+ *
+ * botIds (optional): scope the scan to flows these agents actually invoke, instead of
+ * every PA flow in the environment. Pass the customer's selected agents whenever they
+ * are known — an unscoped scan reports connectors belonging to agents nobody selected.
+ */
+export async function fetchThirdPartyConnectors(
+  session: string,
+  envUrl: string,
+  botIds: string[] = [],
+): Promise<DetectedConnector[]> {
+  const q = botIds.length ? `&botIds=${encodeURIComponent(botIds.join(','))}` : '';
+  const res = await fetch(`/api/migrate/third-party-connectors?session=${session}&envUrl=${encodeURIComponent(envUrl)}${q}`);
   if (!res.ok) throw new Error('connector_scan_failed');
   return ((await res.json()) as { connectors: DetectedConnector[] }).connectors;
 }
@@ -679,7 +758,10 @@ export async function fetchDriveIdentities(
   const res = await fetch(
     `/api/migrate/drive-identities?session=${session}&envUrl=${encodeURIComponent(envUrl)}&sourceIds=${encodeURIComponent(sourceIds.join(','))}`,
   );
-  if (!res.ok) throw new Error('drive_identity_lookup_failed');
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+    throw new Error(body.detail || body.error || 'drive_identity_lookup_failed');
+  }
   return ((await res.json()) as { identities: DriveIdentityStatus[] }).identities;
 }
 
@@ -795,6 +877,8 @@ export interface ConnectorRequirement {
   connectorId: string;
   name?: string;
   icon?: string;
+  /** Real official connector icon (PNG), straight from Microsoft's own connector catalog. */
+  iconUrl?: string;
   authKind?: string;
   fields?: Array<{
     key: string; label: string; type: string; placeholder?: string; hint?: string; shared: boolean;
@@ -804,11 +888,17 @@ export interface ConnectorRequirement {
   requiredPermissions?: string[];
   adminConsentRequired?: boolean;
   permissionsHint?: string;
-  group?: { id: string; name: string; setupUrl?: string; setupHint?: string; siblings: string[] };
+  group?: { id: string; name: string; iconUrl?: string; setupUrl?: string; setupHint?: string; siblings: string[] };
   configured?: boolean;
   /** A sibling connector already supplied the shared credential — only permissions remain. */
   credentialAlreadySupplied?: boolean;
   unknown?: boolean;
+  /**
+   * Per-user sign-in, for connectors whose `invoker` tools in the SOURCE agent ran as the
+   * signed-in Copilot user rather than the app. `supported: false` is meaningful, not merely
+   * absent: it means such a tool on this connector is permanently shared-or-nothing.
+   */
+  userAuth?: { supported: boolean; redirectUri?: string; delegatedPermission?: string };
 }
 
 /**
@@ -938,7 +1028,10 @@ export async function fetchSelection(
   session: string,
 ): Promise<Array<{ env: string; envName?: string; botIds: string[] }>> {
   const res = await fetch(`/api/migrate/selection?session=${session}`);
-  if (!res.ok) throw new Error('selection_failed');
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+    throw new Error(body.detail || body.error || 'selection_failed');
+  }
   return ((await res.json()) as { selection: Array<{ env: string; envName?: string; botIds: string[] }> })
     .selection;
 }

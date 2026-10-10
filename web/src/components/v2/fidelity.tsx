@@ -141,6 +141,10 @@ export function FidelityCard({ fid }: { fid: Fidelity }) {
 /** The inspector body: totals, then only the findings that mean something. */
 export function FidelityDetail({ fid }: { fid: Fidelity }) {
   const assessed = Object.values(fid.reviews);
+  // "+120 more" used to be inert text — it read as a button but clicking it did
+  // nothing. Per-agent, not global: expanding one agent's long list must not also
+  // blow open every other agent's.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   return (
     <>
       {fid.state === 'reading' && (
@@ -174,16 +178,27 @@ export function FidelityDetail({ fid }: { fid: Fidelity }) {
         return (
           <div className="v2-fid" key={a.botId}>
             <Note tone={worstVerdict(r.counts) === 'lost' ? 'bad' : 'you'}>
-              <b>{a.name}</b> — {r.counts.lost ? `${r.counts.lost} lost` : ''}
+              <b>{a.name}</b>: {r.counts.lost ? `${r.counts.lost} lost` : ''}
               {r.counts.lost && r.counts['needs-review'] ? ', ' : ''}
               {r.counts['needs-review'] ? `${r.counts['needs-review']} to check` : ''}
             </Note>
-            {bad.slice(0, 4).map((f, i) => (
+            {(expanded[a.botId] ? bad : bad.slice(0, 4)).map((f, i) => (
               <Note key={`${i}-${f.component}`} tone={f.verdict === 'lost' ? 'bad' : 'you'}>
-                {f.component} — {f.detail}
+                <span className="v2-fid-item">
+                  <b>{f.component}</b>
+                  <span className="v2-fid-detail">{f.detail}</span>
+                </span>
               </Note>
             ))}
-            {bad.length > 4 && <Note>+{bad.length - 4} more on this agent.</Note>}
+            {bad.length > 4 && !expanded[a.botId] && (
+              <button
+                type="button"
+                className="v2-fid-more"
+                onClick={() => setExpanded((e) => ({ ...e, [a.botId]: true }))}
+              >
+                +{bad.length - 4} more on this agent
+              </button>
+            )}
           </div>
         );
       })}

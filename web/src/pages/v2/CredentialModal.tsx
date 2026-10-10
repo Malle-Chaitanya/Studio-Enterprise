@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import type { ConnectorValidation } from '../../api.ts';
-import { ConnectorMark } from '../../components/v2/connectorMarks.tsx';
+import { openAuthorizeUrlPopup, type ConnectorValidation } from '../../api.ts';
+import { ConnectorMark, groupIconOverride } from '../../components/v2/connectorMarks.tsx';
+import { IcoPencil } from '../../icons.tsx';
 import { useSource, type ConnectorRow } from '../../v2/data/index.ts';
 
 /** Field types that hold a secret. The agent may never fill one of these. */
@@ -25,6 +26,132 @@ const VALIDATION_TONE: Record<ConnectorValidation['code'], 'success' | 'danger' 
   unreachable: 'info',
   unverified: 'info',
 };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Lets ONE named person connect their own Microsoft account, for connectors whose tools ran
+ * as the signed-in Copilot user in the source agent (`userAuth.supported`). The shared
+ * app-only credential above this is necessary but not sufficient for those tools — without
+ * this, saving the app registration alone leaves them permanently broken after migration.
+ *
+ * The why (which permission this needs, where to grant it) is explained in the Inspector's
+ * "How to connect" guide, not here — this box is only the credential entry + the sign-in
+ * action itself.
+ */
+function DelegatedSignIn({
+  session, connectorId,
+}: {
+  session: string;
+  connectorId: string;
+}) {
+  const source = useSource();
+  const [userKey, setUserKey] = useState('');
+  /**
+   * `already-connected` (a passive background check, e.g. on blurring the email field) and
+   * `just-connected` (the actual popup sign-in just completed) are deliberately DIFFERENT
+   * states, not one shared "connected" — collapsing them looked, from the outside, like the
+   * Sign-in button worked on the first click when it had not run yet at all: focus moves to
+   * the button before its onClick fires, so the field's onBlur check landed first, found an
+   * already-stored secret (from earlier testing), and showed "Connected" a frame before the
+   * click did anything. Found live 2026-10-07.
+   */
+  const [status, setStatus] = useState<
+    'idle' | 'checking' | 'connecting' | 'already-connected' | 'just-connected' | 'not-connected' | 'error'
+  >('idle');
+  const [message, setMessage] = useState('');
+
+  const check = async (key: string): Promise<void> => {
+    setStatus('checking');
+    setMessage('');
+    try {
+      const res = await source.connectors.consentStatus(session, connectorId, key);
+      setStatus(res.connected ? 'already-connected' : 'not-connected');
+    } catch {
+      setStatus('error');
+      setMessage('Could not check connection status.');
+    }
+  };
+
+  const connect = async (): Promise<void> => {
+    const key = userKey.trim();
+    if (!key) return;
+    setStatus('connecting');
+    setMessage('');
+    try {
+      const { authorizeUrl } = await source.connectors.startConsent(session, connectorId, key);
+      // Empty means the flow already resolved without a round trip (the fixture source's
+      // shortcut) — the real backend always returns a real Microsoft URL here.
+      if (authorizeUrl) {
+        const result = await openAuthorizeUrlPopup(authorizeUrl, 'connector-consent-ok', 'connector-consent-error');
+        if (!result.ok) {
+          setStatus('error');
+          setMessage(
+            result.error === 'closed'
+              ? 'Sign-in window closed before finishing.'
+              : (result.error || 'Sign-in failed.'),
+          );
+          return;
+        }
+      }
+      // Confirm the secret actually landed rather than trusting the popup's own say-so —
+      // and report it as a FRESH connect, not the passive "already connected" check's wording.
+      const res = await source.connectors.consentStatus(session, connectorId, key);
+      if (res.connected) {
+        setStatus('just-connected');
+      } else {
+        setStatus('error');
+        setMessage('Microsoft reported success, but the credential was not found afterward. Try again.');
+      }
+    } catch (e) {
+      setStatus('error');
+      setMessage((e as Error).message || 'consent_start_failed');
+    }
+  };
+
+  return (
+    <div className="cf-field" style={{ margin: '0 0 16px' }}>
+      <label className="cf-label" htmlFor={`consent-${connectorId}`}>
+        Per-person sign-in
+      </label>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          id={`consent-${connectorId}`}
+          className="cf-input"
+          type="email"
+          placeholder="Person's Microsoft email, e.g. erik@contoso.com"
+          value={userKey}
+          onChange={(e) => { setUserKey(e.target.value); setStatus('idle'); setMessage(''); }}
+          onBlur={() => { if (EMAIL_RE.test(userKey.trim())) void check(userKey.trim()); }}
+        />
+        <button
+          type="button"
+          className="cf-btn cf-btn--primary cf-btn--sm"
+          style={{ flex: '0 0 auto' }}
+          disabled={!EMAIL_RE.test(userKey.trim()) || status === 'connecting' || status === 'checking'}
+          onClick={() => void connect()}
+        >
+          {status === 'connecting' ? 'Connecting…' : 'Sign in with Microsoft'}
+        </button>
+      </div>
+      {status === 'checking' && <span className="cf-hint">Checking…</span>}
+      {status === 'already-connected' && (
+        <span className="cf-hint" style={{ color: 'var(--cf-color-success, #0a5c3a)' }}>
+          &#10003; Already connected as {userKey.trim()} — sign in again only to refresh or replace it.
+        </span>
+      )}
+      {status === 'just-connected' && (
+        <span className="cf-hint" style={{ color: 'var(--cf-color-success, #0a5c3a)' }}>
+          &#10003; Signed in just now as {userKey.trim()}.
+        </span>
+      )}
+      {status === 'not-connected' && <span className="cf-hint">Not connected yet for this person.</span>}
+      {status === 'error' && (
+        <span className="cf-hint" style={{ color: 'var(--cf-color-danger, #7a1414)' }}>{message}</span>
+      )}
+    </div>
+  );
+}
 
 /**
  * Enter a connector's credentials.
@@ -64,7 +191,6 @@ export function CredentialForm({
   const [error, setError] = useState('');
   const [validation, setValidation] = useState<ConnectorValidation | null>(null);
 
-  const group = row.req?.group;
   const outstanding = fields.filter((f) => !f.supplied || replacing.has(f.key));
   const canSave = outstanding.length > 0 && outstanding.every((f) => (values[f.key] ?? '').trim().length > 0);
 
@@ -88,36 +214,15 @@ export function CredentialForm({
     }
   };
 
-  const permissions = row.req?.requiredPermissions ?? [];
-
   return (
     <>
-      {group?.setupHint && (
-        <div className="cf-alert cf-alert--info" style={{ marginBottom: 16 }}>
-          <span className="cf-alert__icon" aria-hidden="true">&#8505;</span>
-          <div>
-            <p className="cf-alert__desc">
-              {group.setupHint}
-              {group.setupUrl && (
-                <>
-                  {' '}
-                  <a href={group.setupUrl} target="_blank" rel="noreferrer">Open the setup page</a>
-                </>
-              )}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {fields.length === 0 && (
+      {/* What this needs and where to grant it (setup hint, permissions, redirect URI) is
+          the Inspector's "How to connect" guide now, not a wall of alerts in this dialog —
+          this body is credential entries + sign-in only. See ConnectorsV2.tsx. */}
+      {fields.length === 0 && !row.req?.userAuth?.supported && (
         <div className="cf-alert cf-alert--info">
           <span className="cf-alert__icon" aria-hidden="true">&#8505;</span>
-          <div>
-            <p className="cf-alert__desc">
-              This connector needs no credential of its own. If it is still not ready, the
-              missing piece is a permission grant, not a value.
-            </p>
-          </div>
+          <div><p className="cf-alert__desc">No credential needed for this connector.</p></div>
         </div>
       )}
 
@@ -129,24 +234,26 @@ export function CredentialForm({
               <label className="cf-label" htmlFor={`f-${row.connectorId}-${f.key}`}>
                 {f.label} <em className="cf-hint" style={{ fontStyle: 'normal' }}>— already stored</em>
               </label>
-              <input
-                id={`f-${row.connectorId}-${f.key}`}
-                className="cf-input"
-                value="•••••••• in Secret Manager"
-                disabled
-                readOnly
-                style={{ color: 'var(--cf-color-muted)' }}
-              />
-              <span className="cf-hint">
-                Never read back into this page.{' '}
+              <div className="cf-input-wrap">
+                <input
+                  id={`f-${row.connectorId}-${f.key}`}
+                  className="cf-input"
+                  value="•••••••• in Secret Manager"
+                  disabled
+                  readOnly
+                  style={{ color: 'var(--cf-color-muted)' }}
+                />
                 <button
                   type="button"
-                  className="cf-btn--linklike"
+                  className="cf-input-icon-btn"
+                  title={`Replace ${f.label}`}
+                  aria-label={`Replace ${f.label}`}
                   onClick={() => setReplacing((r) => new Set(r).add(f.key))}
                 >
-                  Replace it
+                  <IcoPencil s={14} />
                 </button>
-              </span>
+              </div>
+              <span className="cf-hint">Never read back into this page.</span>
             </div>
           );
         }
@@ -177,18 +284,8 @@ export function CredentialForm({
         );
       })}
 
-      {permissions.length > 0 && (
-        <div className="cf-alert cf-alert--success" style={{ marginBottom: 16 }}>
-          <span className="cf-alert__icon" aria-hidden="true">&#10003;</span>
-          <div>
-            <p className="cf-alert__desc">
-              Grant these as <b>application</b> permissions, then admin-consent them — a token
-              is issued even with nothing consented, so every call would 403 at run time:
-              <br />
-              <span style={{ fontFamily: 'var(--cf-mono, monospace)' }}>{permissions.join(', ')}</span>
-            </p>
-          </div>
-        </div>
+      {row.req?.userAuth?.supported && (
+        <DelegatedSignIn session={session} connectorId={row.connectorId} />
       )}
 
       {validation && (
@@ -211,13 +308,13 @@ export function CredentialForm({
         </span>
         <span className="cf-credfoot__actions">
           {onCancel && (
-            <button type="button" className="cf-btn cf-btn--secondary" onClick={onCancel}>
+            <button type="button" className="cf-btn cf-btn--secondary cf-btn--lg" onClick={onCancel}>
               {validation ? 'Done' : 'Cancel'}
             </button>
           )}
           <button
             type="button"
-            className="cf-btn cf-btn--primary"
+            className="cf-btn cf-btn--primary cf-btn--lg"
             onClick={() => void save()}
             disabled={!canSave || saving}
           >
@@ -245,18 +342,27 @@ export function CredentialModal({
   onForget?: () => void;
 }) {
   const group = row.req?.group;
+  // Same group-level override as the tile grid: a group's icon is its own brand mark, never
+  // borrowed from whichever connector happens to be the row this modal was opened for.
+  const iconUrl = groupIconOverride(group?.id) ?? row.req?.iconUrl;
   return (
     <div className="cf-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="cf-modal" role="dialog" aria-modal="true" aria-label={`Connect ${row.name}`}>
         <div className="cf-modal__header">
           <span className="cf-connector-glyph" aria-hidden="true">
-            <ConnectorMark connectorId={row.connectorId} name={row.name} emojiHint={row.req?.icon} />
+            <ConnectorMark connectorId={row.connectorId} name={row.name} emojiHint={row.req?.icon} iconUrl={iconUrl} />
           </span>
           <div style={{ flex: 1 }}>
             <h3 className="cf-modal__title">{group?.name ?? row.name}</h3>
+            {/* How many connectors a shared App Registration unlocks across the WHOLE
+                registry (all ~105 Microsoft connectors it could ever serve) was not a useful
+                number here — it never changes with what this migration actually uses. The
+                agent count is: how many agents in THIS migration need it. */}
             <div className="cf-hint">
               {group
-                ? `${group.siblings.length + 1} connector${group.siblings.length ? 's' : ''}${row.agentNames.length ? ` · ${row.agentNames.length} agent${row.agentNames.length > 1 ? 's' : ''}` : ''}`
+                ? row.agentNames.length
+                  ? `Needed by ${row.agentNames.length} agent${row.agentNames.length > 1 ? 's' : ''} in this migration`
+                  : 'Shared Microsoft credential'
                 : `Needed by ${row.agentNames.length || row.flowNames.length} item(s) in this migration`}
             </div>
           </div>
@@ -276,7 +382,7 @@ export function CredentialModal({
                 <p className="cf-alert__desc" style={{ flex: 1 }}>
                   Stored earlier. Forgetting only drops our record — the Secret Manager secret stays.
                 </p>
-                <button type="button" className="cf-btn cf-btn--secondary cf-btn--sm" onClick={onForget}>
+                <button type="button" className="cf-btn cf-btn--secondary cf-btn--lg" onClick={onForget}>
                   Forget stored credentials
                 </button>
               </div>

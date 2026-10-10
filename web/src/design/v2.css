@@ -191,7 +191,7 @@
 .v2-phase.current .mk { background: var(--v2-brand); color: #fff; }
 /* amber says "your turn" here exactly as it does everywhere else */
 .v2-phase.needs-you .mk { background: var(--v2-amber); color: #fff; }
-.v2-phase.needs-you .bd { color: #8a5600; }
+.v2-phase.needs-you .bd { color: var(--v2-amber); }
 .v2-phase.blocked .mk { background: var(--v2-fail); color: #fff; }
 .v2-phase.blocked .bd { color: var(--v2-fail); }
 .v2-phase.not-built { color: var(--v2-ink-4); }
@@ -291,34 +291,24 @@
   background: var(--v2-paper);
   border-bottom: 1px solid var(--v2-edge);
 }
-/* Brand guide's Font Detailing spec: heading weight 600, colour #000 — the
-   h6 tier (20px) is the one built for a slim persistent bar, not the 46px h1
-   size meant for a full-page title. */
-.v2-topbar-title {
-  margin: 0; font-weight: 600; font-size: 20px; line-height: 1.4; color: #000;
-}
-.v2-topbar-status {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: var(--v2-ink-3);
-}
 .v2-topbar-sp { margin-left: auto; }
 /* A real dropdown (trigger + menu), not a direct-click button — reusing
    `.havatar`/`.hsignout` from styles.css would have pulled in the old
    wizard's un-scoped look this file exists to avoid. */
 .v2-account { position: relative; }
 .v2-account-trigger {
-  appearance: none; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
-  display: flex; align-items: center; gap: 8px;
-  background: var(--v2-tint); color: var(--v2-brand);
-  border: 1px solid transparent; border-radius: 999px;
-  padding: 4px 12px 4px 4px;
+  appearance: none; cursor: pointer; font: inherit;
+  display: flex; align-items: center; gap: 4px;
+  background: none; color: var(--v2-brand);
+  border: 0; border-radius: 8px;
+  padding: 4px;
 }
 .v2-account-trigger:hover,
-.v2-account-trigger[aria-expanded='true'] { background: var(--v2-tint-2); border-color: var(--v2-brand-l); }
+.v2-account-trigger[aria-expanded='true'] { color: var(--v2-brand-l); }
 .v2-account-avatar {
-  width: 24px; height: 24px; border-radius: 50%; flex: 0 0 auto;
+  width: 24px; height: 24px; flex: 0 0 auto;
   display: flex; align-items: center; justify-content: center;
-  background: var(--v2-tint-2); color: var(--v2-brand);
+  color: var(--v2-brand);
 }
 .v2-account-menu {
   position: absolute; top: calc(100% + 8px); right: 0; z-index: 30;
@@ -437,12 +427,15 @@
 .v2-band .s { display: block; font-size: 10.5px; color: var(--v2-ink-4); }
 /* The controls cell must never sit on top of a readout: with six cells the band
    wraps, and a `flex-basis` smaller than the controls themselves let them overlap
-   the last number. Basis is now the real content width, and it wraps instead. */
-.v2-band .grow {
-  flex: 1 0 auto; min-width: 280px; border-right: 0; display: flex;
-  align-items: center; justify-content: flex-end; padding-right: 18px; gap: 8px;
-  flex-wrap: wrap;
-}
+   the last number. Basis is now the real content width, and it wraps instead.
+   A COLUMN, not a single centered row: the hidden `.ghost` label (same markup,
+   same rule, as every other cell's real label) reserves the exact height a real
+   label takes, so `.grow-row` starts at the same Y as the `.v` number next door
+   instead of floating at the cell's vertical center, which never lined up with
+   the baseline of the number row beside it. */
+.v2-band .grow { flex: 1 0 auto; min-width: 280px; border-right: 0; flex-direction: column; align-items: flex-end; padding-right: 18px; }
+.v2-band .grow .ghost { visibility: hidden; }
+.v2-band .grow-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .v2-rule { height: 3px; background: var(--v2-sand); position: relative; }
 .v2-rule i { position: absolute; inset: 0 auto 0 0; background: var(--v2-brand); transition: width .4s ease; }
 
@@ -551,11 +544,31 @@
    Scoped to `.mapuser`: the shared `.v2-row .st` chip is reused by every
    other v2 screen's row (Select agents, Connectors, Migrate, Report...). */
 .v2-row.mapuser .st { margin-left: auto; }
+/* Agent Decisions: the connector list IS the answer to "which agent has which
+   connectors" — clipping it to an ellipsis defeats the one thing this row exists
+   to show. Wrap instead, let the name column use the row's real width instead of
+   the fixed 250px every other `.v2-row` reserves for a short name, and pin the
+   chip to the row's true right edge with the same single-auto-margin pattern
+   `.mapuser` uses above, for the same reason. */
+.v2-row.agent-decisions { align-items: flex-start; padding-top: 12px; padding-bottom: 12px; }
+.v2-row.agent-decisions .nmw { flex: 1 1 auto; min-width: 0; }
+.v2-row.agent-decisions .kind { white-space: normal; overflow: visible; text-overflow: clip; }
+.v2-row.agent-decisions .st { flex: 0 0 auto; margin-left: auto; }
 /* A `why` cell holding CONTROLS must not clip them — the ellipsis rules above are
    for prose. Selects and buttons live in `.why.ctl`. */
 .v2-row .why.ctl {
   overflow: visible; white-space: normal; display: flex; align-items: center; gap: 8px;
 }
+/* Env pairing's project picker: project names ("CloudFuze Agent Migration
+   Hub — 6 seats") routinely outrun the shared 190px `.v2-select` width, so
+   the closed control truncated to a few characters AND the native dropdown
+   had to render wider than its own box to fit the option text — spilling
+   rightward over the "Choose app" select next to it. Widening the control
+   itself (plus a bit more gap) fits the label and pushes "Choose app" over,
+   so the dropdown opens without needing to overflow its neighbour. */
+.envpair-ctl { gap: 14px; }
+.envpair-ctl .v2-select:first-child { max-width: 250px; }
+
 /* A NoteRow states a fact in full sentences. Truncating it to one ellipsised line
    would hide exactly the part that matters (what was lost, and why). */
 .muted { color: var(--v2-ink-4); font-style: normal; }
@@ -765,6 +778,19 @@
 .v2-fid { padding: 4px 0 8px; border-bottom: 1px solid var(--v2-line-2, rgba(0,0,0,.06)); }
 .v2-fid:last-child { border-bottom: 0; }
 .v2-fid .v2-note:not(:first-child) { padding-left: 12px; }
+/* Each finding as two lines, not one run-on sentence: the action name reads as
+   its own label, the explanation sits under it in a quieter, smaller line —
+   scannable instead of a wall of "X — Y" clauses stacked on each other. */
+.v2-fid-item { display: flex; flex-direction: column; gap: 2px; }
+.v2-fid-detail { font-size: 11px; color: var(--v2-ink-3); line-height: 1.4; }
+/* A real control, not text styled to look like one — "+120 more" used to be a
+   plain Note with no handler, so clicking it did nothing. */
+.v2-fid-more {
+  appearance: none; border: 0; background: none; cursor: pointer; font: inherit;
+  font-size: 11.5px; font-weight: 500; color: var(--v2-ink-4);
+  padding: 6px 0 6px 12px; text-align: left; display: block;
+}
+.v2-fid-more:hover { color: var(--v2-brand); }
 .v2-row .act { flex: 0 0 118px; display: flex; justify-content: flex-end; }
 
 /* the element the agent is touching right now */
@@ -775,14 +801,17 @@
 }
 
 /* ── inspector ──────────────────────────────────────────────────────── */
-.v2-insp-h { padding: 14px 16px 12px; border-bottom: 1px solid var(--v2-edge); }
+/* No ruled dividers between header/sections — whitespace alone separates
+   them, so a short panel (e.g. Connect's three setup steps) reads as one
+   flowing guide rather than a stack of half-empty boxed cards. */
+.v2-insp-h { padding: 14px 16px 12px; }
 .v2-insp-h .k {
   font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
   color: var(--v2-ink-4); font-weight: 600;
 }
 .v2-insp-h h3 { font-size: 15px; font-weight: 600; letter-spacing: -.02em; margin-top: 3px; line-height: 1.3; }
 .v2-insp-h .v2-chip { margin-top: 9px; }
-.v2-insp-s { padding: 13px 16px; border-bottom: 1px solid var(--v2-edge); }
+.v2-insp-s { padding: 13px 16px; }
 .v2-insp-s h6 {
   font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
   color: var(--v2-ink-4); font-weight: 600; margin-bottom: 9px;
@@ -797,6 +826,46 @@
 .v2-note.ok .m { color: var(--v2-ok); }
 .v2-insp-act { padding: 13px 16px; display: flex; flex-direction: column; gap: 7px; }
 
+/* "How to connect": a numbered checklist someone actually follows in the Azure
+   portal, not prose. Permission scopes and URIs get their own monospace block
+   (`.v2-codeblock`) instead of sitting mid-sentence, so the one thing a reader
+   needs to copy is the one thing that stands out. */
+.v2-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 12px; }
+.v2-steps li { font-size: 12px; color: var(--v2-ink-2); line-height: 1.5; }
+.v2-steps li::marker { font-weight: 600; color: var(--v2-ink-4); }
+.v2-steps a { color: var(--v2-brand); font-weight: 500; }
+.v2-codeblock { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.v2-codeblock code {
+  display: block; font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink);
+  background: var(--v2-sand); border: 1px solid var(--v2-edge); border-radius: var(--v2-r-s);
+  padding: 6px 8px; word-break: break-all;
+}
+
+/* A flat checklist, not a flowchart: a divider between each step (no connecting
+   line down the side), and three honest states for the dot — grey/pending,
+   brand-blue/active (the one thing to do right now), green check/done. */
+.v2-guide { padding: 2px 0 4px; }
+.v2-guide-step {
+  display: flex; align-items: flex-start; gap: 11px; padding: 10px 0;
+}
+.v2-guide-step:first-child { padding-top: 0; }
+.v2-guide-step:last-child { padding-bottom: 0; }
+.v2-guide-step .n {
+  flex: 0 0 auto; margin-top: 1px; width: 20px; height: 20px; border-radius: 999px;
+  display: grid; place-items: center; font-size: 10px; font-weight: 700;
+  font-family: var(--v2-mono); color: var(--v2-ink-4); background: var(--v2-paper);
+  border: 1.5px solid var(--v2-edge-2);
+}
+.v2-guide-step.active .n { border-color: var(--v2-brand); color: var(--v2-brand); background: rgba(1,41,172,.06); }
+.v2-guide-step.done .n { border-color: var(--v2-ok); background: var(--v2-ok); color: #fff; }
+.v2-guide-step .tx { flex: 1 1 auto; min-width: 0; }
+.v2-guide-step .tl { display: block; font-size: 12.5px; font-weight: 600; letter-spacing: -.01em; color: var(--v2-ink-3); }
+.v2-guide-step.active .tl, .v2-guide-step.done .tl { color: var(--v2-ink); }
+.v2-guide-step .sb {
+  display: block; font-size: 11.5px; color: var(--v2-ink-3); line-height: 1.4; margin-top: 2px;
+  word-break: break-word;
+}
+
 /* the agent's ledger. One line per step it actually performed. */
 .v2-ldg { display: flex; gap: 9px; padding: 6px 0; font-size: 12px; line-height: 1.45; color: var(--v2-ink-2); }
 .v2-ldg .m { width: 13px; flex: 0 0 auto; text-align: center; font-size: 10px; color: var(--v2-ok); }
@@ -805,7 +874,7 @@
    still owed — red would call it a defect, green would claim a pass. */
 .v2-ldg.warn .m { color: var(--v2-amber); }
 .v2-ldg.live .m { color: var(--v2-teal); }
-.v2-ldg.stop { color: #8a5600; font-weight: 500; }
+.v2-ldg.stop { color: var(--v2-amber); font-weight: 500; }
 .v2-ldg.stop .m { color: var(--v2-amber); }
 
 /* ── credential modal ───────────────────────────────────────────────── */
@@ -1040,7 +1109,7 @@
   border-color: transparent;
 }
 .v2-wizard .note { font-size: 11.5px; color: var(--v2-ink-4); }
-.v2-wizard .note.blocked { color: #8a5600; }
+.v2-wizard .note.blocked { color: var(--v2-amber); }
 /* Below 900px the rail becomes a horizontal top strip, not a side column, so
    the bar's left edge has nothing to align to — span the full width instead. */
 @media (max-width: 900px) {
@@ -1238,39 +1307,19 @@
   opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0);
 }
 
-/* The direction, stated once both sides are live — a plain summary line now,
-   not a third boxed pill-row nested inside cards that already say the same
-   thing. A hairline top border separates it from the cards; nothing else. */
-/* Its own small standalone strip — floating above the cards like the
-   reference's "THIS MIGRATION" bar, not glued to the cards it summarizes. */
-.v2-dir {
-  display: flex; align-items: center; justify-content: flex-start; gap: 10px;
-  margin-bottom: 16px; padding: 14px 18px; background: var(--v2-paper);
-  border: 1px solid var(--v2-edge); border-radius: var(--v2-r-l);
-  flex-wrap: wrap;
-}
-.v2-dir-label {
-  font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
-  font-weight: 600; color: var(--v2-ink-3);
-}
-.v2-dir-pill {
-  display: inline-flex; align-items: center; gap: 4px;
-  background: var(--v2-sand); border-radius: 999px; padding: 6px 14px;
-  font-size: 13px; color: var(--v2-ink-2);
-}
-.v2-dir-pill .k { color: var(--v2-ink-3); }
-.v2-dir-pill strong { color: var(--v2-ink); font-weight: 700; }
-.v2-dir .to {
-  color: var(--v2-ink-4); font-size: 15px; padding: 0 2px;
-}
-.v2-dir .found { margin-left: auto; display: flex; gap: 18px; }
-.v2-dir .found .n {
+/* The "found" counts (environments/agents/topics) used to live in their own
+   "This migration" strip above the cards. That strip is gone — it only
+   repeated the Source/Destination the two cards above it already state —
+   so the counts moved into the pairing panel's header instead, via
+   PanelHead's `actions` slot. */
+.v2-panel-h .found { display: flex; gap: 18px; }
+.v2-panel-h .found .n {
   /* Same brand-compliance fix as .v2-band .v — Poppins is the only approved
      face, so the serif accent goes even on these big instrument numbers. */
   font-family: 'Poppins', var(--font), sans-serif; font-weight: 600;
   font-size: 21px; line-height: 1.1; display: block;
 }
-.v2-dir .found label {
+.v2-panel-h .found label {
   font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase;
   color: var(--v2-ink-4); font-weight: 600;
 }
@@ -1319,6 +1368,9 @@
 .v2-fold > .hd .tl { font-size: 12.5px; font-weight: 500; color: var(--v2-ink-2); }
 .v2-fold > .hd .nt { font-size: 11.5px; color: var(--v2-ink-4); }
 .v2-fold.open > .hd .tl { color: var(--v2-ink); }
+/* `padded`: the body is prose, not edge-to-edge `Row`s — give it back the
+   panel's own horizontal/bottom padding instead of sitting flush on the border. */
+.v2-fold.pad > .bd { padding: 0 16px 14px; }
 
 
 /* ── credential steps ─────────────────────────────────────────────────────────
@@ -1377,19 +1429,6 @@
   border-bottom: 1px solid var(--v2-edge);
 }
 .v2-dec:last-child { border-bottom: 0; }
-
-/* The agent a group of decisions belongs to, named once above its own rows.
-   Replaces repeating the name on every row across two separate lists, where an
-   agent needing both a surface choice and a Drive account appeared twice and the
-   customer had to reassemble the set themselves. */
-.v2-dec-grp:not(:last-child) { border-bottom: 1px solid var(--v2-edge); }
-.v2-dec-grp .v2-dec:last-child { border-bottom: 0; }
-/* The agent's own name reads as a heading, not as the muted summary line a
-   fold title is elsewhere on this screen. */
-.v2-dec-grp .v2-fold > .hd .tl { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
-/* Indented under their agent so the grouping is visible without a box per agent. */
-.v2-dec-grp .v2-dec { padding-left: 28px; border-bottom: 0; }
-.v2-dec-grp .v2-fold .bd { padding: 0; }
 .v2-dec .nmw { min-width: 0; }
 .v2-dec .nm { display: block; font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
 .v2-dec .kind {
@@ -1406,6 +1445,17 @@
 }
 .v2-dec .pre { color: var(--v2-ink-4); }
 .v2-dec .err { color: var(--v2-fail); }
+/* Collapsed by default: a paragraph of Entra permission requirements on every
+   single row, always visible, is what made a 3-decision popup read as a wall
+   of text. The paragraph itself is unchanged — still the full real requirement,
+   never shortened — just one click away instead of forced onto every row. */
+.v2-dec-why {
+  grid-column: 1 / -1; appearance: none; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 11px; font-weight: 500; color: var(--v2-ink-4);
+  padding: 2px 0; text-align: left; display: inline-flex; align-items: center; gap: 5px;
+}
+.v2-dec-why:hover { color: var(--v2-brand); }
+.v2-dec-why span { font-size: 9px; }
 
 /* A next button the width of its label. Stretched edge-to-edge it read as the
    only thing on the screen, which on Migrate it very nearly was. */
@@ -1543,15 +1593,16 @@
 
 /* Icon-tile grid — the "add applications" treatment: one square tile per
    credential group, official brand mark + name, everything else left for
-   the modal a click opens. 115px tiles to match CloudFuze SaaS Management's
-   own "Add applications" card size. */
+   the modal a click opens. 92px tiles — sized against CloudFuze SaaS
+   Management's own "Add applications" card, which runs noticeably smaller
+   than this grid's original 115px. */
 .cf-connector-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(115px, 1fr)); gap: 14px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px;
 }
 .cf-connector-tile {
   appearance: none; cursor: pointer; font: inherit; position: relative;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-  aspect-ratio: 1 / 1; padding: 14px 10px; background: #fff; border: 1px solid var(--cf-color-border);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  min-height: 92px; padding: 10px 8px; background: #fff; border: 1px solid var(--cf-color-border);
   border-radius: var(--cf-radius-md);
   transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
@@ -1560,12 +1611,44 @@
   z-index: 1;
 }
 .cf-connector-tile-mark {
-  width: 56px; height: 56px; border-radius: var(--cf-radius-md); overflow: hidden; flex: 0 0 auto;
+  width: 40px; height: 40px; border-radius: var(--cf-radius-md); overflow: hidden; flex: 0 0 auto;
 }
 .cf-connector-tile-mark svg { width: 100%; height: 100%; }
 .cf-connector-tile-nm {
-  font-size: 12.5px; font-weight: 600; color: var(--cf-color-navy); text-align: center;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+  font-size: 12.5px; font-weight: 400; color: var(--cf-color-navy); text-align: center;
+  white-space: normal; word-break: break-word; max-width: 100%; line-height: 1.25;
+}
+/* What this tile bundles, on hover — light-blue brand gradient (not a dark
+   bubble, which read as an unrelated popup rather than part of this UI), and
+   BELOW the tile, left-anchored to it rather than centered: the Microsoft
+   tile almost always sorts first (leftmost), and a centered bubble opening
+   upward clipped off the top-left of the viewport there — found live
+   2026-10-08. */
+.cf-connector-tile-tip {
+  position: absolute; top: calc(100% + 10px); left: 0;
+  transform: translateY(-4px);
+  width: 220px; display: flex; flex-direction: column; gap: 3px;
+  background: var(--cf-color-bg-near-white);
+  border: 1px solid var(--cf-color-bg-wash);
+  color: var(--cf-color-body);
+  font-size: 12px; font-weight: 400; line-height: 1.4; text-align: left; white-space: normal;
+  padding: 10px 12px; border-radius: var(--cf-radius-sm);
+  box-shadow: var(--cf-shadow-md);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .12s ease, transform .12s ease;
+  z-index: 20;
+}
+.cf-connector-tile-tip b { font-weight: 600; color: var(--cf-color-primary); }
+/* Flat fill on both the box and its arrow — a gradient on the box but a flat
+   color on the arrow left a visible seam where they met, which is what read
+   as "not aligned" as much as any position did. */
+.cf-connector-tile-tip::after {
+  content: ""; position: absolute; bottom: 100%; left: 24px;
+  border: 5px solid transparent; border-bottom-color: var(--cf-color-bg-near-white);
+}
+.cf-connector-tile:hover .cf-connector-tile-tip,
+.cf-connector-tile:focus-visible .cf-connector-tile-tip {
+  opacity: 1; visibility: visible; transform: translateY(0);
 }
 
 /* Link-styled button ("Replace it") sitting inline inside a `cf-hint` line —

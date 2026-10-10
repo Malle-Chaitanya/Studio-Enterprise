@@ -2,6 +2,13 @@
  * Brand marks for the connectors this migration actually detects, for the
  * Connectors screen's icon-tile grid (see ConnectorsV2.tsx).
  *
+ * TIER 0, now primary: the registry's own `iconUrl` — the REAL official icon read directly
+ * from Microsoft's live connector catalog (api.powerapps.com/providers/Microsoft.PowerApps/
+ * apis), the same source Power Platform's own UI renders from, confirmed 2026-10-07. Covers
+ * both Microsoft first-party connectors and the third-party ones Microsoft redistributes
+ * through that same catalog — not an approximation. The tiers below exist only for the
+ * handful of connectors that catalog does not carry.
+ *
  * The marks below fall into two tiers:
  *
  *  1. REAL official logo outlines, traced straight from each brand's own mark
@@ -26,7 +33,29 @@
  * tinted from the registry's own `icon` field, so a rarely-hit connector
  * never renders blank.
  */
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import microsoft365Icon from '../../assets/icons/microsoft365.png';
+
+/**
+ * Shared-credential GROUP icon overrides — keyed by `CredentialGroupDef.id` (registry.ts),
+ * not by connector id. A group's tile represents every connector it bundles, so its icon
+ * must be the group's own brand mark, never borrowed from whichever member connector
+ * happens to be the representative row for a given agent.
+ *
+ * ms_graph specifically: Power Platform's own "office365" connector icon (what the
+ * registry's `iconUrl` field carries for this group, and for `shared_outlook` itself) is
+ * actually Outlook's mail glyph, not the real Microsoft 365 brand mark — confirmed live
+ * 2026-10-07 against CloudFuze's own sacontain product, which renders the genuine one. The
+ * asset here is that genuine logo, supplied directly by the user.
+ */
+const GROUP_ICON_OVERRIDES: Record<string, string> = {
+  ms_graph: microsoft365Icon,
+};
+
+/** The icon a shared-credential group's own tile/modal should show, if this group overrides it. */
+export function groupIconOverride(groupId: string | undefined): string | undefined {
+  return groupId ? GROUP_ICON_OVERRIDES[groupId] : undefined;
+}
 
 /** Tier 1 — real traced official outline + official hex (Simple Icons, CC0). */
 const OFFICIAL_MARKS: Record<string, { hex: string; d: string; viewBox?: string }> = {
@@ -255,48 +284,32 @@ const EMOJI_TINT: Record<string, string> = {
   '🔶': '#FCB400', '✍️': '#FFCC22', '🌐': '#0078D4',
 };
 
-/** One tile per connector: a real official mark where Simple Icons has one,
- *  a hand-approximated (but real-color) mark for the handful of enterprise
- *  brands it doesn't carry, otherwise a tinted initials tile so nothing ever
- *  renders blank. */
-/**
- * Marks for a CREDENTIAL GROUP, not a connector.
- *
- * A group tile stands for every connector one credential unlocks, so wearing one
- * member's logo misreads as "that is all we found". The Google group tile showed
- * Calendar's official mark purely because Calendar sorted first and is the only
- * Google connector in OFFICIAL_MARKS -- an agent with 10 Drive, 6 Sheets, 5 Tasks
- * and 4 Calendar tools looked Calendar-only on this screen. Keyed by the registry
- * group id (registry.ts CREDENTIAL_GROUPS), reusing primitives.tsx's CloudMark
- * paths so the platform reads the same everywhere.
- */
-const GROUP_MARKS: Record<string, () => ReactNode> = {
-  google_service_account: () => (
-    <svg viewBox="0 0 24 24" role="img" aria-label="Google">
-      <path d="M12 2.5 13.9 9 20.5 12 13.9 15 12 21.5 10.1 15 3.5 12 10.1 9Z" fill="#4285f4" />
-      <path d="M12 2.5 13.9 9 12 12Z" fill="#ea4335" />
-      <path d="M20.5 12 13.9 15 12 12Z" fill="#fbbc04" />
-      <path d="M12 21.5 10.1 15 12 12Z" fill="#34a853" />
-    </svg>
-  ),
-  ms_graph: () => (
-    <svg viewBox="0 0 24 24" role="img" aria-label="Microsoft">
-      <rect x="1" y="1" width="10" height="10" fill="#f25022" />
-      <rect x="13" y="1" width="10" height="10" fill="#7fba00" />
-      <rect x="1" y="13" width="10" height="10" fill="#00a4ef" />
-      <rect x="13" y="13" width="10" height="10" fill="#ffb900" />
-    </svg>
-  ),
-};
-
-export function ConnectorMark({ connectorId, name, emojiHint }: {
+/** One tile per connector: the REAL official icon straight from Microsoft's own connector
+ *  catalog (`iconUrl` — api.powerapps.com, confirmed 2026-10-07) wherever one exists, since
+ *  that is the authoritative source for first-party AND third-party connectors alike — not
+ *  an approximation. Falls back to a hand-traced Simple Icons mark, then a hand-approximated
+ *  mark, then a tinted initials tile, only for the handful of connectors that catalog does
+ *  not cover (never blank). A broken/changed image URL degrades to the same fallback chain
+ *  rather than a broken-image icon. */
+export function ConnectorMark({ connectorId, name, emojiHint, iconUrl }: {
   connectorId: string;
   name: string;
   /** The registry's own `icon` field (an emoji) — used only to tint the fallback. */
   emojiHint?: string;
+  /** The registry's own `iconUrl` field — Microsoft's real official PNG for this connector. */
+  iconUrl?: string;
 }) {
-  const Group = GROUP_MARKS[connectorId];
-  if (Group) return <Group />;
+  const [imgFailed, setImgFailed] = useState(false);
+  if (iconUrl && !imgFailed) {
+    return (
+      <img
+        src={iconUrl}
+        alt={name}
+        style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '5px' }}
+        onError={() => setImgFailed(true)}
+      />
+    );
+  }
   const official = OFFICIAL_MARKS[connectorId];
   if (official) {
     return (

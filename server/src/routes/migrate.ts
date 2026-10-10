@@ -20,6 +20,7 @@ import { migrateSharePointDriveItem } from '../services/knowledgeDataStoreExecut
 import { detectThirdPartyConnectors } from '../services/thirdPartyConnectorScan.js';
 import { detectKnowledgeConnectors } from '../services/knowledgeConnectorScan.js';
 import { listBots, extractAgent } from '../services/dataverse.js';
+import { mapPoolCollect } from '../concurrency.js';
 import { mapAgent } from '../services/mapper.js';
 import { upsertSecretIfChanged, preflightSecretAccess, deleteSecret, getSecretOwnership, getEntraSecret } from '../services/secretManager.js';
 import { validateConnectorCredentials } from '../services/connectorValidator.js';
@@ -450,7 +451,7 @@ migrateRouter.post('/knowledge-source-confirm', async (req, res) => {
 // ── Third-party connector detection + credential storage ──────────────────────
 
 /**
- * GET /api/migrate/third-party-connectors?session=&envUrl=
+ * GET /api/migrate/third-party-connectors?session=&envUrl=&botIds=
  *
  * envUrl is REQUIRED and must be one of the environments the user actually
  * selected agents from (SelectData) — NOT session.dvOrgUrl. A tenant can have
@@ -460,6 +461,15 @@ migrateRouter.post('/knowledge-source-confirm', async (req, res) => {
  * flows that live in every other environment. The caller (ConnectorConfig)
  * loops this once per selected environment, same pattern already used for
  * /knowledge-connectors below.
+ *
+ * botIds (optional, comma-separated): scan only the flows these agents'
+ * topics actually invoke. Without it, every PA flow in the environment was
+ * summarized — including flows that belong to agents nobody selected, which
+ * reported connectors the migration never touches (e.g. Microsoft's own
+ * Copilot Studio system flows) as if this agent depended on them. For each
+ * bot we take the flow ids its own `AgentIR.flows` names (the
+ * `InvokeFlowTaskAction` join key, same `workflows.workflowid` this scan
+ * already queries) and scope the scan to that set.
  */
 migrateRouter.get('/third-party-connectors', async (req, res) => {
   const session = await getSession(req.query.session as string);
@@ -467,10 +477,28 @@ migrateRouter.get('/third-party-connectors', async (req, res) => {
   if (!session.tenantId) return void res.status(400).json({ error: 'ms_not_connected' });
   const envUrl = req.query.envUrl as string | undefined;
   if (!envUrl) return void res.status(400).json({ error: 'env_url_required' });
+  const botIds = String(req.query.botIds ?? '').split(',').map((b) => b.trim()).filter(Boolean);
 
   try {
     const dvToken = await clientCredsToken(session.tenantId, envUrl);
-    const connectors = await detectThirdPartyConnectors(envUrl, dvToken);
+    let allowedWorkflowIds: Set<string> | undefined;
+    if (botIds.length) {
+      const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+      const allBots = await listBots(envUrl, dvToken);
+      const bots = allBots.filter((b) => botIds.includes(b.botid));
+      const perAgentFlowIds = await mapPoolCollect(bots, 8, async (bot) => {
+        try {
+          const cached = await getCachedIR(appUserId, envUrl, bot.botid);
+          const ir = cached?.ir ?? (await extractAgent(envUrl, dvToken, bot));
+          return ir.flows?.map((f) => f.id) ?? [];
+        } catch (err) {
+          logger.debug({ err, bot: bot.name }, 'third-party-connectors: agent extract failed');
+          return [];
+        }
+      });
+      allowedWorkflowIds = new Set(perAgentFlowIds.flat());
+    }
+    const connectors = await detectThirdPartyConnectors(envUrl, dvToken, allowedWorkflowIds);
     res.json({ connectors });
   } catch (err) {
     res.status(502).json({ error: 'connector_scan_failed', detail: (err as Error).message });
@@ -1057,7 +1085,10 @@ migrateRouter.post('/third-party-connectors/credentials', async (req, res) => {
     // saved before tenant scoping keep backing the agents already deployed on them.
     await upsertConnectorCredential(appUserId, {
       connectorId,
-      fields: [...new Set([...(priorRecord?.fields ?? []), ...creds.map((c) => c.field)])],
+      // Array.isArray guards a record written by an older/buggy path with `fields` as
+      // something other than an array (confirmed live, 2026-10-07 — spreading a
+      // non-iterable here crashed this save request, and the whole server with it).
+      fields: [...new Set([...(Array.isArray(priorRecord?.fields) ? priorRecord.fields : []), ...creds.map((c) => c.field)])],
       secretIds: secretIdByField,
       project: secretsProject,
     });
@@ -1138,7 +1169,10 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
   for (const rec of usable) {
     const scope = connectorCredentialScope(rec.connectorId);
     const set = suppliedFieldsByScope.get(scope) ?? new Set<string>();
-    for (const f of rec.fields ?? []) set.add(f);
+    // A malformed stored record (fields written as an object instead of an array by an
+    // older write path) must not take down the whole server over one customer's data —
+    // best-effort persistence means degrading, not crashing. See pr-standard/testing-standard.
+    for (const f of Array.isArray(rec.fields) ? rec.fields : []) set.add(f);
     suppliedFieldsByScope.set(scope, set);
   }
 
@@ -1210,6 +1244,7 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
       connectorId: id,
       name: def.name,
       icon: def.icon,
+      iconUrl: def.iconUrl,
       category: def.category,
       docsUrl: def.docsUrl,
       authKind: def.authKind ?? 'bearer',
@@ -1230,7 +1265,7 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
       adminConsentRequired: !!def.adminConsentRequired,
       permissionsHint: def.permissionsHint,
       group: group
-        ? { id: group.id, name: group.name, setupUrl: group.setupUrl, setupHint: group.setupHint, siblings }
+        ? { id: group.id, name: group.name, iconUrl: group.iconUrl, setupUrl: group.setupUrl, setupHint: group.setupHint, siblings }
         : undefined,
       /**
        * Per-user sign-in, for connectors whose `invoker` tools can actually be reproduced.
@@ -1349,7 +1384,10 @@ migrateRouter.get('/connector-credentials', async (req, res) => {
   res.json({
     connectors: saved.map((s) => ({
       connectorId: s.connectorId,
-      fields: s.fields,
+      // Belt-and-suspenders: the write path (db/repos/connectorCredentials.ts) now
+      // normalizes this on every save, but a record from before that fix must still
+      // never hand the frontend a non-array shape.
+      fields: Array.isArray(s.fields) ? s.fields : [],
       project: s.project,
       updatedAt: s.updatedAt,
       matchesDestination: !!destProject,

@@ -43,6 +43,10 @@ export interface BoundToolSpec {
   contextValues: Record<string, string>;
   auth: VendorAuth;
   aadResource?: string;
+  /** See `VendorBinding.requiresIfMatch` in operationBinding.ts. */
+  requiresIfMatch?: boolean;
+  /** See `VendorBinding.bodyTemplate` in operationBinding.ts. */
+  bodyTemplate?: { template: Record<string, unknown>; consumes: string[] };
 }
 
 export interface BoundToolBuild {
@@ -218,7 +222,16 @@ export async function buildBoundToolSpecs(
       // argument is honest and lets the model pass JSON when it has to.
       .map((p) => {
         const declared = (tool.inputs ?? []).find((i) => i.name === p.name && i.source === 'model');
-        return { name: p.name, in: p.in, required: p.required, type: p.type, description: declared?.description };
+        // The AGENT's own words win when it captured any — they describe what THIS agent's
+        // author actually meant by the argument. Only when it captured none does the
+        // registry's own fallback (operationBinding.ts's queryParamDescriptions) apply — for
+        // a renamed/repurposed parameter like SearchUserV2's searchTerm -> $filter, a bare
+        // vendor parameter name with no description at all leaves the model to guess the
+        // syntax, which is how it ends up reaching for the generic passthrough tool instead.
+        return {
+          name: p.name, in: p.in, required: p.required, type: p.type,
+          description: declared?.description ?? p.description,
+        };
       });
 
     const spec: BoundToolSpec = {
@@ -246,6 +259,8 @@ export async function buildBoundToolSpecs(
       ),
       auth: op.auth,
       aadResource: op.aadResource,
+      requiresIfMatch: op.requiresIfMatch,
+      bodyTemplate: op.bodyTemplate,
     };
     const list = byConnector.get(tool.connectorId) ?? [];
     list.push(spec);

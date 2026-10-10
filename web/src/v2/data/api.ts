@@ -13,6 +13,8 @@ import {
   fetchSavedConnectors,
   saveConnectorCredentials,
   forgetConnectorCredentials,
+  startConnectorConsent,
+  connectorConsentStatus,
   type DetectedConnector,
 } from '../../api.ts';
 import { markStale } from './cache.ts';
@@ -130,7 +132,7 @@ async function scan(session: string): Promise<ConnectorScan> {
   // Each scan is independently best-effort: a Power Automate scan that fails must
   // not hide the knowledge connectors we did find.
   const [flows, knowledge, needed, surfaces] = await Promise.all([
-    Promise.all(envs.map((e) => fetchThirdPartyConnectors(session, e.env).catch(() => [])))
+    Promise.all(envs.map((e) => fetchThirdPartyConnectors(session, e.env, e.botIds).catch(() => [])))
       .then(mergeDetected),
     Promise.all(envs.map((e) => fetchKnowledgeSourceConnectors(session, e.env, e.botIds).catch(() => [])))
       .then(mergeDetected),
@@ -737,5 +739,7 @@ export const apiSource: V2Source = {
       return { validation: res.validation };
     },
     forget: forgetConnectorCredentials,
+    startConsent: startConnectorConsent,
+    consentStatus: connectorConsentStatus,
   },
 };

@@ -70,6 +70,22 @@
 
 .cf-textarea { min-height: 96px; resize: vertical; }
 
+/* An input with one small icon button living inside its right edge — same
+   placement as a password field's show/hide eye, reused here for "replace
+   this stored value" (a pencil, not an eye: clicking it never reveals the
+   secret, it only unlocks typing a new one). */
+.cf-input-wrap { position: relative; display: flex; }
+.cf-input-wrap .cf-input { padding-right: 40px; }
+.cf-input-icon-btn {
+  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0;
+  background: none; border: 0; border-radius: var(--cf-radius-sm);
+  color: var(--cf-color-secondary-gray); cursor: pointer;
+  transition: background var(--cf-transition-fast), color var(--cf-transition-fast);
+}
+.cf-input-icon-btn:hover { background: var(--cf-color-bg-ice); color: var(--cf-color-primary); }
+
 .cf-select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237A8BA6' stroke-width='1.5' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
 
 /* Checkbox / Radio / Switch */
@@ -203,8 +219,8 @@
   width: 100%; max-width: 480px; z-index: var(--cf-z-modal);
   max-height: calc(100vh - 64px); display: flex; flex-direction: column;
 }
-.cf-modal__header { display: flex; align-items: center; justify-content: space-between; padding: var(--cf-space-5); border-bottom: 1px solid var(--cf-color-border); }
-.cf-modal__title { font-size: var(--cf-font-size-lg); font-weight: var(--cf-font-weight-bold); color: var(--cf-color-navy); margin: 0; }
+.cf-modal__header { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; padding: var(--cf-space-5); border-bottom: 1px solid var(--cf-color-border); }
+.cf-modal__title { font-size: var(--cf-font-size-lg); font-weight: 600; color: var(--cf-color-navy); margin: 0; line-height: 1.3; }
 .cf-modal__close { background: none; border: none; cursor: pointer; color: var(--cf-color-muted); font-size: 1.25rem; line-height: 1; padding: 4px; }
 .cf-modal__body { padding: var(--cf-space-5); overflow-y: auto; font-size: var(--cf-font-size-base); color: var(--cf-color-body); }
 .cf-modal__footer { padding: var(--cf-space-4) var(--cf-space-5); border-top: 1px solid var(--cf-color-border); display: flex; justify-content: flex-end; gap: var(--cf-space-3); }

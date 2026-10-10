@@ -163,11 +163,23 @@ async function fetchPaFlows(dvOrgUrl: string, dvToken: string): Promise<PaFlow[]
   return flows;
 }
 
+/**
+ * @param allowedWorkflowIds When given, scope the scan to ONLY these `workflows.workflowid`
+ *   values instead of every PA flow in the environment. Callers that know which agents were
+ *   selected pass the flow ids those agents' own topics actually invoke (`AgentIR.flows`,
+ *   the `InvokeFlowTaskAction` join key — see `dataverse.ts`'s `parseAgentTool`), so a
+ *   customer is never told about a connector that belongs to someone else's agent. Omitted
+ *   entirely only by callers that genuinely want the whole-environment sweep (none do today
+ *   — kept optional so this stays a pure filter, not a second code path).
+ */
 export async function detectThirdPartyConnectors(
   dvOrgUrl: string,
   dvToken: string,
+  allowedWorkflowIds?: Set<string>,
 ): Promise<DetectedConnector[]> {
-  return summarizeFlows(await fetchPaFlows(dvOrgUrl, dvToken));
+  const flows = await fetchPaFlows(dvOrgUrl, dvToken);
+  const scoped = allowedWorkflowIds ? flows.filter((f) => allowedWorkflowIds.has(f.workflowid)) : flows;
+  return summarizeFlows(scoped);
 }
 
 /**

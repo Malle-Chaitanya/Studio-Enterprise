@@ -4,25 +4,18 @@ import type { ConnectorValidation } from '../../api.ts';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
-  Btn, Chip, Inspector, InspectorActions, InspectorHead,
+  Btn, Inspector, InspectorActions, InspectorHead,
   Fold, InspectorSection, KeyValue, Note, SkeletonRows, WizardFooter,
-  type ChipTone,
 } from '../../components/v2/primitives.tsx';
 import { FidelityCard, FidelityDetail, useFidelity } from '../../components/v2/fidelity.tsx';
 import { AgentDecisions } from '../../components/v2/AgentDecisions.tsx';
-import { ConnectorMark } from '../../components/v2/connectorMarks.tsx';
+import { ConnectorMark, groupIconOverride } from '../../components/v2/connectorMarks.tsx';
+import { categoryForConnector, isMicrosoftCategory } from '../../helpers/connectorCategories.ts';
 import {
   clearStale, isStale, markProgress, readProgress, useResource,
 } from '../../v2/data/cache.ts';
 import { useSource, type ConnectorRow } from '../../v2/data/index.ts';
 import { CredentialModal } from './CredentialModal.tsx';
-
-const STATE_LABEL: Record<ConnectorRow['state'], { text: string; chip: ChipTone }> = {
-  'needs-you': { text: 'needs you', chip: 'you' },
-  'wrong-project': { text: 'wrong project', chip: 'bad' },
-  'cannot-migrate': { text: 'cannot migrate', chip: 'bad' },
-  ready: { text: 'connected', chip: 'ok' },
-};
 
 
 /**
@@ -59,9 +52,14 @@ export default function ConnectorsV2() {
   const fid = useFidelity(session);
 
   // Cached: this screen is now opened on demand, and re-scanning the tenant every
-  // time someone glances at it is quota spent for nothing.
+  // time someone glances at it is quota spent for nothing. Cached data still
+  // renders instantly, but with no manual Sync button on this screen any more,
+  // a stale-but-wrong read (e.g. a server-side scoping fix landing underneath an
+  // already-cached scan) had no way to ever correct itself — so this revalidates
+  // quietly in the background on every mount, same as EnvPairing does for data
+  // whose correctness depends on something outside this screen's control.
   const scanRes = useResource(
-    `conn:${session}`, () => source.connectors.scan(session), Boolean(session),
+    `conn:${session}`, () => source.connectors.scan(session), Boolean(session), true,
   );
   const rows = scanRes.data?.rows ?? [];
   // botId -> name, from the assessment's own fetch. Both come from one read, which
@@ -71,7 +69,6 @@ export default function ConnectorsV2() {
     [fid.agents],
   );
   const loading = scanRes.loading;
-  const syncing = scanRes.syncing;
   const error = !session ? 'no_session' : scanRes.error;
   const reload = useCallback((): void => scanRes.sync(), [scanRes]);
 
@@ -87,11 +84,17 @@ export default function ConnectorsV2() {
    * the length and all of the tedium.
    */
   const groups = useMemo(() => {
-    const m = new Map<string, { id: string; name: string; rows: ConnectorRow[] }>();
+    const m = new Map<string, { id: string; name: string; iconUrl?: string; rows: ConnectorRow[] }>();
     for (const r of rows) {
       const g = r.req?.group;
       const id = g?.id ?? r.connectorId;
-      const entry = m.get(id) ?? { id, name: g?.name ?? r.name, rows: [] };
+      // A shared-credential group's OWN brand mark (set once on the group, not read off
+      // whichever member connector happens to represent it) — see CredentialGroupDef.iconUrl
+      // and connectorMarks.tsx's groupIconOverride(). Without this, the tile for an entire
+      // group showed whatever connector happened to be this agent's first/representative
+      // row, which once put Excel's icon on the whole "Microsoft 365" group tile.
+      const iconUrl = groupIconOverride(id) ?? g?.iconUrl;
+      const entry = m.get(id) ?? { id, name: g?.name ?? r.name, iconUrl, rows: [] };
       entry.rows.push(r);
       m.set(id, entry);
     }
@@ -106,6 +109,65 @@ export default function ConnectorsV2() {
 
   const deadGroups = groups.filter((g) => g.rows.every((r) => r.state === 'cannot-migrate'));
   const usableGroups = groups.filter((g) => !g.rows.every((r) => r.state === 'cannot-migrate'));
+
+  /**
+   * The credential is per GROUP, so the permissions to grant it must be too. Reading
+   * `selected.req.requiredPermissions` alone only named whichever ONE connector the
+   * tile happened to represent (e.g. Excel Online's own `Files.Read.All, User.Read.All`)
+   * even though the same app registration also has to cover every other Microsoft
+   * connector this agent actually uses (SharePoint, Outlook, Planner, Groups, ...) —
+   * an admin who granted only the representative's permissions would have every OTHER
+   * connector's calls fail 403 with nothing on screen that said so. Union across every
+   * member this migration actually detected, never the group's full static catalog.
+   */
+  const selectedGroup = useMemo(
+    () => (selected ? groups.find((g) => g.rows.some((r) => r.connectorId === selected.connectorId)) ?? null : null),
+    [groups, selected],
+  );
+  const groupMembers = selectedGroup?.rows ?? (selected ? [selected] : []);
+  const groupPermissions = useMemo(
+    () => [...new Set(groupMembers.flatMap((r) => r.req?.requiredPermissions ?? []))],
+    [groupMembers],
+  );
+  const groupDelegated = useMemo(
+    () => [...new Set(groupMembers.flatMap((r) => (r.req?.userAuth?.delegatedPermission ? [r.req.userAuth.delegatedPermission] : [])))],
+    [groupMembers],
+  );
+  const groupRedirectUri = groupMembers.find((r) => r.req?.userAuth?.redirectUri)?.req?.userAuth?.redirectUri;
+  const groupNeedsUserAuth = groupMembers.some((r) => r.req?.userAuth?.supported);
+
+  /**
+   * ONE row stands in for the whole group — its state drives the tile, and it is the row
+   * the modal opens on. A credential group can hold over a hundred connectors sharing one
+   * app registration (ms_graph), and an arbitrary pick (first in the list) can silently hide
+   * something that actually needs attention: a connector needing delegated per-user sign-in
+   * buried behind, say, Excel Online as the representative meant the "Connect this person"
+   * section never appeared at all when the group's shared fields were already stored and no
+   * row still said "needs you" — found live 2026-10-07. Preference order: still-blocked,
+   * then needs delegated sign-in (actionable and otherwise invisible), then whatever is first.
+   */
+  const representativeRow = (rowsIn: ConnectorRow[]): ConnectorRow =>
+    rowsIn.find((r) => r.state === 'needs-you')
+    ?? rowsIn.find((r) => r.req?.userAuth?.supported)
+    ?? rowsIn[0];
+
+  /**
+   * One flat grid, Microsoft's own connector groups sorted first (a "needs you" group
+   * always sorts above a settled one, Microsoft categories above third-party) — but no
+   * section headings. Credentials collapse by GROUP (see `groups` above), and virtually
+   * every Microsoft/Azure connector shares the single `ms_graph` app registration, so in
+   * practice there is almost always exactly one Microsoft tile — a labeled header repeating
+   * that one tile's own name above it was redundant, not informative. Third-party groups
+   * (HubSpot, Jira, Google Drive, ...) are real standalone tiles and sort after.
+   */
+  const sortedGroups = useMemo(() => {
+    const rank = (g: (typeof usableGroups)[number]): number => {
+      const urgent = g.rows.some((r) => r.state === 'needs-you') ? 0 : 1;
+      const cat = isMicrosoftCategory(categoryForConnector(representativeRow(g.rows).connectorId)) ? 0 : 1;
+      return urgent * 10 + cat;
+    };
+    return [...usableGroups].sort((a, b) => rank(a) - rank(b));
+  }, [usableGroups]);
 
   const blocked = rows.filter((r) => r.state === 'needs-you');
   // Record what was actually SEEN, so the rail can still say it after the scan
@@ -174,17 +236,7 @@ export default function ConnectorsV2() {
         </div>
       </div>
 
-      <div className="cf-card">
-        <div className="cf-card__header">
-          <div />
-          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {syncing && <span className="cf-badge cf-badge--primary">syncing</span>}
-            <button type="button" className="cf-btn cf-btn--secondary cf-btn--sm" onClick={reload} disabled={syncing || loading}>
-              {syncing ? 'Syncing…' : 'Sync'}
-            </button>
-          </span>
-        </div>
-
+      <>
         {error && (
           <div className="cf-card__body">
             <div className="cf-alert cf-alert--danger">
@@ -210,17 +262,25 @@ export default function ConnectorsV2() {
             "Add applications" screen — one tile per credential group, official
             brand mark, and name. Everything else (status, which connectors/
             agents this unlocks, the fields, permissions) lives in the modal a
-            click opens, not on the tile itself. */}
+            click opens, not on the tile itself. One flat grid, no section
+            headings — Microsoft's own connectors nearly always collapse to one
+            shared-credential tile (see `groups` above), so a heading repeating
+            that single tile's own name added noise, not information. A group
+            with any "needs you" item sorts to the top. */}
         <div className="cf-card__body">
           <div className="cf-connector-grid">
-            {usableGroups.map((g) => {
-              // The row that still needs input, if any: that is the one whose
-              // fields are outstanding. Otherwise any member represents the group.
-              const row = g.rows.find((r) => r.state === 'needs-you') ?? g.rows[0];
+            {sortedGroups.map((g) => {
+              const row = representativeRow(g.rows);
               // The tile shows the brand name only — "(one API token)" etc. is
               // useful detail, but belongs on hover/in the modal, not squeezed
               // (and ellipsised) into a 128px-wide tile label.
               const shortName = g.name.replace(/\s*\([^)]*\)\s*$/, '');
+              // What this tile actually bundles, for the hover — the real, detected
+              // connectors in THIS migration, not the full static category list, so the
+              // tooltip never claims more than we found.
+              const memberNames = [...new Set(g.rows.map((r) => r.name))];
+              const shown = memberNames.slice(0, 8);
+              const more = memberNames.length - shown.length;
               return (
                 <button
                   type="button"
@@ -228,21 +288,19 @@ export default function ConnectorsV2() {
                   key={g.id}
                   data-agent-target={`conn:${row.connectorId}`}
                   onClick={() => { setPicked(row.connectorId); setExpanded(g.id); }}
-                  title={g.name}
                 >
                   <span className="cf-connector-tile-mark">
-                    {/* A group of several connectors gets the GROUP's mark, not the
-                        first member's: one credential standing for Drive, Sheets,
-                        Tasks, Calendar and Contacts wearing Calendar's logo read as
-                        "Calendar is all we found". Single-connector groups are
-                        unchanged -- there the member IS the group. */}
-                    <ConnectorMark
-                      connectorId={g.rows.length > 1 ? g.id : row.connectorId}
-                      name={g.name}
-                      emojiHint={row.req?.icon}
-                    />
+                    <ConnectorMark connectorId={row.connectorId} name={g.name} emojiHint={row.req?.icon} iconUrl={g.iconUrl ?? row.req?.iconUrl} />
                   </span>
                   <span className="cf-connector-tile-nm">{shortName}</span>
+                  <span className="cf-connector-tile-tip" role="tooltip">
+                    <b>{g.name}</b>
+                    {memberNames.length > 1 && (
+                      <span>
+                        Includes {shown.join(', ')}{more > 0 ? `, +${more} more` : ''}.
+                      </span>
+                    )}
+                  </span>
                 </button>
               );
             })}
@@ -268,7 +326,7 @@ export default function ConnectorsV2() {
             ))}
           </Fold>
         )}
-      </div>
+      </>
 
       {picked && expanded && (() => {
         const openRow = rows.find((r) => r.connectorId === picked);
@@ -317,15 +375,60 @@ export default function ConnectorsV2() {
     <Inspector>
       {selected ? (
         <>
-          <InspectorHead
-            kind="Connector"
-            title={selected.name}
-            status={<Chip tone={STATE_LABEL[selected.state].chip}>{STATE_LABEL[selected.state].text}</Chip>}
-          />
+          <InspectorHead kind="Connector" title={selected.name} />
+          {/* A numbered checklist, not paragraphs — this is instructions someone follows
+              step by step in the Azure portal, not prose to read once. Permission scopes
+              and URIs sit on their own line in monospace so they're easy to spot and copy,
+              never buried mid-sentence. */}
+          {selected.req && (selected.req.group?.setupHint || groupPermissions.length > 0 || groupNeedsUserAuth) && (
+            <InspectorSection title="How to connect">
+              <ol className="v2-steps">
+                {selected.req.group?.setupHint && (
+                  <li>
+                    {selected.req.group.setupHint}
+                    {selected.req.group.setupUrl && (
+                      <>
+                        {' '}
+                        <a href={selected.req.group.setupUrl} target="_blank" rel="noreferrer">Open the setup page →</a>
+                      </>
+                    )}
+                  </li>
+                )}
+                {groupPermissions.length > 0 && (
+                  <li>
+                    Add as <b>Application</b> permissions, then click <b>Grant admin consent</b>.
+                    {groupMembers.length > 1 && ' This one app registration is shared, so the list below covers every connector it unlocks for this agent, not just this one:'}
+                    <div className="v2-codeblock">
+                      {groupPermissions.map((p) => <code key={p}>{p}</code>)}
+                    </div>
+                  </li>
+                )}
+                {groupNeedsUserAuth && (
+                  <li>
+                    Some tools here run as the signed-in person, not the app. Sign that
+                    person in from the Credentials dialog.
+                    {groupDelegated.length > 0 && (
+                      <>
+                        {' '}Add {groupDelegated.length > 1 ? 'these Delegated permissions' : 'this Delegated permission'} to the same app registration:
+                        <div className="v2-codeblock">
+                          {groupDelegated.map((p) => <code key={p}>{p}</code>)}
+                        </div>
+                      </>
+                    )}
+                  </li>
+                )}
+                {groupRedirectUri && (
+                  <li>
+                    Add this <b>Redirect URI</b> under Authentication on the app registration:
+                    <div className="v2-codeblock"><code>{groupRedirectUri}</code></div>
+                  </li>
+                )}
+              </ol>
+            </InspectorSection>
+          )}
+
           <InspectorSection title="Facts">
             <dl>
-              <KeyValue k="Id" v={selected.connectorId} />
-              <KeyValue k="Auth" v={selected.req?.authKind ?? 'unknown'} />
               <KeyValue
                 k="Fields stored"
                 v={`${(selected.req?.fields ?? []).filter((f) => f.supplied).length}/${(selected.req?.fields ?? []).length}`}
@@ -346,8 +449,8 @@ export default function ConnectorsV2() {
           {selected.detected?.confidence === 'heuristic' && (
             <InspectorSection title="How we know">
               <Note tone="you">
-                Inferred from editable text on a generic source — we think this connector is used,
-                but Copilot Studio did not name it. Worth confirming.
+                We think this connector is used, based on the agent's own content — Copilot
+                Studio didn't name it directly, so it's worth double-checking.
               </Note>
             </InspectorSection>
           )}

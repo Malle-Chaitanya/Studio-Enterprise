@@ -242,7 +242,14 @@ export default function MigrateV2() {
     }
   }, [session, source]);
 
-  const start = useCallback(async (): Promise<void> => {
+  /**
+   * Takes `live` explicitly rather than reading the `dryRun` toggle state — a caller
+   * that flips the toggle and starts in the same click (going straight from "dry run
+   * finished" to a live run) would otherwise race `setDryRun`'s own re-render: `start`
+   * closes over whatever `dryRun` was at the PREVIOUS render, so it would still read
+   * 'dry' and silently start another dry run instead of the live one just requested.
+   */
+  const start = useCallback(async (live: boolean): Promise<void> => {
     setLines([]);
     setAgents([]);
     setPct(0);
@@ -254,7 +261,7 @@ export default function MigrateV2() {
     setSilentFor(0);
     setRejoined(false);
     setStopping(false);
-    dispatch({ kind: 'thinking', note: dryRun === 'dry' ? 'Dry run — nothing will be written.' : 'Migrating.' });
+    dispatch({ kind: 'thinking', note: live ? 'Migrating.' : 'Dry run — nothing will be written.' });
 
     // The plan POST still lands BEFORE we attach: the stream starts a run only when
     // a plan exists, and refuses with 400 `no_plan` otherwise. (It no longer EXECUTES
@@ -262,7 +269,7 @@ export default function MigrateV2() {
     // still what makes the first attach find something to join.)
     try {
       await source.migrate.start(session, {
-        dryRun: dryRun === 'dry',
+        dryRun: !live,
         // Stated in the panel above this button. Without it the server stops
         // mid-run and waits, which for this product is a worse outcome than a
         // clearly-worded warning next to the action.
@@ -276,7 +283,7 @@ export default function MigrateV2() {
     }
 
     attach();
-  }, [session, source, dryRun, attach]);
+  }, [session, source, attach]);
 
   /**
    * Does this run invert a permission?
@@ -293,6 +300,17 @@ export default function MigrateV2() {
   // Written but unproven. Counted apart from verified, never added to it.
   const unverified = agents.filter((a) => a.state === 'created').length;
   const failed = agents.filter((a) => a.state === 'failed').length;
+
+  /**
+   * A dry run that finished clean has nothing left to decide — the next real action
+   * IS a live migration, not another dry run. Without this the toggle up top was the
+   * only way to get there: the button below kept reading "Start dry run" (and, if
+   * clicked, would silently run ANOTHER dry run) until someone noticed the toggle and
+   * flipped it themselves. Only the button/sub below treat this as "live" — the toggle
+   * itself still shows 'Dry run' until the person actually chooses to proceed.
+   */
+  const dryRunDone = dryRun === 'dry' && Boolean(finished) && staged > 0 && failed === 0;
+  const readyForLive = dryRun === 'live' || dryRunDone;
 
   const canvas = (
     <>
@@ -397,15 +415,17 @@ export default function MigrateV2() {
               // "Run finished" beside a column of red chips read as "finished
               // badly". A dry run that staged everything succeeded, and the title
               // should say which of the two happened.
-              ? (dryRun === 'dry' && staged > 0 && failed === 0
+              ? (dryRunDone
                 ? `Dry run finished — ${staged} agent${staged === 1 ? '' : 's'} ready to migrate`
                 : failed > 0 ? 'Run finished with failures' : 'Run finished')
               : 'Ready to run'}
-          sub={dryRun === 'dry'
+          sub={!readyForLive
             ? 'A dry run extracts and maps everything, then stops. Nothing is created, published or shared.'
             // Said once, beside the button that does it. The permission sentence is
             // only shown when the server says a permission actually inverts, and it
-            // is the server's own summary rather than our paraphrase of it.
+            // is the server's own summary rather than our paraphrase of it. Shown as
+            // soon as a clean dry run makes the next click a live one, not only once
+            // someone has flipped the toggle themselves.
             : `This writes to Gemini Enterprise. Re-running is safe — agents are matched by name.${
               aclInPlay
                 ? ` ${inverting[0].permissionLoss?.summary
@@ -423,8 +443,17 @@ export default function MigrateV2() {
               </Btn>
             )
             : (
-              <Btn tone={dryRun === 'dry' ? 'blue' : 'amber'} onClick={() => void start()}>
-                {dryRun === 'dry'
+              <Btn
+                tone={readyForLive ? 'amber' : 'blue'}
+                onClick={() => {
+                  // Flips the toggle too, not just the action — so the band above,
+                  // the KeyValue in the inspector, and this button all agree on the
+                  // mode the moment the run actually becomes live.
+                  if (dryRunDone) setDryRun('live');
+                  void start(readyForLive);
+                }}
+              >
+                {!readyForLive
                   ? 'Start dry run'
                   : aclInPlay
                     ? 'Start migration and accept permission loss'
@@ -554,7 +583,6 @@ export default function MigrateV2() {
       <InspectorHead
         kind="Run"
         title={running ? 'In progress' : finished ? 'Finished' : 'Not started'}
-        status={running ? <Chip tone="run">running</Chip> : finished ? <Chip tone="ok">finished</Chip> : <Chip>idle</Chip>}
       />
       <InspectorSection title="This run">
         <dl>
@@ -579,14 +607,14 @@ export default function MigrateV2() {
                 </Note>
                 {e.verdict === 'wrong_agent_tools' && (
                   <Note tone="bad">
-                    Fired {e.unexpected.join(', ')}, which belongs to another agent. Wired here:
-                    {' '}{e.expected.join(', ') || 'nothing'}.
+                    It used {e.unexpected.join(', ')}, which belongs to another agent — not
+                    {' '}{e.expected.join(', ') || 'anything'} connected to this one.
                   </Note>
                 )}
                 {e.verdict === 'tools_confirmed' && e.unexpected.length > 0 && (
                   <Note tone="you">
-                    Its own tools answered, but {e.unexpected.join(', ')} also fired and was never
-                    wired here. Worth a look; not a swap.
+                    Its own tools answered, but {e.unexpected.join(', ')} also ran even though it
+                    isn't connected here. Worth a look — not a dealbreaker.
                   </Note>
                 )}
                 {e.missing.length > 0 && e.verdict !== 'wrong_agent_tools' && (
@@ -608,15 +636,15 @@ export default function MigrateV2() {
       )}
 
       <InspectorSection title="What a run does">
-        <Note>Phase 1 reads each agent from Dataverse and stages it in the database.</Note>
-        <Note>Phase 2 creates, publishes, shares and then smoke-tests it in Gemini.</Note>
+        <Note>Step 1 reads each agent from Microsoft Copilot Studio.</Note>
+        <Note>Step 2 creates, publishes, shares, and tests it in Google Gemini Enterprise.</Note>
         <Note tone="ok">
-          Staging in between is why a failed run can be retried without re-reading the source.
+          If a run fails partway, you can retry it without starting over from step 1.
         </Note>
         {failed > 0 && (
           <Note tone="bad">
-            A failure here does not roll back what already succeeded. Re-run when the cause is
-            fixed — agents already created are matched by name, not duplicated.
+            A failure doesn't undo what already succeeded. Fix the cause and re-run — agents
+            already created won't be duplicated.
           </Note>
         )}
       </InspectorSection>

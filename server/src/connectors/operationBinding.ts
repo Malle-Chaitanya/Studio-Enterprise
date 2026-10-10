@@ -243,6 +243,8 @@ export interface BoundParameter {
   in: 'path' | 'query' | 'header' | 'body' | 'formData';
   required: boolean;
   type: string;
+  /** Registry-supplied fallback description, used when the source agent captured none. */
+  description?: string;
 }
 
 export interface BoundOperation {
@@ -260,6 +262,10 @@ export interface BoundOperation {
    * nothing but the model's arguments and a credential.
    */
   contextRequired: string[];
+  /** Vendor requires an If-Match header (e.g. a prior ETag) on this call. */
+  requiresIfMatch?: boolean;
+  /** Fixed request-body shape, with the model-filled keys named in `consumes`. */
+  bodyTemplate?: { template: Record<string, unknown>; consumes: string[] };
 }
 
 export type BindingResult =

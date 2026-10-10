@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Btn, Chip, Fold, Note, NoteRow, Panel, PanelHead, Select, SkeletonRows } from './primitives.tsx';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Btn, Chip, Modal, Note, NoteRow, Panel, PanelHead, Select, SkeletonRows } from './primitives.tsx';
 import {
   fetchDriveIdentities, fetchSelection, fetchSurfaceEquivalences,
   saveDriveIdentity, saveSurfaceDecision,
   type DriveIdentityStatus, type SurfaceEquivalence,
 } from '../../api.ts';
+import { IcoCheck } from '../../icons.tsx';
 
 /**
  * The per-AGENT decisions.
@@ -22,9 +23,13 @@ import {
  * Drive operations all resolved, and then shipped it without Drive, and the only
  * way anyone found out was by reading the server log.
  *
- * Kept to one line per agent with one control. These are decisions, not reading
- * material — the previous screen explained them at paragraph length and the
- * explanation is what people skipped.
+ * Kept to one line per agent — not one line per DECISION. A tenant with 30 agents
+ * each needing two or three of these (Outlook mail, calendar, contacts, Drive...)
+ * used to mean 30+ near-identical inline rows stacked on this one panel, which
+ * stopped being scannable well before 30. Each agent gets exactly one row now,
+ * with a status ("all set" / "N undecided"); the row opens a popup holding every
+ * decision for that agent together, still one control per decision, same save/
+ * skip/error behaviour as before — just no longer spread across the whole panel.
  */
 
 interface Unit { env: string; envName?: string; botIds: string[] }
@@ -65,6 +70,13 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
   const [driveError, setDriveError] = useState('');
   const [emails, setEmails] = useState<Record<string, string>>({});
   const [picked, setPicked] = useState<Record<string, string>>({});
+  /** Which agent's popup is open, if any — null means the compact list, not a modal. */
+  const [openAgentId, setOpenAgentId] = useState<string | null>(null);
+  /** Which rows' permission-requirement text is expanded, keyed like `rowError`.
+   *  Collapsed by default — real but dense Entra-permission paragraphs on every
+   *  decision made the popup read as a wall of text. The information still
+   *  exists in full, one click away; it is not shortened or dropped. */
+  const [openPrereq, setOpenPrereq] = useState<Record<string, boolean>>({});
 
   const read = useCallback(async (): Promise<void> => {
     setError('');
@@ -113,8 +125,11 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
     const decided = s.decision !== null;
     return (
       <div className="v2-dec" key={key}>
+        {/* The service name, not the agent's — the modal this now lives in is
+            already titled with the agent's name, so repeating it on every one
+            of its rows was pure noise, not identification. */}
         <span className="nmw">
-          <span className="nm">uses {s.sourceName}</span>
+          <span className="nm">{s.sourceName}</span>
           <span className="kind">{noun}</span>
         </span>
         <span className="ctl">
@@ -172,7 +187,20 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
             ? <Chip tone={s.decision === 'skip' ? 'you' : 'ok'}>{s.decision === 'skip' ? 'skipped' : 'decided'}</Chip>
             : <Chip tone="you">undecided</Chip>}
         </span>
-        {target?.prerequisite && <span className="pre">{target.prerequisite}</span>}
+        {target?.prerequisite && (
+          <>
+            <button
+              type="button"
+              className="v2-dec-why"
+              onClick={() => setOpenPrereq((p) => ({ ...p, [key]: !p[key] }))}
+              aria-expanded={Boolean(openPrereq[key])}
+            >
+              <span aria-hidden="true">{openPrereq[key] ? '▾' : '▸'}</span>
+              {openPrereq[key] ? 'Hide required permissions' : 'Required permissions'}
+            </button>
+            {openPrereq[key] && <span className="pre">{target.prerequisite}</span>}
+          </>
+        )}
         {rowError[key] && <span className="err">{rowError[key]}</span>}
       </div>
     );
@@ -185,9 +213,10 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
     return (
       <div className="v2-dec" key={key}>
         <span className="nmw">
-          <span className="nm">Drive acts as</span>
+          <span className="nm">Google Drive</span>
           <span className="kind">
-            {d.suggestion && !confirmed ? `suggested: ${d.suggestion.email}` : 'Google account this agent uses'}
+            acts as
+            {d.suggestion && !confirmed ? ` · suggested: ${d.suggestion.email}` : ''}
           </span>
         </span>
         <span className="ctl">
@@ -220,6 +249,7 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
         <span className="st">
           {confirmed ? <Chip tone="ok">confirmed</Chip> : <Chip tone="you">not wired</Chip>}
         </span>
+        {!confirmed && <span className="pre">No skip option here — leaving this blank already counts as one.</span>}
         {rowError[key] && <span className="err">{rowError[key]}</span>}
       </div>
     );
@@ -238,43 +268,59 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
   const wantsDrive = new Set(driveAgentIds.filter(Boolean));
   const driveRows = drives.filter((d) => wantsDrive.has(d.sourceId));
 
-  const undecided = surfaces.filter((s) => s.decision === null).length;
-  const unwired = driveRows.filter((d) => d.current?.status !== 'confirmed').length;
-
   /**
-   * One block per AGENT, not one flat list per decision KIND.
+   * One group per agent (sourceId), each carrying its own surface decisions and
+   * its Drive identity if it has one — the two used to be two separate flat
+   * lists; an agent needing both now gets both in the same popup, since both are
+   * about the same agent's own tools.
    *
-   * Surfaces and Drive identities used to render as two separate lists, so an agent
-   * needing both appeared twice -- its name repeated on every row -- and the customer
-   * had to reassemble "what do I have to decide about THIS agent" by scanning two
-   * lists for the same name. The decisions belong to the agent; the kind is a detail
-   * of each one. Grouping also makes the real unit of work countable: N agents need
-   * you, not N rows scattered across two sections.
-   *
-   * Agents with something outstanding sort first -- this panel is a queue of work,
-   * same ordering rule as the connector tiles.
+   * Order: first-seen in `surfaces`, then any Drive-only agent not already
+   * covered — stable across re-renders because it does not depend on undecided
+   * counts, so fixing a decision does not reshuffle the list out from under you.
    */
-  const byAgent = (() => {
-    const m = new Map<string, {
-      sourceId: string;
-      name: string;
-      surfaces: Array<SurfaceEquivalence & { env: string }>;
-      drives: Array<DriveIdentityStatus & { env: string; name: string }>;
-    }>();
-    const slot = (sourceId: string, name: string) => {
-      const e = m.get(sourceId) ?? { sourceId, name, surfaces: [], drives: [] };
-      // A name resolved anywhere beats a blank one: the two endpoints do not always
-      // resolve the same agent's name, and a header reading "" helps nobody.
-      if (!e.name && name) e.name = name;
-      m.set(sourceId, e);
-      return e;
-    };
-    for (const x of surfaces) slot(x.sourceId, x.agentName).surfaces.push(x);
-    for (const d of driveRows) slot(d.sourceId, d.name).drives.push(d);
-    const pending = (a: { surfaces: typeof surfaces; drives: typeof driveRows }): number =>
-      a.surfaces.some((x) => x.decision === null) || a.drives.some((d) => d.current?.status !== 'confirmed') ? 0 : 1;
-    return [...m.values()].sort((a, b) => pending(a) - pending(b) || a.name.localeCompare(b.name));
-  })();
+  const agentGroups = useMemo(() => {
+    const order: string[] = [];
+    const seen = new Set<string>();
+    const add = (id: string): void => { if (!seen.has(id)) { seen.add(id); order.push(id); } };
+    surfaces.forEach((s) => add(s.sourceId));
+    driveRows.forEach((d) => add(d.sourceId));
+    return order.map((id) => {
+      const agentSurfaces = surfaces.filter((s) => s.sourceId === id);
+      const drive = driveRows.find((d) => d.sourceId === id);
+      return { id, name: agentSurfaces[0]?.agentName ?? drive?.name ?? id, surfaces: agentSurfaces, drive };
+    });
+  }, [surfaces, driveRows]);
+
+  const agentUndecidedCount = (g: typeof agentGroups[number]): number =>
+    g.surfaces.filter((s) => s.decision === null).length
+    + (g.drive && g.drive.current?.status !== 'confirmed' ? 1 : 0);
+
+  const openAgentGroup = agentGroups.find((g) => g.id === openAgentId) ?? null;
+
+  const agentRow = (g: typeof agentGroups[number]): JSX.Element => {
+    const n = agentUndecidedCount(g);
+    const uses = [...g.surfaces.map((s) => s.sourceName), ...(g.drive ? ['Google Drive'] : [])].join(', ');
+    return (
+      <button
+        type="button"
+        className="v2-row agent-decisions"
+        key={g.id}
+        onClick={() => setOpenAgentId(g.id)}
+        data-agent-target={`agent-decisions:${g.id}`}
+      >
+        <span className="glyph" aria-hidden="true">{g.name.slice(0, 2).toUpperCase()}</span>
+        <span className="nmw">
+          <span className="nm">{g.name}</span>
+          <span className="kind">uses {uses}</span>
+        </span>
+        <span className="st">
+          {n === 0
+            ? <Chip tone="ok" icon={<IcoCheck s={9} />}>all set</Chip>
+            : <Chip tone="you">{n} undecided</Chip>}
+        </span>
+      </button>
+    );
+  };
 
   // Only truly silent when a successful read found nothing AND nothing failed. Any
   // other combination has something to say.
@@ -282,12 +328,15 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
     && surfaces.length === 0 && driveRows.length === 0) return null;
 
   return (
+    <>
     <Panel>
-      <PanelHead
-        title="Decisions only you can make, per agent"
-        sub="Left undecided, these do not fail — the agent migrates with those tools missing, which is worse, because it looks like it worked."
-      />
-      {loading && <SkeletonRows rows={2} controls />}
+      <PanelHead title="Decisions only you can make, per agent" />
+      {/* Gated on agentGroups too, not just `loading`: surfaces resolve before drives
+          do, and `loading` only flips false once BOTH reads finish — so a frame where
+          surfaces already rendered a real row still had loading=true and showed the
+          skeleton on top of it. Once there is real content to show, the skeleton has
+          nothing left to stand in for. */}
+      {loading && agentGroups.length === 0 && <SkeletonRows rows={2} controls />}
       {error && <NoteRow tone="bad">Could not read the per-agent decisions: {error}</NoteRow>}
       {surfaceError && (
         <NoteRow tone="bad">
@@ -300,49 +349,30 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
           Could not read the Drive identities ({driveError}). Unknown, not none.
         </NoteRow>
       )}
-      
-      {!loading && undecided > 0 && (
-        <NoteRow tone="you">
-          {undecided} surface decision{undecided > 1 ? 's' : ''} not recorded. An agent with no
-          decision gets no tools for that service at all — not a default, nothing.
-        </NoteRow>
-      )}
-      {!loading && unwired > 0 && (
-        <NoteRow tone="you">
-          {unwired} agent{unwired > 1 ? 's' : ''} would deploy without the Drive tool. There is
-          no &ldquo;skip&rdquo; to record here: leaving it empty IS the skip, and the run
-          reports it as a loss rather than a choice.
-        </NoteRow>
-      )}
 
-      {byAgent.map((a) => {
-        const open = a.surfaces.filter((x) => x.decision === null).length
-          + a.drives.filter((d) => d.current?.status !== 'confirmed').length;
-        const total = a.surfaces.length + a.drives.length;
-        return (
-          // Collapsed once everything is recorded, open while anything is not: an
-          // agent with ten connectors is ten rows, and ten finished agents is 100
-          // rows of nothing to do burying the one that still needs a decision.
-          // `open` is an initial state, so an agent stays put while you work in it
-          // instead of folding shut under you on the reload after each save.
-          <div className="v2-dec-grp" key={a.sourceId}>
-            <Fold
-              title={a.name || a.sourceId}
-              note={open > 0
-                ? `${open} of ${total} still need${open === 1 ? 's' : ''} you`
-                : `${total} decision${total > 1 ? 's' : ''} · all recorded`}
-              open={open > 0}
-            >
-              {a.surfaces.map(surfaceRow)}
-              {a.drives.map(driveRow)}
-            </Fold>
-          </div>
-        );
-      })}
+      {agentGroups.map(agentRow)}
 
       {!loading && units && units.length === 0 && (
         <Note>No agents in the server-side plan yet, so there is nothing to decide.</Note>
       )}
     </Panel>
+
+    {openAgentGroup && (
+      <Modal
+        label={`Decisions for ${openAgentGroup.name}`}
+        glyph={openAgentGroup.name.slice(0, 2).toUpperCase()}
+        title={openAgentGroup.name}
+        sub={`${openAgentGroup.surfaces.length + (openAgentGroup.drive ? 1 : 0)} decision${
+          openAgentGroup.surfaces.length + (openAgentGroup.drive ? 1 : 0) > 1 ? 's' : ''} for this agent`}
+        onClose={() => setOpenAgentId(null)}
+        body={(
+          <>
+            {openAgentGroup.surfaces.map(surfaceRow)}
+            {openAgentGroup.drive && driveRow(openAgentGroup.drive)}
+          </>
+        )}
+      />
+    )}
+    </>
   );
 }

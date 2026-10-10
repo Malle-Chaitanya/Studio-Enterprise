@@ -356,15 +356,15 @@ export default function ReportV2() {
           <InspectorHead kind="Report" title={header?.runId ?? runIdParam ?? 'latest run'} />
           <InspectorSection title="What this is">
             <Note>
-              One migration run, read back from the server rather than from this browser —
-              so it stays readable after the run, the tab, and the container that ran it are
-              gone.
+              A record of one migration run, saved on the server — so you can still read it
+              after this browser tab is closed.
             </Note>
           </InspectorSection>
           <InspectorSection title="Deeper detail">
             <Note>
-              Per-operation mappings, verification evidence, unwired connectors and
-              knowledge candidates are in the .xlsx rather than on this screen.
+              The full breakdown — exactly how each action was mapped, test results, connectors
+              still needing setup, and knowledge sources to review — is in the downloadable
+              report, not on this screen.
             </Note>
           </InspectorSection>
         </Inspector>
