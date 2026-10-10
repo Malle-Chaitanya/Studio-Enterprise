@@ -35,27 +35,7 @@
  */
 import { useState, type ReactNode } from 'react';
 import microsoft365Icon from '../../assets/icons/microsoft365.png';
-
-/**
- * Shared-credential GROUP icon overrides — keyed by `CredentialGroupDef.id` (registry.ts),
- * not by connector id. A group's tile represents every connector it bundles, so its icon
- * must be the group's own brand mark, never borrowed from whichever member connector
- * happens to be the representative row for a given agent.
- *
- * ms_graph specifically: Power Platform's own "office365" connector icon (what the
- * registry's `iconUrl` field carries for this group, and for `shared_outlook` itself) is
- * actually Outlook's mail glyph, not the real Microsoft 365 brand mark — confirmed live
- * 2026-10-07 against CloudFuze's own sacontain product, which renders the genuine one. The
- * asset here is that genuine logo, supplied directly by the user.
- */
-const GROUP_ICON_OVERRIDES: Record<string, string> = {
-  ms_graph: microsoft365Icon,
-};
-
-/** The icon a shared-credential group's own tile/modal should show, if this group overrides it. */
-export function groupIconOverride(groupId: string | undefined): string | undefined {
-  return groupId ? GROUP_ICON_OVERRIDES[groupId] : undefined;
-}
+import googleIcon from '../../assets/icons/google.svg';
 
 /** Tier 1 — real traced official outline + official hex (Simple Icons, CC0). */
 const OFFICIAL_MARKS: Record<string, { hex: string; d: string; viewBox?: string }> = {
@@ -172,6 +152,36 @@ const OFFICIAL_MARKS: Record<string, { hex: string; d: string; viewBox?: string 
     d: 'M12 0C5.381-.008.008 5.352 0 11.971V12c0 6.64 5.359 12 12 12 6.64 0 12-5.36 12-12 0-6.641-5.36-12-12-12zm0 20.801c-4.846.015-8.786-3.904-8.801-8.75V12c-.014-4.846 3.904-8.786 8.75-8.801H12c4.847-.014 8.786 3.904 8.801 8.75V12c.015 4.847-3.904 8.786-8.75 8.801H12zm5.44-11.76c0 1.359-1.12 2.479-2.481 2.479-1.366-.007-2.472-1.113-2.479-2.479 0-1.361 1.12-2.481 2.479-2.481 1.361 0 2.481 1.12 2.481 2.481zm0 5.919c0 1.36-1.12 2.48-2.481 2.48-1.367-.008-2.473-1.114-2.479-2.48 0-1.359 1.12-2.479 2.479-2.479 1.361-.001 2.481 1.12 2.481 2.479zm-5.919 0c0 1.36-1.12 2.48-2.479 2.48-1.368-.007-2.475-1.113-2.481-2.48 0-1.359 1.12-2.479 2.481-2.479 1.358-.001 2.479 1.12 2.479 2.479zm0-5.919c0 1.359-1.12 2.479-2.479 2.479-1.367-.007-2.475-1.112-2.481-2.479 0-1.361 1.12-2.481 2.481-2.481 1.358 0 2.479 1.12 2.479 2.481z',
   },
 };
+
+/**
+ * Shared-credential GROUP icon overrides — keyed by `CredentialGroupDef.id` (registry.ts),
+ * not by connector id. A group's tile represents every connector it bundles, so its icon
+ * must be the group's own brand mark, never borrowed from whichever member connector
+ * happens to be the representative row for a given agent.
+ *
+ * ms_graph specifically: Power Platform's own "office365" connector icon (what the
+ * registry's `iconUrl` field carries for this group, and for `shared_outlook` itself) is
+ * actually Outlook's mail glyph, not the real Microsoft 365 brand mark — confirmed live
+ * 2026-10-07 against CloudFuze's own sacontain product, which renders the genuine one. The
+ * asset here is that genuine logo, supplied directly by the user.
+ *
+ * google_service_account: the group's own registry entry carries no `iconUrl`, and its
+ * representative row can be Gmail, Calendar, Contacts or Chat depending on which one a
+ * given agent happens to use — so the tile fell through to whichever of THOSE connectors'
+ * own marks was representative (Gmail's, in the reported case), labelled "Google Cloud"
+ * over an icon that was never Google's. The asset here (assets/icons/google.svg) is the
+ * real multi-colour "G" mark, fetched verbatim from Google's own gstatic.com CDN
+ * (the same asset Google ships for its own Sign-In button) — not an approximation.
+ */
+const GROUP_ICON_OVERRIDES: Record<string, string> = {
+  ms_graph: microsoft365Icon,
+  google_service_account: googleIcon,
+};
+
+/** The icon a shared-credential group's own tile/modal should show, if this group overrides it. */
+export function groupIconOverride(groupId: string | undefined): string | undefined {
+  return groupId ? GROUP_ICON_OVERRIDES[groupId] : undefined;
+}
 
 /** Tier 2 — hand-approximated multi-color marks for brands not carried by
  *  Simple Icons (withdrawn on trademark-policy grounds). Real documented

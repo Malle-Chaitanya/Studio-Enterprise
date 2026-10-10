@@ -1673,3 +1673,9 @@
   font-size: 12.5px; color: var(--cf-color-secondary-gray);
 }
 .cf-credfoot__actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+/* Cancel / Save and test / Forget stored credentials used `.cf-btn--lg`, which
+   at 18px semibold next to this footer's 12.5px note read as shouting rather
+   than as the primary action. A new modifier, not a change to `.cf-btn--lg`
+   itself (shared across the whole legacy UI) or `.cf-btn`'s own font-weight
+   (every cf-btn everywhere) — scoped to just these three. */
+.cf-btn--light { padding: 8px 16px; font-size: var(--cf-font-size-sm); font-weight: var(--cf-font-weight-medium); }

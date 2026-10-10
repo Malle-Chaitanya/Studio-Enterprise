@@ -308,13 +308,13 @@ export function CredentialForm({
         </span>
         <span className="cf-credfoot__actions">
           {onCancel && (
-            <button type="button" className="cf-btn cf-btn--secondary cf-btn--lg" onClick={onCancel}>
+            <button type="button" className="cf-btn cf-btn--secondary cf-btn--light" onClick={onCancel}>
               {validation ? 'Done' : 'Cancel'}
             </button>
           )}
           <button
             type="button"
-            className="cf-btn cf-btn--primary cf-btn--lg"
+            className="cf-btn cf-btn--primary cf-btn--light"
             onClick={() => void save()}
             disabled={!canSave || saving}
           >
@@ -382,7 +382,7 @@ export function CredentialModal({
                 <p className="cf-alert__desc" style={{ flex: 1 }}>
                   Stored earlier. Forgetting only drops our record — the Secret Manager secret stays.
                 </p>
-                <button type="button" className="cf-btn cf-btn--secondary cf-btn--lg" onClick={onForget}>
+                <button type="button" className="cf-btn cf-btn--secondary cf-btn--light" onClick={onForget}>
                   Forget stored credentials
                 </button>
               </div>
