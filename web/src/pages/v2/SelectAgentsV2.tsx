@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
@@ -87,10 +87,23 @@ export default function SelectAgentsV2() {
   const syncing = paired.syncing || agents.syncing;
   const error = !session ? 'no_session' : paired.error || agents.error;
 
-  // The saved selection wins over "everything": a selection is a decision, and a
-  // remount is not a reason to throw a decision away.
+  /**
+   * Pre-tick ONCE per session, never again.
+   *
+   * This used to re-run whenever `rows` changed identity -- which a background sync
+   * does on its own -- and its only guard was `prev.size > 0`. An empty selection is
+   * indistinguishable from "not seeded yet" under that guard, so pressing Clear and
+   * waiting for the next sync silently re-ticked every agent. Reported live: one
+   * agent wanted, eighteen selected. Clearing is a decision; a refetch must not
+   * overrule it.
+   *
+   * The saved selection still wins over "everything": a selection is a decision, and
+   * a remount is not a reason to throw a decision away.
+   */
+  const seeded = useRef('');
   useEffect(() => {
-    if (rows.length === 0) return;
+    if (rows.length === 0 || seeded.current === session) return;
+    seeded.current = session;
     setChosen((prev) => {
       if (prev.size > 0) return prev;
       try {
