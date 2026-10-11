@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
-import { FidelityCard, FidelityDetail, useFidelity } from '../../components/v2/fidelity.tsx';
-import { useResource } from '../../v2/data/cache.ts';
+import { FidelityCard, FidelityDetail, useFidelity, worstVerdict } from '../../components/v2/fidelity.tsx';
+import { readCache, useResource } from '../../v2/data/cache.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
   Band, BandCell, BandRule, Btn, Chip, Inspector, InspectorHead, InspectorSection, KeyValue,
@@ -125,6 +125,15 @@ export default function MigrateV2() {
   const blockers = connRes.data
     ? connRes.data.rows.filter((r) => r.state === 'needs-you').length
     : null;
+
+  // The environment's NAME. A truncated Dataverse org URL is not information — it
+  // is the same forty characters on every row with the useful part cut off.
+  const envName = useCallback((url: string): string => {
+    const envs = readCache<{ value: Array<{ name: string; url: string }> }>(`envs:${session}`)?.value;
+    // No name means we have not read the environment list in this session. Return
+    // empty and render nothing: "this environment" looked like an answer.
+    return envs?.find((e) => e.url === url)?.name ?? '';
+  }, [session]);
 
   const planned = useMemo(() => {
     try {
@@ -347,6 +356,34 @@ export default function MigrateV2() {
       </Panel>
 
       <FidelityCard fid={fid} />
+
+      {/* Before a run this screen said almost nothing: a title, a toggle and a
+          button. What a person needs to see first is WHICH agents are about to be
+          touched and what each one is going to cost, from the assessment already
+          read for the panel on the right. */}
+      {!running && !finished && fid.agents.length > 0 && (
+        <div>
+          {fid.agents.map((a) => {
+            const r = fid.reviews[a.botId];
+            const worst = r ? worstVerdict(r.counts) : undefined;
+            return (
+              <div className="v2-row" key={a.botId} data-agent-target={`agent:${a.botId}`}>
+                <span className="nmw">
+                  <span className="nm">{a.name}</span>
+                  {envName(a.env) && <span className="kind">{envName(a.env)}</span>}
+                </span>
+                <span className="st" style={{ marginLeft: 'auto' }}>
+                  {!r
+                    ? <Chip tone="plain">{fid.unknown.includes(a.name) ? 'unknown' : 'reading'}</Chip>
+                    : worst === 'lost'
+                      ? <Chip tone="bad">lossy</Chip>
+                      : worst === 'needs-review' ? <Chip tone="you">check</Chip> : <Chip tone="ok">clean</Chip>}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Connectors are opened on demand, so this screen has to say when something
           needs credentials — otherwise a run starts against connectors that cannot
