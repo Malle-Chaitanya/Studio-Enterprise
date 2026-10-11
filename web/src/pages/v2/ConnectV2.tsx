@@ -275,7 +275,7 @@ export default function ConnectV2() {
             : `Connect ${state.source.connected ? 'Google' : 'Microsoft'} to continue`)
           : paired.done === 0
             ? 'Point at least one environment at a Gemini app to continue'
-            : `${paired.done} of ${paired.total} environments will migrate`}
+            : ''}
       />
     </>
   );

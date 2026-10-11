@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
-import { FidelityCard, FidelityDetail, useFidelity, worstVerdict } from '../../components/v2/fidelity.tsx';
-import { readCache, useResource } from '../../v2/data/cache.ts';
+import { FidelityCard, FidelityDetail, useFidelity } from '../../components/v2/fidelity.tsx';
+import { useResource } from '../../v2/data/cache.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
   Band, BandCell, BandRule, Btn, Chip, Inspector, InspectorHead, InspectorSection, KeyValue,
-  Ledger, Note, NoteRow, Panel, PanelHead, Row, Toggle, WizardFooter, type ChipTone,
+  Ledger, Note, NoteRow, Panel, PanelHead, Row, WizardFooter, type ChipTone,
 } from '../../components/v2/primitives.tsx';
 import {
   useSource, type RunAgent, type RunHandoff, type RunLine,
 } from '../../v2/data/index.ts';
+import {
+  IcoCheckCircle, IcoCopy, IcoPlusCircle, IcoRing, IcoStack, IcoXCircle,
+} from '../../icons.tsx';
 
 const AGENT_CHIP: Record<RunAgent['state'], ChipTone> = {
   queued: 'plain', running: 'run', staged: 'ok', created: 'warn', verified: 'ok', failed: 'bad',
@@ -61,6 +64,7 @@ export default function MigrateV2() {
   const source = useSource();
 
   const [dryRun, setDryRun] = useState<'dry' | 'live'>('dry');
+  const [toast, setToast] = useState('');
   const [lines, setLines] = useState<RunLine[]>([]);
   const [agents, setAgents] = useState<RunAgent[]>([]);
   const [pct, setPct] = useState(0);
@@ -121,15 +125,6 @@ export default function MigrateV2() {
   const blockers = connRes.data
     ? connRes.data.rows.filter((r) => r.state === 'needs-you').length
     : null;
-
-  // The environment's NAME. A truncated Dataverse org URL is not information — it
-  // is the same forty characters on every row with the useful part cut off.
-  const envName = useCallback((url: string): string => {
-    const envs = readCache<{ value: Array<{ name: string; url: string }> }>(`envs:${session}`)?.value;
-    // No name means we have not read the environment list in this session. Return
-    // empty and render nothing: "this environment" looked like an answer.
-    return envs?.find((e) => e.url === url)?.name ?? '';
-  }, [session]);
 
   const planned = useMemo(() => {
     try {
@@ -229,6 +224,16 @@ export default function MigrateV2() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, source]);
 
+  const copyLog = useCallback(async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(lines.map((l) => l.msg).join('\n'));
+      setToast('Log copied to clipboard.');
+    } catch {
+      setToast('Could not copy — your browser blocked clipboard access.');
+    }
+    window.setTimeout(() => setToast(''), 3600);
+  }, [lines]);
+
   const stop = useCallback(async (): Promise<void> => {
     setStopping(true);
     try {
@@ -315,80 +320,33 @@ export default function MigrateV2() {
   const canvas = (
     <>
       <Panel>
-        <Band
-          aside={
-            <>
-              <Chip tone={dryRun === 'dry' ? 'warn' : 'bad'}>
-                {dryRun === 'dry' ? 'writes nothing' : 'writes for real'}
-              </Chip>
-              <Toggle
-                value={dryRun}
-                options={[{ id: 'dry', label: 'Dry run' }, { id: 'live', label: 'Migrate' }]}
-                onChange={(v) => setDryRun(v)}
-              />
-            </>
-          }
-        >
-          <BandCell label="In this run" value={planned || agents.length || '—'} note="agents" tone="warn" />
+        {/* No mode toggle here any more — dry run is always first, and the
+            action button below promotes itself to "Start migration" on its
+            own once a dry run finishes clean (see `readyForLive`). There is
+            deliberately no control left to jump straight to a live run. */}
+        <Band>
+          <BandCell label="In this run" value={planned || agents.length} note="agents" tone="warn"
+            icon={<span style={{ color: 'var(--v2-brand)' }}><IcoStack s={16} /></span>} />
           {dryRun === 'dry'
-            ? <BandCell label="Staged" value={staged || '—'} note="read, mapped, not written" tone="ok" />
-            : <BandCell label="Verified" value={verified || '—'} note="answered a probe" tone="ok" />}
+            ? <BandCell label="Staged" value={staged} note="read, mapped, not written" tone="ok"
+              icon={<span style={{ color: '#12855a' }}><IcoCheckCircle s={16} /></span>} />
+            : <BandCell label="Verified" value={verified} note="answered a probe" tone="ok"
+              icon={<span style={{ color: '#12855a' }}><IcoCheckCircle s={16} /></span>} />}
           {dryRun === 'dry'
-            ? <BandCell label="Would create" value={staged || '—'} note="if you run it live" />
-            : <BandCell label="Unverified" value={unverified || '—'} note="written, not proven"
-              tone={unverified ? 'amber' : 'plain'} />}
-          <BandCell label="Failed" value={failed || '—'} note="see the log" tone={failed ? 'bad' : 'plain'} />
-          <BandCell label="Progress" value={`${Math.round(pct)}%`} note={running ? 'running' : finished ? 'finished' : 'not started'} />
+            ? <BandCell label="Would create" value={staged} note="if you run it live"
+              icon={<span style={{ color: '#7c4fe0' }}><IcoPlusCircle s={16} /></span>} />
+            : <BandCell label="Unverified" value={unverified} note="written, not proven"
+              tone={unverified ? 'amber' : 'plain'}
+              icon={<span style={{ color: unverified ? '#a86600' : '#7c4fe0' }}><IcoPlusCircle s={16} /></span>} />}
+          <BandCell label="Failed" value={failed} note="see the log" tone={failed ? 'bad' : 'plain'}
+            icon={<span style={{ color: failed ? '#d61616' : 'var(--v2-ink-4)' }}><IcoXCircle s={16} /></span>} />
+          <BandCell label="Progress" value={`${Math.round(pct)}%`} note={running ? 'running' : finished ? 'finished' : 'not started'}
+            icon={<span style={{ color: '#0b8f87' }}><IcoRing s={16} /></span>} />
         </Band>
         <BandRule pct={pct} />
       </Panel>
 
       <FidelityCard fid={fid} />
-
-      {/* Before a run this screen said almost nothing: a title, a toggle and a
-          button. What a person needs to see first is WHICH agents are about to be
-          touched and what each one is going to cost, from the assessment already
-          read for the panel on the right. */}
-      {!running && !finished && fid.agents.length > 0 && (
-        <Panel>
-          <PanelHead
-            title={`${fid.agents.length} agent${fid.agents.length > 1 ? 's' : ''} in this run`}
-            sub={dryRun === 'dry'
-              ? 'Each one is read from Copilot Studio and mapped. Nothing is written.'
-              : 'Each one is created in Gemini Enterprise, published, shared and then probed.'}
-          />
-          {fid.agents.map((a) => {
-            const r = fid.reviews[a.botId];
-            const worst = r ? worstVerdict(r.counts) : undefined;
-            return (
-              <div className="v2-row" key={a.botId} data-agent-target={`agent:${a.botId}`}>
-                <span className="nmw">
-                  <span className="nm">{a.name}</span>
-                  {envName(a.env) && <span className="kind">{envName(a.env)}</span>}
-                </span>
-                <span className="why">
-                  {!r
-                    ? (fid.unknown.includes(a.name)
-                      ? 'could not be assessed — unknown, not clean'
-                      : 'reading what it will cost…')
-                    : worst === 'lost'
-                      ? `${r.counts.lost} cannot come across`
-                      : worst === 'needs-review'
-                        ? `${r.counts['needs-review']} to check after`
-                        : 'nothing lost'}
-                </span>
-                <span className="st">
-                  {!r
-                    ? <Chip tone="plain">{fid.unknown.includes(a.name) ? 'unknown' : 'reading'}</Chip>
-                    : worst === 'lost'
-                      ? <Chip tone="bad">lossy</Chip>
-                      : worst === 'needs-review' ? <Chip tone="you">check</Chip> : <Chip tone="ok">clean</Chip>}
-                </span>
-              </div>
-            );
-          })}
-        </Panel>
-      )}
 
       {/* Connectors are opened on demand, so this screen has to say when something
           needs credentials — otherwise a run starts against connectors that cannot
@@ -554,7 +512,15 @@ export default function MigrateV2() {
 
       {lines.length > 0 && (
         <Panel>
-          <PanelHead title="Log" sub="Exactly what the server reported, in order." />
+          <PanelHead
+            title="Log"
+            sub="Exactly what the server reported, in order."
+            actions={
+              <Btn tone="plain" onClick={() => void copyLog()}>
+                <IcoCopy s={13} /> Copy log
+              </Btn>
+            }
+          />
           <div className="v2-log" ref={logRef}>
             {lines.map((l, i) => (
               <div className={`ln ${l.level}`} key={`${i}-${l.msg}`}>
@@ -674,6 +640,7 @@ export default function MigrateV2() {
       onStop={() => { stopRef.current?.(); setRunning(false); dispatch({ kind: 'idle' }); }}
       canvas={canvas}
       inspector={inspector}
+      toast={toast}
     />
   );
 }

@@ -176,10 +176,19 @@ export async function detectThirdPartyConnectors(
   dvOrgUrl: string,
   dvToken: string,
   allowedWorkflowIds?: Set<string>,
+  /**
+   * workflowid -> the selected agent(s) whose topics invoke that flow. Without this,
+   * every connector this scan finds carries no `agentNames`/`agentIds` at all — the
+   * caller already knows which bot each flow id belongs to (it built
+   * `allowedWorkflowIds` from exactly that), so passing it through costs nothing and
+   * is what lets the Connectors screen say which agent actually needs a credential
+   * instead of leaving "Blocks these agents" empty for every flow-detected connector.
+   */
+  flowOwners?: Map<string, Array<{ id: string; name: string }>>,
 ): Promise<DetectedConnector[]> {
   const flows = await fetchPaFlows(dvOrgUrl, dvToken);
   const scoped = allowedWorkflowIds ? flows.filter((f) => allowedWorkflowIds.has(f.workflowid)) : flows;
-  return summarizeFlows(scoped);
+  return summarizeFlows(scoped, flowOwners);
 }
 
 /**
@@ -222,13 +231,27 @@ export async function findConnectionReferenceLogicalNames(
 }
 
 /** Group the flows' connection references into per-connector counts. */
-function summarizeFlows(flows: PaFlow[]): DetectedConnector[] {
+function summarizeFlows(
+  flows: PaFlow[],
+  flowOwners?: Map<string, Array<{ id: string; name: string }>>,
+): DetectedConnector[] {
 
   // Map: connectorId → { flowCount, flowNames }
   const connectorMap = new Map<string, { flowCount: number; flowNames: string[] }>();
   // Connector api names found in flows that have no registry entry — reported, never
   // silently dropped.
   const unsupportedMap = new Map<string, { flowCount: number; flowNames: string[] }>();
+  // connectorId → agents (by id) whose own flow used it. Accumulated alongside the
+  // counts above so a connector pulled in by several agents' flows lists all of them.
+  const agentsByConnector = new Map<string, Map<string, string>>();
+  const attribute = (connectorId: string, flow: PaFlow): void => {
+    if (!flowOwners) return;
+    const owners = flowOwners.get(flow.workflowid);
+    if (!owners?.length) return;
+    const bucket = agentsByConnector.get(connectorId) ?? new Map<string, string>();
+    for (const o of owners) bucket.set(o.id, o.name);
+    agentsByConnector.set(connectorId, bucket);
+  };
 
   for (const flow of flows) {
     if (!flow.clientdata) continue;
@@ -277,6 +300,7 @@ function summarizeFlows(flows: PaFlow[]): DetectedConnector[] {
         } else {
           unsupportedMap.set(apiName, { flowCount: 1, flowNames: [flow.name] });
         }
+        attribute(apiName, flow);
         continue;
       }
 
@@ -289,6 +313,7 @@ function summarizeFlows(flows: PaFlow[]): DetectedConnector[] {
       } else {
         connectorMap.set(apiName, { flowCount: 1, flowNames: [flow.name] });
       }
+      attribute(apiName, flow);
     }
   }
 
@@ -296,14 +321,22 @@ function summarizeFlows(flows: PaFlow[]): DetectedConnector[] {
   for (const [connectorId, { flowCount, flowNames }] of connectorMap) {
     const def = REGISTRY_BY_ID.get(connectorId);
     if (def) {
-      results.push({ connectorId, def, flowCount, flowNames });
+      const owners = agentsByConnector.get(connectorId);
+      results.push({
+        connectorId, def, flowCount, flowNames,
+        ...(owners ? { agentIds: [...owners.keys()], agentNames: [...owners.values()] } : {}),
+      });
     }
   }
 
   // Unsupported connectors ride along with no def, flagged so the UI can show them
   // as "detected, cannot migrate" and the report can record them as lost.
   for (const [connectorId, { flowCount, flowNames }] of unsupportedMap) {
-    results.push({ connectorId, flowCount, flowNames, unsupported: true });
+    const owners = agentsByConnector.get(connectorId);
+    results.push({
+      connectorId, flowCount, flowNames, unsupported: true,
+      ...(owners ? { agentIds: [...owners.keys()], agentNames: [...owners.values()] } : {}),
+    });
   }
 
   // Sort by flow count descending (most-used connectors first)

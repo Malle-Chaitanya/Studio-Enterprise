@@ -40,25 +40,41 @@ export function PanelHead({ title, sub, actions, accent }: {
 
 export type BandTone = 'plain' | 'ok' | 'warn' | 'bad' | 'amber';
 
-/** One readout. `value` is a number the backend can produce, never a guess. */
-export function BandCell({ label, value, note, tone = 'plain' }: {
+/**
+ * One readout. `value` is a number the backend can produce, never a guess.
+ *
+ * `icon` is optional and pre-colored by the caller (a span with its own
+ * `style={{color}}` wrapping one of the Ico* glyphs) — this stays generic
+ * rather than growing its own color/tone logic for an icon, since callers
+ * already pick meaningfully different hues per reading (blue for a neutral
+ * count, red only once something has actually failed, etc.).
+ */
+export function BandCell({ label, value, note, tone = 'plain', icon }: {
   label: string;
   value: ReactNode;
   note?: string;
   tone?: BandTone;
+  icon?: ReactNode;
 }) {
   return (
-    <div className="cell">
-      <label>{label}</label>
-      <span className={`v${tone === 'plain' ? '' : ` ${tone}`}`}>{value}</span>
-      {note && <span className="s">{note}</span>}
+    <div className={icon ? 'cell with-icon' : 'cell'}>
+      {icon && <span className="cell-icon">{icon}</span>}
+      <div className="cell-body">
+        <label>{label}</label>
+        <span className={`v${tone === 'plain' ? '' : ` ${tone}`}`}>{value}</span>
+        {note && <span className="s">{note}</span>}
+      </div>
     </div>
   );
 }
 
 export function Band({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
   return (
-    <div className="v2-band">
+    // Without a 6th "controls" cell, the real stat cells would otherwise sit
+    // flush left with the rest of the row empty — `.v2-band--fill` (scoped to
+    // this exact case, never applied when `aside` exists) spreads them to
+    // occupy the whole row instead.
+    <div className={aside ? 'v2-band' : 'v2-band v2-band--fill'}>
       {children}
       {aside && (
         <div className="cell grow">
@@ -111,22 +127,6 @@ export function Btn({ children, onClick, tone = 'plain', disabled, wide, classNa
 }
 
 /** Two-state mode switch (Agent | Manual and friends). */
-export function Toggle<T extends string>({ value, options, onChange }: {
-  value: T;
-  options: Array<{ id: T; label: string }>;
-  onChange: (id: T) => void;
-}) {
-  return (
-    <>
-      {options.map((o) => (
-        <Btn key={o.id} tone={o.id === value ? 'blue' : 'plain'} onClick={() => onChange(o.id)}>
-          {o.label}
-        </Btn>
-      ))}
-    </>
-  );
-}
-
 // ── status ──────────────────────────────────────────────────────────────────
 
 /** `you` is the amber one: it means a human must act, and nothing else may use it. */
@@ -155,8 +155,13 @@ export function Chip({ children, tone = 'plain', icon }: {
  * the inner click.
  *
  * `agentTarget` is the contract the agent cursor points at — see agent/driver.ts.
+ *
+ * `plain` drops the button semantics (role, tabIndex, pointer cursor, hover
+ * wash) for a row that is read-only information, not a control — a lone
+ * status readout with nothing to click reading as clickable was what made it
+ * look like a stray card rather than plain text sitting in the page.
  */
-export function Row({ glyph, name, sub, why, status, action, selected, onSelect, agentTarget }: {
+export function Row({ glyph, name, sub, why, status, action, selected, onSelect, agentTarget, plain }: {
   glyph: ReactNode;
   name: string;
   sub?: string;
@@ -166,12 +171,13 @@ export function Row({ glyph, name, sub, why, status, action, selected, onSelect,
   selected?: boolean;
   onSelect?: () => void;
   agentTarget?: string;
+  plain?: boolean;
 }) {
   return (
     <div
-      role="button"
-      tabIndex={0}
-      className={`v2-row${selected ? ' pick' : ''}`}
+      role={plain ? undefined : 'button'}
+      tabIndex={plain ? undefined : 0}
+      className={`v2-row${selected ? ' pick' : ''}${plain ? ' plain' : ''}`}
       data-agent-target={agentTarget}
       onClick={onSelect}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect?.(); }}

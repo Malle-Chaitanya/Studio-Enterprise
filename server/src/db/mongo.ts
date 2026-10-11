@@ -292,6 +292,14 @@ async function ensureCollections(): Promise<void> {
     { unique: true },
   );
 
+  // Customer-chosen destination display name per source agent. Absent means "use the
+  // source name" — see db/repos/agentDestinationName.ts.
+  await ensure('agentDestinationNames');
+  await db.collection('agentDestinationNames').createIndex(
+    { appUserId: 1, sourceId: 1 },
+    { unique: true },
+  );
+
   // ── Seed the first accounts ───────────────────────────────────────────────
   //
   // The credentials come from the environment, never from this file. They used to be

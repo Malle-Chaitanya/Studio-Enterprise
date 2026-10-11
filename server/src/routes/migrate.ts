@@ -61,6 +61,11 @@ import {
   agentUsesSurface,
 } from '../db/repos/agentSurfaceChoice.js';
 import { getCachedIR, cacheAgentIR } from '../db/repos/agentIR.js';
+import {
+  getAgentDestinationNames,
+  setAgentDestinationName,
+  clearAgentDestinationName,
+} from '../db/repos/agentDestinationName.js';
 import { suggestEnvironmentDriveIdentity } from '../services/driveIdentityResolution.js';
 import { buildOrganizationProfile } from '../services/organizationProfile.js';
 import { getIdentityMap } from '../db/repos/identityMap.js';
@@ -482,6 +487,10 @@ migrateRouter.get('/third-party-connectors', async (req, res) => {
   try {
     const dvToken = await clientCredsToken(session.tenantId, envUrl);
     let allowedWorkflowIds: Set<string> | undefined;
+    // workflowid -> the selected agent(s) whose topics invoke it. Built from the exact
+    // same per-bot flow-id lookup used for scoping below, so a connector's "Blocks
+    // these agents" list is never a guess — just the reverse of this index.
+    let flowOwners: Map<string, Array<{ id: string; name: string }>> | undefined;
     if (botIds.length) {
       const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
       const allBots = await listBots(envUrl, dvToken);
@@ -490,19 +499,64 @@ migrateRouter.get('/third-party-connectors', async (req, res) => {
         try {
           const cached = await getCachedIR(appUserId, envUrl, bot.botid);
           const ir = cached?.ir ?? (await extractAgent(envUrl, dvToken, bot));
-          return ir.flows?.map((f) => f.id) ?? [];
+          return { bot, flowIds: ir.flows?.map((f) => f.id) ?? [] };
         } catch (err) {
           logger.debug({ err, bot: bot.name }, 'third-party-connectors: agent extract failed');
-          return [];
+          return { bot, flowIds: [] as string[] };
         }
       });
-      allowedWorkflowIds = new Set(perAgentFlowIds.flat());
+      allowedWorkflowIds = new Set(perAgentFlowIds.flatMap((p) => p.flowIds));
+      flowOwners = new Map();
+      for (const { bot, flowIds } of perAgentFlowIds) {
+        for (const flowId of flowIds) {
+          const owners = flowOwners.get(flowId) ?? [];
+          owners.push({ id: bot.botid, name: bot.name });
+          flowOwners.set(flowId, owners);
+        }
+      }
     }
-    const connectors = await detectThirdPartyConnectors(envUrl, dvToken, allowedWorkflowIds);
+    const connectors = await detectThirdPartyConnectors(envUrl, dvToken, allowedWorkflowIds, flowOwners);
     res.json({ connectors });
   } catch (err) {
     res.status(502).json({ error: 'connector_scan_failed', detail: (err as Error).message });
   }
+});
+
+/**
+ * GET /api/migrate/destination-names?session=&sourceIds=id1,id2
+ *
+ * The customer-chosen display name for each agent, keyed by source id. An id with no
+ * entry means "use the source name" — this is an override, not a required field.
+ */
+migrateRouter.get('/destination-names', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  const sourceIds = String(req.query.sourceIds ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (sourceIds.length === 0) return void res.json({ names: {} });
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const names = await getAgentDestinationNames(appUserId, sourceIds);
+  res.json({ names: Object.fromEntries(names) });
+});
+
+/**
+ * POST /api/migrate/destination-names  { session, sourceId, name }
+ *
+ * Rename one agent's destination. An empty/whitespace-only name clears the override
+ * (back to the source name) rather than storing a blank display name, which Gemini
+ * would reject anyway.
+ */
+migrateRouter.post('/destination-names', async (req, res) => {
+  const { session: sessionId, sourceId, name } = req.body as { session?: string; sourceId?: string; name?: string };
+  const session = await getSession(sessionId ?? '');
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!sourceId) return void res.status(400).json({ error: 'source_id_required' });
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const trimmed = name?.trim();
+  if (trimmed) await setAgentDestinationName(appUserId, sourceId, trimmed);
+  else await clearAgentDestinationName(appUserId, sourceId);
+  res.json({ ok: true, name: trimmed || null });
 });
 
 /**

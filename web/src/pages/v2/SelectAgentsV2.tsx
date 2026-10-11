@@ -3,12 +3,13 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
-  Btn, Chip, Group, Inspector, InspectorHead, InspectorSection, KeyValue,
+  Btn, Group, Inspector, InspectorHead, InspectorSection, KeyValue,
   Note, NoteRow, Panel, SelectBar, SkeletonRows, Tick, WizardFooter,
 } from '../../components/v2/primitives.tsx';
 import { useResource } from '../../v2/data/cache.ts';
 import { useSource, type AgentRow } from '../../v2/data/index.ts';
-import { IcoChevronLeft, IcoChevronRight, IcoRefresh, IcoSearch } from '../../icons.tsx';
+import { IcoChevronLeft, IcoChevronRight, IcoPencil, IcoRefresh, IcoSearch } from '../../icons.tsx';
+import { fetchDestinationNames, saveDestinationName } from '../../api.ts';
 
 const PAGE_SIZES = [25, 50, 100, 200] as const;
 
@@ -57,6 +58,32 @@ export default function SelectAgentsV2() {
   const rows = agents.data ?? [];
   const pairs = usable;
   const loading = paired.loading || agents.loading;
+
+  /**
+   * The destination name, per agent — absent means "use the source name", so an
+   * agent nobody renamed shows and saves exactly as it did before this existed.
+   * Only edited values live in `destDrafts`; everything else reads straight from
+   * the fetched overrides (or falls back to the source name), so there is no
+   * "hydrate local state from an async fetch" step to get wrong.
+   */
+  const destRes = useResource(
+    `destnames:${session}`,
+    () => fetchDestinationNames(session, rows.map((r) => r.botId)),
+    Boolean(session) && rows.length > 0,
+  );
+  const [destDrafts, setDestDrafts] = useState<Record<string, string>>({});
+  const destFor = (r: AgentRow): string => destDrafts[r.botId] ?? destRes.data?.[r.botId] ?? r.name;
+  const saveDestIfChanged = async (r: AgentRow): Promise<void> => {
+    const value = destFor(r).trim();
+    const baseline = destRes.data?.[r.botId] ?? r.name;
+    if (value === baseline || !value) return;
+    try {
+      await saveDestinationName(session, r.botId, value);
+    } catch (e) {
+      setToast(`Could not save that name: ${(e as Error).message}`);
+      window.setTimeout(() => setToast(''), 4600);
+    }
+  };
   const syncing = paired.syncing || agents.syncing;
   const error = !session ? 'no_session' : paired.error || agents.error;
 
@@ -223,6 +250,14 @@ export default function SelectAgentsV2() {
 
         {!loading && !error && searched.length > 0 && (
           <div className="v2-scrollbox tight">
+        {/* Same flex shape as the real rows below (checkbox + nmw + why), so these
+            labels sit exactly above the columns they name instead of needing a
+            hand-tuned offset that drifts the moment either side changes. */}
+        <div className="v2-row v2-rowhead2 v2-row--agentsel">
+          <span className="v2-rowhead2-check" aria-hidden="true" />
+          <span className="nmw">Source name</span>
+          <span className="why">Destination name</span>
+        </div>
         {byEnv.map(([env, list]) => {
           const on = list.filter((r) => chosen.has(r.botId)).length;
           const state = on === 0 ? 'off' : on === list.length ? 'on' : 'mixed';
@@ -242,7 +277,7 @@ export default function SelectAgentsV2() {
               {list.map((r) => (
                 <div
                   key={r.botId}
-                  className={`v2-row${chosen.has(r.botId) ? ' pick' : ''}`}
+                  className={`v2-row v2-row--agentsel${chosen.has(r.botId) ? ' pick' : ''}`}
                   data-agent-target={`agent:${r.botId}`}
                   role="button"
                   tabIndex={0}
@@ -257,13 +292,51 @@ export default function SelectAgentsV2() {
                       {r.topics ? ` · ${r.topics} topics` : ''}
                     </span>
                   </span>
+                  {/* The destination name — an input always, but styled to read as
+                      plain text until hovered or focused, with a pencil hint that it
+                      can be changed. Defaults to the source name (see `destFor`); an
+                      edit here is what mapper.ts actually names the agent in Gemini,
+                      not just a label on this screen. */}
                   <span className="why">
-                    {r.owner ? '' : 'Nobody owns this agent in Dataverse'}
+                    <span className="v2-destname">
+                      <input
+                        className="v2-destname-input"
+                        value={destFor(r)}
+                        // An <input>'s own box never sizes to its value's length on its
+                        // own (CSS width:auto falls back to a fixed ~20-character box
+                        // regardless of content — that was the earlier truncation bug).
+                        // `size` is the real fix: it's the one thing that genuinely sizes
+                        // the box to this row's own text, short or long, with no fixed
+                        // width and no oversized empty box for a short name either.
+                        size={Math.max(destFor(r).length, 1)}
+                        onChange={(e) => setDestDrafts((d) => ({ ...d, [r.botId]: e.target.value }))}
+                        onBlur={() => void saveDestIfChanged(r)}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                        }}
+                        aria-label={`Destination name for ${r.name}`}
+                        spellCheck={false}
+                      />
+                      <button
+                        type="button"
+                        className="v2-destname-edit"
+                        aria-label={`Edit destination name for ${r.name}`}
+                        onClick={(e) => {
+                          // Stop the row's own onClick from also firing — otherwise
+                          // clicking the pencil toggled the agent's selection instead
+                          // of doing the one thing this button is for.
+                          e.stopPropagation();
+                          const input = e.currentTarget.previousElementSibling as HTMLInputElement | null;
+                          input?.focus();
+                          input?.select();
+                        }}
+                      >
+                        <IcoPencil s={11} />
+                      </button>
+                    </span>
                   </span>
-                  <span className="st">
-                    {chosen.has(r.botId) ? <Chip tone="ok">in this run</Chip> : <Chip>skipped</Chip>}
-                  </span>
-                  <span className="act" />
                 </div>
               ))}
             </Group>

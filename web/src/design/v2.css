@@ -1516,7 +1516,7 @@
    mid-word. A decision row has to hold a picker, a text field, a verdict AND an
    explanation, so it is a grid with somewhere for the long text to go. */
 .v2-dec {
-  display: grid; grid-template-columns: minmax(150px, 1fr) auto auto;
+  display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, auto) auto;
   gap: 8px 14px; align-items: center; padding: 12px 16px;
   border-bottom: 1px solid var(--v2-edge);
 }

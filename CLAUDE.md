@@ -165,67 +165,18 @@ gstack is installed globally at `~/.claude/skills/gstack`. Use `/browse` from gs
 - `/cso` — security audit (if security-sensitive)
 - `/ship` — opens PR
 
-## Pre-flight — gstack availability check
-
-Before offering the Skill routing menu OR running any gstack slash command, Claude MUST first verify gstack is installed:
-
-```bash
-test -f ~/.claude/skills/gstack/setup && echo "gstack_installed" || echo "gstack_missing"
-```
-
-- `gstack_installed` → show **Menu A** below
-- `gstack_missing` → show **Menu B** below
-
-Install command (used when the user chooses "Install gstack now"):
-
-```bash
-git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack && cd ~/.claude/skills/gstack && ./setup
-```
-
-After install, tell the user: "✅ gstack installed. Reopen this project in Claude Code so the new skills are discovered. Then re-ask your original question."
-
-If install fails, report the error, suggest the manual install, and fall back to the normal project approach.
-
 ## Skill routing
 
-Before any repository task, Claude must run the Pre-flight check and show the correct menu.
+Do not run a pre-flight gstack check, and do not show a menu or ask the user to choose
+an approach before starting work — just do the task directly using normal project files
+(reading, editing, typechecking, etc.).
 
-**Menu A — gstack IS installed**
+Only touch gstack at all when the user explicitly types a gstack slash command
+(`/review`, `/qa`, `/cso`, `/ship`, `/office-hours`, etc.) or explicitly asks to use a
+gstack workflow. In that case, run the requested command directly — no availability
+check, no menu, no confirmation prompt first. If the command fails because gstack isn't
+installed, say so and fall back to the normal approach.
 
-"Before I start, choose one:
-1. Use gstack workflow
-2. Use normal project files / plain Claude approach
-3. Let Claude recommend the best option first"
-
-**Menu B — gstack is NOT installed**
-
-"gstack is not installed on your machine. Before I start, choose one:
-1. Install gstack now (~60 seconds), then use gstack workflow
-2. Use normal project files / plain Claude approach (no gstack workflows available)
-3. Let Claude recommend the best option first"
-
-The install option MUST appear on every question until gstack is installed — not just the first time.
-
-**Slash command exception:** if the user types a gstack slash command (`/review`, `/qa`, `/cso`, `/ship`, `/office-hours`, etc.) directly, run the Pre-flight check first. If installed, run the command directly. If not, show Menu B.
-
-Claude must wait for the user's selection before reading files, editing files, or invoking any skill.
-
-**Option 1 (Menu A) — Use gstack workflow.** Mappings:
-- Product brainstorm / feature ideas → `/office-hours`
-- Rough idea to spec → `/spec`
-- Scope tradeoffs → `/plan-ceo-review`
-- New-feature architecture → `/plan-eng-review`
-- Bugs / unexpected errors → `/investigate`
-- Test a URL → `/qa` or `/qa-only`
-- Diff review before land → `/review`
-- Security-sensitive change → `/cso`
-- Open a PR → `/ship`
-- Deploy / verify prod → `/land-and-deploy`
-- Docs update → `/document-release`
-- Docs generation → `/document-generate`
-
-**Option 1 (Menu B) — Install gstack now.** Run the install command. On success, tell the user to reopen the project. On failure, fall back to Option 2.
-
-**Option 2 — Use normal project files / plain Claude approach.** Reading files, explaining code, small edits, typo fixes, one-file updates, basic refactoring, config changes, project Q&A, checking implementation details.
-
-**Option 3 — Let Claude recommend.** If gstack installed → recommend between gstack workflow and normal approach. If gstack missing → recommend between installing gstack (for tasks that need it) or normal approach (for small tasks).
+For everything else — UI tweaks, bug fixes, reading code, small edits — never invoke
+gstack, never run its pre-flight shell check, and never ask the user to pick between
+"gstack workflow" and "normal approach." Just proceed.

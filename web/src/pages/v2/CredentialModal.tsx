@@ -232,13 +232,13 @@ export function CredentialForm({
           return (
             <div className="cf-field" key={f.key}>
               <label className="cf-label" htmlFor={`f-${row.connectorId}-${f.key}`}>
-                {f.label} <em className="cf-hint" style={{ fontStyle: 'normal' }}>— already stored</em>
+                {f.label}
               </label>
               <div className="cf-input-wrap">
                 <input
                   id={`f-${row.connectorId}-${f.key}`}
                   className="cf-input"
-                  value="•••••••• in Secret Manager"
+                  value="••••••••"
                   disabled
                   readOnly
                   style={{ color: 'var(--cf-color-muted)' }}
@@ -253,7 +253,6 @@ export function CredentialForm({
                   <IcoPencil s={14} />
                 </button>
               </div>
-              <span className="cf-hint">Never read back into this page.</span>
             </div>
           );
         }
@@ -304,7 +303,7 @@ export function CredentialForm({
       <div className="cf-credfoot">
         <span className="cf-credfoot__note">
           {saving ? <span className="cf-spinner" aria-hidden="true" /> : <span aria-hidden="true">&#128274;</span>}
-          <span>{saving ? 'Writing to Secret Manager…' : 'Values go straight to Secret Manager'}</span>
+          <span>{saving ? 'Writing to Secret Manager…' : 'Values go straight to Secret Manager and are never read back into this page'}</span>
         </span>
         <span className="cf-credfoot__actions">
           {onCancel && (

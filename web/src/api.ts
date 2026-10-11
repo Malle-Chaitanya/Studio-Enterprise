@@ -778,6 +778,39 @@ export async function saveDriveIdentity(session: string, sourceId: string, email
   }
 }
 
+// ── Per-agent destination name ────────────────────────────────────────────────
+
+/** The customer-chosen display name for each agent, keyed by source id. A missing
+ *  entry means "use the source name" — this is an override, not a required field. */
+export async function fetchDestinationNames(
+  session: string,
+  sourceIds: string[],
+): Promise<Record<string, string>> {
+  if (sourceIds.length === 0) return {};
+  const res = await fetch(
+    `/api/migrate/destination-names?session=${session}&sourceIds=${encodeURIComponent(sourceIds.join(','))}`,
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+    throw new Error(body.detail || body.error || 'destination_name_lookup_failed');
+  }
+  return ((await res.json()) as { names: Record<string, string> }).names;
+}
+
+/** Rename one agent's destination. An empty name clears the override (back to the
+ *  source name) rather than saving a blank display name. */
+export async function saveDestinationName(session: string, sourceId: string, name: string): Promise<void> {
+  const res = await fetch('/api/migrate/destination-names', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, sourceId, name }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+    throw new Error(body.detail || body.error || 'destination_name_save_failed');
+  }
+}
+
 /** Scan knowledge-source botcomponents for specific agents — detects Confluence, etc. */
 export async function fetchKnowledgeSourceConnectors(
   session: string,

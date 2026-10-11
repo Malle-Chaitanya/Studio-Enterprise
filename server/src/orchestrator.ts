@@ -23,6 +23,7 @@ import { resolveConnectorSecrets, buildLiveConnectorSpecsDetailed, agentConnecto
 import { resolveSurfaceTarget, SURFACE_EQUIVALENTS, agentUsesSurface, CALENDAR_OPERATION_IDS, CONTACTS_OPERATION_IDS } from './db/repos/agentSurfaceChoice.js';
 import { connectorsSharingCredentials, connectorSecretId } from './services/connectorCredentials.js';
 import { getAgentConnectorIdentity } from './db/repos/agentConnectorIdentity.js';
+import { getAgentDestinationName } from './db/repos/agentDestinationName.js';
 import { readinessFor } from './connectors/readiness.js';
 import { buildBoundToolSpecs } from './connectors/boundToolSpec.js';
 import { resolveOpIndex, type CaptureContext } from './connectors/captureOpIndex.js';
@@ -1102,8 +1103,11 @@ async function execute(
       // do not exist on it. Passing every configured connector gave an agent that
       // references three systems live API access to nine.
       const irConnectorIds = agentConnectorIds(ir);
+      // Absent for every agent nobody renamed — mapAgent falls back to ir.name itself.
+      const destinationName = await getAgentDestinationName(appUserId, item.bot.botid);
       const mapped = await mapAgent(ir, {
         connectors: resolvedConnectors.filter((c) => irConnectorIds.has(c.connectorId)),
+        destinationName: destinationName ?? undefined,
       });
       const capabilities = [...topicsPlan.systemCapabilities, ...topicsPlan.connectedAgents.flatMap((a) => a.capabilities)];
 

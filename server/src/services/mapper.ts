@@ -207,6 +207,12 @@ export interface MapOptions {
    * usage pattern for each configured connector.
    */
   connectors?: ResolvedConnector[];
+  /**
+   * Customer-chosen destination display name (db/repos/agentDestinationName.ts),
+   * overriding `ir.name`. Absent means "use the source name" — unset for every
+   * agent nobody renamed, so this changes nothing by default.
+   */
+  destinationName?: string;
 }
 
 export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAgent> {
@@ -281,7 +287,7 @@ export async function mapAgent(ir: AgentIR, opts?: MapOptions): Promise<MappedAg
 
   return {
     ir,
-    displayName: ir.name,
+    displayName: opts?.destinationName || ir.name,
     description,
     instruction: refined,
     starterPrompts: buildStarterPrompts(ir),
