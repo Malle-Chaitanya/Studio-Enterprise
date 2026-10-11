@@ -138,6 +138,7 @@ export function V2Layout({
           {/* The sidebar now carries the logo, so this bar is deliberately slim:
               status + sign out, sitting only beside the rail, not above it. */}
           <header className="v2-topbar">
+            <span className="v2-topbar-title">Agent Migrations</span>
             <span className="v2-topbar-sp" />
             <div className="v2-account" ref={accountRef}>
               <button
