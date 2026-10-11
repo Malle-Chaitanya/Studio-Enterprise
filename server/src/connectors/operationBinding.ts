@@ -115,6 +115,18 @@ export interface VendorBinding {
   /** Why a `proxy-only` connector cannot be reproduced — shown to the customer verbatim. */
   proxyReason?: string;
   /**
+   * An extra path segment some "codeless connectors" insert that has no vendor equivalent —
+   * confirmed live 2026-10-10 against `shared_office365users`: the captured path
+   * `/{connectionId}/codeless/v1.0/users/{id}/manager` and the real Microsoft Graph call
+   * `GET https://graph.microsoft.com/v1.0/users/{id}/manager` return the IDENTICAL result
+   * (same manager) once `codeless` is stripped. Applied only to operations whose path
+   * actually starts with this segment — a connector can mix codeless and legacy paths (this
+   * one does: `Manager_V2` is codeless, the older `Manager` operation is not), and an
+   * operation that does not match the verified shape is refused rather than guessed at. See
+   * `bindOperation`'s own check.
+   */
+  stripPrefix?: string;
+  /**
    * Operations on a `proxy-only` connector that ARE reproduced, by a hand-written tool in
    * `server/scripts/connector_tools/`, keyed operationId → what the migrated tool does.
    *
@@ -212,6 +224,21 @@ export const VENDOR_BINDINGS: Record<string, VendorBinding> = {
     proxyReason:
       'Office 365 Outlook connector paths are a Power Platform table abstraction ' +
       '(/$metadata.json/datasets/...), not Graph paths.',
+  },
+  // Mixed shape, confirmed live 2026-10-10 against the real captured index: newer operations
+  // (Manager_V2, GetUserV2, DirectReportsV2, ...) route through a "codeless connector" prefix
+  // whose path, once `/codeless` is stripped, IS the real Graph v1.0/beta path verbatim —
+  // verified by calling GET /v1.0/users/{id}/manager directly and getting the identical
+  // result the codeless path returns. Older operations (plain `Manager`, bare `/users`, the
+  // `/codeless/httprequest` tunnel) do NOT follow this shape and are not claimed here —
+  // `stripPrefix` only fires on a path that actually starts with it, so those fall through to
+  // an honest refusal instead of a guessed URL.
+  shared_office365users: {
+    baseUrl: 'https://graph.microsoft.com',
+    pathStyle: 'vendor-path',
+    auth: 'aad-token',
+    aadResource: 'https://graph.microsoft.com',
+    stripPrefix: 'codeless',
   },
   shared_sharepointonline: {
     baseUrl: '',
@@ -345,7 +372,25 @@ export function bindOperation(index: ConnectorOpIndex, operationId: string): Bin
     };
   }
 
-  const vendorPath = stripConnectionId(op.path);
+  let vendorPath = stripConnectionId(op.path);
+  if (binding.stripPrefix) {
+    const prefixPattern = new RegExp(`^/${binding.stripPrefix}(?=/|$)`);
+    if (!prefixPattern.test(vendorPath)) {
+      // This operation does not follow the verified shape `stripPrefix` was confirmed
+      // against (see VendorBinding.stripPrefix) — refuse rather than guess at a path that
+      // may point somewhere entirely different (or a nonexistent vendor host).
+      return {
+        status: 'proxy-only',
+        connectorId: index.connectorId,
+        operationId,
+        reason:
+          `${index.connectorId}'s "${operationId}" does not use the verified ` +
+          `"${binding.stripPrefix}" path shape this connector's other operations do, so its ` +
+          'real vendor path is not known — reproducing it would mean guessing a URL.',
+      };
+    }
+    vendorPath = vendorPath.replace(prefixPattern, '');
+  }
   const urlTemplate = `${binding.baseUrl.replace(/\/$/, '')}${vendorPath}`;
   // `x-ms-visibility: internal` parameters are the proxy's own plumbing (connectionId,
   // the fixed `prefer`/`accept` headers). Passing them through would make the tool

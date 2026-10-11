@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseToolInputs,
+  parseConnectorToolInputs,
   parseOutputSchema,
   parseMcpBinding,
   parseFlowId,
@@ -125,6 +126,92 @@ describe('parseToolInputs — the arguments the author bound', () => {
   it('returns nothing for a tool with no inputs, and does not throw', () => {
     expect(parseToolInputs('kind: TaskDialog\naction:\n  kind: InvokeFlowTaskAction\n')).toEqual([]);
     expect(parseToolInputs('')).toEqual([]);
+  });
+});
+
+/**
+ * The newer, flatter `kind: ConnectorTool` row shape's own `toolInputs:` block — deliberately
+ * built against an UNRELATED connector (a ticketing vendor, not Office 365/Advanced Approvals,
+ * the connectors this shape was first confirmed live against on 2026-10-10) to prove the
+ * parser reads the SHAPE, not anything specific to one connector or one agent.
+ */
+const CONNECTOR_TOOL_ROW = `kind: ConnectorTool
+authMode: Invoker
+connectionReference: pub_Agent.cr.shared_jira.xyz789
+connectorId: /providers/Microsoft.PowerApps/apis/shared_jira
+operationId: CreateIssueV2
+toolInputs:
+  - name: issue.project
+    description: The project key the ticket belongs to, from earlier in the conversation.
+
+  - name: issue.summary
+    description: A one-line summary of the problem.
+
+  - name: issue.priority
+    value: High
+
+  - name: issue.dueDate
+    value:
+      kind: ValueReference
+      type: "{\\"type\\":\\"string\\"}"
+      defaultValue: "\\"2026-12-31\\""
+`;
+
+describe('parseConnectorToolInputs — the newer ConnectorTool row shape, any connector', () => {
+  const inputs = parseConnectorToolInputs(CONNECTOR_TOOL_ROW);
+
+  it('reads every input on a connector unrelated to the one this shape was first found on', () => {
+    expect(inputs.map((i) => i.name)).toEqual([
+      'issue.project',
+      'issue.summary',
+      'issue.priority',
+      'issue.dueDate',
+    ]);
+  });
+
+  it('keeps model-filled inputs with their author-written description', () => {
+    expect(inputs.find((i) => i.name === 'issue.project')).toMatchObject({
+      source: 'model',
+      description: 'The project key the ticket belongs to, from earlier in the conversation.',
+    });
+  });
+
+  it('reads a plain scalar value as a fixed literal', () => {
+    expect(inputs.find((i) => i.name === 'issue.priority')).toMatchObject({
+      source: 'fixed',
+      value: 'High',
+    });
+  });
+
+  // Copilot double-JSON-encodes a pinned ValueReference's defaultValue (confirmed live
+  // 2026-10-10: `defaultValue: "\"2026-12-31\""`, not a plain scalar) — a single JSON.parse
+  // would leave the quotes in. This is the structural pattern, independent of which field or
+  // connector carries it.
+  it('fully unwraps a double-JSON-encoded ValueReference default', () => {
+    expect(inputs.find((i) => i.name === 'issue.dueDate')).toMatchObject({
+      source: 'fixed',
+      value: '2026-12-31',
+    });
+  });
+
+  it('does not read the legacy inputs: block, and the legacy parser does not read toolInputs:', () => {
+    expect(parseToolInputs(CONNECTOR_TOOL_ROW)).toEqual([]);
+    expect(parseConnectorToolInputs(CONNECTOR_TOOL)).toEqual([]);
+  });
+
+  it('returns nothing for a ConnectorTool row with no toolInputs block, and does not throw', () => {
+    expect(parseConnectorToolInputs('kind: ConnectorTool\noperationId: Ping\n')).toEqual([]);
+    expect(parseConnectorToolInputs('')).toEqual([]);
+  });
+
+  it('falls back to the raw text when a ValueReference default is not JSON-quoted', () => {
+    const odd = parseConnectorToolInputs(`toolInputs:
+  - name: weird
+    value:
+      kind: ValueReference
+      defaultValue: not-json-quoted
+`);
+    expect(odd).toEqual([{ name: 'weird', source: 'fixed', value: 'not-json-quoted', isExpression: undefined, description: undefined }]);
   });
 });
 

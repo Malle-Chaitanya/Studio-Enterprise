@@ -4,7 +4,7 @@ import { ComponentType } from '../types.js';
 import { parseTopicGraph } from './topicGraph.js';
 import { classifyKnowledgeSource, checkFileCompatibility } from './knowledgeClassifier.js';
 import { resolveConnectorId, connectionAuthModeFrom, connectorIdFromArmPath } from './connectorRef.js';
-import { parseToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef, parseTopicConnectorActions } from './toolPayload.js';
+import { parseToolInputs, parseConnectorToolInputs, parseOutputSchema, parseMcpBinding, parseFlowId, parseAiPluginRef, parseTopicConnectorActions } from './toolPayload.js';
 import { resolveMcpServerUrls } from '../connectors/customConnectorInventory.js';
 import type { AgentIR, AgentPermissions, AgentSourceMetadata, AgentToolIR, AgentToolKind, ChatAccess, FlowActionIR, FlowConnectionReferenceIR, FlowIR, FlowParameterIR, FlowTriggerIR, KnowledgeSourceIR, KnowledgeSourceMetadata, PrincipalRef, SharedPrincipal, TopicIR } from '../types.js';
 import { fetchWithThrottleBackoff } from './httpTransient.js';
@@ -913,6 +913,7 @@ function parseConnectorToolRow(c: BotComponent): AgentToolIR {
   const armPath = /^\s*connectorId:\s*(\S+)\s*$/m.exec(data)?.[1];
   const connectionReference = /^\s*connectionReference:\s*(\S+)\s*$/m.exec(data)?.[1];
   const operationId = /^\s*operationId:\s*(\S+)\s*$/m.exec(data)?.[1] || undefined;
+  const inputs = parseConnectorToolInputs(data);
   return {
     name: c.name ?? '(unnamed tool)',
     kind: 'connector',
@@ -921,6 +922,7 @@ function parseConnectorToolRow(c: BotComponent): AgentToolIR {
     connectorId: resolveConnectorId(connectionReference, operationId, armPath).connectorId,
     connectionAuthMode: connectionAuthModeFrom(data),
     operationId,
+    inputs: inputs.length ? inputs : undefined,
     schemaName: c.schemaname ?? undefined,
   };
 }
@@ -1543,6 +1545,18 @@ function parseAgentSettings(configuration?: string): {
   memoryEnabled?: boolean;
   modelSeries?: string;
   /**
+   * The agent's real instructions, for agents authored on the newer surface that keeps them
+   * here (`agentSettings.instructions.segments[]`) instead of in a GptComponentMetadata
+   * component. Confirmed live 2026-10-10 ("HR Support Desk"): this agent has NO type-15
+   * component at all, so `gptComp` is undefined and `gptParsed.instructions` is always `''`
+   * for it — every agent built this way extracted as if it had no instructions, when the
+   * Build page plainly shows real authored ones. `StaticSegment` values are joined verbatim
+   * (lossless — nothing is trimmed or cleaned beyond the existing `.trim()`); any other
+   * segment kind (e.g. one that references a variable rather than holding plain text) is
+   * named in `otherSettings` instead of silently dropped.
+   */
+  instructions?: string;
+  /**
    * Bot-configuration switches we read but do not reproduce, as `name=value` strings.
    *
    * Sales desk carries nine of these — channels (MsTeams, Microsoft365Copilot),
@@ -1565,6 +1579,7 @@ function parseAgentSettings(configuration?: string): {
         web?: { enableWebSearch?: boolean };
         enableMemory?: boolean;
         model?: { series?: string };
+        instructions?: { segments?: Array<{ $kind?: string; value?: unknown }> };
       };
       channels?: Array<{ channelId?: string }>;
       settings?: { GenerativeActionsEnabled?: boolean };
@@ -1588,6 +1603,15 @@ function parseAgentSettings(configuration?: string): {
     }
     if (cfg.publishOnImport === true) other.push('publishOnImport=true');
     if (cfg.isLightweightBot === true) other.push('isLightweightBot=true');
+
+    const instructionSegments: string[] = [];
+    for (const seg of s?.instructions?.segments ?? []) {
+      if (seg?.$kind === 'StaticSegment' && typeof seg.value === 'string') {
+        instructionSegments.push(seg.value);
+      } else if (seg) {
+        other.push(`agentSettings.instructions has a ${seg.$kind ?? 'unknown'} segment not read as plain text`);
+      }
+    }
     // aISettings is a flat bag of runtime toggles — carried whole rather than enumerated, so
     // a switch Microsoft adds next month still reaches the report instead of vanishing.
     for (const [k, v] of Object.entries(cfg.aISettings ?? {})) {
@@ -1600,6 +1624,7 @@ function parseAgentSettings(configuration?: string): {
       webSearch: typeof s.web?.enableWebSearch === 'boolean' ? s.web.enableWebSearch : undefined,
       memoryEnabled: typeof s.enableMemory === 'boolean' ? s.enableMemory : undefined,
       modelSeries: typeof s.model?.series === 'string' ? s.model.series : undefined,
+      instructions: instructionSegments.length ? instructionSegments.join('\n\n') : undefined,
       otherSettings: other.length ? other : undefined,
     };
   } catch {
@@ -1853,11 +1878,14 @@ export async function extractAgent(
   const gptParsed = gptComp
     ? parseGptMetadata(gptComp)
     : { instructions: '', description: '', capabilities: { webBrowsing: false, codeInterpreter: false }, starterPrompts: [] };
-  // Newer agents carry no GptComponentMetadata at all, so their web-search setting lives
-  // only on bot.configuration. Prefer whichever source actually states it; only fall back
-  // to the component's default when agentSettings is silent.
+  // Newer agents carry no GptComponentMetadata at all, so their web-search setting AND their
+  // real instructions live only on bot.configuration.agentSettings. Prefer whichever source
+  // actually states it; only fall back to the component's default when agentSettings is
+  // silent. See parseAgentSettings's own doc comment on `instructions` for why this matters:
+  // without it, an agent built on this authoring surface extracts as if it had none at all.
   const gpt = {
     ...gptParsed,
+    instructions: agentSettings.instructions || gptParsed.instructions,
     capabilities: {
       ...gptParsed.capabilities,
       webBrowsing: agentSettings.webSearch ?? gptParsed.capabilities.webBrowsing,

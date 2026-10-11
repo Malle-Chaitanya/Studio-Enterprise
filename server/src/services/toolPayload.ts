@@ -193,6 +193,77 @@ export function parseToolInputs(data: string): ToolInputIR[] {
 }
 
 /**
+ * The arguments a `kind: ConnectorTool` row binds — the newer, flatter authoring surface's
+ * own `toolInputs:` block, distinct from the legacy TaskDialog `inputs:` block
+ * `parseToolInputs` reads above: a different block key, `name:` instead of `propertyName:`,
+ * and a fixed value nested under `value: { kind: ValueReference, defaultValue: ... }` rather
+ * than a flat scalar.
+ *
+ * Confirmed live 2026-10-10 ("HR Support Desk"): `parseConnectorToolRow` never read this
+ * block at all, so every `ConnectorTool`-shaped tool extracted with NO inputs — silently
+ * losing every per-argument description the author wrote (e.g. "Never ask if already
+ * known", "as identified by GetManagerInfo"), which is exactly the behavioral guidance a
+ * migrated tool needs to reproduce the source agent's judgment calls, not just its shape.
+ */
+export function parseConnectorToolInputs(data: string): ToolInputIR[] {
+  const lines = blockLines(data, 'toolInputs');
+  if (!lines.length) return [];
+
+  const itemIndents = lines.filter((l) => /^\s*-\s/.test(l)).map(indentOf);
+  if (!itemIndents.length) return [];
+  const itemIndent = Math.min(...itemIndents);
+
+  const items: string[][] = [];
+  let current: string[] | null = null;
+  for (const line of lines) {
+    if (/^\s*-\s/.test(line) && indentOf(line) === itemIndent) {
+      if (current) items.push(current);
+      current = [line.replace(/^(\s*)-\s/, '$1  ')];
+    } else if (current) {
+      current.push(line);
+    }
+  }
+  if (current) items.push(current);
+
+  const out: ToolInputIR[] = [];
+  for (const item of items) {
+    const name = scalar(item, 'name');
+    if (!name) continue; // an input with no name binds nothing
+    const description = scalar(item, 'description');
+    // A plain scalar `value:` is a fixed literal. A nested `value:` block (ValueReference)
+    // pins a typed default instead — Copilot double-JSON-encodes it (same as the sibling
+    // `type:` field's `"{\"type\":\"string\"}"`), so a single JSON.parse leaves a string
+    // that is STILL a JSON string literal (`"\"(UTC-08:00) ...\""` -> `"(UTC-08:00) ...\""`,
+    // quotes and all). Unwrap until it stops being one, capped at 2 rounds — Copilot has
+    // never been seen nesting deeper than this, and an unbounded loop would hang on a
+    // string that just happens to look JSON-quoted forever.
+    const plainValue = scalar(item, 'value');
+    const valueBlock = blockLines(item.join('\n'), 'value');
+    const defaultValueRaw = valueBlock.length ? scalar(valueBlock, 'defaultValue') : undefined;
+    let fixedValue = plainValue;
+    if (fixedValue === undefined && defaultValueRaw !== undefined) {
+      fixedValue = defaultValueRaw;
+      for (let round = 0; round < 2; round++) {
+        if (typeof fixedValue !== 'string' || !/^".*"$/s.test(fixedValue)) break;
+        try {
+          fixedValue = JSON.parse(fixedValue);
+        } catch {
+          break;
+        }
+      }
+    }
+    out.push({
+      name: unquoteName(name),
+      source: fixedValue !== undefined ? 'fixed' : 'model',
+      value: fixedValue,
+      isExpression: fixedValue?.startsWith('=') || undefined,
+      description,
+    });
+  }
+  return out;
+}
+
+/**
  * The tool's declared result shape, flattened to `path` + `type`.
  *
  * Copilot nests this arbitrarily (`value` → `Table` → per-column types). Flattening keeps

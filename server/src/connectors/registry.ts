@@ -1266,6 +1266,30 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     impersonation: { header: '', resolve: 'graph-user-path' },
   },
 
+  // Directory reads (who is this person's manager?), unlike mail/calendar, are not scoped to
+  // one person's own data — app-only Graph with User.Read.All can look up ANYONE's manager,
+  // confirmed live 2026-10-10 by calling GET /v1.0/users/{id}/manager directly with the
+  // existing app-only credential and getting back the correct result with no extra consent.
+  // So unlike shared_office365, this needs neither `userAuth` nor `impersonation` — the
+  // target person is a real operation parameter (`id`), not implied by who is asking.
+  {
+    id: 'shared_office365users',
+    name: 'Office 365 Users',
+    category: 'productivity',
+    icon: '👤',
+    docsUrl: 'https://learn.microsoft.com/en-us/graph/api/user-list',
+    credentials: [], // supplied by the ms_graph credential group
+    credentialGroup: 'ms_graph',
+    requiredPermissions: ['User.Read.All'],
+    adminConsentRequired: true,
+    permissionsHint: 'User.Read.All lets the agent read basic profile and manager info for any user in your directory — it does not grant mailbox or file access.',
+    baseUrlTemplate: 'https://graph.microsoft.com/v1.0',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'oauth2-client-credentials',
+    tokenUrlTemplate: 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+    scope: 'https://graph.microsoft.com/.default',
+  },
+
   {
     id: 'shared_planner',
     name: 'Microsoft Planner',

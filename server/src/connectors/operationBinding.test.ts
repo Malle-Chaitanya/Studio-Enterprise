@@ -72,6 +72,28 @@ describe('bindOperation — vendor-path connectors', () => {
   });
 });
 
+describe('bindOperation — stripPrefix, for connectors whose proxy inserts a segment the vendor does not have', () => {
+  // shared_office365users mixes "codeless connector" paths (Manager_V2, GetUserV2, ...) with
+  // legacy ones (plain Manager, bare /users). Only the first group was confirmed live
+  // 2026-10-10 to match real Graph once `/codeless` is stripped.
+  it('strips the confirmed prefix and binds to the real Graph endpoint', () => {
+    const r = bindOperation(index('shared_office365users'), 'Manager_V2');
+    expect(r.status).toBe('bindable');
+    if (r.status !== 'bindable') return;
+    expect(r.operation.urlTemplate).toBe('https://graph.microsoft.com/v1.0/users/{id}/manager');
+    expect(r.operation.auth).toBe('aad-token');
+    expect(r.operation.parameters.map((p) => p.name)).toEqual(['id', '$select']);
+  });
+
+  it('refuses an operation that does not have the confirmed prefix, rather than guessing its path', () => {
+    const r = bindOperation(index('shared_office365users'), 'Manager');
+    expect(r.status).toBe('proxy-only');
+    if (r.status !== 'proxy-only') return;
+    expect(r.reason).toContain('codeless');
+    expect(r.reason).toContain('guessing');
+  });
+});
+
 describe('bindOperation — refusals are named, never guessed', () => {
   it('refuses Google Drive: its paths are a Power Platform abstraction', () => {
     const r = bindOperation(index('shared_googledrive'), 'GetFileContent');

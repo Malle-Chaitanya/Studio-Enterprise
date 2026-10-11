@@ -1,0 +1,565 @@
+{
+  "connectorId": "shared_office365users",
+  "displayName": "Office 365 Users",
+  "proxyHost": "7f9f87cc-464e-e470-95bb-363b7f227200.09.common.usa002.azure-apihub.net",
+  "proxyBasePath": "/apim/office365users",
+  "securityDefinitions": {
+    "oauth2_auth": {
+      "type": "oauth2",
+      "flow": "accessCode",
+      "authorizationUrl": "https://login.windows.net/common/oauth2/authorize",
+      "tokenUrl": "https://login.windows.net/common/oauth2/authorize",
+      "scopes": {
+        "Sites.Read.All User.ReadBasic.All User.ReadWrite": "Sites.Read.All User.ReadBasic.All User.ReadWrite"
+      }
+    }
+  },
+  "connectionAuth": {
+    "Token": {
+      "type": "oauthSetting",
+      "identityProvider": "office365usercertificate",
+      "scopes": []
+    },
+    "Token:TenantId": {
+      "type": "string"
+    }
+  },
+  "operationCount": 20,
+  "operations": {
+    "UpdateMyProfile": {
+      "method": "PATCH",
+      "path": "/{connectionId}/codeless/v1.0/me",
+      "summary": "Update my profile",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "MyProfile_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/v1.0/me",
+      "summary": "Get my profile (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UpdateMyPhoto": {
+      "method": "PUT",
+      "path": "/{connectionId}/codeless/v1.0/me/photo/$value",
+      "summary": "Update my profile photo",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "Content-Type",
+          "in": "header",
+          "required": true,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "MyTrendingDocuments": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/beta/me/insights/trending",
+      "summary": "Get my trending documents",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "extractSensitivityLabel",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "fetchSensitivityLabelMetadata",
+          "in": "query",
+          "required": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "RelevantPeople": {
+      "method": "GET",
+      "path": "/{connectionId}/users/{userId}/relevantpeople",
+      "summary": "Get relevant people",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "MyProfile": {
+      "method": "GET",
+      "path": "/{connectionId}/users/me",
+      "summary": "Get my profile (V1)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "UserProfile": {
+      "method": "GET",
+      "path": "/{connectionId}/users/{userId}",
+      "summary": "Get user profile (V1)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UserPhotoMetadata": {
+      "method": "GET",
+      "path": "/{connectionId}/users/photo",
+      "summary": "Get user photo metadata",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "userId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "UserPhoto": {
+      "method": "GET",
+      "path": "/{connectionId}/users/photo/value",
+      "summary": "Get user photo (V1)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "userId",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "Manager": {
+      "method": "GET",
+      "path": "/{connectionId}/users/{userId}/manager",
+      "summary": "Get manager (V1)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "DirectReports": {
+      "method": "GET",
+      "path": "/{connectionId}/users/{userId}/directReports",
+      "summary": "Get direct reports (V1)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "SearchUser": {
+      "method": "GET",
+      "path": "/{connectionId}/users",
+      "summary": "Search for users",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "searchTerm",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "SearchUserV2": {
+      "method": "GET",
+      "path": "/{connectionId}/v2/users",
+      "summary": "Search for users (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "searchTerm",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        },
+        {
+          "name": "isSearchTermRequired",
+          "in": "query",
+          "required": false,
+          "type": "boolean",
+          "visibility": "advanced"
+        },
+        {
+          "name": "skipToken",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "TestConnection": {
+      "method": "GET",
+      "path": "/{connectionId}/testconnection",
+      "summary": "Tests the connection",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        }
+      ]
+    },
+    "UserProfile_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/v1.0/users/{id}",
+      "summary": "Get user profile (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "Manager_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/v1.0/users/{id}/manager",
+      "summary": "Get manager (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "DirectReports_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/v1.0/users/{id}/directReports",
+      "summary": "Get direct reports (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$select",
+          "in": "query",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "$top",
+          "in": "query",
+          "required": false,
+          "type": "integer",
+          "visibility": "advanced"
+        }
+      ]
+    },
+    "UserPhoto_V2": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/v1.0/users/{id}/photo/$value",
+      "summary": "Get user photo (V2)",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ]
+    },
+    "TrendingDocuments": {
+      "method": "GET",
+      "path": "/{connectionId}/codeless/beta/users/{id}/insights/trending",
+      "summary": "Get trending documents",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "$filter",
+          "in": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "",
+          "in": "query",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "",
+          "in": "query",
+          "required": false,
+          "type": "object"
+        }
+      ]
+    },
+    "HttpRequest": {
+      "method": "POST",
+      "path": "/{connectionId}/codeless/httprequest",
+      "summary": "Send an HTTP request",
+      "parameters": [
+        {
+          "name": "connectionId",
+          "in": "path",
+          "required": true,
+          "type": "string",
+          "visibility": "internal"
+        },
+        {
+          "name": "Uri",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "Method",
+          "in": "header",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "Body",
+          "in": "body",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "ContentType",
+          "in": "header",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "CustomHeader1",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader2",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader3",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader4",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        },
+        {
+          "name": "CustomHeader5",
+          "in": "header",
+          "required": false,
+          "type": "string",
+          "visibility": "advanced"
+        }
+      ]
+    }
+  }
+}

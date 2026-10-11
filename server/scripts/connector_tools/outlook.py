@@ -709,6 +709,73 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
 
     # Read tools first — the model reaches for what it sees earliest, and reading before
     # writing is the safer default when a request is ambiguous.
+    def outlook_create_event(
+        subject: str,
+        start_time: str,
+        end_time: str,
+        time_zone: str = "UTC",
+        attendees: str = "",
+        description: str = "",
+        is_all_day: bool = False,
+    ) -> dict:
+        """Create (book) a calendar event. Equivalent to Copilot's "Create event (V4)" action
+        — the operation an agent built for leave approval uses to mark approved dates as
+        out-of-office on the employee's own calendar.
+
+        ALWAYS confirm the title, dates, and attendee list with the user before calling this
+        — booking is a real action a real person will see on their calendar and, for
+        attendees, receive an invite for.
+
+        Args:
+            subject: the event title.
+            start_time: RFC3339 datetime (e.g. "2026-10-27T00:00:00") for a timed event, or
+                a bare date ("2026-10-27") when is_all_day is True.
+            end_time: same rule as start_time. For a MULTI-DAY all-day event, Graph's end
+                date is EXCLUSIVE — pass the day AFTER the last day covered (leave on Oct
+                27-28 needs end_time="2026-10-29", not "2026-10-28").
+            time_zone: IANA timezone name, e.g. "America/Los_Angeles".
+            attendees: comma-separated email addresses to invite, or blank for none.
+            description: optional event body text.
+            is_all_day: True for an all-day event (e.g. marking someone on leave for the
+                day), False for a timed event. Defaults to False.
+
+        Returns:
+            dict with `created` true, `id`, `subject`, `start`, `end`, `isAllDay`,
+            `mailbox`, or `error`.
+        """
+        if not subject or not start_time or not end_time:
+            return {"error": "subject, start_time, and end_time are all required"}
+        try:
+            token = mint_token(fill)
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"auth failed: {e}"}
+        payload = {
+            "subject": subject,
+            "body": {"contentType": "Text", "content": description or ""},
+            "start": {"dateTime": start_time, "timeZone": time_zone or "UTC"},
+            "end": {"dateTime": end_time, "timeZone": time_zone or "UTC"},
+            "isAllDay": bool(is_all_day),
+            "attendees": [
+                {"emailAddress": {"address": a.strip()}, "type": "required"}
+                for a in (attendees or "").split(",") if a.strip()
+            ],
+        }
+        try:
+            created = _graph(f"{_user_path()}/events", token, method="POST", body=payload)
+        except Exception as e:  # noqa: BLE001
+            return _err(e, "Outlook event creation failed")
+        start = created.get("start", {}) or {}
+        end = created.get("end", {}) or {}
+        return {
+            "created": True,
+            "mailbox": _mailbox(),
+            "id": created.get("id"),
+            "subject": created.get("subject"),
+            "start": start.get("dateTime") or start.get("date"),
+            "end": end.get("dateTime") or end.get("date"),
+            "isAllDay": created.get("isAllDay", bool(is_all_day)),
+        }
+
     def outlook_list_calendar_events(start: str = "", end: str = "",
                                      max_results: int = DEFAULT_RESULTS) -> dict:
         """List calendar events in a date range — what is on the calendar, and when.
@@ -840,6 +907,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         outlook_read_message,
         outlook_list_folders,
         outlook_list_calendar_events,
+        outlook_create_event,
         outlook_get_attachment,
         outlook_create_draft,
         outlook_send_draft,
