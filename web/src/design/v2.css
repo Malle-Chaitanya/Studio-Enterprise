@@ -546,6 +546,11 @@
      tie this selector exists to stop losing. */
   text-align: left; font-size: 10px; font-weight: 700;
   letter-spacing: .08em; text-transform: uppercase; color: var(--v2-ink-4);
+  /* Same flex and same 4px gap as `.v2-destname` in the rows below, so the
+     heading's Gemini mark and every row's mark land on one vertical line. A
+     plain inline image here was close but never exact, and "nearly aligned"
+     reads as broken in a column of 50 identical rows. */
+  display: flex; align-items: center; gap: 4px;
 }
 /* The whole Destination column (heading, text, edit pencil) as one narrower
    block instead of stretching edge-to-edge — shifted in from Source name and
@@ -660,6 +665,12 @@
    so the dropdown opens without needing to overflow its neighbour. */
 .envpair-ctl { gap: 14px; }
 .envpair-ctl .v2-select:first-child { max-width: 250px; }
+/* The four product marks (components/v2/productMarks.tsx), one rule for all of
+   them. Each is an <img> sitting in a flex row of text: it must not shrink when
+   the row is tight, and `display:block` kills the inline baseline gap an <img>
+   otherwise adds under itself. Size comes from the component's own `s` prop, so
+   one screen can show a 22px mark and another a 14px one without a class each. */
+.v2-pmark { flex: 0 0 auto; object-fit: contain; display: block; }
 
 /* A NoteRow states a fact in full sentences. Truncating it to one ellipsised line
    would hide exactly the part that matters (what was lost, and why). */
@@ -794,7 +805,9 @@
      what carries the brand color here, not the text itself. */
   color: var(--v2-ink-4);
 }
-.v2-rowhead-src { flex: 0 0 291px; }
+/* `display:flex` so the vendor mark sits on the label's centre line rather than
+   on the text baseline; Destination (below) already had exactly this. */
+.v2-rowhead-src { flex: 0 0 291px; display: flex; align-items: center; gap: 6px; }
 /* Same `flex: 1 1 300px` (shrinkable, not rigid), the same fixed 40px nudge,
    and the same left alignment as `.v2-row.mapuser .why` below it — both sit
    the same distance after Source with no auto-margin centering, so their

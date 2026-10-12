@@ -5,6 +5,7 @@ import {
 import { invalidateCache, markStale, primeResource, useResource } from '../../v2/data/cache.ts';
 import { useSource, type DestOption, type EnvPair, type EnvRow } from '../../v2/data/index.ts';
 import { IcoCheck } from '../../icons.tsx';
+import { CopilotStudioMark, GeminiMark } from './productMarks.tsx';
 
 /**
  * Environment → Gemini app pairing, as a phase-in-place rather than a phase
@@ -133,12 +134,22 @@ export function EnvPairing({ session, onChange, found }: {
     const project = destList.find((d) => d.project === pair?.project);
     return (
       <div className="v2-row" key={env.url} data-agent-target={`env:${env.url}`}>
-        <span className="glyph" aria-hidden="true">{env.name.slice(0, 2).toUpperCase()}</span>
+        {/* The product, not the first two letters of the name. Every row here is a
+            Copilot Studio environment being pointed at a Gemini app, and "CL"/"FI"
+            said nothing about that -- the one thing this screen exists to make
+            obvious is which side is which. Decorative: the environment name sits
+            immediately beside it, so the mark adds no information a screen reader
+            needs read out twice. */}
+        <CopilotStudioMark s={22} />
         <span className="nmw">
           <span className="nm" title={env.name}>{env.name}</span>
           <span className="kind">{env.agents} agents · {env.topics} topics</span>
         </span>
         <span className="why ctl envpair-ctl">
+          {/* Pairs with the Copilot Studio mark on the left: these two pickers are the
+              Gemini half of the row. Marks the destination without spending a column
+              on a word the panel heading already says. */}
+          <GeminiMark s={18} />
           <Select
             agentTarget={`env-project:${env.url}`}
             value={pair?.project ?? ''}

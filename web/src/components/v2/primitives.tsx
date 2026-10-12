@@ -299,8 +299,16 @@ export function Ledger({ lines, limit }: {
  * The two clouds, drawn rather than fetched.
  *
  * Inline SVG on purpose: a remote logo is a request that can fail, and a broken
- * image on the sign-in screen makes a working product look dead. These are simple
- * vendor-coloured marks, not exact brand lockups.
+ * image on the sign-in screen makes a working product look dead.
+ *
+ * Google is the GENUINE "G" (logo_googleg_48dp) -- the same paths and official
+ * hexes Google ships on its own Sign-In button, copied verbatim from the asset
+ * already in this repo at assets/icons/google.svg. It replaced a hand-drawn
+ * four-colour spark that read as a generic sparkle rather than as Google, which
+ * is the one thing this card exists to say. Inlined rather than imported so the
+ * "drawn, not fetched" property above still holds: no bundler URL, no <img>, no
+ * request that can fail. Microsoft stays a simple four-square mark -- it is
+ * already unmistakable at 40px and needs no lockup.
  */
 export function CloudMark({ platform }: { platform: 'microsoft' | 'google' }) {
   if (platform === 'microsoft') {
@@ -314,11 +322,23 @@ export function CloudMark({ platform }: { platform: 'microsoft' | 'google' }) {
     );
   }
   return (
-    <svg className="v2-mark" viewBox="0 0 24 24" role="img" aria-label="Google">
-      <path d="M12 2.5 13.9 9 20.5 12 13.9 15 12 21.5 10.1 15 3.5 12 10.1 9Z" fill="#4285f4" />
-      <path d="M12 2.5 13.9 9 12 12Z" fill="#ea4335" />
-      <path d="M20.5 12 13.9 15 12 12Z" fill="#fbbc04" />
-      <path d="M12 21.5 10.1 15 12 12Z" fill="#34a853" />
+    <svg className="v2-mark" viewBox="0 0 120 120" role="img" aria-label="Google">
+      <path
+        fill="#4285F4"
+        d="M117.6,61.3636364 C117.6,57.1090909 117.218182,53.0181818 116.509091,49.0909091 L60,49.0909091 L60,72.3 L92.2909091,72.3 C90.9,79.8 86.6727273,86.1545455 80.3181818,90.4090909 L80.3181818,105.463636 L99.7090909,105.463636 C111.054545,95.0181818 117.6,79.6363636 117.6,61.3636364 L117.6,61.3636364 Z"
+      />
+      <path
+        fill="#34A853"
+        d="M60,120 C76.2,120 89.7818182,114.627273 99.7090909,105.463636 L80.3181818,90.4090909 C74.9454545,94.0090909 68.0727273,96.1363636 60,96.1363636 C44.3727273,96.1363636 31.1454545,85.5818182 26.4272727,71.4 L6.38181818,71.4 L6.38181818,86.9454545 C16.2545455,106.554545 36.5454545,120 60,120 L60,120 Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M26.4272727,71.4 C25.2272727,67.8 24.5454545,63.9545455 24.5454545,60 C24.5454545,56.0454545 25.2272727,52.2 26.4272727,48.6 L26.4272727,33.0545455 L6.38181818,33.0545455 C2.31818182,41.1545455 0,50.3181818 0,60 C0,69.6818182 2.31818182,78.8454545 6.38181818,86.9454545 L26.4272727,71.4 L26.4272727,71.4 Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M60,23.8636364 C68.8090909,23.8636364 76.7181818,26.8909091 82.9363636,32.8363636 L100.145455,15.6272727 C89.7545455,5.94545455 76.1727273,0 60,0 C36.5454545,0 16.2545455,13.4454545 6.38181818,33.0545455 L26.4272727,48.6 C31.1454545,34.4181818 44.3727273,23.8636364 60,23.8636364 L60,23.8636364 Z"
+      />
     </svg>
   );
 }

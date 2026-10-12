@@ -6,6 +6,7 @@ import {
   Btn, Chip, Inspector, InspectorHead, InspectorSection, KeyValue, Modal, Note, NoteRow, Panel,
   SelectBar, SkeletonRows, Tick, WizardFooter,
 } from '../../components/v2/primitives.tsx';
+import { GoogleMark, MicrosoftMark } from '../../components/v2/productMarks.tsx';
 import { markProgress, useResource } from '../../v2/data/cache.ts';
 import { useSource, type CandidatePage, type UserRow } from '../../v2/data/index.ts';
 import {
@@ -436,8 +437,12 @@ export default function MapUsersV2() {
                 label="Select all on this page"
                 onToggle={togglePage}
               />
-              <span className="v2-rowhead-src">Source</span>
+              {/* A person's two ACCOUNTS, so these are the plain vendor marks, not
+                  Copilot Studio / Gemini — no agent product is involved in mapping a
+                  human, and saying otherwise on a row of people would be false. */}
+              <span className="v2-rowhead-src"><MicrosoftMark /> Source</span>
               <span className="v2-rowhead-dest">
+                <GoogleMark />
                 Destination
                 <div className="v2-fdd" ref={filterRef}>
                   <button

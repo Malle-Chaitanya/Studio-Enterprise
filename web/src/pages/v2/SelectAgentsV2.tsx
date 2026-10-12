@@ -10,6 +10,7 @@ import { useResource } from '../../v2/data/cache.ts';
 import { useSource, type AgentRow } from '../../v2/data/index.ts';
 import { IcoChevronLeft, IcoChevronRight, IcoPencil, IcoRefresh, IcoSearch } from '../../icons.tsx';
 import { fetchDestinationNames, saveDestinationName } from '../../api.ts';
+import { CopilotStudioMark, GeminiMark, GoogleMark, MicrosoftMark } from '../../components/v2/productMarks.tsx';
 
 const PAGE_SIZES = [25, 50, 100, 200] as const;
 
@@ -266,10 +267,17 @@ export default function SelectAgentsV2() {
         {/* Same flex shape as the real rows below (checkbox + nmw + why), so these
             labels sit exactly above the columns they name instead of needing a
             hand-tuned offset that drifts the moment either side changes. */}
+        {/* VENDOR marks on the headings, PRODUCT marks on the rows: the column is
+            "the Microsoft side" / "the Google side", and each row then names the
+            specific product moving across it (Copilot Studio -> Gemini). Both sizes
+            are 16 on purpose -- the mark is a flex child ahead of `.nmw`, so a 14px
+            heading mark over a 16px row mark would push the two Source columns 2px
+            out of line down the whole list. */}
         <div className="v2-row v2-rowhead2 v2-row--agentsel">
           <span className="v2-rowhead2-check" aria-hidden="true" />
+          <MicrosoftMark s={16} />
           <span className="nmw">Source name</span>
-          <span className="why">Destination name</span>
+          <span className="why"><GoogleMark s={16} /> Destination name</span>
         </div>
         {byEnv.map(([env, list]) => {
           const on = list.filter((r) => chosen.has(r.botId)).length;
@@ -298,6 +306,11 @@ export default function SelectAgentsV2() {
                   onKeyDown={(e) => { if (e.key === 'Enter') toggle(r.botId); }}
                 >
                   <Tick state={chosen.has(r.botId) ? 'on' : 'off'} label={r.name} onToggle={() => toggle(r.botId)} />
+                  {/* Per ROW, not just in the heading. The destination name defaults to
+                      the source name, so the overwhelming case is the same string twice
+                      — at which point a heading two rows up is the only thing saying
+                      which column is which, and it scrolls away. */}
+                  <CopilotStudioMark s={16} />
                   <span className="nmw">
                     <span className="nm">{r.name}</span>
                     <span className="kind">
@@ -312,6 +325,7 @@ export default function SelectAgentsV2() {
                       not just a label on this screen. */}
                   <span className="why">
                     <span className="v2-destname">
+                      <GeminiMark s={16} />
                       <input
                         className="v2-destname-input"
                         value={destFor(r)}

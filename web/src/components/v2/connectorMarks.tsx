@@ -34,11 +34,22 @@
  * never renders blank.
  */
 import { useState, type ReactNode } from 'react';
-import microsoft365Icon from '../../assets/icons/microsoft365.png';
+import microsoftIcon from '../../assets/icons/Microsoft.svg';
 import googleIcon from '../../assets/icons/google.svg';
 
 /** Tier 1 — real traced official outline + official hex (Simple Icons, CC0). */
 const OFFICIAL_MARKS: Record<string, { hex: string; d: string; viewBox?: string }> = {
+  /**
+   * The ATLASSIAN group, not a connector. Its members are Jira, Confluence, GitHub and
+   * GitLab -- two of which are not Atlassian products at all -- so no member's icon can
+   * stand for the group, and borrowing one is exactly how this tile ended up showing
+   * Confluence's navy (#172B4D) under the label "Atlassian". Simple Icons, CC0, the same
+   * source as the connector marks below.
+   */
+  atlassian: {
+    hex: '0052CC',
+    d: 'M7.12 11.084a.683.683 0 00-1.16.126L.075 22.974a.703.703 0 00.63 1.018h8.19a.678.678 0 00.63-.39c1.767-3.65.696-9.203-2.406-12.52zM11.434.386a15.515 15.515 0 00-.906 15.317l3.95 7.9a.703.703 0 00.628.388h8.19a.703.703 0 00.63-1.017L12.63.38a.664.664 0 00-1.196.006z',
+  },
   shared_jira: {
     hex: '0052CC',
     d: 'M11.571 11.513H0a5.218 5.218 0 0 0 5.232 5.215h2.13v2.057A5.215 5.215 0 0 0 12.575 24V12.518a1.005 1.005 0 0 0-1.005-1.005zm5.723-5.756H5.736a5.215 5.215 0 0 0 5.215 5.214h2.129v2.058a5.218 5.218 0 0 0 5.215 5.214V6.758a1.001 1.001 0 0 0-1.001-1.001zM23.013 0H11.455a5.215 5.215 0 0 0 5.215 5.215h2.129v2.057A5.215 5.215 0 0 0 24 12.483V1.005A1.001 1.001 0 0 0 23.013 0Z',
@@ -174,7 +185,7 @@ const OFFICIAL_MARKS: Record<string, { hex: string; d: string; viewBox?: string 
  * (the same asset Google ships for its own Sign-In button) — not an approximation.
  */
 const GROUP_ICON_OVERRIDES: Record<string, string> = {
-  ms_graph: microsoft365Icon,
+  ms_graph: microsoftIcon,
   google_service_account: googleIcon,
 };
 
@@ -182,6 +193,19 @@ const GROUP_ICON_OVERRIDES: Record<string, string> = {
 export function groupIconOverride(groupId: string | undefined): string | undefined {
   return groupId ? GROUP_ICON_OVERRIDES[groupId] : undefined;
 }
+
+/**
+ * Credential-group ids are not connector ids, so a group never matched OFFICIAL_MARKS and
+ * fell all the way to the initials tile -- which is the whole reason the HubSpot group
+ * rendered as a plain "HU" square while the real HubSpot sprocket sat two screens up in
+ * this very file, keyed `shared_hubspot`.
+ *
+ * Only for groups that ARE one brand. `atlassian` and `ms_graph` span several and get
+ * their own mark instead (above, and GROUP_ICON_OVERRIDES).
+ */
+const GROUP_MARK_ALIAS: Record<string, string> = {
+  hubspot: 'shared_hubspot',
+};
 
 /** Tier 2 — hand-approximated multi-color marks for brands not carried by
  *  Simple Icons (withdrawn on trademark-policy grounds). Real documented
@@ -320,7 +344,7 @@ export function ConnectorMark({ connectorId, name, emojiHint, iconUrl }: {
       />
     );
   }
-  const official = OFFICIAL_MARKS[connectorId];
+  const official = OFFICIAL_MARKS[connectorId] ?? OFFICIAL_MARKS[GROUP_MARK_ALIAS[connectorId] ?? ''];
   if (official) {
     return (
       <svg viewBox={official.viewBox ?? '0 0 24 24'} role="img" aria-label={name}>
