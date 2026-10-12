@@ -5,7 +5,7 @@ import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
 import { V2Layout } from '../../components/v2/V2Layout.tsx';
 import {
   Btn, Inspector, InspectorActions, InspectorHead,
-  Fold, InspectorSection, KeyValue, Note, SkeletonRows, WizardFooter,
+  InspectorSection, KeyValue, Note, SkeletonRows, WizardFooter,
 } from '../../components/v2/primitives.tsx';
 import { FidelityCard, FidelityDetail, useFidelity } from '../../components/v2/fidelity.tsx';
 import { AgentDecisions } from '../../components/v2/AgentDecisions.tsx';
@@ -107,7 +107,13 @@ export default function ConnectorsV2() {
     return [...m.values()].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   }, [rows]);
 
-  const deadGroups = groups.filter((g) => g.rows.every((r) => r.state === 'cannot-migrate'));
+  // Connectors with no registry entry are dropped from this step entirely: there is no
+  // credential to enter and nothing to fix here, so listing them only pads the work with
+  // dead ends. They are NOT hidden -- the run reports each one per agent as a `lost`
+  // fidelity note naming the exact operations that agent used (orchestrator.ts, the
+  // `unsupportedForThisAgent` pass), which ReportV2 counts as noteworthy and opens by
+  // itself. That is strictly more than this list said, and it says it about the agents
+  // actually being migrated rather than everything the environment scan happened to see.
   const usableGroups = groups.filter((g) => !g.rows.every((r) => r.state === 'cannot-migrate'));
 
   /**
@@ -290,7 +296,11 @@ export default function ConnectorsV2() {
                   onClick={() => { setPicked(row.connectorId); setExpanded(g.id); }}
                 >
                   <span className="cf-connector-tile-mark">
-                    <ConnectorMark connectorId={row.connectorId} name={g.name} emojiHint={row.req?.icon} iconUrl={g.iconUrl ?? row.req?.iconUrl} />
+                    {/* `g.id`, not `row.connectorId`. For an ungrouped connector these are the same
+                        value (see `groups` above), but for a GROUP the representative row is
+                        whichever member this agent happened to use -- so the mark lookup was
+                        answering about a member instead of about the group. */}
+                    <ConnectorMark connectorId={g.id} name={g.name} emojiHint={row.req?.icon} iconUrl={g.iconUrl ?? row.req?.iconUrl} />
                   </span>
                   <span className="cf-connector-tile-nm">{shortName}</span>
                   <span className="cf-connector-tile-tip" role="tooltip">
@@ -306,26 +316,6 @@ export default function ConnectorsV2() {
             })}
           </div>
         </div>
-        {/* Not in our registry: nothing to enter, nothing to fix here. Folded so
-            the list is the work, not the work plus two dead ends. Kept reachable
-            because "why is this agent's action missing" is answered here. */}
-        {deadGroups.length > 0 && (
-          <Fold
-            title={`${deadGroups.length} connector${deadGroups.length > 1 ? 's' : ''} we cannot call`}
-            note="not in our registry — their actions will not be reproduced"
-          >
-            {deadGroups.map((g) => (
-              <div className="cf-connector-row cf-connector-row--dead" key={g.id}>
-                <span className="cf-connector-glyph" aria-hidden="true">×</span>
-                <span className="cf-connector-tx">
-                  <span className="cf-connector-nm">{g.name}</span>
-                  <span className="cf-connector-sb">{g.rows.map((r) => r.connectorId).join(', ')}</span>
-                </span>
-                <span className="cf-badge cf-badge--danger">cannot migrate</span>
-              </div>
-            ))}
-          </Fold>
-        )}
       </>
 
       {picked && expanded && (() => {
