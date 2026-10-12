@@ -80,16 +80,26 @@ const MS_NATIVE_FIELDS = [
   { key: 'client_secret', label: 'Client Secret',   type: 'password' as const, hint: 'Azure Portal → App registrations → Certificates & secrets → New client secret' },
 ];
 
-// iconUrl values are Microsoft's own real official icons (api.powerapps.com connector
-// catalog, confirmed 2026-10-07) — same source as the registry's own `iconUrl` field.
-const MS_CONNECTOR_LABELS: Record<string, { icon: string; iconUrl: string; name: string }> = {
-  shared_teams:           { icon: '🟣', name: 'Microsoft Teams', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1829/1.0.1829.5052/teams/icon.png' },
-  shared_office365:       { icon: '📧', name: 'Office 365 / Exchange', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1819/1.0.1819.4795/office365/icon.png' },
-  shared_sharepointonline:{ icon: '📂', name: 'SharePoint Online', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1827/1.0.1827.4913/sharepointonline/icon.png' },
-  shared_onedrive:        { icon: '☁️', name: 'OneDrive', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1827/1.0.1827.4902/onedriveforbusiness/icon.png' },
-  shared_dynamicscrmonline:{ icon: '💎', name: 'Dynamics 365 / Dataverse', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1823/1.0.1823.4837/dynamicscrmonline/icon.png' },
-  shared_planner:         { icon: '📋', name: 'Microsoft Planner', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1825/1.0.1825.4855/planner/icon.png' },
-  shared_excelonline:     { icon: '📊', name: 'Excel Online', iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1819/1.0.1819.4795/excelonline/icon.png' },
+/**
+ * Local NAMES and emoji only — deliberately no urls.
+ *
+ * This table used to carry Microsoft's icon urls inline, copied out of the connector
+ * catalog. They are version-pinned
+ * (`.../releases/v1.0.1819/1.0.1819.4795/office365/icon.png`), so every one of them
+ * stops resolving the next time Microsoft re-pins a release, and nothing in a source
+ * file can notice. The live url now arrives per request on
+ * `ConnectorRequirement.iconUrl`, fed by services/connectorIconCatalog.ts, which
+ * re-reads the catalog per environment — so it repairs itself where a literal here
+ * could only rot. The emoji stays as the offline fallback.
+ */
+const MS_CONNECTOR_LABELS: Record<string, { icon: string; name: string }> = {
+  shared_teams:           { icon: '🟣', name: 'Microsoft Teams' },
+  shared_office365:       { icon: '📧', name: 'Office 365 / Exchange' },
+  shared_sharepointonline:{ icon: '📂', name: 'SharePoint Online' },
+  shared_onedrive:        { icon: '☁️', name: 'OneDrive' },
+  shared_dynamicscrmonline:{ icon: '💎', name: 'Dynamics 365 / Dataverse' },
+  shared_planner:         { icon: '📋', name: 'Microsoft Planner' },
+  shared_excelonline:     { icon: '📊', name: 'Excel Online' },
 };
 
 function MsNativeSection({ session, detectedMsIds, reqs }: {
@@ -220,7 +230,10 @@ function MsNativeSection({ session, detectedMsIds, reqs }: {
               const m = MS_CONNECTOR_LABELS[id];
               return m ? (
                 <span key={id} style={{ marginRight: 8, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <IconGlyph icon={m.icon} iconUrl={m.iconUrl} size={14} /> {m.name}
+                  {/* The live, per-environment icon from the catalog. The emoji beside
+                      it only shows when this connector is absent from that
+                      environment's catalog, which does happen. */}
+                  <IconGlyph icon={m.icon} iconUrl={reqs?.get(id)?.iconUrl} size={14} /> {m.name}
                 </span>
               ) : null;
             })}

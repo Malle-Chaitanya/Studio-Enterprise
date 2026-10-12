@@ -25,6 +25,8 @@ import { mapAgent } from '../services/mapper.js';
 import { upsertSecretIfChanged, preflightSecretAccess, deleteSecret, getSecretOwnership, getEntraSecret } from '../services/secretManager.js';
 import { validateConnectorCredentials } from '../services/connectorValidator.js';
 import { logger } from '../logger.js';
+import { iconsFor } from '../services/connectorIconCatalog.js';
+import type { ConnectorIconEntry } from '../db/repos/connectorIcons.js';
 import {
   runKeyFor,
   startRun,
@@ -1248,6 +1250,14 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
     session.tenantId && envId
       ? { tenantId: session.tenantId, environmentId: envId, scope: credentialScope(session) }
       : undefined;
+  // Microsoft's own official icon for every connector in this environment, read from the
+  // cache in ONE projected findOne. Never fetches here: `iconsFor` fires a refresh off the
+  // request path when the catalog is stale and serves whatever is already stored, so this
+  // line cannot add network latency to a screen the prod logs show being loaded ten times
+  // a visit. An empty map just means the tiles keep the fallback chain they already had.
+  const catalogIcons: Record<string, ConnectorIconEntry> =
+    capCtx ? await iconsFor(capCtx).catch(() => ({})) : {};
+
   const discovered = new Map<string, { displayName: string; bindable: boolean }>();
   if (capCtx) {
     for (const id of wantedIds) {
@@ -1298,7 +1308,11 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
       connectorId: id,
       name: def.name,
       icon: def.icon,
-      iconUrl: def.iconUrl,
+      // A deliberately pinned `def.iconUrl` wins; otherwise Microsoft's own catalog art,
+      // which is the only source covering a connector no registry entry was ever written
+      // for. Today no registry entry sets one, so in practice this IS the catalog -- the
+      // ordering is here so pinning one later does not need this line changed too.
+      iconUrl: def.iconUrl ?? catalogIcons[id]?.uri,
       category: def.category,
       docsUrl: def.docsUrl,
       authKind: def.authKind ?? 'bearer',

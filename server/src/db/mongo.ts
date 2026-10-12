@@ -144,6 +144,18 @@ async function ensureCollections(): Promise<void> {
     { unique: true },
   );
 
+  // 11c. connectorIconCatalog — Microsoft's own official icon url for every connector in
+  //      the customer's environment, one document per environment. Measured 2026-10-12:
+  //      1309 of 1309 connectors publish `properties.iconUri`, which is the only source
+  //      that covers connectors we have never seen. Refreshed off the request path (see
+  //      services/connectorIconCatalog.ts); scoped like the op indexes beside it because
+  //      the set of installed connectors is the customer's business.
+  await ensure('connectorIconCatalog');
+  await db.collection('connectorIconCatalog').createIndex(
+    { scope: 1, environmentId: 1 },
+    { unique: true },
+  );
+
   // 12. entraAppCredentials — per (customer, Microsoft tenant) reference to a
   //     Secret Manager-stored Entra app credential, so a NEW site under an
   //     already-onboarded tenant can auto-provision a connector without asking
