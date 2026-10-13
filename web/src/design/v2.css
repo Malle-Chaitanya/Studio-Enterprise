@@ -437,6 +437,24 @@
    render exactly as before. */
 .v2-band .cell.with-icon { display: flex; align-items: flex-start; gap: 8px; }
 .v2-band .cell-icon { flex: 0 0 auto; margin-top: 2px; }
+/* A readout that is also the control opening the list behind it. Every reset
+   here undoes a <button> default that would otherwise make it look unlike the
+   plain cells beside it (centred text, UA font, grey chrome); `border: 0` has
+   to restore `border-right` explicitly because `button.cell` outranks `.cell`. */
+.v2-band .cell-btn {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  background: none; border: 0; border-right: 1px solid var(--v2-edge);
+  cursor: pointer; border-radius: 0;
+}
+.v2-band .cell-btn.with-icon { display: flex; }
+.v2-band .cell-btn:hover { background: var(--v2-sand); }
+.v2-band .cell-btn:focus-visible { outline: 2px solid var(--v2-brand); outline-offset: -2px; }
+.v2-band .cell-caret {
+  display: inline-flex; vertical-align: middle; margin-left: 5px;
+  color: var(--v2-ink-4); transition: transform .15s ease;
+}
+.v2-band .cell-caret.open { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .v2-band .cell-caret { transition: none; } }
 /* The controls cell must never sit on top of a readout: with six cells the band
    wraps, and a `flex-basis` smaller than the controls themselves let them overlap
    the last number. Basis is now the real content width, and it wraps instead.
