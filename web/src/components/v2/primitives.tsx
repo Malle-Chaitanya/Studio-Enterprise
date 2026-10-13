@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { IcoArrowLeft, IcoCheck, IcoMinus } from '../../icons.tsx';
+import { IcoArrowLeft, IcoCheck, IcoChevronDown, IcoMinus } from '../../icons.tsx';
 
 /**
  * v2 primitives.
@@ -49,23 +49,51 @@ export type BandTone = 'plain' | 'ok' | 'warn' | 'bad' | 'amber';
  * already pick meaningfully different hues per reading (blue for a neutral
  * count, red only once something has actually failed, etc.).
  */
-export function BandCell({ label, value, note, tone = 'plain', icon }: {
+export function BandCell({ label, value, note, tone = 'plain', icon, onClick, expanded }: {
   label: string;
   value: ReactNode;
   note?: string;
   tone?: BandTone;
   icon?: ReactNode;
+  /**
+   * Makes this readout the control that reveals what it counts. A number alone
+   * says three; the only way to see WHICH three is to open the list, so the
+   * number itself is the obvious place to click.
+   */
+  onClick?: () => void;
+  /** Required with `onClick` — drives the caret AND `aria-expanded`, so what a
+   *  sighted person sees and what a screen reader is told cannot drift apart. */
+  expanded?: boolean;
 }) {
-  return (
-    <div className={icon ? 'cell with-icon' : 'cell'}>
+  const body = (
+    <>
       {icon && <span className="cell-icon">{icon}</span>}
       <div className="cell-body">
-        <label>{label}</label>
+        <label>
+          {label}
+          {onClick && (
+            // Not a decoration: a bare number gives no hint it can be opened.
+            <span className={expanded ? 'cell-caret open' : 'cell-caret'} aria-hidden="true">
+              <IcoChevronDown s={11} />
+            </span>
+          )}
+        </label>
         <span className={`v${tone === 'plain' ? '' : ` ${tone}`}`}>{value}</span>
         {note && <span className="s">{note}</span>}
       </div>
-    </div>
+    </>
   );
+  const cls = icon ? 'cell with-icon' : 'cell';
+  // A real <button>, not a div with onClick: it has to be reachable by keyboard
+  // and announce its own expanded state, and every other BandCell on the band
+  // stays a plain div so nothing that is only a readout claims to be operable.
+  return onClick
+    ? (
+      <button type="button" className={`${cls} cell-btn`} onClick={onClick} aria-expanded={expanded}>
+        {body}
+      </button>
+    )
+    : <div className={cls}>{body}</div>;
 }
 
 export function Band({ children, aside }: { children: ReactNode; aside?: ReactNode }) {

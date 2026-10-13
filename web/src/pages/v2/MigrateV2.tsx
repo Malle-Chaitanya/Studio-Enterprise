@@ -64,6 +64,15 @@ export default function MigrateV2() {
   const source = useSource();
 
   const [dryRun, setDryRun] = useState<'dry' | 'live'>('dry');
+  /**
+   * Is the roster behind "In this run" open?
+   *
+   * The list used to sit open on the page permanently, which pushed the thing a
+   * person comes here to press — the run button — below a column of agent rows
+   * that most visits never need to read. Collapsed by default, and the count
+   * that names it is the control that opens it.
+   */
+  const [rosterOpen, setRosterOpen] = useState(false);
   const [toast, setToast] = useState('');
   const [lines, setLines] = useState<RunLine[]>([]);
   const [agents, setAgents] = useState<RunAgent[]>([]);
@@ -315,6 +324,9 @@ export default function MigrateV2() {
   const unverified = agents.filter((a) => a.state === 'created').length;
   const failed = agents.filter((a) => a.state === 'failed').length;
 
+  /** There is a pre-run roster to show. Gates both the band control and the list. */
+  const rosterReady = !running && !finished && fid.agents.length > 0;
+
   /**
    * A dry run that finished clean has nothing left to decide — the next real action
    * IS a live migration, not another dry run. Without this the toggle up top was the
@@ -334,8 +346,13 @@ export default function MigrateV2() {
             own once a dry run finishes clean (see `readyForLive`). There is
             deliberately no control left to jump straight to a live run. */}
         <Band>
+          {/* Only a control when there is in fact a roster to reveal: during a run
+              the panel below already lists every agent with its live state, and a
+              button that opens nothing is worse than no button. */}
           <BandCell label="In this run" value={planned || agents.length} note="agents" tone="warn"
-            icon={<span style={{ color: 'var(--v2-brand)' }}><IcoStack s={16} /></span>} />
+            icon={<span style={{ color: 'var(--v2-brand)' }}><IcoStack s={16} /></span>}
+            onClick={rosterReady ? () => setRosterOpen((v) => !v) : undefined}
+            expanded={rosterReady ? rosterOpen : undefined} />
           {dryRun === 'dry'
             ? <BandCell label="Staged" value={staged} note="read, mapped, not written" tone="ok"
               icon={<span style={{ color: '#12855a' }}><IcoCheckCircle s={16} /></span>} />
@@ -353,37 +370,37 @@ export default function MigrateV2() {
             icon={<span style={{ color: '#0b8f87' }}><IcoRing s={16} /></span>} />
         </Band>
         <BandRule pct={pct} />
+        {/* The roster the count above stands for: WHICH agents are about to be
+            touched and what each one is going to cost, from the assessment
+            already read for the panel on the right. It lives inside this panel,
+            directly under the cell that opens it, so the answer appears where
+            the question was asked rather than further down the page. */}
+        {rosterReady && rosterOpen && (
+          <div className="v2-band-roster">
+            {fid.agents.map((a) => {
+              const r = fid.reviews[a.botId];
+              const worst = r ? worstVerdict(r.counts) : undefined;
+              return (
+                <div className="v2-row" key={a.botId} data-agent-target={`agent:${a.botId}`}>
+                  <span className="nmw">
+                    <span className="nm">{a.name}</span>
+                    {envName(a.env) && <span className="kind">{envName(a.env)}</span>}
+                  </span>
+                  <span className="st" style={{ marginLeft: 'auto' }}>
+                    {!r
+                      ? <Chip tone="plain">{fid.unknown.includes(a.name) ? 'unknown' : 'reading'}</Chip>
+                      : worst === 'lost'
+                        ? <Chip tone="bad">lossy</Chip>
+                        : worst === 'needs-review' ? <Chip tone="you">check</Chip> : <Chip tone="ok">clean</Chip>}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Panel>
 
       <FidelityCard fid={fid} />
-
-      {/* Before a run this screen said almost nothing: a title, a toggle and a
-          button. What a person needs to see first is WHICH agents are about to be
-          touched and what each one is going to cost, from the assessment already
-          read for the panel on the right. */}
-      {!running && !finished && fid.agents.length > 0 && (
-        <div>
-          {fid.agents.map((a) => {
-            const r = fid.reviews[a.botId];
-            const worst = r ? worstVerdict(r.counts) : undefined;
-            return (
-              <div className="v2-row" key={a.botId} data-agent-target={`agent:${a.botId}`}>
-                <span className="nmw">
-                  <span className="nm">{a.name}</span>
-                  {envName(a.env) && <span className="kind">{envName(a.env)}</span>}
-                </span>
-                <span className="st" style={{ marginLeft: 'auto' }}>
-                  {!r
-                    ? <Chip tone="plain">{fid.unknown.includes(a.name) ? 'unknown' : 'reading'}</Chip>
-                    : worst === 'lost'
-                      ? <Chip tone="bad">lossy</Chip>
-                      : worst === 'needs-review' ? <Chip tone="you">check</Chip> : <Chip tone="ok">clean</Chip>}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {/* Connectors are opened on demand, so this screen has to say when something
           needs credentials — otherwise a run starts against connectors that cannot
