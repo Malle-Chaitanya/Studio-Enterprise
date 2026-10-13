@@ -2758,17 +2758,31 @@ async function execute(
                   // confirmed 2026-09-01: the migrated sub-agent booked a meeting without ever
                   // asking for a title or duration, a real behavior regression from the
                   // source agent, not a difference in how the two platforms' models behave.
+                  //
+                  // An ORDINARY topic has no instructions of its own — the real behavior
+                  // rules (what to call, what to confirm, how to format output) live on the
+                  // ROOT agent's own instructions. ADK transfers the whole turn to this
+                  // sub-agent once routed here, so the root's instruction is no longer in
+                  // play for the rest of the conversation — without prepending it, the
+                  // sub-agent runs on nothing but the one-line routing note below and
+                  // improvises everything else from general knowledge. Confirmed live
+                  // 2026-10-13 on a real "Credit Facility Amendment" topic: the sub-agent
+                  // handling the agent's entire multi-step amendment+email flow had no
+                  // instruction beyond "handle this topic," producing inconsistent
+                  // formatting/sequencing/recipient choices run to run — a second instance
+                  // of the exact same class of silent rule-loss as the booking regression
+                  // above, just for ordinary topics instead of child agents.
                   instruction:
                     t.isChildAgent && t.childAgentInstructions
                       ? t.childAgentInstructions
-                      : `You handle the "${name}" topic, migrated from Microsoft Copilot Studio.
-` +
-                        (t.aiPrompt ? `
-Original AI Builder prompt:
-${t.aiPrompt}
-` : '') +
-                        `
-If the request is outside "${name}", say so briefly so the main assistant takes over.`,
+                      : [
+                          row.mapped!.instruction,
+                          `---\n\nYou are currently handling the "${name}" topic specifically.` +
+                            (t.aiPrompt ? `\n\nOriginal AI Builder prompt:\n${t.aiPrompt}` : '') +
+                            `\n\nIf the request is clearly outside "${name}", say so briefly so the main assistant takes over.`,
+                        ]
+                          .filter(Boolean)
+                          .join('\n\n'),
                   liveConnectors: childLiveConnectors?.length ? childLiveConnectors : undefined,
                 };
               });
