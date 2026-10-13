@@ -696,6 +696,17 @@ function translateQuery(a: FlowActionIR, flow: FlowIR, state: State) {
     `function executeScript(event) {`,
     `  var raw = event.getParameter(${JSON.stringify(sourceOutVar)});`,
     `  var parsed = JSON.parse(raw);`,
+    // Graph answers a failed call (e.g. "FileOpenHostTooManyRequests" throttling on a
+    // frequently-opened workbook) with an {error:...} envelope, not a thrown exception —
+    // confirmed live 2026-10-12 on a real GetRateSheetBand run. Falling straight through to
+    // `parsed.text || []` turned that failure into an indistinguishable empty result, which
+    // the agent then reported as "no matching row" instead of "the lookup failed." That is
+    // exactly the overclaiming this project's fidelity rules exist to prevent: a transient
+    // infrastructure error must surface as an error, never as a confident negative.
+    `  if (parsed && parsed.error) {`,
+    `    event.setParameter(${JSON.stringify(outVar)}, JSON.stringify({ error: (parsed.error.message || parsed.error.code || 'lookup failed') }));`,
+    `    return;`,
+    `  }`,
     `  var grid = parsed.text || [];`,
     `  var headers = grid[0] || [];`,
     `  var matches = [];`,

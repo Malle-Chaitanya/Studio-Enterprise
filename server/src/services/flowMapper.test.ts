@@ -257,6 +257,63 @@ describe('translateFlow — Excel Table connector + Query filter (real GetRateSh
     const params = (result.integrationDefinition as { integrationParameters: { key: string; dataType: string }[] }).integrationParameters;
     expect(params.find((p) => p.key === 'NewLimit')?.dataType).toBe('DOUBLE_VALUE');
   });
+
+  it('surfaces a failed upstream Graph call as an error instead of silently reporting zero matches', () => {
+    // Live 2026-10-12, real GetRateSheetBand run: Graph throttled the Excel workbook open
+    // ("FileOpenHostTooManyRequests") and answered with an {error:...} envelope instead of
+    // a thrown exception. Without this check, `parsed.text || []` turned that failure into
+    // an empty array indistinguishable from a genuine "no band matches this limit" result —
+    // the deployed agent then told the customer "no matching rate" for data that actually
+    // exists, which is exactly the overclaiming this project's fidelity rules forbid. Locking
+    // this down directly: a future edit to translateQuery must not silently drop the check.
+    const flow: FlowIR = {
+      id: 'flow-5',
+      name: 'GetRateSheetBand',
+      trigger: { type: 'Request', kind: 'Skills', inputSchema: [{ name: 'number', displayName: 'NewLimit', dataType: 'number', required: true }] },
+      actions: [
+        {
+          id: 'List_rows_present_in_a_table',
+          type: 'OpenApiConnection',
+          runAfter: {},
+          raw: {},
+          connector: {
+            connectionReferenceName: 'shared_excelonlinebusiness',
+            operationId: 'GetItems',
+            parameters: { source: 'me', drive: 'driveId123', file: 'fileId456', table: '{TABLE-GUID}' },
+          },
+        },
+        {
+          id: 'Filter_array',
+          type: 'Query',
+          runAfter: { List_rows_present_in_a_table: ['SUCCEEDED'] },
+          raw: {
+            inputs: {
+              from: "@outputs('List_rows_present_in_a_table')?['body/value']",
+              where: "@and(lessOrEquals(int(item()['Limit Band Min']), triggerBody()['number']), greater(int(item()['Limit Band Max']), triggerBody()['number']))",
+            },
+          },
+        },
+        {
+          id: 'Respond_to_the_agent',
+          type: 'Response',
+          runAfter: { Filter_array: ['SUCCEEDED'] },
+          raw: {},
+          response: { statusCode: 200, bodyTemplate: { matchingrows: "@{body('Filter_array')}" }, schema: { properties: { matchingrows: { title: 'MatchingRows' } } } },
+        },
+      ],
+      connectionReferences: [{ name: 'shared_excelonlinebusiness', connectorId: 'shared_excelonlinebusiness' }],
+      unmapped: [],
+    };
+    const result = translateFlow(flow, { integrationName: integrationNameForFlow(flow.name) });
+    const tasks = (result.integrationDefinition as { taskConfigs: { task: string; parameters: { script?: { value: { stringValue: string } } } }[] }).taskConfigs;
+    const script = tasks.find((t) => t.task === 'JavaScriptTask')!.parameters.script!.value.stringValue;
+
+    expect(script).toContain('parsed.error');
+    // The error path must set the task's real output parameter (not some other name) and
+    // return immediately, so a failed call never falls through into the empty-array branch.
+    expect(script).toMatch(/if\s*\(parsed\s*&&\s*parsed\.error\)\s*\{\s*\n\s*event\.setParameter\("Filter_array_Out"/);
+    expect(script).toMatch(/if\s*\(parsed\s*&&\s*parsed\.error\)[\s\S]*?return;[\s\S]*?var grid = parsed\.text/);
+  });
 });
 
 describe('translateFlow — unrecognized connector operation is needs-review, never silently guessed', () => {
