@@ -3,6 +3,7 @@ import type { KnowledgeClassification } from './services/knowledgeClassifier.js'
 import type { ToolInputIR, ToolOutputFieldIR, McpBindingIR } from './services/toolPayload.js';
 import type { VerificationEvidence } from './services/verify.js';
 
+// These types belong to CloudFuze Studio Migrate, which moves agents from Copilot Studio to Gemini Enterprise.
 /**
  * Types shared across the migration pipeline.
  *
