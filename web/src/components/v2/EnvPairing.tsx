@@ -162,13 +162,13 @@ export function EnvPairing({ session, onChange, found }: {
             // is not a destination at all. Filtering it out of the list (rather than
             // greying it in) is the difference between "14 things to read before you
             // find the 3 that matter" and "3 things to read."
+            // Just the project's name. The seat count used to ride along here, which
+            // made every option a two-part string to read past at the exact moment the
+            // only question is "which project" — and seats are not what the choice turns
+            // on. Nothing else in the web reads the count, so it is no longer carried.
             options={destList.filter((d) => d.engines.length > 0).map((d) => ({
               id: d.project,
-              // Seat count is undefined (not 0) when it couldn't be read — that must
-              // not be said out loud as "no seats" when it just means "couldn't verify".
-              label: d.licenseCount === undefined
-                ? (d.name ?? d.project)
-                : `${d.name ?? d.project} — ${d.licenseCount} seat${d.licenseCount === 1 ? '' : 's'}`,
+              label: d.name ?? d.project,
             }))}
             onChange={(id) => set(env.url, { project: id, engine: undefined })}
           />

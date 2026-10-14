@@ -294,7 +294,6 @@ const pair: PairSource = {
         project: p.projectId,
         name: p.displayName ?? p.projectId,
         engines: r?.engines.map((e) => ({ id: e.id, displayName: e.displayName })) ?? [],
-        licenseCount: r?.licensedUserCount,
       };
     }));
     return withEngines;

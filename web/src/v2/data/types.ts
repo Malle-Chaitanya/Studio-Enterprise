@@ -123,9 +123,6 @@ export interface DestOption {
   project: string;
   name?: string;
   engines: Array<{ id: string; displayName: string }>;
-  /** ASSIGNED Gemini Enterprise seats in this project. Undefined when unreadable —
-   *  distinct from 0, which means "readable, genuinely no seats". */
-  licenseCount?: number;
 }
 
 /** One environment pointed at one Gemini app. Both must be set to be usable. */
