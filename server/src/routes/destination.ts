@@ -10,6 +10,7 @@ import { connectorCollectionId, normalizeSharePointSiteUrl } from '../services/k
 import { getSession, updateSession, DEFAULT_APP_USER_ID, type Session } from '../sessionStore.js';
 import { chatWithAdkAgent, createAdkSession } from '../services/adkAgentChat.js';
 import { listAdkDeployments } from '../db/repos/adkDeployments.js';
+import { listEnvPairings, saveEnvPairings, soleProject } from '../db/repos/envPairings.js';
 import { getEntraAppCredential, upsertEntraAppCredential } from '../db/repos/entraAppCredentials.js';
 import {
   getKnowledgeConnector,
@@ -61,6 +62,91 @@ async function freshGoogleUserToken(
  * present; otherwise returns an empty list + the session's known project so the
  * UI can fall back to manual entry / the connected project.
  */
+/**
+ * GET /api/destination/pairings?session=…
+ *
+ * The customer's own environment → Gemini app choices, as stored. The browser keeps a copy
+ * too, but this is the authority: a reload, a new tab or a different machine must see the
+ * same pairing, and the server needs it to know where credentials belong.
+ */
+destinationRouter.get('/pairings', async (req, res) => {
+  const session = await getSession(req.query.session as string);
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!session.tenantId) return void res.status(400).json({ error: 'ms_not_connected' });
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  const pairings = await listEnvPairings(appUserId, session.tenantId);
+  res.json({
+    pairings: pairings.map((p) => ({
+      env: p.envUrl, project: p.project, engine: p.engine, assistant: p.assistant,
+    })),
+  });
+});
+
+/**
+ * POST /api/destination/pairings
+ * body: { session, pairs: [{ env, project, engine }] }
+ *
+ * Record where the customer pointed each environment — and make that the project their
+ * credentials are written to.
+ *
+ * THIS IS THE FIX for a choice that never left the browser. `discoverGeminiProject` picks a
+ * project by itself at Google connect and `session.geminiProject` kept it forever, so the
+ * credential routes wrote secrets to a project the customer had never selected. Now an
+ * explicit choice wins over the guess.
+ *
+ * Only when the environments AGREE on one project. Credentials are per customer and a
+ * secret has to live somewhere specific; two environments pointed at two projects give no
+ * single answer, and picking one of them would write the customer's token into a project
+ * they did not choose for it — the exact failure this route exists to end. In that case the
+ * pairings are still stored (the run reads them per environment) and the credential project
+ * is left as it was.
+ */
+destinationRouter.post('/pairings', async (req, res) => {
+  const { session: sessionId, pairs } = req.body as {
+    session?: string;
+    pairs?: Array<{ env?: string; project?: string; engine?: string; assistant?: string }>;
+  };
+  const session = await getSession(sessionId ?? '');
+  if (!session) return void res.status(404).json({ error: 'session_not_found' });
+  if (!session.tenantId) return void res.status(400).json({ error: 'ms_not_connected' });
+  if (!Array.isArray(pairs)) return void res.status(400).json({ error: 'pairs_required' });
+
+  // Both halves or neither: a row holding a project with no engine is a half-made choice,
+  // not a destination, and storing it would make `soleProject` count a project nothing can
+  // actually be created in.
+  const clean = pairs
+    .filter((p) => p?.env && p?.project && p?.engine)
+    .map((p) => ({
+      envUrl: String(p.env), project: String(p.project), engine: String(p.engine),
+      assistant: p.assistant ? String(p.assistant) : 'default_assistant',
+    }));
+
+  const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
+  await saveEnvPairings(appUserId, session.tenantId, clean);
+
+  // Decide from EVERY stored pairing, not just the ones in this request: the screen posts
+  // what it has on screen, and an environment paired on an earlier visit still counts.
+  const all = await listEnvPairings(appUserId, session.tenantId);
+  const chosen = soleProject(all.length ? all : clean.map((c) => ({ project: c.project })));
+  let credentialProject = session.geminiProject ?? '';
+  if (chosen && chosen !== session.geminiProject) {
+    await updateSession(sessionId!, { geminiProject: chosen });
+    credentialProject = chosen;
+    logger.info(
+      { from: session.geminiProject, to: chosen },
+      'pairings: credential project now follows the chosen pairing',
+    );
+  }
+
+  res.json({
+    saved: clean.length,
+    credentialProject,
+    // Said out loud rather than silently keeping the old project: the customer can see why
+    // their choice did not move the destination.
+    ambiguous: !chosen && all.length > 1,
+  });
+});
+
 destinationRouter.get('/projects', async (req, res) => {
   const sessionId = req.query.session as string;
   const session = await getSession(sessionId);

@@ -253,6 +253,35 @@ export interface GeminiDest { project: string; engine: string; assistant: string
 
 /** List the Google Cloud projects the connected admin can access. `defaultProject`
  *  is the discovered Gemini destination, used to pre-select the dropdown. */
+/** The stored environment -> Gemini app pairings for this customer and tenant. */
+export async function fetchPairings(
+  session: string,
+): Promise<Array<{ env: string; project: string; engine: string; assistant?: string }>> {
+  const res = await fetch(`/api/destination/pairings?session=${session}`);
+  if (!res.ok) throw new Error('pairings_failed');
+  const body = (await res.json()) as { pairings?: Array<{ env: string; project: string; engine: string; assistant?: string }> };
+  return body.pairings ?? [];
+}
+
+/**
+ * Persist the pairings, and let the server make the chosen project the one credentials go to.
+ *
+ * `ambiguous` comes back true when environments point at different projects, so there is no
+ * single project for a credential to live in and the server kept the one it had.
+ */
+export async function savePairings(
+  session: string,
+  pairs: Array<{ env: string; project?: string; engine?: string }>,
+): Promise<{ saved: number; credentialProject: string; ambiguous: boolean }> {
+  const res = await fetch('/api/destination/pairings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, pairs }),
+  });
+  if (!res.ok) throw new Error('pairings_save_failed');
+  return (await res.json()) as { saved: number; credentialProject: string; ambiguous: boolean };
+}
+
 export async function fetchProjects(
   session: string,
 ): Promise<{ projects: DestProject[]; manualEntry: boolean; defaultProject?: string }> {

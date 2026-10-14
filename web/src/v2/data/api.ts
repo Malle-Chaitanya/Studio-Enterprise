@@ -16,6 +16,8 @@ import {
   startConnectorConsent,
   connectorConsentStatus,
   type DetectedConnector,
+  fetchPairings,
+  savePairings,
 } from '../../api.ts';
 import { markStale } from './cache.ts';
 import type { ConnectorRow, ConnectorScan, ScopeEnv, V2Source } from './types.ts';
@@ -298,7 +300,26 @@ const pair: PairSource = {
     }));
     return withEngines;
   },
+  /**
+   * Stored pairings, server first.
+   *
+   * sessionStorage is still read as a fallback, and still written by `save` below, because
+   * the run and the Map-users licence check both read those keys directly. But the SERVER
+   * is the authority now: the pairing used to live only in this tab, so a reload or another
+   * machine saw nothing, and — the real damage — the server never learned which project was
+   * chosen and wrote credentials to the one it had discovered by itself instead.
+   */
   read: async (session) => {
+    const stored = await fetchPairings(session).catch(() => null);
+    if (stored?.length) {
+      // Mirror into the keys the run reads, so a pairing made on another machine is
+      // honoured by a run started on this one.
+      const map: Record<string, { project: string; engine: string; assistant: string }> = {};
+      for (const p of stored) map[p.env] = { project: p.project, engine: p.engine, assistant: p.assistant ?? 'default_assistant' };
+      sessionStorage.setItem(`csge_dest_${session}`, JSON.stringify(map));
+      sessionStorage.setItem(`csge_envs_${session}`, JSON.stringify(Object.keys(map)));
+      return stored.map((p) => ({ env: p.env, project: p.project, engine: p.engine }));
+    }
     const raw = sessionStorage.getItem(`csge_dest_${session}`);
     if (!raw) return [];
     try {
@@ -317,6 +338,10 @@ const pair: PairSource = {
     }
     sessionStorage.setItem(`csge_dest_${session}`, JSON.stringify(map));
     sessionStorage.setItem(`csge_envs_${session}`, JSON.stringify(Object.keys(map)));
+    // Then tell the server, which is what makes the choice the credential destination.
+    // Best-effort: a pairing that cannot be persisted still drives THIS session from the
+    // keys above rather than failing the save in front of the customer.
+    await savePairings(session, next).catch(() => undefined);
   },
 };
 

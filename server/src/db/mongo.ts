@@ -156,6 +156,18 @@ async function ensureCollections(): Promise<void> {
     { unique: true },
   );
 
+  // 11d. envPairings — which Gemini app each source environment was pointed at, as the
+  //      CUSTOMER chose it. The choice used to live only in the browser's sessionStorage
+  //      (web/src/v2/data/api.ts's pair.save), so the server never learned it and resolved
+  //      the credential project from `discoverGeminiProject` instead — an admin picked one
+  //      project and their secrets were written to another. Keyed per customer+tenant+env
+  //      rather than per session, because a pairing has to outlive the browser tab.
+  await ensure('envPairings');
+  await db.collection('envPairings').createIndex(
+    { appUserId: 1, tenantId: 1, envUrl: 1 },
+    { unique: true },
+  );
+
   // 12. entraAppCredentials — per (customer, Microsoft tenant) reference to a
   //     Secret Manager-stored Entra app credential, so a NEW site under an
   //     already-onboarded tenant can auto-provision a connector without asking
@@ -396,5 +408,5 @@ async function ensureCollections(): Promise<void> {
     /* best-effort: a count failing must never stop the app booting */
   }
 
-  logger.info('All 19 collections verified with indexes (multi-tenant scoped)');
+  logger.info('All 20 collections verified with indexes (multi-tenant scoped)');
 }
