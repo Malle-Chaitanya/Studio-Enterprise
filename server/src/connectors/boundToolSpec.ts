@@ -215,6 +215,33 @@ export async function buildBoundToolSpecs(
       continue;
     }
 
+    // THE COLUMNS THIS OPERATION ACTUALLY RETURNS, for the arguments written in terms of
+    // them. A query argument like `$filter` or `$select` is only answerable if you know the
+    // field names, and in Copilot the author picked them from a table the product displayed.
+    // The migrated tool had the same list all along - extraction captures it as
+    // `outputSchema` - and then dropped it, so the model wrote the filter from the words in
+    // the question instead. Measured live 2026-10-14: the deployed agent sent
+    // `cr88d_name` against a table whose name column is `cr88d_clientname`, and Dataverse
+    // answered 0x80060888 "Could not find a property named 'cr88d_name'". The names were
+    // sitting in the IR the whole time.
+    //
+    // Rows come back under `value`, so a row's own columns are the `value.<column>` paths;
+    // anything else is envelope. Capped because a wide table would otherwise push the real
+    // description out of the model's view, and a truncated list says so rather than
+    // implying those are all the columns there are.
+    const rowColumns = (tool.outputSchema ?? [])
+      .map((f) => /^value\.([^.]+)$/.exec(f.path ?? '')?.[1])
+      .filter((n): n is string => !!n && !n.startsWith('_'));
+    const columnHint = rowColumns.length
+      ? ` Columns on this table: ${rowColumns.slice(0, 40).join(', ')}`
+        + `${rowColumns.length > 40 ? `, and ${rowColumns.length - 40} more` : ''}.`
+        + ' Use these exact names; do not invent one.'
+      : '';
+    // Only the arguments written in terms of column names. Appending the table's columns to,
+    // say, a page-size argument would be noise the model has to read past on every call.
+    const takesColumnNames = (name: string): boolean =>
+      /^\$(filter|select|orderby|expand|apply)$/i.test(name);
+
     // Anything the author did not pin is the model's to supply.
     const modelArgs = op.parameters
       .filter((p) => !(p.name in fixedArgs))
@@ -228,9 +255,10 @@ export async function buildBoundToolSpecs(
         // a renamed/repurposed parameter like SearchUserV2's searchTerm -> $filter, a bare
         // vendor parameter name with no description at all leaves the model to guess the
         // syntax, which is how it ends up reaching for the generic passthrough tool instead.
+        const base = declared?.description ?? p.description;
         return {
           name: p.name, in: p.in, required: p.required, type: p.type,
-          description: declared?.description ?? p.description,
+          description: takesColumnNames(p.name) ? `${base ?? ''}${columnHint}`.trim() || undefined : base,
         };
       });
 
