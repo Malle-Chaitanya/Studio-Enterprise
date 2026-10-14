@@ -88,7 +88,16 @@ function synthesizeInstruction(ir: AgentIR): { instruction: string; notes: Fidel
   // Split by whether the connector actually HAS a delegated sign-in, because the two are
   // different facts with different remedies: one is a setup step, the other is a permanent
   // limit. Reporting both as "needs review" would hide which is which.
-  const invokerTools = (ir.agentTools ?? []).filter((t) => t.connectionAuthMode === 'invoker');
+  // CONNECTOR tools only. `connectionAuthMode` is recorded on every tool Copilot ran under
+  // a connection, FLOW-backed and built-in tools included, and those carry no connectorId at
+  // all - so they failed both the `impersonated` and `delegable` tests below (each of which
+  // requires one) and fell into `blocked`, reported as "their connector offers no per-user
+  // sign-in". They have no connector to be short of. Measured live 2026-10-14: four flow
+  // tools on Credit Amendment Agent were called lost while GetRateSheetBand answered in the
+  // deployed agent, returning a real rate. A flow's own fidelity notes cover it properly.
+  const invokerTools = (ir.agentTools ?? []).filter(
+    (t) => t.connectionAuthMode === 'invoker' && t.connectorId,
+  );
   if (invokerTools.length) {
     const label = (t: { displayName?: string; name?: string }) => t.displayName || t.name;
     // Three outcomes, three different things to tell the customer: nothing to do, one setup

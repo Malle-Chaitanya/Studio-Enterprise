@@ -2071,15 +2071,21 @@ export async function extractAgent(
         return { id: flowId, name: '(unnamed flow)', actions: [], connectionReferences: [], unmapped: [`fetch failed: ${(e as Error).message}`] };
       }
     });
-    // Honest wording matters here specifically: the flow-migration feature is still being
-    // built (extraction only, as of this note) — flowMapper.ts / applicationIntegration.ts
-    // do not exist yet, so nothing downstream actually creates these in Gemini. Do not
-    // claim "translated"/"migrated" until that's true, or this note becomes exactly the
-    // overclaiming the fidelity-honesty rule forbids.
+    // This note said flow migration was "not yet implemented" because, when it was written,
+    // it was not: flowMapper.ts and applicationIntegration.ts did not exist. They do now, and
+    // the insert phase creates an Application Integration per flow and wires it as a callable
+    // tool - so the note was contradicting per-flow notes in the SAME report, and telling a
+    // customer that four working tools had not been migrated. Understating is still
+    // inaccurate; the rule is honesty, not pessimism.
+    //
+    // EXTRACTION cannot promise the outcome either, though: whether each flow translates, and
+    // how much of it survives, is decided in the insert phase and reported there per flow.
+    // So this says what extraction actually knows - the flows were captured - and points at
+    // the notes that carry the verdict.
     unmapped.push(
-      `${flows.length} agent flow(s) extracted: ${flows.map((f) => f.name).join(', ')}. Flow migration to ` +
-        `Gemini Application Integration is not yet implemented — these flows are captured in the IR but no ` +
-        `tool is created for them in this run.`,
+      `${flows.length} agent flow(s) extracted: ${flows.map((f) => f.name).join(', ')}. Each is translated to ` +
+        `a Gemini Application Integration and wired as a callable tool during the insert phase; the per-flow ` +
+        `notes in this report say how much of each one survived.`,
     );
   }
 

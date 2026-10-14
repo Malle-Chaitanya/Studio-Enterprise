@@ -76,6 +76,32 @@ describe('per-user tool credentials are reported, not silently shared', () => {
     expect(found.find((x) => x.status === 'lost')?.detail).not.toContain('SendEmail');
   });
 
+  it('ignores a tool that has no connector at all', async () => {
+    // A FLOW-backed tool carries connectionAuthMode but no connectorId. It was landing in the
+    // `blocked` bucket - neither `impersonated` nor `delegable` can match without a connector -
+    // and being reported as "their connector offers no per-user sign-in", which is a sentence
+    // about a connector it does not have. Live 2026-10-14 this called four working flow tools
+    // lost, GetRateSheetBand among them, while the deployed agent answered with it.
+    const m = await mapAgent(base([
+      { name: 'GetRateSheetBand', displayName: 'GetRateSheetBand', kind: 'flow', connectionAuthMode: 'invoker' },
+      { name: 'Postoteams', displayName: 'Postoteams', kind: 'flow', connectionAuthMode: 'invoker' },
+    ] as unknown as AgentIR['agentTools']));
+    expect(notes(m).filter((x) => x.component === 'toolCredentials')).toHaveLength(0);
+  });
+
+  it('still reports a real connector tool when a flow tool sits beside it', async () => {
+    // The connectorless filter must narrow, not silence: an agent mixing the two still has a
+    // genuine per-user loss to report, and dropping it would trade one wrong answer for another.
+    const m = await mapAgent(base([
+      { name: 'GetRateSheetBand', displayName: 'GetRateSheetBand', kind: 'flow', connectionAuthMode: 'invoker' },
+      { name: 'Get CRM objects from Hubspot - Get companies', displayName: 'GetClientProfile', kind: 'connector', connectorId: 'shared_get-20crm-20objects-20from-20hubspot', connectionAuthMode: 'invoker' },
+    ] as unknown as AgentIR['agentTools']));
+    const n = notes(m).find((x) => x.component === 'toolCredentials');
+    expect(n?.status).toBe('lost');
+    expect(n?.detail).toContain('GetClientProfile');
+    expect(n?.detail).not.toContain('GetRateSheetBand');
+  });
+
   it('says nothing when every tool was already a shared maker connection', async () => {
     const m = await mapAgent(base([
       { name: 'Microsoft Dataverse - List rows', displayName: 'ListRows', kind: 'connector', connectionAuthMode: 'maker' },

@@ -3231,9 +3231,41 @@ async function execute(
                 .map((s) => s.mapped?.ir.name ?? s.displayName ?? s.name ?? '')
                 .filter((n) => n && n !== row.mapped!.ir.name);
 
+              // Flow-backed tools, by the name the agent will actually call them with. Their
+              // behaviour comes from an Application Integration created above, not from a
+              // connector, so `wired` below is false for them and the final branch filed each
+              // one as "Tool of an unrecognised kind ... not migrated" - while the deployed
+              // agent was calling it successfully. Measured live 2026-10-14.
+              const flowByName = new Map(
+                flowsWired.map((f) => [f.name.trim().toLowerCase(), f]),
+              );
               for (const tool of row.mapped!.ir.agentTools ?? []) {
                 const wired = !!tool.connectorId && wiredConnectorIds.has(tool.connectorId);
                 const opText = tool.operationId ? ` (${tool.operationId})` : '';
+
+                // Matched on displayName first: that is what the author named the tool and what
+                // the flow carries, while `tool.name` is often the internal component name.
+                const flowMatch =
+                  flowByName.get((tool.displayName ?? '').trim().toLowerCase())
+                  ?? flowByName.get((tool.name ?? '').trim().toLowerCase());
+                if (flowMatch) {
+                  result.fidelity.push({
+                    component: `tool:${tool.name}`,
+                    // `partial`, not `mapped`, when steps were dropped: the tool exists and runs,
+                    // but it does less than the original did, and the flow's own notes say which
+                    // steps. Calling that `mapped` is the overclaiming this report exists to avoid.
+                    status: flowMatch.lostTaskCount ? 'partial' : 'mapped',
+                    detail: flowMatch.lostTaskCount
+                      ? `Backed by the migrated Agent Flow "${flowMatch.name}"`
+                        + `${flowMatch.integrationName ? ` (${flowMatch.integrationName})` : ''}, wired as a `
+                        + `callable tool. ${flowMatch.lostTaskCount} step(s) of that flow could not be `
+                        + 'translated and DO NOT happen when it is called - see the flow\'s own notes.'
+                      : `Backed by the migrated Agent Flow "${flowMatch.name}"`
+                        + `${flowMatch.integrationName ? `, created as ${flowMatch.integrationName}` : ''}`
+                        + ' and wired as a callable tool on the migrated agent.',
+                  });
+                  continue;
+                }
 
                 if (tool.kind === 'mcp-server') {
                   const declared = tool.mcp?.tools ?? [];
