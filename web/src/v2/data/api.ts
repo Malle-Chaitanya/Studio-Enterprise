@@ -47,6 +47,7 @@ import {
   type DiscoveredIdentityPrincipal,
   type MsUserBrief,
 } from '../../api.ts';
+import type { SavedConnector } from '../../api.ts';
 import type {
   Compatibility, FidelityNote, MigrationScope, ProgressEvent,
 } from '../../types.ts';
@@ -164,12 +165,26 @@ async function scan(session: string): Promise<ConnectorScan> {
     fetchSavedConnectors(session).catch(() => []),
   ]);
   const reqById = new Map(reqs.map((r) => [r.connectorId, r]));
-  const savedById = new Map(saved.map((s) => [s.connectorId, s]));
+  // Keyed by credential SCOPE, not connector id. Both sides of this join are the
+  // server's own naming: the record carries the scope it was stored under, the
+  // requirement carries the scope the connector reads from. Matching on connector id
+  // instead meant a stored Atlassian token showed Confluence with every field masked
+  // (that flag IS group-aware) and yet no record behind it — no Last saved, no
+  // Forget, and a Forget that cleared only the sibling it was filed under.
+  // `?? connectorId` keeps a server that predates `scope` working unchanged.
+  const savedByScope = new Map<string, SavedConnector>();
+  for (const s of saved) {
+    const key = s.scope ?? s.connectorId;
+    const held = savedByScope.get(key);
+    // Several records can share one scope. Show the newest — it is the one whose
+    // secret version the run will actually resolve.
+    if (!held || (s.updatedAt ?? '') > (held.updatedAt ?? '')) savedByScope.set(key, s);
+  }
 
   const rows: ConnectorRow[] = ids.map((id) => {
     const det = detectedById.get(id) ?? null;
     const req = reqById.get(id) ?? null;
-    const sav = savedById.get(id) ?? null;
+    const sav = savedByScope.get(req?.credentialScope ?? id) ?? null;
     const fields = req?.fields ?? [];
     const missingFields = fields.filter((f) => !f.supplied).map((f) => f.key);
 
@@ -341,7 +356,13 @@ const pair: PairSource = {
     // Then tell the server, which is what makes the choice the credential destination.
     // Best-effort: a pairing that cannot be persisted still drives THIS session from the
     // keys above rather than failing the save in front of the customer.
-    await savePairings(session, next).catch(() => undefined);
+    //
+    // The result is RETURNED rather than dropped. The server already says when the
+    // environments disagree on a project (so the credential destination did not move) and
+    // whether secrets can be written to the chosen one; both were being thrown away here,
+    // which is how a pick that changed nothing could look like a pick that worked.
+    // `null` means the call itself failed - not that it came back clean.
+    return await savePairings(session, next).catch(() => null);
   },
 };
 

@@ -3,7 +3,9 @@ import {
   Chip, NoteRow, Panel, PanelHead, Select, SkeletonRows,
 } from './primitives.tsx';
 import { invalidateCache, markStale, primeResource, useResource } from '../../v2/data/cache.ts';
-import { useSource, type DestOption, type EnvPair, type EnvRow } from '../../v2/data/index.ts';
+import {
+  useSource, type DestOption, type EnvPair, type EnvRow, type PairSaveResult,
+} from '../../v2/data/index.ts';
 import { IcoCheck } from '../../icons.tsx';
 import { CopilotStudioMark, GeminiMark } from './productMarks.tsx';
 
@@ -61,6 +63,16 @@ export function EnvPairing({ session, onChange, found }: {
   // component unmounting and remounting as you walk the flow.
   const [edits, setEdits] = useState<Record<string, EnvPair>>({});
   const [saveError, setSaveError] = useState('');
+  /**
+   * What the server made of the pairing, once it had it.
+   *
+   * Two things it has always answered and nothing ever showed: that the environments
+   * disagree on a project (so the credential destination did NOT move, and a pick that
+   * changed nothing looked like one that worked), and whether secrets can be written to
+   * the project just chosen - which used to surface only after a token had been typed,
+   * naming a project the person had not selected.
+   */
+  const [saveResult, setSaveResult] = useState<PairSaveResult | null>(null);
 
   const pairs = useMemo<EnvPair[]>(
     () => envList.map((env) => edits[env.url]
@@ -107,7 +119,7 @@ export function EnvPairing({ session, onChange, found }: {
     // phase because something upstream changed.
     markStale(session, `conn:${session}`);
     void source.pair.save(session, all)
-      .then(() => setSaveError(''))
+      .then((r) => { setSaveError(''); setSaveResult(r); })
       .catch(() => setSaveError('Could not save that pairing — it is set here but not stored.'));
     setEdits((prev) => ({ ...prev, [env]: next }));
   }, [pairs, session, source]);
@@ -241,6 +253,23 @@ export function EnvPairing({ session, onChange, found }: {
         <NoteRow tone="bad">{`Could not read Google Cloud projects, so "Choose project" has nothing to list: ${destsError}`}</NoteRow>
       )}
       {saveError && <NoteRow tone="bad">{saveError}</NoteRow>}
+      {/* Pairings ARE stored in this case — only the credential destination stayed put.
+          Saying nothing let someone change a project and believe their credentials had
+          followed it. */}
+      {saveResult?.ambiguous && (
+        <NoteRow tone="you">
+          Your environments point at different Google projects, so there is no single place
+          to keep this customer's credentials — they stay in
+          {' '}<b>{saveResult.credentialProject || 'the project already in use'}</b>. Point every
+          environment at one project to move them.
+        </NoteRow>
+      )}
+      {saveResult && saveResult.secretAccess && !saveResult.secretAccess.ok && (
+        <NoteRow tone="bad">
+          {saveResult.secretAccess.detail
+            ?? `Credentials cannot be stored in "${saveResult.credentialProject}" yet.`}
+        </NoteRow>
+      )}
 
       {loading && <SkeletonRows rows={3} controls />}
 

@@ -432,6 +432,14 @@ export default function ConnectorsV2() {
                 k="Fields stored"
                 v={`${(selected.req?.fields ?? []).filter((f) => f.supplied).length}/${(selected.req?.fields ?? []).length}`}
               />
+              {selected.saved?.project && (
+                <KeyValue
+                  k="Saved in"
+                  v={selected.saved.syncedFromOtherProject
+                    ? `${selected.saved.project} (copied in by the run)`
+                    : selected.saved.project}
+                />
+              )}
               {selected.saved?.updatedAt && (
                 <KeyValue k="Last saved" v={new Date(selected.saved.updatedAt).toLocaleString()} />
               )}

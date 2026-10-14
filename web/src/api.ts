@@ -263,6 +263,20 @@ export async function fetchPairings(
   return body.pairings ?? [];
 }
 
+/** What the server did with a pairing — and anything about the chosen project worth saying. */
+export interface PairSaveResult {
+  saved: number;
+  /** Where this customer's credentials will now be written. */
+  credentialProject: string;
+  /** Environments disagree on a project, so the credential destination did NOT move. */
+  ambiguous: boolean;
+  /**
+   * Whether secrets can actually be written to that project, checked at pick time.
+   * Absent when the check could not run — which is not the same as a pass.
+   */
+  secretAccess?: { ok: boolean; code?: string; detail?: string };
+}
+
 /**
  * Persist the pairings, and let the server make the chosen project the one credentials go to.
  *
@@ -272,14 +286,14 @@ export async function fetchPairings(
 export async function savePairings(
   session: string,
   pairs: Array<{ env: string; project?: string; engine?: string }>,
-): Promise<{ saved: number; credentialProject: string; ambiguous: boolean }> {
+): Promise<PairSaveResult> {
   const res = await fetch('/api/destination/pairings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session, pairs }),
   });
   if (!res.ok) throw new Error('pairings_save_failed');
-  return (await res.json()) as { saved: number; credentialProject: string; ambiguous: boolean };
+  return (await res.json()) as PairSaveResult;
 }
 
 export async function fetchProjects(
@@ -903,9 +917,19 @@ export interface ConnectorValidation {
 /** One connector the customer has already configured. Never carries credential values. */
 export interface SavedConnector {
   connectorId: string;
+  /**
+   * The credential GROUP this record really belongs to, as the server names it.
+   *
+   * One Atlassian token backs both Jira and Confluence and is stored under whichever
+   * of them was configured first, so matching a row to its record by connector id
+   * answered null for the sibling. Join on this.
+   */
+  scope?: string;
   fields: string[];
   project: string;
   updatedAt?: string;
+  /** The credential lives in another project and the run will copy it in. */
+  syncedFromOtherProject?: boolean;
   /** The secrets are in the project this migration targets. When false they exist but
    *  are unreachable from the destination, so the connector is NOT configured for
    *  this run — treating it as configured is what silently skipped knowledge sources. */
@@ -947,6 +971,8 @@ export interface ConnectorRequirement {
     /** A value is already in Secret Manager for this field — do not ask for it again. */
     supplied?: boolean;
   }>;
+  /** Namespace the credential is stored under — the group id, or the connector id. */
+  credentialScope?: string;
   requiredPermissions?: string[];
   adminConsentRequired?: boolean;
   permissionsHint?: string;

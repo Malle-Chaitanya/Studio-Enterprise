@@ -1,11 +1,16 @@
 import { Router } from 'express';
 import { config } from '../config.js';
-import { getSaToken, refreshGoogleToken } from '../auth/google.js';
+import { getSaToken, refreshGoogleToken, serviceAccountEmail } from '../auth/google.js';
 import { listEnginesResult, listProjects } from '../services/destination.js';
 import { logger } from '../logger.js';
 import { engineReachable, listLicensedPrincipals, resolveDestination } from '../services/gemini.js';
 import { setUpSharePointConnector, getConnectorOperation, getConnectorDataStores, type SharePointConnectorCreds } from '../services/geminiConnector.js';
-import { putEntraSecret, getEntraSecret } from '../services/secretManager.js';
+import {
+  putEntraSecret,
+  getEntraSecret,
+  preflightSecretAccess,
+  type SecretAccessCheck,
+} from '../services/secretManager.js';
 import { connectorCollectionId, normalizeSharePointSiteUrl } from '../services/knowledgePlanner.js';
 import { getSession, updateSession, DEFAULT_APP_USER_ID, type Session } from '../sessionStore.js';
 import { chatWithAdkAgent, createAdkSession } from '../services/adkAgentChat.js';
@@ -138,12 +143,31 @@ destinationRouter.post('/pairings', async (req, res) => {
     );
   }
 
+  // Ask Secret Manager about the project NOW, while a project is being chosen, instead
+  // of when the first token is typed. Enablement is a property of the project, so it is
+  // knowable the moment one is picked; discovering it on the write meant an admin had
+  // already typed a credential before being told the API was off - and the message named
+  // a project they had never selected, which is the confusion this route exists to end.
+  //
+  // Best-effort, never fatal. This is a live call to Google and the pairing is already
+  // stored; a check that cannot run must not fail a save that already succeeded.
+  let secretAccess: SecretAccessCheck | undefined;
+  if (credentialProject) {
+    try {
+      const saToken = await getSaToken(session.gEmail);
+      secretAccess = await preflightSecretAccess(credentialProject, saToken, serviceAccountEmail());
+    } catch (e) {
+      logger.warn(`pairings: Secret Manager preflight could not run: ${(e as Error).message}`);
+    }
+  }
+
   res.json({
     saved: clean.length,
     credentialProject,
     // Said out loud rather than silently keeping the old project: the customer can see why
     // their choice did not move the destination.
     ambiguous: !chosen && all.length > 1,
+    ...(secretAccess ? { secretAccess } : {}),
   });
 });
 

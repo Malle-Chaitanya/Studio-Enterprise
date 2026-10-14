@@ -1230,6 +1230,11 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
   // copies of them live (see 718edcc).
   const usable = saved;
   const savedIds = new Set(usable.map((s) => s.connectorId));
+  // The same fact at GROUP level. A stored Atlassian token sits under whichever of
+  // shared_jira / shared_confluence the customer configured first, so an exact-id set
+  // answers false for the sibling - which then rendered with every field masked (those
+  // ARE scope-aware, below) and yet no record behind it: no Last saved, no Forget.
+  const savedScopes = new Set(usable.map((s) => connectorCredentialScope(s.connectorId)));
   // Said out loud rather than silently shown as empty: "nothing is stored" and "I cannot
   // tell which project this migration targets" are different facts, and only one of them
   // is about the customer — the same distinction hasProjectWideSecretAccess draws.
@@ -1351,6 +1356,16 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
           // save so an unchanged credential does not get a new version.
           supplied: suppliedFieldsByScope.get(connectorCredentialScope(id))?.has(f.key) ?? false,
         })),
+      /**
+       * The namespace this connector's credential is stored under - its credential group
+       * when it has one, else its own id.
+       *
+       * Sent so the client joins stored records on the same key the server stores them
+       * under. The grouping lived only here, so the web matched saved records by exact
+       * connector id and disagreed with this very response about whether a credential
+       * existed. One fact, one implementation - the client should not re-derive it.
+       */
+      credentialScope: connectorCredentialScope(id),
       requiredPermissions: def.requiredPermissions ?? [],
       adminConsentRequired: !!def.adminConsentRequired,
       permissionsHint: def.permissionsHint,
@@ -1376,7 +1391,7 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
           : undefined,
         delegatedPermission: def.userAuth?.scope,
       },
-      configured: savedIds.has(id),
+      configured: savedScopes.has(connectorCredentialScope(id)),
       credentialAlreadySupplied,
     };
   });
@@ -1474,6 +1489,8 @@ migrateRouter.get('/connector-credentials', async (req, res) => {
   res.json({
     connectors: saved.map((s) => ({
       connectorId: s.connectorId,
+      /** Credential group this record really belongs to - see credentialScope above. */
+      scope: connectorCredentialScope(s.connectorId),
       // Belt-and-suspenders: the write path (db/repos/connectorCredentials.ts) now
       // normalizes this on every save, but a record from before that fix must still
       // never hand the frontend a non-array shape.
@@ -1507,21 +1524,35 @@ migrateRouter.delete('/connector-credentials', async (req, res) => {
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
   const purge = String(req.query.purge ?? '') === 'true';
 
-  const record = purge ? await getConnectorCredential(appUserId, connectorId) : null;
-  await deleteConnectorCredential(appUserId, connectorId);
+  // Forget the whole credential GROUP, not only the id named. One Atlassian API token
+  // backs both Confluence and Jira and is stored under whichever of the two the customer
+  // configured first, so deleting by exact id left the sibling record in place: the
+  // screen went on reporting the credential as supplied and Forget read as a no-op.
+  // The credential belongs to the group, so forgetting it does too.
+  const groupScope = connectorCredentialScope(connectorId);
+  const targets = (await listConnectorCredentials(appUserId)).filter(
+    (r) => connectorCredentialScope(r.connectorId) === groupScope,
+  );
+  // Fall back to the id as given when nothing matched, so a legacy or unregistered
+  // connector id is still forgotten rather than silently skipped.
+  for (const id of targets.length ? targets.map((r) => r.connectorId) : [connectorId]) {
+    await deleteConnectorCredential(appUserId, id);
+  }
 
   const purged: string[] = [];
   const purgeErrors: string[] = [];
-  if (purge && record) {
+  if (purge && targets.length) {
     // Read the remaining records AFTER the delete, so "still in use" reflects the state
     // the customer is left with rather than the one they asked us to leave behind.
+    const remaining = await listConnectorCredentials(appUserId);
+    const saToken = await getSaToken(session.gEmail);
+    const scope = credentialScope(session);
+    for (const record of targets) {
     const stillUsed = new Set(
-      (await listConnectorCredentials(appUserId))
+      remaining
         .filter((r) => r.project === record.project)
         .flatMap((r) => Object.values(r.secretIds ?? {})),
     );
-    const saToken = await getSaToken(session.gEmail);
-    const scope = credentialScope(session);
     for (const secretId of new Set(Object.values(record.secretIds ?? {}))) {
       if (stillUsed.has(secretId)) continue;
       // Destroy is irreversible, and an id is not proof of ownership: credentials saved
@@ -1554,6 +1585,7 @@ migrateRouter.delete('/connector-credentials', async (req, res) => {
       const del = await deleteSecret(saToken, record.project, secretId);
       if (del.ok) purged.push(secretId);
       else purgeErrors.push(`${secretId}: ${del.error}`);
+    }
     }
   }
   res.json({ ok: true, purged, ...(purgeErrors.length ? { purgeErrors } : {}) });

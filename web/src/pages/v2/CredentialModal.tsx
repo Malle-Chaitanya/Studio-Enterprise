@@ -344,6 +344,17 @@ export function CredentialModal({
   // Same group-level override as the tile grid: a group's icon is its own brand mark, never
   // borrowed from whichever connector happens to be the row this modal was opened for.
   const iconUrl = groupIconOverride(group?.id) ?? row.req?.iconUrl;
+  // Name the project the credential actually lives in. Someone who picked project B and
+  // was still told "stored" had no way to tell whether that record belonged to B or to
+  // the project the tool had discovered for them on its own - which is the exact
+  // confusion the destination picker exists to end. `syncedFromOtherProject` is the
+  // server's own answer to it and was being computed and thrown away.
+  const sav = row.saved;
+  const storedNote = sav?.project
+    ? sav.syncedFromOtherProject
+      ? `Stored earlier in ${sav.project}. This migration targets a different project, so the run copies the secret across - there is nothing to re-enter. Forgetting only drops our record; the Secret Manager secret stays.`
+      : `Stored earlier in ${sav.project}. Forgetting only drops our record - the Secret Manager secret stays.`
+    : 'Stored earlier. Forgetting only drops our record - the Secret Manager secret stays.';
   return (
     <div className="cf-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="cf-modal" role="dialog" aria-modal="true" aria-label={`Connect ${row.name}`}>
@@ -379,7 +390,7 @@ export function CredentialModal({
               <span className="cf-alert__icon" aria-hidden="true">&#8505;</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', width: '100%' }}>
                 <p className="cf-alert__desc" style={{ flex: 1 }}>
-                  Stored earlier. Forgetting only drops our record — the Secret Manager secret stays.
+                  {storedNote}
                 </p>
                 <button type="button" className="cf-btn cf-btn--secondary cf-btn--light" onClick={onForget}>
                   Forget stored credentials

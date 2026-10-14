@@ -7,7 +7,7 @@ import type { V2Source } from './types.ts';
 export type {
   V2Source, ConnectorRow, ConnectorScan, ScopeEnv, ConnectorsSource,
   CloudLink, ConnectState, ConnectSource,
-  EnvRow, DestOption, EnvPair, PairSource,
+  EnvRow, DestOption, EnvPair, PairSource, PairSaveResult,
   UserRow, UsersSource, CandidatePage,
   AgentRow, AgentsSource,
   Verdict, ReviewFinding, ReviewRow, ReviewSource,

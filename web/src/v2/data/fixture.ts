@@ -360,7 +360,7 @@ const pair: PairSource = {
   environments: async () => wait(ENVS),
   destinations: async () => wait(DESTS),
   read: async () => wait(pairs),
-  save: async (_s, next) => { pairs = next; await wait(null); },
+  save: async (_s, next) => { pairs = next; await wait(null); return null; },
 };
 
 const users: UsersSource = {

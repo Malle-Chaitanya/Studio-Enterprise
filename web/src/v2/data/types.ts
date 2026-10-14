@@ -132,11 +132,15 @@ export interface EnvPair {
   engine?: string;
 }
 
+/** Re-exported so a screen can read a save result without reaching past this layer. */
+import type { PairSaveResult } from '../../api.ts';
+export type { PairSaveResult };
+
 export interface PairSource {
   environments(session: string): Promise<EnvRow[]>;
   destinations(session: string): Promise<DestOption[]>;
   read(session: string): Promise<EnvPair[]>;
-  save(session: string, pairs: EnvPair[]): Promise<void>;
+  save(session: string, pairs: EnvPair[]): Promise<PairSaveResult | null>;
 }
 
 // ── users ───────────────────────────────────────────────────────────────────
