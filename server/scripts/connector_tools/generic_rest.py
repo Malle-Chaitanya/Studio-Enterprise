@@ -441,35 +441,50 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         # a systemuserid from one org is meaningless in another, and someone who joins after
         # the migration would not be in a deploy-time map at all.
         #
-        # Matched on the caller's own address first, then on the local part, because the
+        # TWO LOOKUPS, NOT ONE OR-ED FILTER. The local-part clause exists because the
         # destination directory and the source Dataverse are usually different domains
-        # (alex@newco.com and alex@oldco.co being one person is the normal case, not the odd one).
+        # (alex@newco.com and alex@oldco.co being one person is the normal case). OR-ing it
+        # with the exact clause made the fallback compete with the answer: erik@filefuze.co
+        # is one specific account AND a prefix match for erik@voohalu.co, so a caller whose
+        # address was sitting in the table verbatim was refused as ambiguous. Measured live
+        # 2026-10-14. An exact address is not a guess and nothing can out-rank it; the
+        # fallback is only for when there is no exact match to rank.
         local = who.split("@")[0].replace("'", "''")
         safe = who.replace("'", "''")
-        flt = (
+
+        def _lookup(flt):
+            url = (base_url + "/systemusers?$select=systemuserid,internalemailaddress&$top=2&$filter="
+                   + urllib.parse.quote(flt, safe=""))
+            req = urllib.request.Request(url, headers={
+                "Authorization": auth, "Accept": "application/json",
+                "OData-MaxVersion": "4.0", "OData-Version": "4.0",
+            })
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return (_json.loads(resp.read().decode("utf-8")) or {}).get("value") or []
+
+        rows = _lookup(
             "internalemailaddress eq '" + safe + "'"
             " or domainname eq '" + safe + "'"
-            " or startswith(internalemailaddress,'" + local + "@')"
         )
-        url = (base_url + "/systemusers?$select=systemuserid,internalemailaddress&$top=2&$filter="
-               + urllib.parse.quote(flt, safe=""))
-        req = urllib.request.Request(url, headers={
-            "Authorization": auth, "Accept": "application/json",
-            "OData-MaxVersion": "4.0", "OData-Version": "4.0",
-        })
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            rows = (_json.loads(resp.read().decode("utf-8")) or {}).get("value") or []
+        exact = bool(rows)
+        if not rows:
+            rows = _lookup("startswith(internalemailaddress,'" + local + "@')")
         if not rows:
             raise RuntimeError(
                 (conn.get("name") or "this tool") + ": no account for " + who
                 + " exists in this environment, so it cannot run as them."
             )
         if len(rows) > 1:
-            # Two matches means the local-part fallback was ambiguous. Picking one would act
-            # as a person chosen by sort order.
+            # Still ambiguous after the split. Two accounts carrying the SAME address is a
+            # directory problem; two sharing a local part means the fallback cannot tell them
+            # apart. Either way, picking one would act as a person chosen by sort order.
             raise RuntimeError(
                 (conn.get("name") or "this tool") + ": " + who
-                + " matches more than one account in this environment; cannot choose."
+                + (" matches more than one account with that exact address"
+                   if exact else
+                   " has no account with that exact address, and more than one account"
+                   " shares its name before the @")
+                + " in this environment; cannot choose."
             )
         caller_cache[who] = rows[0]["systemuserid"]
         return {header: caller_cache[who]}
