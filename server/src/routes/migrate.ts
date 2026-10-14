@@ -1213,10 +1213,32 @@ migrateRouter.get('/connector-requirements', async (req, res) => {
   const wantedIds = expandWithDecidedSurfaceTargets(ids, decided, (cid) => REGISTRY_BY_ID.has(cid));
   const destProject = effectiveGeminiProject(session.geminiProject);
   const saved = await listConnectorCredentials(appUserId);
-  // Only credentials stored in the project we are migrating INTO are usable — the
-  // deployed container resolves secrets from its own project. See the GET route above.
-  const usable = saved.filter((s) => !!destProject && s.project === destProject);
+  // EVERY stored record counts as supplied, whichever project it was saved against.
+  //
+  // This filtered to `s.project === destProject`, which was right only while the run
+  // DISCARDED a credential belonging to another project. It no longer does: the
+  // orchestrator syncs strays from their own project before resolving secrets, and the
+  // sibling GET /connector-credentials route below already says so in as many words
+  // ("a record from another project is configured — it is just not copied yet").
+  //
+  // Two routes answering one question differently is how this screen started demanding
+  // credentials that were sitting in Secret Manager the whole time: set GEMINI_PROJECT on
+  // the server, or load this before the session knows its project, and `destProject` stops
+  // matching what was saved — so every field came back unsupplied and a returning admin
+  // retyped everything, writing a fresh secret version each time. Which is also how a
+  // mis-pasted key gets in. Credentials belong to a CUSTOMER; a project is only where
+  // copies of them live (see 718edcc).
+  const usable = saved;
   const savedIds = new Set(usable.map((s) => s.connectorId));
+  // Said out loud rather than silently shown as empty: "nothing is stored" and "I cannot
+  // tell which project this migration targets" are different facts, and only one of them
+  // is about the customer — the same distinction hasProjectWideSecretAccess draws.
+  if (!destProject && usable.length) {
+    logger.warn(
+      { appUserId, records: usable.length },
+      'connector requirements: no destination project resolved — reporting stored credentials as supplied anyway',
+    );
+  }
   // Which individual FIELDS already have a secret, across the whole credential group.
   // Per-field state is what lets the UI stop demanding a value it already holds: a
   // returning admin was shown every input as required, so they retyped credentials

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { ConnectorValidation } from '../../api.ts';
 import { initialAgentState, reduceAgent } from '../../agent/driver.ts';
@@ -45,6 +45,8 @@ export default function ConnectorsV2() {
   /** Which step is open. One at a time: this is a sequence of decisions, not a
    *  form with eleven sections. */
   const [expanded, setExpanded] = useState<string | null>(null);
+  /** Last row the open dialog rendered, so a refetch cannot pull it out from under it. */
+  const openRowRef = useRef<ConnectorRow | null>(null);
   const [toast, setToast] = useState('');
 
   // Fidelity lives in a shared hook: this screen and Migrate must never be able
@@ -318,14 +320,21 @@ export default function ConnectorsV2() {
         </div>
       </>
 
+      {/* The open dialog is NOT derived from the live row list.
+          `rows` is revalidated in the background (and re-read whenever something
+          upstream marks the scan stale), so while someone was typing, a refetch that
+          momentarily lacked this connector unmounted the dialog mid-entry and threw away
+          everything already typed into it. Holding the last row we saw for `picked` means
+          only an explicit close — the X or the scrim — can shut it. */}
       {picked && expanded && (() => {
-        const openRow = rows.find((r) => r.connectorId === picked);
+        const openRow = rows.find((r) => r.connectorId === picked) ?? openRowRef.current;
         if (!openRow) return null;
+        openRowRef.current = openRow;
         return (
           <CredentialModal
             session={session}
             row={openRow}
-            onClose={() => setExpanded(null)}
+            onClose={() => { openRowRef.current = null; setExpanded(null); }}
             onSaved={(v) => onSaved(v)}
             onForget={openRow.saved ? () => void forget(openRow) : undefined}
           />

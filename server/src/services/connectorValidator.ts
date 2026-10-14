@@ -67,6 +67,48 @@ export async function validateConnectorCredentials(
   values: Record<string, string>,
 ): Promise<ConnectorValidation> {
   try {
+    // SHAPE FIRST, for anything holding a service-account key.
+    //
+    // We cannot test a Google credential without spending a domain-wide-delegation mint,
+    // so this group has always returned `unverified` — which is honest about the KEY but
+    // said nothing about the JSON wrapping it. A key missing its final brace is not a
+    // credential we failed to test; it is one that cannot be parsed by anybody, and the
+    // check costs no network at all.
+    //
+    // Measured 2026-10-14: a stored key was 2356 bytes where a correct copy of the same
+    // key is 2358 — the closing ` }` had been lost on paste. It stored silently, and
+    // surfaced hours later as a deployed agent answering "there was an authentication
+    // error" on every Gmail call, with Python's `json.loads` position as the only clue.
+    // Said here, it is "that key did not paste fully" while the admin is still looking at
+    // the box they pasted into.
+    const saJson = values.service_account_json?.trim();
+    if (saJson) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(saJson);
+      } catch (e) {
+        return {
+          code: 'invalid_credentials',
+          detail:
+            'This is not valid JSON, so no tool could ever read it — most often the paste ' +
+            `was cut short. Copy the whole key file, including the final "}". (${(e as Error).message})`,
+        };
+      }
+      // Parsing is not enough: valid JSON that is not a key is just as unusable, and the
+      // fields named here are the ones every Google auth path actually reads.
+      const o = (parsed ?? {}) as Record<string, unknown>;
+      const missing = (['client_email', 'private_key', 'token_uri'] as const).filter((k) => !o[k]);
+      if (missing.length) {
+        return {
+          code: 'invalid_credentials',
+          detail:
+            `This JSON parses but is missing ${missing.join(', ')}, so it is not a service ` +
+            'account key. Download a fresh key: Google Cloud Console -> IAM & Admin -> ' +
+            'Service Accounts -> your account -> Keys -> Add key (JSON), and paste the whole file.',
+        };
+      }
+    }
+
     switch (connectorCredentialScope(connectorId)) {
       case 'ms_graph':
         return await validateMsGraph(values);

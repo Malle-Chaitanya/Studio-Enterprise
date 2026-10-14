@@ -120,6 +120,19 @@ export function EnvPairing({ session, onChange, found }: {
   const loading = envs.loading;
   // The pickers, not the rows, are what a pending project list actually affects.
   const destsPending = dests.loading || (dests.data === undefined && !dests.error);
+  /**
+   * A cached project list is on screen AND a fresh read is still running.
+   *
+   * `loading` is false in this state by design — cached data renders instantly so walking
+   * back through the wizard does not flicker. But the picker then looks settled while the
+   * list underneath it can still change: open it early and you see one project, wait, and
+   * it becomes four, because the first read fell back to just the connected project (see
+   * routes/destination.ts, which unshifts it when OAuth enumeration returns nothing) and
+   * the real enumeration landed afterwards. A list that grows under the cursor is a
+   * correctness problem, not a cosmetic one — you can pick the wrong destination from a
+   * list that had not finished. Say it is still arriving instead of implying it has.
+   */
+  const destsRefreshing = dests.syncing && !destsPending;
   // Named separately, not folded into one `error` string — a projects-list
   // failure surfacing as "could not read environments" pointed anyone
   // debugging it at the wrong half of this screen entirely.
@@ -196,7 +209,9 @@ export function EnvPairing({ session, onChange, found }: {
     <Panel>
       <PanelHead
         title="Point each environment at a Gemini app"
-        sub={loading ? 'Reading environments…' : undefined}
+        sub={loading
+          ? 'Reading environments…'
+          : destsRefreshing ? 'Checking for more Gemini projects…' : undefined}
         actions={found && (
           <span className="found">
             <span>

@@ -86,4 +86,50 @@ describe('validateConnectorCredentials reads the registry’s own field keys', (
 
     expect(res.code).toBe('invalid_credentials');
   });
+
+describe('service-account JSON shape', () => {
+  // A complete-enough key: only the three fields every Google auth path reads.
+  const goodKey = JSON.stringify({
+    type: 'service_account',
+    project_id: 'p',
+    private_key: '-----BEGIN PRIVATE KEY-----abc-----END PRIVATE KEY-----',
+    client_email: 'sa@p.iam.gserviceaccount.com',
+    token_uri: 'https://oauth2.googleapis.com/token',
+  });
+
+  it('rejects a key whose paste was cut short, naming the cause', async () => {
+    // The real failure, 2026-10-14: the trailing ` }` was lost, the key stored silently,
+    // and a deployed agent answered "authentication error" on every Gmail call hours later.
+    const truncated = goodKey.slice(0, -1);
+
+    const res = await validateConnectorCredentials('shared_gmail', { service_account_json: truncated });
+
+    expect(res.code).toBe('invalid_credentials');
+    expect(res.detail).toMatch(/not valid JSON/i);
+  });
+
+  it('rejects JSON that parses but is not a service account key', async () => {
+    const res = await validateConnectorCredentials('shared_gmail', {
+      service_account_json: JSON.stringify({ type: 'service_account', project_id: 'p' }),
+    });
+
+    expect(res.code).toBe('invalid_credentials');
+    expect(res.detail).toMatch(/client_email/);
+  });
+
+  it('a well-formed key still reports unverified, never ok — we did not test it', async () => {
+    // Shape is not proof the credential works. Claiming `ok` here would be exactly the
+    // overclaiming this module exists to avoid.
+    const res = await validateConnectorCredentials('shared_gmail', { service_account_json: goodKey });
+
+    expect(res.code).toBe('unverified');
+  });
+
+  it('never looks at the field for a connector that does not carry one', async () => {
+    const res = await validateConnectorCredentials('shared_gmail', {});
+
+    expect(res.code).toBe('unverified');
+  });
+});
+
 });
