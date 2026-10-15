@@ -4,7 +4,7 @@ import { logger } from '../logger.js';
 import type { ResolvedConnector } from './connectorToolBuilder.js';
 import { connectorCapabilityRefs, buildLiveConnectorInstruction } from './connectorToolBuilder.js';
 import { translateFlow, integrationNameForFlow } from './flowMapper.js';
-import type { AgentIR, AgentToolIR, FidelityNote, MappedAgent, MappedFlowIntegration } from '../types.js';
+import type { AgentIR, FidelityNote, MappedAgent, MappedFlowIntegration } from '../types.js';
 
 /**
  * Maps an AgentIR to a Gemini Enterprise agent definition.
@@ -150,84 +150,6 @@ function synthesizeInstruction(ir: AgentIR): { instruction: string; notes: Fidel
   // Web browsing still maps to the googleSearch tool (tool wiring, not text).
   if (ir.capabilities.webBrowsing) {
     notes.push({ component: 'webBrowsing', status: 'mapped', detail: 'Web browsing → googleSearch tool.' });
-  }
-
-  // FIELD-LEVEL guidance the author attached to one INPUT of one bound tool — a fixed
-  // value to always send (a pinned Subject line), or a description telling the model
-  // where a "model"-filled value comes from (Copilot shows this to its own orchestrator
-  // the moment it is about to fill that field, e.g. "use GetClientProfile's Email field,
-  // never ask"). The migrated tool is one GENERIC implementation shared across every
-  // customer and every agent on this connector, so it carries none of this — only the
-  // instruction can. The IR already captures it losslessly (`AgentToolIR.inputs`);
-  // synthesizeInstruction just never read it until 2026-10-14.
-  //
-  // ⚠️ INTERIM MEASURE, SHIPPED UNDER TIME PRESSURE 2026-10-15 — NOT THE REAL FIX, DO NOT
-  // treat this block as closing the gap generally. It splices each tool's guidance next to
-  // that tool's own mention in the author's instruction prose when it can find one (so the
-  // model sees "use GetClientProfile's Email field, never ask" right next to "Do not call
-  // SendEmail until approved", not 2000 characters later in an undifferentiated tail list).
-  // That matching is HEURISTIC and AUTHOR-STYLE-DEPENDENT: it works here because this
-  // agent's instructions happen to name each step in prose with a token that also appears
-  // on the tool (`displayName`, or `operationId` with its version suffix stripped, for
-  // "SendEmail" ~ "SendEmailV2"). A differently-worded instruction, or one that never
-  // enumerates steps in prose, gets NO benefit — it silently falls back to the old tail-list
-  // placement below. The real, generalizable fix is per-agent tool-wrapper generation at
-  // DEPLOY time (bake `fixed` inputs into the tool so the model is never asked about them at
-  // all, and override `model` inputs' docstrings with THIS agent's own sourcing guidance) —
-  // that needs an architect pass and is tracked separately, not shipped here.
-  const toolGuidanceLines = new Map<AgentToolIR, string[]>();
-  let guidanceCount = 0;
-  for (const tool of ir.agentTools ?? []) {
-    const lines: string[] = [];
-    for (const input of tool.inputs ?? []) {
-      if (input.source === 'fixed' && input.value && !input.isExpression) {
-        lines.push(`  → **${input.name}**: always use exactly "${input.value}".`);
-      } else if (input.source === 'model') {
-        // `scalar()` (services/toolPayload.ts) leaves a bare YAML block-scalar indicator
-        // ("|", "|+") when the author's block had no real content — not guidance to repeat.
-        const desc = input.description?.trim();
-        if (desc && !/^\|[+-]?$/.test(desc)) {
-          lines.push(`  → **${input.name}**: ${desc}`);
-        }
-      }
-    }
-    if (lines.length) {
-      toolGuidanceLines.set(tool, lines);
-      guidanceCount += lines.length;
-    }
-  }
-
-  const tailFallback: string[] = [];
-  let inlineMatched = 0;
-  for (const [tool, lines] of toolGuidanceLines) {
-    const label = tool.displayName || tool.name;
-    // Version-suffix-stripped operationId last, so "SendEmailV2" also matches a prose
-    // mention of plain "SendEmail" — the shorthand an author's own instructions commonly use.
-    const candidates = [tool.displayName?.trim(), tool.name, tool.operationId, tool.operationId?.replace(/V\d+$/i, '')]
-      .filter((c): c is string => !!c && c.length > 2);
-    const matchIdx = candidates.map((c) => instruction.indexOf(c)).find((i) => i >= 0);
-    if (matchIdx !== undefined) {
-      const lineEnd = instruction.indexOf('\n', matchIdx);
-      const insertAt = lineEnd === -1 ? instruction.length : lineEnd;
-      instruction = `${instruction.slice(0, insertAt)}\n${lines.join('\n')}${instruction.slice(insertAt)}`;
-      inlineMatched += 1;
-    } else {
-      tailFallback.push(`- **${label}**:\n${lines.join('\n')}`);
-    }
-  }
-  if (tailFallback.length) {
-    instruction += `\n\n## Field-level guidance from the source agent\n${tailFallback.join('\n')}`;
-  }
-  if (guidanceCount) {
-    notes.push({
-      component: 'instructions',
-      status: 'mapped',
-      detail:
-        `${guidanceCount} tool-input-level rule(s) from the source agent folded into the instruction ` +
-        '(fixed values and model-fill sourcing guidance that the generic migrated tool cannot carry on its own) — ' +
-        `${inlineMatched}/${toolGuidanceLines.size} tool(s) matched inline next to their mention in the author's ` +
-        'own instruction, the rest placed in a tail summary.',
-    });
   }
 
   if (instruction.length > MAX_INSTRUCTION_CHARS) {
