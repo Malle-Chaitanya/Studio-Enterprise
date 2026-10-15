@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { writeFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { assistantBase } from './gemini.js';
 import { geminiWriteLimiter } from './rateLimiter.js';
 import { logger } from '../logger.js';
@@ -619,7 +622,7 @@ export interface DeployResult {
  *
  * Deploy takes ~2-5 min. Callers should run this with low concurrency.
  */
-export function deployReasoningEngine(
+export async function deployReasoningEngine(
   project: string,
   location: string,
   spec: AdkSpec,
@@ -641,12 +644,22 @@ export function deployReasoningEngine(
   // The comment below this function has always said "run this with low concurrency" while the
   // orchestrator ran concurrency 5. A comment is not an enforcement; a unique path is.
   const gcsDir = `agent_engine/${sanitize(spec.name || 'agent')}-${randomUUID()}`;
+
+  // The full spec (instruction + every resolved connector/flow/topic definition) easily
+  // exceeds Windows' ~32K CreateProcess command-line limit once an agent has more than a
+  // couple of connectors or flows wired in. Confirmed live 2026-10-15: `spawn ENAMETOOLONG`
+  // deploying an agent with 16 resolved connector credentials + 4 flow integrations in its
+  // spec. A temp file has no such ceiling, and adk_deploy.py has read --spec-file from the
+  // start (see its argparse block) — the TS side just never passed it that way.
+  const specFilePath = join(tmpdir(), `adk-spec-${randomUUID()}.json`);
+  await writeFile(specFilePath, JSON.stringify(spec), 'utf-8');
+
   const args = [
     script,
     '--project', project,
     '--location', location,
     '--gcs-dir', gcsDir,
-    '--spec', JSON.stringify(spec),
+    '--spec-file', specFilePath,
   ];
   if (opts?.stagingBucket || process.env.ADK_STAGING_BUCKET) {
     args.push('--staging-bucket', opts?.stagingBucket || process.env.ADK_STAGING_BUCKET!);
@@ -744,18 +757,28 @@ export function deployReasoningEngine(
   const isTransport = (msg: string | undefined): boolean =>
     !!msg && TRANSPORT_FAILURE.some((needle) => msg.includes(needle));
 
-  return attempt().then((first) => {
-    if (first.ok) return first;
-    if (first.neverStarted) {
-      logger.warn(`adk: python worker never started (${first.error}) - retrying once before falling back`);
-      return attempt();
+  try {
+    return await attempt().then((first) => {
+      if (first.ok) return first;
+      if (first.neverStarted) {
+        logger.warn(`adk: python worker never started (${first.error}) - retrying once before falling back`);
+        return attempt();
+      }
+      if (isTransport(first.error)) {
+        logger.warn(`adk: deploy hit a transport failure (${first.error}) - retrying once before falling back`);
+        return attempt();
+      }
+      return first;
+    });
+  } finally {
+    // Best-effort: a leaked temp file costs only disk, while throwing here would mask
+    // whatever deployReasoningEngine actually returned.
+    try {
+      await unlink(specFilePath);
+    } catch {
+      /* ignore */
     }
-    if (isTransport(first.error)) {
-      logger.warn(`adk: deploy hit a transport failure (${first.error}) - retrying once before falling back`);
-      return attempt();
-    }
-    return first;
-  });
+  }
 }
 
 /**
