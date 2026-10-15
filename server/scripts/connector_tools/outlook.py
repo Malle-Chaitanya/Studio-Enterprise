@@ -402,11 +402,19 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                    for f in data.get("value", [])]
         return {"mailbox": _mailbox(), "folders": folders, "count": len(folders)}
 
-    def outlook_send_message(to: str, subject: str, body: str, cc: str = "") -> dict:
+    def outlook_send_message(to: str, subject: str, body: str, cc: str = "", is_html: bool = False) -> dict:
         """Send a NEW email. This is irreversible — the message cannot be recalled.
 
         ALWAYS show the user the recipient, subject and body and get their explicit agreement
         before calling this. Never send on a guess about what they meant.
+
+        Args:
+            to: recipient address, or several separated by commas.
+            subject: the subject line.
+            body: the email body — plain text by default, or HTML if is_html is True.
+            cc: optional cc addresses, comma separated.
+            is_html: set True when body contains HTML markup (tables, headers, lists, etc.)
+                so it renders instead of showing the raw tags. Leave False for plain text.
 
         Returns:
             dict with `queued` true plus a `delivery` caveat, `to`, `subject`, or `error`.
@@ -422,7 +430,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             return {"error": f"auth failed: {e}"}
         payload = {"message": {
             "subject": subject or "",
-            "body": {"contentType": "Text", "content": body or ""},
+            "body": {"contentType": "HTML" if is_html else "Text", "content": body or ""},
             "toRecipients": _to_recipients(to),
             "ccRecipients": _to_recipients(cc),
         }, "saveToSentItems": True}
@@ -486,11 +494,19 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         return {"queued": True, "delivery": _DELIVERY_NOTE, "mailbox": _mailbox(), "to": to,
                 "note": "Attachments were forwarded with the message."}
 
-    def outlook_create_draft(to: str, subject: str, body: str, cc: str = "") -> dict:
+    def outlook_create_draft(to: str, subject: str, body: str, cc: str = "", is_html: bool = False) -> dict:
         """Write an email and SAVE IT AS A DRAFT without sending it.
 
         Prefer this over outlook_send_message when the user has not clearly asked for the
         mail to go out — a draft is reversible, a sent message is not.
+
+        Args:
+            to: recipient address, or several separated by commas.
+            subject: the subject line.
+            body: the email body — plain text by default, or HTML if is_html is True.
+            cc: optional cc addresses, comma separated.
+            is_html: set True when body contains HTML markup (tables, headers, lists, etc.)
+                so it renders instead of showing the raw tags. Leave False for plain text.
 
         Returns:
             dict with `draftId`, or `error`.
@@ -504,7 +520,7 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         try:
             d = _graph(f"{_user_path()}/messages", token, method="POST", body={
                 "subject": subject or "",
-                "body": {"contentType": "Text", "content": body or ""},
+                "body": {"contentType": "HTML" if is_html else "Text", "content": body or ""},
                 "toRecipients": _to_recipients(to),
                 "ccRecipients": _to_recipients(cc),
             })
