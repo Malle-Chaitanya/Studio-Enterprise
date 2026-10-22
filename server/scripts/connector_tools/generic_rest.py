@@ -244,6 +244,77 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             token_cache[cache_key] = {"token": token, "expires_at": time.time() + int(payload.get("expires_in") or 3600)}
             return "Bearer " + token
 
+        # Bounded, declarative pagination — follows ONLY the field named in the catalog's
+        # `pagination` metadata (e.g. Microsoft Graph's `@odata.nextLink`), never auto-detected
+        # by shape. Two safety rules that are not optional:
+        #   1. A continuation link is only ever followed to the SAME host as the original
+        #      request, over https. A vendor response naming a different host is refused, not
+        #      followed — an unvalidated redirect carrying a live Authorization header is
+        #      exactly how a credential leaks to an unintended destination.
+        #   2. A failure on page 2+ (network error, non-200, bad JSON) stops pagination and
+        #      returns what was ALREADY fetched, with a note saying why it stopped — never
+        #      silently discarded, and never thrown away in favor of nothing.
+        MAX_PAGINATION_PAGES = 10
+
+        def _follow_pagination(first_body, first_url, headers):
+            """Returns (merged_body, pages_fetched, stop_reason_or_None)."""
+            pagination = op.get("pagination")
+            result_path = op.get("resultPath")
+            if not pagination or method != "GET" or not isinstance(first_body, dict):
+                return first_body, 1, None
+            field = pagination.get("field")
+            if not field or not result_path:
+                return first_body, 1, None
+            items = first_body.get(result_path)
+            if not isinstance(items, list):
+                # Nothing list-shaped to merge into — a single object response with a stray
+                # next-link field is left exactly as the vendor sent it.
+                return first_body, 1, None
+
+            original_host = urllib.parse.urlparse(first_url).netloc.lower()
+            merged = list(items)
+            body = first_body
+            pages = 1
+            while pages < MAX_PAGINATION_PAGES:
+                next_url = body.get(field)
+                if not next_url or not isinstance(next_url, str):
+                    break
+                parsed_next = urllib.parse.urlparse(next_url)
+                if parsed_next.scheme != "https" or parsed_next.netloc.lower() != original_host:
+                    return (
+                        {result_path: merged},
+                        pages,
+                        "stopped following pagination: the next-page link pointed to "
+                        + (parsed_next.netloc or "an unrecognizable address")
+                        + ", not the original host (" + original_host + ") — refused rather than followed.",
+                    )
+                try:
+                    next_req = urllib.request.Request(next_url, headers=dict(headers), method="GET")
+                    with urllib.request.urlopen(next_req, timeout=30) as resp:
+                        body = _json.loads(resp.read().decode("utf-8"))
+                except Exception as e:  # noqa: BLE001
+                    return (
+                        {result_path: merged},
+                        pages,
+                        "stopped following pagination after page " + str(pages) + ": " + str(e),
+                    )
+                pages += 1
+                page_items = body.get(result_path)
+                if isinstance(page_items, list):
+                    merged.extend(page_items)
+                if not isinstance(body, dict) or not body.get(field):
+                    break
+
+            final = dict(body) if isinstance(body, dict) else {}
+            final.pop(field, None)
+            final[result_path] = merged
+            stop_reason = (
+                "stopped at the " + str(MAX_PAGINATION_PAGES) + "-page limit; more results may exist"
+                if pages >= MAX_PAGINATION_PAGES and isinstance(body, dict) and body.get(field)
+                else None
+            )
+            return final, pages, stop_reason
+
         def _invoke(**kwargs) -> dict:
             try:
                 header = _aad_header() if op.get("auth") == "aad-token" else auth_header(fill)
@@ -307,9 +378,18 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                 return {"error": str(e)}
             data = None
             if body_val is not None and method in ("POST", "PUT", "PATCH"):
-                payload = body_val if isinstance(body_val, str) else _json.dumps(body_val)
-                data = payload.encode("utf-8")
-                req_headers["Content-Type"] = "application/json"
+                if isinstance(body_val, str) and "Content-Type" in headers:
+                    # The operation declared its OWN Content-Type via a header-typed parameter
+                    # (e.g. "text/csv", "text/plain") -- that means the body is the raw content
+                    # itself, not a JSON envelope to wrap it in. Forcing application/json here
+                    # unconditionally used to silently mislabel a real file's content on every
+                    # such call, permanently -- not just for Drive, for any future operation
+                    # shaped this way. Respect the declared type instead.
+                    data = body_val.encode("utf-8")
+                else:
+                    payload = body_val if isinstance(body_val, str) else _json.dumps(body_val)
+                    data = payload.encode("utf-8")
+                    req_headers["Content-Type"] = "application/json"
             req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
@@ -318,7 +398,13 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                         parsed = _json.loads(raw)
                     except Exception:  # noqa: BLE001
                         return _capped({"status": resp.status, "body": raw}, narrowing)
-                    return _capped({"status": resp.status, "body": parsed}, narrowing)
+                    parsed, pages_fetched, pagination_note = _follow_pagination(parsed, url, req_headers)
+                    result = {"status": resp.status, "body": parsed}
+                    if pages_fetched > 1:
+                        result["pagesFetched"] = pages_fetched
+                    if pagination_note:
+                        result["paginationNote"] = pagination_note
+                    return _capped(result, narrowing)
             except Exception as e:  # noqa: BLE001
                 # Quote the failure. A vague error invites the model to narrate a
                 # plausible answer instead of reporting that it could not look.
@@ -327,6 +413,299 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                 except Exception:  # noqa: BLE001
                     detail = str(e)
                 return {"error": conn_name + " " + op_id + " failed: " + detail}
+
+        # ── Multi-call operations ("chain") ───────────────────────────────────────────
+        #
+        # A real vendor operation that is not one HTTP call -- resolving "Reports/2026/
+        # file.csv" to a file id (Drive has no path lookup, only name-within-parent search,
+        # one segment at a time), or creating a file WITH content (create the metadata row,
+        # THEN upload bytes to the id it returned). Declared as data (BoundOperation.chain /
+        # operationBinding.ts's ChainStep), executed generically here -- nothing below is
+        # specific to Drive or to any one connector.
+        def _extract_chain_value(body, path):
+            """Dot-path extraction (numeric segments index a list). None if any segment is
+            missing -- callers decide what that means (not-found vs. a real error)."""
+            cur = body
+            for seg in (path or "").split("."):
+                if seg == "":
+                    continue
+                if isinstance(cur, list):
+                    try:
+                        idx = int(seg)
+                    except ValueError:
+                        return None
+                    cur = cur[idx] if 0 <= idx < len(cur) else None
+                elif isinstance(cur, dict):
+                    cur = cur.get(seg)
+                else:
+                    return None
+                if cur is None:
+                    return None
+            return cur
+
+        def _extract_header_value(items, header_name):
+            """Finds the entry whose `name` matches `header_name` (case-insensitive) in a
+            `[{name, value}, ...]`-shaped list (e.g. Gmail's MIME `payload.headers`) and
+            returns its `value`, or None."""
+            if not isinstance(items, list):
+                return None
+            want = (header_name or "").lower()
+            for item in items:
+                if isinstance(item, dict) and str(item.get("name", "")).lower() == want:
+                    return item.get("value")
+            return None
+
+        def _build_mime_message(spec: dict, values: dict) -> bytes:
+            """Assembles a real RFC 2822 message from `spec` (ChainStep.mimeMessage),
+            substituting {placeholders} the same way a URL template does. Returns the raw
+            (unencoded) message bytes -- the caller base64url-encodes it."""
+            def fill(s):
+                out = str(s or "")
+                for k, v in values.items():
+                    out = out.replace("{" + k + "}", str(v))
+                return out
+
+            lines = []
+            if spec.get("to"):
+                lines.append("To: " + fill(spec["to"]))
+            if spec.get("cc"):
+                lines.append("Cc: " + fill(spec["cc"]))
+            if spec.get("subject"):
+                lines.append("Subject: " + fill(spec["subject"]))
+            if spec.get("inReplyTo"):
+                lines.append("In-Reply-To: " + fill(spec["inReplyTo"]))
+            if spec.get("references"):
+                lines.append("References: " + fill(spec["references"]))
+            lines.append("Content-Type: " + fill(spec.get("contentType") or "text/plain; charset=UTF-8"))
+            lines.append("MIME-Version: 1.0")
+            lines.append("")  # blank line separates headers from the body
+            lines.append(fill(spec.get("body") or ""))
+            return ("\r\n".join(lines)).encode("utf-8")
+
+        def _invoke_chain(**kwargs) -> dict:
+            values: dict = {}
+            for name, meta in fixed.items():
+                values[name] = str(meta.get("value"))
+            for pn, a in unique_args:
+                val = kwargs.get(pn)
+                if val not in (None, "", 0, False):
+                    values[a["name"]] = str(val)
+            try:
+                for c in ctx_required:
+                    values[c] = _context(c, ctx_values)
+            except Exception as e:  # noqa: BLE001
+                return {"error": str(e)}
+            # {callerEmail} -- the real Google identity this call is already running as
+            # (invoker: whoever is asking; maker: the connector's configured impersonate_email)
+            # -- available to any step that needs to find "me" in a fetched list (e.g.
+            # matching my own entry in a Calendar event's attendees to RSVP correctly).
+            # Best-effort: a step that references {callerEmail} without a resolvable one gets
+            # a literal empty match, which simply will not find anyone -- never a crash.
+            try:
+                values["callerEmail"] = (
+                    (caller() if (conn.get("perUser") and callable(caller)) else None)
+                    or secret("impersonate_email")
+                )
+            except Exception:  # noqa: BLE001
+                values.setdefault("callerEmail", "")
+
+            def _unresolved_names(s: str):
+                """Any `{word}` still left after substitution -- same check `_invoke`'s
+                single-call path already does for its URL. A step whose template names an
+                argument the model never supplied (optional, or forgotten) must refuse
+                clearly, never silently send the literal `{name}` text as real request
+                data -- that reads as a working call that quietly corrupts the record."""
+                return _re.findall(r"\{(\w+)\}", s)
+
+            def _fill_url(tpl: str, extra: dict) -> str:
+                merged = dict(values)
+                merged.update(extra)
+                out = tpl
+                for k, v in merged.items():
+                    out = out.replace("{" + k + "}", urllib.parse.quote(str(v), safe=""))
+                return out
+
+            def _fill_template(node, ctx: dict):
+                """Recursively substitutes {placeholders} into a JSON-shaped template's
+                STRING values -- a template's own structure (keys, arrays, numbers, booleans)
+                is never altered, just like a URL template's non-placeholder characters never
+                are. A string that is EXACTLY one placeholder (e.g. "{attendees}") and whose
+                bound value is NOT itself a string splices that raw value in directly instead
+                of stringifying it -- needed to carry a whole fetched-and-modified list/object
+                through to a later step's body untouched (see `updateListEntry` below)."""
+                if isinstance(node, str):
+                    if node.startswith("{") and node.endswith("}") and node.count("{") == 1:
+                        key = node[1:-1]
+                        if key in ctx and not isinstance(ctx[key], str):
+                            return ctx[key]
+                    out = node
+                    for k, v in ctx.items():
+                        out = out.replace("{" + k + "}", str(v))
+                    return out
+                if isinstance(node, list):
+                    return [_fill_template(n, ctx) for n in node]
+                if isinstance(node, dict):
+                    return {k: _fill_template(v, ctx) for k, v in node.items()}
+                return node
+
+            def _step_body(step: dict):
+                """(body_bytes, content_type) for this step, or (None, None) if it has no
+                body at all -- a plain GET/DELETE step, the normal case."""
+                if step.get("mimeMessage") is not None:
+                    import base64 as _base64
+
+                    mime_bytes = _build_mime_message(step["mimeMessage"], values)
+                    encoded = _base64.urlsafe_b64encode(mime_bytes).decode("ascii")
+                    # Dot-path, not a flat key only -- Gmail's drafts.create needs the encoded
+                    # message NESTED as {"message": {"raw": "..."}}, not a top-level "raw".
+                    raw_path = (step["mimeMessage"].get("rawField") or "raw").split(".")
+                    envelope = dict(_fill_template(step.get("bodyTemplate") or {}, values))
+                    node = envelope
+                    for part in raw_path[:-1]:
+                        node = node.setdefault(part, {})
+                    node[raw_path[-1]] = encoded
+                    return _json.dumps(envelope).encode("utf-8"), "application/json"
+                if step.get("bodyTemplate") is not None:
+                    filled = _fill_template(step["bodyTemplate"], values)
+                    return _json.dumps(filled).encode("utf-8"), "application/json"
+                if step.get("bodyFromParam"):
+                    raw = values.get(step["bodyFromParam"], "")
+                    ct_param = step.get("bodyContentTypeParam")
+                    content_type = values.get(ct_param, "") if ct_param else ""
+                    return raw.encode("utf-8"), (content_type or "application/octet-stream")
+                return None, None
+
+            def _call(method_s: str, url: str, body_bytes=None, content_type=None):
+                """Raises on either a refused caller (impersonation) or a real request
+                failure -- the two are kept visibly separate at each call site below,
+                same discipline as the single-call `_invoke` above."""
+                try:
+                    header = _aad_header() if op.get("auth") == "aad-token" else auth_header(fill)
+                except Exception as e:  # noqa: BLE001
+                    raise RuntimeError("auth failed (" + str(op.get("auth") or auth_kind) + "): " + str(e)) from e
+                headers = {"Accept": "application/json"}
+                if header:
+                    headers["Authorization"] = header
+                headers.update(_caller_headers(url, header))  # raises if this caller cannot be named
+                if body_bytes is not None and content_type:
+                    headers["Content-Type"] = content_type
+                req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method_s)
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    raw = resp.read().decode("utf-8")
+                    return _json.loads(raw) if raw.strip() else {}
+
+            steps = op.get("chain") or []
+            last_body: dict = {}
+            for step in steps:
+                # A LOCAL TRANSFORM, not an HTTP call -- updates ONE entry in a list a prior
+                # step already fetched (matched on a field, e.g. "email"), binding the WHOLE
+                # modified list for a later step's bodyTemplate to send back. Exists because
+                # a vendor PATCH that takes an array field (e.g. Calendar's `attendees`)
+                # typically REPLACES it wholesale -- sending back just one entry would erase
+                # everyone else invited, so the only correct way to change "my own" response
+                # is fetch-the-full-list, change my one entry, send the whole list back.
+                upd = step.get("updateListEntry")
+                if upd:
+                    source_list = values.get(upd["listVar"])
+                    if not isinstance(source_list, list):
+                        return {"error": "'" + upd["listVar"] + "' is not a list — cannot update an entry in it"}
+                    match_value = _fill_template(upd["matchValue"], values)
+                    set_value = _fill_template(upd["setValue"], values)
+                    new_list = []
+                    found = False
+                    for entry in source_list:
+                        if (
+                            isinstance(entry, dict)
+                            and str(entry.get(upd["matchField"], "")).lower() == str(match_value).lower()
+                        ):
+                            entry = dict(entry)
+                            entry[upd["setField"]] = set_value
+                            found = True
+                        new_list.append(entry)
+                    if not found:
+                        return {
+                            "error": "no entry in '" + upd["listVar"] + "' has " + upd["matchField"]
+                            + " = '" + str(match_value) + "' — nothing to update"
+                        }
+                    values[upd["bindAs"]] = new_list
+                    continue
+
+                method_s = (step.get("method") or "GET").upper()
+                repeat_param = step.get("repeatOverParam")
+                if repeat_param:
+                    raw_val = values.get(repeat_param, "")
+                    segments = [s for s in str(raw_val).strip("/").split("/") if s]
+                    if not segments:
+                        return {"error": "'" + repeat_param + "' must name at least one segment"}
+                    bind_as = step.get("bindAs") or "prev"
+                    noun = step.get("itemNoun") or "item"
+                    current = step.get("initialValue", "")
+                    for i, seg in enumerate(segments):
+                        url = _fill_url(step["urlTemplate"], {bind_as: current, "segment": seg})
+                        missing_in_url = _unresolved_names(url)
+                        if missing_in_url:
+                            return {"error": "missing required value(s) for " + ", ".join(missing_in_url)}
+                        try:
+                            body = _call(method_s, url)
+                        except Exception as e:  # noqa: BLE001
+                            try:
+                                detail = e.read().decode("utf-8")[:300]  # type: ignore[attr-defined]
+                            except Exception:  # noqa: BLE001
+                                detail = str(e)
+                            return {"error": "could not resolve '" + seg + "': " + detail}
+                        matches = _extract_chain_value(body, step.get("extractPath") or "")
+                        if not isinstance(matches, list):
+                            matches = [] if matches is None else [matches]
+                        seen_so_far = "/".join(segments[:i]) or "root"
+                        if len(matches) == 0:
+                            return {"error": "'" + seg + "' not found under '" + seen_so_far + "'"}
+                        if len(matches) > 1:
+                            return {
+                                "error": "'" + seg + "' is ambiguous under '" + seen_so_far
+                                + "' -- " + str(len(matches)) + " " + noun
+                                + "s share that name; narrow the path."
+                            }
+                        item = matches[0]
+                        id_field = step.get("itemIdField")
+                        current = item.get(id_field) if id_field and isinstance(item, dict) else item
+                        if current is None:
+                            return {"error": "could not read '" + str(id_field) + "' for '" + seg + "'"}
+                    values[bind_as] = current
+                    continue
+
+                url = _fill_url(step["urlTemplate"], {})
+                missing_in_url = _unresolved_names(url)
+                if missing_in_url:
+                    return {"error": "missing required value(s) for " + ", ".join(missing_in_url)}
+                body_bytes, content_type = _step_body(step)
+                if body_bytes is not None and (step.get("bodyTemplate") is not None or step.get("mimeMessage") is not None):
+                    missing_in_body = _unresolved_names(body_bytes.decode("utf-8", errors="ignore"))
+                    if missing_in_body:
+                        return {"error": "missing required value(s) for " + ", ".join(missing_in_body)}
+                try:
+                    body = _call(method_s, url, body_bytes, content_type)
+                except Exception as e:  # noqa: BLE001
+                    try:
+                        detail = e.read().decode("utf-8")[:500]  # type: ignore[attr-defined]
+                    except Exception:  # noqa: BLE001
+                        detail = str(e)
+                    return {"error": conn_name + " " + op_id + " failed: " + detail}
+                last_body = body
+                bind_as = step.get("bindAs")
+                if bind_as:
+                    extracted = _extract_chain_value(body, step.get("extractPath") or "")
+                    if extracted is None:
+                        return {"error": "could not extract '" + str(step.get("extractPath")) + "' from the response"}
+                    values[bind_as] = extracted
+                for spec in (step.get("extracts") or []):
+                    raw_val = _extract_chain_value(body, spec.get("path") or "")
+                    if spec.get("headerName"):
+                        raw_val = _extract_header_value(raw_val, spec["headerName"])
+                    if raw_val is None:
+                        return {"error": "could not extract '" + str(spec.get("headerName") or spec.get("path")) + "' from the response"}
+                    values[spec["bindAs"]] = raw_val
+
+            return _capped({"status": 200, "body": last_body})
 
         # ADK describes a tool to the model from its SIGNATURE and docstring, so the
         # signature has to be real. Generated here rather than **kwargs, which ADK
@@ -343,8 +722,12 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
         sig = ", ".join(parts)
         call_args = ", ".join(pn + "=" + pn for pn, _ in unique_args)
         fn_name = op.get("toolName") or ("call_" + op_id.lower())
-        src = "def " + fn_name + "(" + sig + ") -> dict:\n    return _invoke(" + call_args + ")\n"
-        ns = {"_invoke": _invoke}
+        if op.get("chain"):
+            src = "def " + fn_name + "(" + sig + ") -> dict:\n    return _invoke_chain(" + call_args + ")\n"
+            ns = {"_invoke_chain": _invoke_chain}
+        else:
+            src = "def " + fn_name + "(" + sig + ") -> dict:\n    return _invoke(" + call_args + ")\n"
+            ns = {"_invoke": _invoke}
         exec(src, ns)  # noqa: S102 - generated from our own spec, never from model output
         fn = ns[fn_name]
 
@@ -400,6 +783,17 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
             # systemusers lookup must run against the SAME environment as the call.
             api_root = url.split("/api/data/")[0] + "/api/data/v9.2"
             return _impersonation_headers(api_root, auth)
+        if kind_ == "google-dwd-subject":
+            # NOT unimplemented -- already finished, just somewhere else. For Google connectors
+            # the caller is baked into the ACCESS TOKEN itself at mint time (`_mint_token` in
+            # adk_deploy.py, which already resolved `_caller_var()` into a DWD subject before
+            # `auth` -- the header this function receives -- was ever built). There is nothing
+            # left for a HEADER to add on top of that, so unlike the "no mechanism" case below,
+            # returning {} here is correct, not a silent skip. Confirmed live 2026-10-22: this
+            # exact raise was firing for an invoker-mode Drive tool whose token mint had already
+            # succeeded as the right person, because this function did not yet know that
+            # "google-dwd-subject" means "handled, not missing."
+            return {}
         raise RuntimeError(
             (conn.get("name") or "this tool")
             + ": ran under each user's own credentials in Copilot Studio, but this connector"

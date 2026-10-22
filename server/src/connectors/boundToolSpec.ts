@@ -19,8 +19,10 @@
  * an error, which is the worse failure.
  */
 import type { AgentIR, AgentToolIR, FidelityNote } from '../types.js';
-import { bindOperation, type VendorAuth } from './operationBinding.js';
+import { bindOperation, type BoundOperation, type ChainStep, type VendorAuth } from './operationBinding.js';
 import { resolveOpIndex, type CaptureContext } from './captureOpIndex.js';
+import { bindAlwaysOnOperations, bindFromCatalog } from './catalogBinding.js';
+import { logger } from '../logger.js';
 
 /** One deployable operation: everything the container needs to make the call. */
 export interface BoundToolSpec {
@@ -47,6 +49,16 @@ export interface BoundToolSpec {
   requiresIfMatch?: boolean;
   /** See `VendorBinding.bodyTemplate` in operationBinding.ts. */
   bodyTemplate?: { template: Record<string, unknown>; consumes: string[] };
+  /** See `BoundOperation.resultPath`/`.pagination` in operationBinding.ts — carried through
+   *  unchanged so the Python executor can safely auto-follow a declared pagination link. */
+  resultPath?: string;
+  pagination?: { strategy: 'next-link-field'; field: string };
+  /** See `BoundOperation.catalogVersion` — present only when bound via the dynamic catalog;
+   *  used by orchestrator.ts's catalog-version pinning (connectors/catalogPinning.ts). */
+  catalogVersion?: number;
+  /** See `BoundOperation.chain`/`ChainStep` — a multi-call operation. When present, the
+   *  Python executor runs these steps instead of a single request against `urlTemplate`. */
+  chain?: ChainStep[];
 }
 
 export interface BoundToolBuild {
@@ -137,34 +149,71 @@ export async function buildBoundToolSpecs(
   for (const tool of expanded) {
     if (tool.kind !== 'connector' || !tool.connectorId || !tool.operationId) continue;
 
-    const index = await resolveOpIndex(tool.connectorId, ctx);
-    if (!index) continue; // reported elsewhere as an unsupported connector
+    // DYNAMIC CATALOG — tried FIRST. This is data populated ahead of time from the vendor's
+    // own published API docs (db/repos/connectorCatalog.ts), not a live Power Platform
+    // swagger capture and not the hand-maintained VENDOR_BINDINGS table below. A miss here
+    // ('not-in-catalog') falls through to the existing path completely unchanged, so every
+    // connector not yet migrated into the catalog keeps working exactly as it does today —
+    // see docs/connector-architecture-decisions.md and .claude/memory/decisions.md for why
+    // this starts as a pilot (Office 365 Users only) rather than a wholesale replacement.
+    const catalogResult = await bindFromCatalog(tool.connectorId, tool.operationId);
+    let op: BoundOperation;
+    let descriptionFallback: string;
 
-    // A custom connector can apply POLICIES that rewrite the request before it reaches the
-    // backend — inject headers, remap query parameters, change the host. We reproduce the
-    // published definition, not the policies, so where any exist our call may differ from
-    // Copilot's in a way neither we nor the customer can see from the outside. Say so once
-    // per connector rather than let a silently different call pass as a faithful one.
-    if (index.policyCount && !policyWarned.has(tool.connectorId)) {
-      policyWarned.add(tool.connectorId);
+    if (catalogResult.status === 'unsupported') {
+      // The catalog knows something VENDOR_BINDINGS has no way to express — e.g. an
+      // operation that needs a real signed-in person, which an app-only credential can never
+      // satisfy. Refuse up front, with the real reason, instead of deploying a tool that
+      // would fail at run time with a confusing error.
       notes.push({
-        component: `connector:${tool.connectorId}`,
-        status: 'needs-review',
-        detail:
-          `${index.displayName} applies ${index.policyCount} Power Platform policy/policies that rewrite the ` +
-          'request before it reaches the vendor. The migrated tools call the vendor API directly from the ' +
-          'connector definition, so any header, parameter or host the policies changed is not reproduced — ' +
-          'compare a result against the original agent before relying on it.',
+        component: `tool:${tool.name}`,
+        status: 'lost',
+        detail: `"${tool.name}" was not recreated. ${catalogResult.reason}`,
       });
-    }
-
-    const bound = bindOperation(index, tool.operationId);
-    if (bound.status !== 'bindable') {
-      // The per-operation refusal is already reported by the orchestrator's readiness pass;
-      // adding a second note here would double-count the same loss in the report.
       continue;
+    } else if (catalogResult.status === 'bindable') {
+      op = catalogResult.operation;
+      descriptionFallback = catalogResult.displayName;
+      // Confirmed live 2026-10-22: a naming mismatch between a catalog row's
+      // `sourceOperationIds` and the REAL extracted operationId silently falls through to
+      // the path below instead — with no visible difference in the fidelity report, since
+      // both paths can resolve to the same working URL. This line is the only way to tell
+      // which path actually served a given operation without re-deriving it by hand.
+      logger.info({ connectorId: tool.connectorId, operationId: tool.operationId }, 'bound via dynamic catalog');
+    } else {
+      // not-in-catalog — the existing, unchanged path: live capture + the hand-maintained
+      // VENDOR_BINDINGS table.
+      const index = await resolveOpIndex(tool.connectorId, ctx);
+      if (!index) continue; // reported elsewhere as an unsupported connector
+
+      // A custom connector can apply POLICIES that rewrite the request before it reaches the
+      // backend — inject headers, remap query parameters, change the host. We reproduce the
+      // published definition, not the policies, so where any exist our call may differ from
+      // Copilot's in a way neither we nor the customer can see from the outside. Say so once
+      // per connector rather than let a silently different call pass as a faithful one.
+      if (index.policyCount && !policyWarned.has(tool.connectorId)) {
+        policyWarned.add(tool.connectorId);
+        notes.push({
+          component: `connector:${tool.connectorId}`,
+          status: 'needs-review',
+          detail:
+            `${index.displayName} applies ${index.policyCount} Power Platform policy/policies that rewrite the ` +
+            'request before it reaches the vendor. The migrated tools call the vendor API directly from the ' +
+            'connector definition, so any header, parameter or host the policies changed is not reproduced — ' +
+            'compare a result against the original agent before relying on it.',
+        });
+      }
+
+      const bound = bindOperation(index, tool.operationId);
+      if (bound.status !== 'bindable') {
+        // The per-operation refusal is already reported by the orchestrator's readiness pass;
+        // adding a second note here would double-count the same loss in the report.
+        continue;
+      }
+      op = bound.operation;
+      descriptionFallback = index.operations[tool.operationId]?.summary || `${index.displayName} ${tool.operationId}`;
+      logger.info({ connectorId: tool.connectorId, operationId: tool.operationId }, 'bound via legacy VENDOR_BINDINGS fallback (not in dynamic catalog)');
     }
-    const op = bound.operation;
 
     const fixedArgs: Record<string, { in: string; value: string }> = {};
     const paramByName = new Map(op.parameters.map((p) => [p.name, p]));
@@ -275,10 +324,7 @@ export async function buildBoundToolSpecs(
       // row persists no description at all. Reaching for it here is what stops four HubSpot
       // tools arriving as "Get CRM objects from Hubspot GetDeals/GetTickets/…" — strings a
       // model cannot choose between. The operation id remains the last resort.
-      description:
-        tool.description ||
-        index.operations[tool.operationId]?.summary ||
-        `${index.displayName} ${tool.operationId}`,
+      description: tool.description || descriptionFallback,
       fixedArgs,
       modelArgs,
       contextRequired: op.contextRequired,
@@ -289,10 +335,53 @@ export async function buildBoundToolSpecs(
       aadResource: op.aadResource,
       requiresIfMatch: op.requiresIfMatch,
       bodyTemplate: op.bodyTemplate,
+      resultPath: op.resultPath,
+      pagination: op.pagination,
+      catalogVersion: op.catalogVersion,
+      chain: op.chain,
     };
     const list = byConnector.get(tool.connectorId) ?? [];
     list.push(spec);
     byConnector.set(tool.connectorId, list);
+  }
+
+  // ALWAYS-ON bonus capabilities — see catalogBinding.ts's `bindAlwaysOnOperations`. Attached
+  // for every connector this agent touches at all (even one whose own tool calls happened
+  // not to bind to anything), because these were never conditional on a specific extracted
+  // operation in the first place — a dedicated hand-written module's full function list
+  // never was either. Keyed on connectorId alone, so a second agent configuring the same
+  // connector sees the same bonus set; no per-agent decision applies here.
+  const touchedConnectorIds = new Set(
+    expanded.filter((t) => t.kind === 'connector' && t.connectorId).map((t) => t.connectorId as string),
+  );
+  for (const connectorId of touchedConnectorIds) {
+    const alwaysOn = await bindAlwaysOnOperations(connectorId);
+    for (const { displayName, operation: op } of alwaysOn) {
+      const toolName = toolNameFor({ name: displayName } as AgentToolIR, op.operationId, usedNames);
+      const spec: BoundToolSpec = {
+        toolName,
+        connectorId,
+        operationId: op.operationId,
+        method: op.method,
+        urlTemplate: op.urlTemplate,
+        description: displayName,
+        fixedArgs: {},
+        modelArgs: op.parameters.map((p) => ({
+          name: p.name, in: p.in, required: p.required, type: p.type,
+        })),
+        contextRequired: op.contextRequired,
+        contextValues: {},
+        auth: op.auth,
+        aadResource: op.aadResource,
+        resultPath: op.resultPath,
+        pagination: op.pagination,
+        catalogVersion: op.catalogVersion,
+        chain: op.chain,
+      };
+      const list = byConnector.get(connectorId) ?? [];
+      list.push(spec);
+      byConnector.set(connectorId, list);
+    }
   }
 
   return { byConnector, notes };

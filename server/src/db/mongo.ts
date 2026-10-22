@@ -324,6 +324,38 @@ async function ensureCollections(): Promise<void> {
     { unique: true },
   );
 
+  // 20. connectors — the dynamic-connector catalog: one row per connector's real, vendor-
+  //     published API shape (base URL, auth), captured ahead of time from the vendor's own
+  //     documentation — NOT Microsoft's Power Platform connector wrapper, and NOT captured
+  //     live from a customer's tenant. Deliberately UNSCOPED (no appUserId/environment key),
+  //     unlike every other connector-adjacent collection below (connectorOpIndexes,
+  //     connectorIconCatalog) — those reveal which connectors a customer installed, which is
+  //     the customer's business; this one states only a vendor's own published API facts,
+  //     true identically for every customer, same category as the committed fixtures in
+  //     connectors/fixtures/*.ops.json. See .claude/memory/decisions.md for this departure.
+  await ensure('connectors');
+  await db.collection('connectors').createIndex({ connectorId: 1 }, { unique: true });
+
+  // 21. connectorOperations — one row PER OPERATION of a cataloged connector, so an
+  //     operation's shape (method, path, parameters, auth mode) can be looked up directly
+  //     instead of recomputed from a live swagger capture. Same unscoped justification as
+  //     `connectors` above — also carries `sourceOperationIds`, the names Copilot Studio
+  //     itself uses for this operation, which is how a migrated agent's recorded tool call
+  //     gets matched to a real, known API shape.
+  await ensure('connectorOperations');
+  // Drop stale indexes left behind by an earlier, unrelated prototype that used this same
+  // collection name with a different field (`operationId`, not this schema's `operationKey`)
+  // — `ensure()` only creates the collection if ABSENT, so a pre-existing one from that
+  // prototype kept its old indexes, and every insert here collided on `operationId: null`.
+  // Best-effort: a fresh database never had these, and a failed drop must not block boot.
+  try { await db.collection('connectorOperations').dropIndex('connectorId_1_operationId_1'); } catch {}
+  try { await db.collection('connectorOperations').dropIndex('operationId_1'); } catch {}
+  await db.collection('connectorOperations').createIndex(
+    { connectorId: 1, operationKey: 1 },
+    { unique: true },
+  );
+  await db.collection('connectorOperations').createIndex({ connectorId: 1, sourceOperationIds: 1 });
+
   // ── Seed the first accounts ───────────────────────────────────────────────
   //
   // The credentials come from the environment, never from this file. They used to be

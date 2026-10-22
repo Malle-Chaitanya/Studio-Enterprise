@@ -791,15 +791,24 @@ export interface DriveIdentityStatus {
   suggestion: { email: string; reason: string } | null;
 }
 
-/** WHICH Google account each of these agents' Drive connector should impersonate. */
+/**
+ * WHICH Google account each of these agents' connector should impersonate.
+ *
+ * GENERALIZED 2026-10-22: `connectorId` used to not exist — this only ever asked about
+ * 'shared_googledrive'. Any of the six Google connectors (Drive, Gmail, Calendar, Contacts,
+ * Sheets, Tasks) needs exactly this same per-agent decision; the server validates the id is
+ * one of them. Defaults to Drive so an un-migrated caller keeps working unchanged.
+ */
 export async function fetchDriveIdentities(
   session: string,
   envUrl: string,
   sourceIds: string[],
+  connectorId = 'shared_googledrive',
 ): Promise<DriveIdentityStatus[]> {
   if (sourceIds.length === 0) return [];
   const res = await fetch(
-    `/api/migrate/drive-identities?session=${session}&envUrl=${encodeURIComponent(envUrl)}&sourceIds=${encodeURIComponent(sourceIds.join(','))}`,
+    `/api/migrate/drive-identities?session=${session}&envUrl=${encodeURIComponent(envUrl)}` +
+    `&sourceIds=${encodeURIComponent(sourceIds.join(','))}&connectorId=${encodeURIComponent(connectorId)}`,
   );
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
@@ -808,12 +817,17 @@ export async function fetchDriveIdentities(
   return ((await res.json()) as { identities: DriveIdentityStatus[] }).identities;
 }
 
-/** Admin confirms (or corrects) which Google account ONE agent's Drive connector uses. */
-export async function saveDriveIdentity(session: string, sourceId: string, email: string): Promise<void> {
+/** Admin confirms (or corrects) which Google account ONE agent's connector uses. */
+export async function saveDriveIdentity(
+  session: string,
+  sourceId: string,
+  email: string,
+  connectorId = 'shared_googledrive',
+): Promise<void> {
   const res = await fetch('/api/migrate/drive-identities', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session, sourceId, email }),
+    body: JSON.stringify({ session, sourceId, email, connectorId }),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };

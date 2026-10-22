@@ -31,6 +31,10 @@ def caller_headers(conn, caller, url="https://org.crm.dynamics.com/api/data/v9.2
         api_root = url.split("/api/data/")[0] + "/api/data/v9.2"
         assert api_root.endswith("/api/data/v9.2")
         return {conn.get("impersonationHeader") or "MSCRMCallerID": f"id-of:{caller}"}
+    if kind == "google-dwd-subject":
+        # Already handled elsewhere (adk_deploy.py's _mint_token, at token-mint time) --
+        # nothing for a HEADER to add on top of that. See generic_rest.py's own comment.
+        return {}
     raise RuntimeError("no way to act as another person (" + str(kind) + ")")
 
 
@@ -39,6 +43,8 @@ DV = {"perUser": True, "perUserMode": "impersonate",
 JIRA_MISMARKED = {"perUser": True, "perUserMode": "impersonate", "name": "Jira",
                   "impersonationResolve": "atlassian-none"}
 GRAPH = {"perUser": True, "perUserMode": "impersonate", "impersonationResolve": "graph-user-path"}
+GOOGLE_DWD = {"perUser": True, "perUserMode": "impersonate", "name": "Google Drive",
+              "impersonationResolve": "google-dwd-subject"}
 SHARED = {}
 
 # 1. Dataverse: the caller is named on the request.
@@ -81,6 +87,21 @@ except RuntimeError:
 
 # 7. Shared connectors are untouched -- no headers, no exception.
 check("shared connector sends no caller headers", caller_headers(SHARED, "ron@corp.com") == {})
+
+# 8. THE FIX, 2026-10-22: google-dwd-subject is handled elsewhere (token-mint time), not
+#    missing -- confirmed live against an invoker-mode Google Drive tool that failed here
+#    even though its token had already been minted as the right person. Must return {},
+#    NOT raise -- raising here after the identity already succeeded is the actual bug.
+h = caller_headers(GOOGLE_DWD, "admin@migrationn.com")
+check("google-dwd-subject returns no extra headers instead of raising", h == {}, str(h))
+
+# 9. The fix must not widen to graph-user-path -- that one genuinely has no implementation
+#    in this function (Outlook's impersonation works differently) and must keep refusing.
+try:
+    caller_headers(GRAPH, "ron@corp.com")
+    check("graph-user-path still refuses (unaffected by the google-dwd-subject fix)", False, "returned headers")
+except RuntimeError:
+    check("graph-user-path still refuses (unaffected by the google-dwd-subject fix)", True)
 
 print()
 print(("FAILED: " + ", ".join(fails)) if fails else "all passed")

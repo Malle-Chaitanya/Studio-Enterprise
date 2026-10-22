@@ -346,7 +346,18 @@ export default function ConnectorsV2() {
           the card would otherwise report after the fact. */}
       <AgentDecisions
         session={session}
-        driveAgentIds={rows.find((r) => r.connectorId === 'shared_googledrive')?.agentIds ?? []}
+        // One entry per Google connector that gets a per-agent "acts as" decision (Drive,
+        // Gmail, Calendar, Contacts, Sheets, Tasks) — was Drive-only; confirmed live that a
+        // real agent uses five of the six and had no way to set an identity for four of
+        // them. `rows` already carries every connector's own agentIds from the same scan.
+        googleIdentityAgentIds={{
+          shared_googledrive: rows.find((r) => r.connectorId === 'shared_googledrive')?.agentIds ?? [],
+          shared_gmail: rows.find((r) => r.connectorId === 'shared_gmail')?.agentIds ?? [],
+          shared_googlecalendar: rows.find((r) => r.connectorId === 'shared_googlecalendar')?.agentIds ?? [],
+          shared_googlecontacts: rows.find((r) => r.connectorId === 'shared_googlecontacts')?.agentIds ?? [],
+          shared_googlesheet: rows.find((r) => r.connectorId === 'shared_googlesheet')?.agentIds ?? [],
+          shared_googletasks: rows.find((r) => r.connectorId === 'shared_googletasks')?.agentIds ?? [],
+        }}
         // The assessment already fetched the selected agents, so the map costs
         // nothing extra and comes from the same read as the rest of the screen.
         nameById={nameById}

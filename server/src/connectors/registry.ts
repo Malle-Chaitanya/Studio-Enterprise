@@ -724,6 +724,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     name: 'Google Drive',
     category: 'storage',
     icon: '📁',
+    iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1822/1.0.1822.4824/googledrive/icon.png',
     docsUrl: 'https://developers.google.com/drive/api/reference/rest/v3',
     requiredPermissions: ['https://www.googleapis.com/auth/drive'],
     // Deliberately the CUSTOMER'S OWN service account, not CloudFuze's shared one — see
@@ -764,6 +765,9 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     name: 'Gmail',
     category: 'storage',
     icon: '✉️',
+    // Real official icon, confirmed live 2026-10-22 (learn.microsoft.com/en-us/connectors/gmail/)
+    // — was missing before; this connector fell through to the plain tinted-initials tile.
+    iconUrl: 'https://conn-afd-prod-endpoint-bmc9bqahasf3grgk.b01.azurefd.net/releases/v1.0.1800/1.0.1800.4648/gmail/icon.png',
     docsUrl: 'https://developers.google.com/gmail/api/reference/rest',
     requiredPermissions: ['https://www.googleapis.com/auth/gmail.modify'],
     // CROSS-VENDOR. Every other entry in this registry is the destination for the SAME
@@ -802,6 +806,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     name: 'Google Calendar',
     category: 'storage',
     icon: '📅',
+    iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1819/1.0.1819.4795/googlecalendar/icon.png',
     docsUrl: 'https://developers.google.com/workspace/calendar/api/v3/reference',
     requiredPermissions: ['https://www.googleapis.com/auth/calendar'],
     // CROSS-VENDOR, the third one after shared_gmail and shared_googlechat: the Google
@@ -824,6 +829,11 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'google-service-account',
     scope: 'https://www.googleapis.com/auth/calendar',
+    // ADDED 2026-10-22 — this connector was invoker-mode-capable in name only until now:
+    // Drive/Gmail/Sheets/Tasks all had this field; Calendar never did, so an invoker-mode
+    // agent's Calendar tools failed closed with "not configured for per-user sign-in"
+    // (confirmed live). Same mechanism as the others — nothing connector-specific about it.
+    impersonation: { header: '', resolve: 'google-dwd-subject' },
   },
 
   {
@@ -831,6 +841,7 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     name: 'Google Contacts',
     category: 'storage',
     icon: '📇',
+    iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1827/1.0.1827.4908/googlecontacts/icon.png',
     docsUrl: 'https://developers.google.com/people/api/rest/v1/people',
     requiredPermissions: ['https://www.googleapis.com/auth/contacts'],
     // CROSS-VENDOR, the fourth after shared_gmail/shared_googlechat/shared_googlecalendar:
@@ -853,6 +864,64 @@ export const CONNECTOR_REGISTRY: ConnectorDef[] = [
     authHeaderTemplate: 'Bearer {access_token}',
     authKind: 'google-service-account',
     scope: 'https://www.googleapis.com/auth/contacts',
+    // ADDED 2026-10-22 — same gap and same fix as shared_googlecalendar just above: this
+    // connector had no impersonation mechanism at all, so an invoker-mode agent's Contacts
+    // tools failed closed with "not configured for per-user sign-in" (confirmed live).
+    impersonation: { header: '', resolve: 'google-dwd-subject' },
+  },
+
+  {
+    id: 'shared_googlesheet',
+    name: 'Google Sheets',
+    category: 'productivity',
+    icon: '📊',
+    iconUrl: 'https://static.powerapps.com/resource/ppcr/releases/v1.0.1807/1.0.1807.4698/googlesheet/icon.png',
+    docsUrl: 'https://developers.google.com/sheets/api/reference/rest',
+    requiredPermissions: ['https://www.googleapis.com/auth/spreadsheets'],
+    // Added 2026-10-22 alongside shared_googletasks for the dynamic-catalog pilot. A prior
+    // comment on this file (above the Sixth Tier-2 batch) said these two "need the same DWD/
+    // service-account Tier-0 code as Drive/Calendar, not a data row" — that was wrong. The
+    // Tier-0 code (`_mint_token`/`_auth_header` in adk_deploy.py, keyed purely off
+    // `authKind: 'google-service-account'`) is already generic across every Google connector,
+    // not something private to google_drive.py — confirmed by reading adk_deploy.py directly.
+    // Sheets has no dedicated connector_tools/*.py file, so it falls straight through to
+    // generic_rest.py's bound-operation path, which already calls that same generic
+    // `_auth_header`. This connector is exactly a data row, same as every other one here.
+    permissionsHint:
+      'Uses the same service account key as your other Google connectors (see the Google Cloud ' +
+      'credential group). Authorize its Client ID for domain-wide delegation with THIS scope too ' +
+      '— a SEPARATE grant from Drive/Calendar/Contacts/Gmail, even if this agent also uses those. ' +
+      'WHICH account\'s spreadsheets each agent acts on is set per-agent on the next screen.',
+    credentials: [], // supplied by the google_service_account credential group
+    credentialGroup: 'google_service_account',
+    baseUrlTemplate: 'https://sheets.googleapis.com/v4',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'google-service-account',
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    impersonation: { header: '', resolve: 'google-dwd-subject' },
+  },
+
+  {
+    id: 'shared_googletasks',
+    name: 'Google Tasks',
+    category: 'productivity',
+    icon: '✅',
+    iconUrl: 'https://conn-afd-prod-endpoint-bmc9bqahasf3grgk.b01.azurefd.net/releases/v1.0.1780/1.0.1780.4444/googletasks/icon.png',
+    docsUrl: 'https://developers.google.com/tasks/reference/rest',
+    requiredPermissions: ['https://www.googleapis.com/auth/tasks'],
+    // See shared_googlesheet's note just above — same correction applies here. No dedicated
+    // connector_tools/googletasks.py exists or is needed; this is a data row only.
+    permissionsHint:
+      'Uses the same service account key as your other Google connectors (see the Google Cloud ' +
+      'credential group). Authorize its Client ID for domain-wide delegation with THIS scope too. ' +
+      'WHICH account\'s task lists each agent acts on is set per-agent on the next screen.',
+    credentials: [], // supplied by the google_service_account credential group
+    credentialGroup: 'google_service_account',
+    baseUrlTemplate: 'https://tasks.googleapis.com/tasks/v1',
+    authHeaderTemplate: 'Bearer {access_token}',
+    authKind: 'google-service-account',
+    scope: 'https://www.googleapis.com/auth/tasks',
+    impersonation: { header: '', resolve: 'google-dwd-subject' },
   },
 
   {

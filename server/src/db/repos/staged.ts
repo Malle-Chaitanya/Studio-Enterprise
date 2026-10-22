@@ -114,6 +114,16 @@ export interface StagedAgent {
   error?: string;
   stagedAt?: Date;
   insertedAt?: Date;
+  /**
+   * Dynamic-catalog version PINNING (connectors/catalogPinning.ts) — one entry per
+   * (connectorId, source operationId) this agent successfully bound against the catalog,
+   * recording which `catalogVersion` was used. A retry compares against this map rather
+   * than trusting whatever the catalog currently says, so an edit to a catalog row made
+   * between the original attempt and a retry is DETECTED and refused, never silently
+   * applied. Additive, best-effort like every other field on this row — absent on rows
+   * staged before this existed, which simply means every connector on them is "first-time".
+   */
+  connectorCatalogPins?: Record<string, number>;
 }
 
 /** Upsert a staged (extracted + mapped) agent. Called during phase 1. */

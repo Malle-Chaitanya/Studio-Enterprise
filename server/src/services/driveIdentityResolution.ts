@@ -1,8 +1,14 @@
 /**
- * Best-effort suggestion for WHICH Google account a Drive-connected agent should
+ * Best-effort suggestion for WHICH Google account a Google-connected agent should
  * impersonate — never a decision. See db/repos/agentConnectorIdentity.ts and
  * docs/connector-architecture-decisions.md §12.5 for why this exists and why it is
  * scoped to the whole environment rather than one agent.
+ *
+ * GENERALIZED 2026-10-22: this used to hardcode 'shared_googledrive' — the only one of the
+ * six Google connectors that had a per-agent identity decision at all. Sheets, Calendar,
+ * Tasks and Contacts are exactly as "which person does this act as" as Drive is (confirmed
+ * live: a real agent, "Employee Helpdesk agent", uses all five and had no way to set an
+ * identity for four of them) — the connector id is now a parameter instead of a literal.
  */
 import { getConnectionReferenceOwner, findConnectionReferenceLogicalNames } from './thirdPartyConnectorScan.js';
 import { resolvePrincipal } from './identityMap.js';
@@ -27,13 +33,14 @@ export interface DriveIdentitySuggestion {
  *    resolve to more than one distinct identity, this returns null rather than
  *    guessing which one a particular agent needs — the admin has to say.
  */
-export async function suggestEnvironmentDriveIdentity(
+export async function suggestEnvironmentGoogleIdentity(
+  connectorId: string,
   dvOrgUrl: string,
   dvToken: string,
   ownedDomains: string[],
   overrides: IdentityMapOverrides,
 ): Promise<DriveIdentitySuggestion | null> {
-  const logicalNames = await findConnectionReferenceLogicalNames(dvOrgUrl, dvToken, 'shared_googledrive');
+  const logicalNames = await findConnectionReferenceLogicalNames(dvOrgUrl, dvToken, connectorId);
   const candidates = new Map<string, string>(); // resolved Google email -> Microsoft owner name, for the reason text
   for (const logicalName of logicalNames) {
     const owner = await getConnectionReferenceOwner(dvOrgUrl, dvToken, logicalName);

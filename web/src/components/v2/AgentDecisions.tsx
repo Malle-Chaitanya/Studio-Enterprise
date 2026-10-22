@@ -34,19 +34,35 @@ import { IcoCheck } from '../../icons.tsx';
 
 interface Unit { env: string; envName?: string; botIds: string[] }
 
-export function AgentDecisions({ session, driveAgentIds, nameById, live = true, onSaved }: {
+/**
+ * Every connector this per-agent "acts as" decision applies to — one fixed Google identity
+ * per agent, DWD-impersonated. Was Drive-only until 2026-10-22; confirmed live that a real
+ * agent ("Employee Helpdesk agent") uses five of these six and had no way to set an identity
+ * for four of them. Google Chat is NOT here — it has its own, already-built
+ * `impersonate_email` credential field instead of this per-agent mechanism.
+ */
+const GOOGLE_IDENTITY_CONNECTORS: Array<{ id: string; name: string }> = [
+  { id: 'shared_googledrive', name: 'Google Drive' },
+  { id: 'shared_gmail', name: 'Gmail' },
+  { id: 'shared_googlecalendar', name: 'Google Calendar' },
+  { id: 'shared_googlecontacts', name: 'Google Contacts' },
+  { id: 'shared_googlesheet', name: 'Google Sheets' },
+  { id: 'shared_googletasks', name: 'Google Tasks' },
+];
+
+export function AgentDecisions({ session, googleIdentityAgentIds, nameById, live = true, onSaved }: {
   session: string;
   /**
-   * Botids the connector scan saw on the Google Drive connector.
+   * connectorId -> botIds the connector scan saw using THAT connector, for every id in
+   * GOOGLE_IDENTITY_CONNECTORS. An absent/empty array means "no agent uses this connector
+   * here", not "unknown" — same discipline the old Drive-only prop used.
    *
-   * The Drive endpoint answers for whatever ids it is asked about and does not
-   * itself say who uses Drive, so the scan is what narrows it. Ids, not names: the
-   * scan used to expose only names, so an agent whose display name could not be
-   * resolved had no row at all and nobody could tell, and two agents sharing a name
-   * collided. The scan now returns ids wherever it saw one, which is strictly more
-   * often than it could name them.
+   * Each endpoint answers for whatever ids it is asked about and does not itself say who
+   * uses it, so the scan is what narrows it. Ids, not names: an agent whose display name
+   * could not be resolved would otherwise have no row at all and nobody could tell, and two
+   * agents sharing a name would collide.
    */
-  driveAgentIds: string[];
+  googleIdentityAgentIds: Record<string, string[]>;
   /** botId -> agent name, from the same agent list the rest of the screen uses. */
   nameById: Record<string, string>;
   /**
@@ -59,7 +75,7 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
 }) {
   const [units, setUnits] = useState<Unit[] | null>(null);
   const [surfaces, setSurfaces] = useState<Array<SurfaceEquivalence & { env: string }>>([]);
-  const [drives, setDrives] = useState<Array<DriveIdentityStatus & { env: string; name: string }>>([]);
+  const [identities, setIdentities] = useState<Array<DriveIdentityStatus & { env: string; name: string; connectorId: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -99,12 +115,17 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
       }));
       setSurfaces(surf.flat());
 
-      const drv = await Promise.all(sel.map(async (u) => {
-        const rows = await fetchDriveIdentities(session, u.env, u.botIds)
-          .catch((e: Error) => { dErr = e.message; return []; });
-        return rows.map((r) => ({ ...r, env: u.env, name: nameById[r.sourceId] ?? '' }));
-      }));
-      setDrives(drv.flat());
+      // One fetch per (environment, connector) pair, asking about every selected agent —
+      // same pattern the old Drive-only fetch used (ask broadly, narrow client-side via
+      // googleIdentityAgentIds below), just repeated across all six connectors now.
+      const idn = await Promise.all(
+        sel.flatMap((u) => GOOGLE_IDENTITY_CONNECTORS.map(async (c) => {
+          const rows = await fetchDriveIdentities(session, u.env, u.botIds, c.id)
+            .catch((e: Error) => { dErr = e.message; return []; });
+          return rows.map((r) => ({ ...r, env: u.env, name: nameById[r.sourceId] ?? '', connectorId: c.id }));
+        })),
+      );
+      setIdentities(idn.flat());
       setSurfaceError(sErr);
       setDriveError(dErr);
     } catch (e) {
@@ -206,14 +227,15 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
     );
   };
 
-  const driveRow = (d: DriveIdentityStatus & { env: string; name: string }): JSX.Element => {
-    const key = `drive:${d.sourceId}`;
+  const googleIdentityRow = (d: DriveIdentityStatus & { env: string; name: string; connectorId: string }): JSX.Element => {
+    const key = `gid:${d.connectorId}:${d.sourceId}`;
+    const connectorName = GOOGLE_IDENTITY_CONNECTORS.find((c) => c.id === d.connectorId)?.name ?? d.connectorId;
     const value = emails[key] ?? d.current?.email ?? d.suggestion?.email ?? '';
     const confirmed = d.current?.status === 'confirmed';
     return (
       <div className="v2-dec" key={key}>
         <span className="nmw">
-          <span className="nm">Google Drive</span>
+          <span className="nm">{connectorName}</span>
           <span className="kind">
             acts as
             {d.suggestion && !confirmed ? ` · suggested: ${d.suggestion.email}` : ''}
@@ -233,7 +255,7 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
               setBusy(key);
               setRowError((r) => ({ ...r, [key]: '' }));
               try {
-                await saveDriveIdentity(session, d.sourceId, value.trim());
+                await saveDriveIdentity(session, d.sourceId, value.trim(), d.connectorId);
                 await read();
                 onSaved?.();
               } catch (e) {
@@ -255,51 +277,59 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
     );
   };
 
-  // Only Drive-using agents are asked. The endpoint answers for ANY id it is given,
-  // so without this every selected agent would be offered a Drive account it has no
-  // use for.
+  // Only agents actually using a given connector are asked about it. Each endpoint answers
+  // for ANY id it is given, so without this every selected agent would be offered an
+  // identity for a connector it has no use for.
   //
-  // Matched on botid, exactly. This was a display-name comparison for as long as
-  // names were the only key the scan exposed, which meant an agent whose name could
-  // not be resolved silently had no row — a Drive tool dropped from the run with
-  // nothing on screen to say so — and two agents sharing a name collided. The scan
-  // now returns ids wherever it saw one, so the failure mode is gone rather than
-  // merely visible, and the normalisation and unmatched-name notice went with it.
-  const wantsDrive = new Set(driveAgentIds.filter(Boolean));
-  const driveRows = drives.filter((d) => wantsDrive.has(d.sourceId));
+  // Matched on botid, exactly. This was a display-name comparison for as long as names were
+  // the only key the scan exposed, which meant an agent whose name could not be resolved
+  // silently had no row — a tool dropped from the run with nothing on screen to say so —
+  // and two agents sharing a name collided. The scan now returns ids wherever it saw one.
+  const identityRows = GOOGLE_IDENTITY_CONNECTORS.flatMap((c) => {
+    const wants = new Set((googleIdentityAgentIds[c.id] ?? []).filter(Boolean));
+    return identities.filter((d) => d.connectorId === c.id && wants.has(d.sourceId));
+  });
 
   /**
-   * One group per agent (sourceId), each carrying its own surface decisions and
-   * its Drive identity if it has one — the two used to be two separate flat
-   * lists; an agent needing both now gets both in the same popup, since both are
-   * about the same agent's own tools.
+   * One group per agent (sourceId), each carrying its own surface decisions and every
+   * Google-identity decision it needs — these used to be two separate flat lists; an agent
+   * needing several now gets all of them in the same popup, since all are about the same
+   * agent's own tools.
    *
-   * Order: first-seen in `surfaces`, then any Drive-only agent not already
-   * covered — stable across re-renders because it does not depend on undecided
-   * counts, so fixing a decision does not reshuffle the list out from under you.
+   * Order: first-seen in `surfaces`, then any identity-only agent not already covered —
+   * stable across re-renders because it does not depend on undecided counts, so fixing a
+   * decision does not reshuffle the list out from under you.
    */
   const agentGroups = useMemo(() => {
     const order: string[] = [];
     const seen = new Set<string>();
     const add = (id: string): void => { if (!seen.has(id)) { seen.add(id); order.push(id); } };
     surfaces.forEach((s) => add(s.sourceId));
-    driveRows.forEach((d) => add(d.sourceId));
+    identityRows.forEach((d) => add(d.sourceId));
     return order.map((id) => {
       const agentSurfaces = surfaces.filter((s) => s.sourceId === id);
-      const drive = driveRows.find((d) => d.sourceId === id);
-      return { id, name: agentSurfaces[0]?.agentName ?? drive?.name ?? id, surfaces: agentSurfaces, drive };
+      const agentIdentities = identityRows.filter((d) => d.sourceId === id);
+      return {
+        id,
+        name: agentSurfaces[0]?.agentName ?? agentIdentities[0]?.name ?? id,
+        surfaces: agentSurfaces,
+        identities: agentIdentities,
+      };
     });
-  }, [surfaces, driveRows]);
+  }, [surfaces, identityRows]);
 
   const agentUndecidedCount = (g: typeof agentGroups[number]): number =>
     g.surfaces.filter((s) => s.decision === null).length
-    + (g.drive && g.drive.current?.status !== 'confirmed' ? 1 : 0);
+    + g.identities.filter((d) => d.current?.status !== 'confirmed').length;
 
   const openAgentGroup = agentGroups.find((g) => g.id === openAgentId) ?? null;
 
   const agentRow = (g: typeof agentGroups[number]): JSX.Element => {
     const n = agentUndecidedCount(g);
-    const uses = [...g.surfaces.map((s) => s.sourceName), ...(g.drive ? ['Google Drive'] : [])].join(', ');
+    const uses = [
+      ...g.surfaces.map((s) => s.sourceName),
+      ...g.identities.map((d) => GOOGLE_IDENTITY_CONNECTORS.find((c) => c.id === d.connectorId)?.name ?? d.connectorId),
+    ].join(', ');
     return (
       <button
         type="button"
@@ -325,7 +355,7 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
   // Only truly silent when a successful read found nothing AND nothing failed. Any
   // other combination has something to say.
   if (!loading && !error && !surfaceError && !driveError
-    && surfaces.length === 0 && driveRows.length === 0) return null;
+    && surfaces.length === 0 && identityRows.length === 0) return null;
 
   return (
     <>
@@ -346,7 +376,7 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
       )}
       {driveError && (
         <NoteRow tone="bad">
-          Could not read the Drive identities ({driveError}). Unknown, not none.
+          Could not read the Google connector identities ({driveError}). Unknown, not none.
         </NoteRow>
       )}
 
@@ -362,13 +392,13 @@ export function AgentDecisions({ session, driveAgentIds, nameById, live = true, 
         label={`Decisions for ${openAgentGroup.name}`}
         glyph={openAgentGroup.name.slice(0, 2).toUpperCase()}
         title={openAgentGroup.name}
-        sub={`${openAgentGroup.surfaces.length + (openAgentGroup.drive ? 1 : 0)} decision${
-          openAgentGroup.surfaces.length + (openAgentGroup.drive ? 1 : 0) > 1 ? 's' : ''} for this agent`}
+        sub={`${openAgentGroup.surfaces.length + openAgentGroup.identities.length} decision${
+          openAgentGroup.surfaces.length + openAgentGroup.identities.length > 1 ? 's' : ''} for this agent`}
         onClose={() => setOpenAgentId(null)}
         body={(
           <>
             {openAgentGroup.surfaces.map(surfaceRow)}
-            {openAgentGroup.drive && driveRow(openAgentGroup.drive)}
+            {openAgentGroup.identities.map(googleIdentityRow)}
           </>
         )}
       />

@@ -293,6 +293,160 @@ export interface BoundOperation {
   requiresIfMatch?: boolean;
   /** Fixed request-body shape, with the model-filled keys named in `consumes`. */
   bodyTemplate?: { template: Record<string, unknown>; consumes: string[] };
+  /** Field in the response body holding the row list (e.g. Microsoft Graph's `value`).
+   *  Required for `pagination` below to know what to merge across pages — without it, a
+   *  paginated operation is still callable, just not auto-followed. */
+  resultPath?: string;
+  /**
+   * Declarative pagination, carried from the dynamic catalog (db/repos/connectorCatalog.ts)
+   * — never auto-detected by shape. Only ONE strategy exists today: a top-level response
+   * field naming the next page's full URL (Microsoft Graph's `@odata.nextLink`). The
+   * executor must still validate that URL belongs to the same host before following it —
+   * see generic_rest.py's pagination note.
+   */
+  pagination?: { strategy: 'next-link-field'; field: string };
+  /** The dynamic catalog's `catalogVersion` this operation was resolved against — present
+   *  only when bound via the catalog (never set by the hand-maintained VENDOR_BINDINGS
+   *  path). This is the value `catalogPinning.ts` pins per staged agent. */
+  catalogVersion?: number;
+  /**
+   * A MULTI-CALL operation, declared as data — generic, not specific to any one connector.
+   * When present, the executor runs these steps in order instead of a single request, feeding
+   * each step's extracted result into the next. Exists because some real vendor operations
+   * are not one HTTP call: resolving "Reports/2026/file.csv" to a file id is Drive's own
+   * `files.list` repeated once per path segment; creating a file with real content there is
+   * create-metadata, THEN upload-content against the id the first call returned. Absent for
+   * every ordinary single-call operation — this is the exception, not the common case.
+   */
+  chain?: ChainStep[];
+}
+
+/**
+ * One step of a `BoundOperation.chain`. See the field comment there for why this exists.
+ */
+export interface ChainStep {
+  /** Omit only for an `updateListEntry` step — a local transform, not an HTTP call. */
+  method?: string;
+  /** May reference `{name}` for any fixed/model argument or a context value bound by an
+   *  earlier step (see `bindAs`), plus `{segment}` inside a repeating step (see
+   *  `repeatOverParam`). Omit only for an `updateListEntry` step. */
+  urlTemplate?: string;
+  /**
+   * Dot-path into this step's JSON response (numeric segments index an array, e.g.
+   * "files.0.id"). Without `itemIdField` the extracted value itself is what gets bound —
+   * use this for a response that already names a single thing (e.g. a newly created file's
+   * own "id"). With `itemIdField`, `extractPath` must instead point to a LIST that is
+   * expected to contain exactly one match (e.g. Drive's "files" from a `files.list` search);
+   * zero or more than one match is refused with a clear reason, never guessed at.
+   */
+  extractPath?: string;
+  /** See `extractPath` — the field to pull off the single matched list item. */
+  itemIdField?: string;
+  /**
+   * For a response shaped as a list of `{name, value}` pairs (e.g. Gmail's MIME
+   * `payload.headers`) — `extractPath` points to that list, and this names which entry to
+   * find (matched on its `name` field, case-insensitive), binding its `value`. Mutually
+   * exclusive with `itemIdField` (one response shape is a vendor RESOURCE list needing
+   * disambiguation, the other is a flat header lookup needing none).
+   */
+  extractHeaderName?: string;
+  /** Bind the extracted value under this name for a LATER step's `urlTemplate` (as
+   *  `{<bindAs>}`), or — inside a repeating step — for the NEXT iteration. */
+  bindAs?: string;
+  /**
+   * Repeats THIS ONE step once per `/`-separated segment of the named argument (e.g. a
+   * "path" parameter: "Reports/2026/file.csv" becomes 3 iterations), carrying `bindAs`
+   * forward from each iteration into the next's `urlTemplate`, seeded by `initialValue`
+   * before the first. At most one step in a chain may set this.
+   */
+  repeatOverParam?: string;
+  /** Seed value for `{<bindAs>}` before a repeating step's first iteration (e.g. Drive's
+   *  "root" as the starting parent folder). */
+  initialValue?: string;
+  /** Singular noun for this step's target, used only in "not found"/"ambiguous" error text
+   *  (e.g. "folder", "file"). Defaults to "item". */
+  itemNoun?: string;
+  /**
+   * Pull SEVERAL simple values out of one step's response in one go (vs. the single
+   * `extractPath`/`bindAs` pair above, meant for the repeating-segment / single-field case).
+   * E.g. reading a Gmail message's `threadId` AND its "Message-ID"/"Subject"/"From" headers
+   * all from the one `messages.get` response, to feed a later reply step.
+   */
+  extracts?: Array<{
+    /** Dot-path into the response (same rules as `extractPath`). */
+    path: string;
+    /** When the extracted value is a `{name, value}`-pair list (e.g. Gmail's MIME
+     *  `payload.headers`), find the entry whose `name` matches this (case-insensitive) and
+     *  bind its `value` instead of the raw list. */
+    headerName?: string;
+    /** Bind the extracted value under this name, for a later step's `urlTemplate`,
+     *  `bodyTemplate`, or `mimeMessage` fields. */
+    bindAs: string;
+  }>;
+  /**
+   * A JSON-shaped request body for this step, built by substituting `{placeholders}` into
+   * every string value (recursively through nested objects/arrays) the same way `urlTemplate`
+   * does, then sending the result as `application/json` — e.g. `{"name": "{name}", "parents":
+   * ["{folderId}"]}`. Use this for an ordinary structured body (creating a file's metadata).
+   */
+  bodyTemplate?: Record<string, unknown>;
+  /**
+   * Assembles a real RFC 2822 email message from these fields (each may contain
+   * `{placeholders}`, substituted the same way `urlTemplate` is), base64url-encodes it, and
+   * merges `{ [rawField ?? "raw"]: <encoded> }` into this step's JSON body (alongside
+   * `bodyTemplate` if both are set — e.g. `bodyTemplate: { threadId: "{threadId}" }` plus this
+   * for Gmail's `{"raw": "...", "threadId": "..."}` send/reply shape). Exists because a vendor
+   * reply/send operation is not just "fill in a JSON template" — the body itself has to be a
+   * correctly-headered email, encoded a specific way, which is genuinely different work from
+   * ordinary JSON assembly.
+   */
+  mimeMessage?: {
+    to?: string;
+    cc?: string;
+    subject?: string;
+    /** RFC 2822 `In-Reply-To` header — the ORIGINAL message's real Message-ID (not the
+     *  vendor's own internal id), for correct thread-reply behaviour. */
+    inReplyTo?: string;
+    references?: string;
+    /** Defaults to `text/plain; charset=UTF-8`. */
+    contentType?: string;
+    /** The message text itself. */
+    body: string;
+    /** JSON field name the encoded message is placed under. Defaults to `"raw"`. */
+    rawField?: string;
+  };
+  /**
+   * A LOCAL TRANSFORM step — no HTTP call at all — that updates ONE entry in a list an
+   * earlier step already fetched (via `extracts`), then binds the WHOLE modified list for a
+   * later step's `bodyTemplate` to send back. Exists because a vendor PATCH taking an array
+   * field (e.g. Calendar's `attendees`) typically REPLACES it wholesale — sending back only
+   * one entry would silently erase everyone else, so the only correct way to change "my own"
+   * response is fetch-the-full-list, change my one entry, send the whole list back. When
+   * set, this step has no `method`/`urlTemplate` at all.
+   */
+  updateListEntry?: {
+    /** The bound variable (from an earlier step's `extracts`) holding the list to update. */
+    listVar: string;
+    /** Field within each entry to match on (e.g. "email"). */
+    matchField: string;
+    /** Value to match against — may be a whole-string placeholder (e.g. "{callerEmail}",
+     *  the real identity this call is already running as — see the executor's own note on
+     *  why that's always available). */
+    matchValue: string;
+    /** Field within the matched entry to change (e.g. "responseStatus"). */
+    setField: string;
+    /** New value for that field (may contain `{placeholders}`). */
+    setValue: string;
+    /** Bind the whole modified list under this name. */
+    bindAs: string;
+  };
+  /** For a step whose body is raw text/bytes rather than JSON (e.g. uploading a file's
+   *  actual content) — the named argument's own value becomes the ENTIRE body verbatim.
+   *  Mutually exclusive with `bodyTemplate`. */
+  bodyFromParam?: string;
+  /** Content-Type to send with `bodyFromParam`'s body — either another argument's name
+   *  (its value is used), or omit to default to `application/octet-stream`. */
+  bodyContentTypeParam?: string;
 }
 
 export type BindingResult =

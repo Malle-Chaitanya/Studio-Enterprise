@@ -68,7 +68,7 @@ import {
   setAgentDestinationName,
   clearAgentDestinationName,
 } from '../db/repos/agentDestinationName.js';
-import { suggestEnvironmentDriveIdentity } from '../services/driveIdentityResolution.js';
+import { suggestEnvironmentGoogleIdentity } from '../services/driveIdentityResolution.js';
 import { buildOrganizationProfile } from '../services/organizationProfile.js';
 import { getIdentityMap } from '../db/repos/identityMap.js';
 import { listRuns, getRunResults, getRunHeader } from '../db/repos/migrations.js';
@@ -562,12 +562,30 @@ migrateRouter.post('/destination-names', async (req, res) => {
 });
 
 /**
- * GET /api/migrate/drive-identities?session=&envUrl=&sourceIds=id1,id2
+ * Which connectors this per-agent "acts as" mechanism applies to. Data-driven, not a
+ * hardcoded list: every connector in the shared `google_service_account` credential group
+ * (Drive, Gmail, Calendar, Contacts, Sheets, Tasks) needs exactly the same thing Drive always
+ * did — one fixed Google identity per agent, DWD-impersonated. Google Chat is deliberately
+ * NOT in this set: it carries its own `impersonate_email` credential field instead (see its
+ * registry entry), a different, already-built mechanism, not this one.
  *
- * For each Drive-connected agent, which Google account it should impersonate — a
- * confirmed one already saved, and/or a best-effort suggestion. Never returns a
- * "confirmed" status on its own initiative; only routes/migrate.ts's POST below,
- * driven by an admin action, does that. See db/repos/agentConnectorIdentity.ts.
+ * GENERALIZED 2026-10-22: this endpoint used to accept only 'shared_googledrive'. Confirmed
+ * live that a real agent ("Employee Helpdesk agent") uses five of the six and had no way to
+ * set an identity for four of them — Sheets, Calendar, Tasks, Contacts were silently stuck
+ * with no decision screen at all, not a missing feature anyone could see from the outside.
+ */
+function isGoogleIdentityConnector(connectorId: string): boolean {
+  return REGISTRY_BY_ID.get(connectorId)?.credentialGroup === 'google_service_account';
+}
+
+/**
+ * GET /api/migrate/drive-identities?session=&envUrl=&sourceIds=id1,id2&connectorId=shared_googledrive
+ *
+ * For each agent using the given Google connector, which account it should impersonate — a
+ * confirmed one already saved, and/or a best-effort suggestion. Never returns a "confirmed"
+ * status on its own initiative; only the POST below, driven by an admin action, does that.
+ * `connectorId` defaults to 'shared_googledrive' for any caller written before this was
+ * generalized. See db/repos/agentConnectorIdentity.ts.
  */
 migrateRouter.get('/drive-identities', async (req, res) => {
   const session = await getSession(req.query.session as string);
@@ -575,6 +593,10 @@ migrateRouter.get('/drive-identities', async (req, res) => {
   if (!session.tenantId) return void res.status(400).json({ error: 'ms_not_connected' });
   const envUrl = req.query.envUrl as string | undefined;
   if (!envUrl) return void res.status(400).json({ error: 'env_url_required' });
+  const connectorId = (req.query.connectorId as string | undefined) || 'shared_googledrive';
+  if (!isGoogleIdentityConnector(connectorId)) {
+    return void res.status(400).json({ error: 'unsupported_identity_connector' });
+  }
   const sourceIds = String(req.query.sourceIds ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   if (sourceIds.length === 0) return void res.json({ identities: [] });
 
@@ -582,7 +604,7 @@ migrateRouter.get('/drive-identities', async (req, res) => {
   try {
     const currentByAgent = new Map(
       await Promise.all(
-        sourceIds.map(async (sourceId) => [sourceId, await getAgentConnectorIdentity(appUserId, sourceId, 'shared_googledrive')] as const),
+        sourceIds.map(async (sourceId) => [sourceId, await getAgentConnectorIdentity(appUserId, sourceId, connectorId)] as const),
       ),
     );
 
@@ -596,7 +618,7 @@ migrateRouter.get('/drive-identities', async (req, res) => {
           buildOrganizationProfile(session, new Date().toISOString()),
           getIdentityMap(appUserId, session.tenantId, session.geminiProject ?? ''),
         ]);
-        suggestion = await suggestEnvironmentDriveIdentity(envUrl, dvToken, profile.ownedDomains, overrides);
+        suggestion = await suggestEnvironmentGoogleIdentity(connectorId, envUrl, dvToken, profile.ownedDomains, overrides);
       } catch (err) {
         logger.warn({ err }, 'drive-identities: suggestion lookup failed — continuing without one');
       }
@@ -618,19 +640,25 @@ migrateRouter.get('/drive-identities', async (req, res) => {
 
 /**
  * POST /api/migrate/drive-identities
- * body: { session, sourceId, email }
+ * body: { session, sourceId, email, connectorId? }
  *
- * Admin confirms (or corrects) which Google account ONE agent's Drive connector
- * should impersonate. Same domain-ownership check as the shared connector
- * credential save — an admin can only assign identities within their own,
- * OAuth-proven Google Workspace, never another CloudFuze customer's.
+ * Admin confirms (or corrects) which Google account ONE agent's connector should
+ * impersonate. Same domain-ownership check as the shared connector credential save — an
+ * admin can only assign identities within their own, OAuth-proven Google Workspace, never
+ * another CloudFuze customer's. `connectorId` defaults to 'shared_googledrive'.
  */
 migrateRouter.post('/drive-identities', async (req, res) => {
-  const { session: sessionId, sourceId, email } = req.body as { session?: string; sourceId?: string; email?: string };
+  const { session: sessionId, sourceId, email, connectorId: rawConnectorId } = req.body as {
+    session?: string; sourceId?: string; email?: string; connectorId?: string;
+  };
   const session = await getSession(sessionId ?? '');
   if (!session) return void res.status(404).json({ error: 'session_not_found' });
   if (!sourceId || !email?.trim()) {
     return void res.status(400).json({ error: 'source_id_and_email_required' });
+  }
+  const connectorId = rawConnectorId || 'shared_googledrive';
+  if (!isGoogleIdentityConnector(connectorId)) {
+    return void res.status(400).json({ error: 'unsupported_identity_connector' });
   }
   const target = email.trim();
   const ownDomain = session.gEmail?.split('@')[1]?.toLowerCase();
@@ -645,12 +673,12 @@ migrateRouter.post('/drive-identities', async (req, res) => {
   if (!impersonationAllowed(target, allowedDomains)) {
     return void res.status(400).json({
       error: 'impersonation_domain_mismatch',
-      detail: `"${target}" is not in your Google Workspace (verified domains: ${allowedDomains.join(', ')}). An agent can only be set up to access Drive for users in your own organization.`,
+      detail: `"${target}" is not in your Google Workspace (verified domains: ${allowedDomains.join(', ')}). An agent can only be set up to access this connector for users in your own organization.`,
     });
   }
 
   const appUserId = session.appUserId ?? DEFAULT_APP_USER_ID;
-  await upsertAgentConnectorIdentity(appUserId, sourceId, 'shared_googledrive', {
+  await upsertAgentConnectorIdentity(appUserId, sourceId, connectorId, {
     impersonateEmail: target,
     status: 'confirmed',
   });

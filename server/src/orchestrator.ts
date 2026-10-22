@@ -1,3 +1,4 @@
+import { config } from './config.js';
 import { clientCredsToken } from './auth/microsoft.js';
 import { resolveCallerIdentityMap } from './services/callerIdentity.js';
 import { recoverSharePointUrlAcrossEnvs } from './services/sharePointUrlRecovery.js';
@@ -26,6 +27,7 @@ import { getAgentConnectorIdentity } from './db/repos/agentConnectorIdentity.js'
 import { getAgentDestinationName } from './db/repos/agentDestinationName.js';
 import { readinessFor } from './connectors/readiness.js';
 import { buildBoundToolSpecs } from './connectors/boundToolSpec.js';
+import { checkCatalogPin, withCatalogPins } from './connectors/catalogPinning.js';
 import { resolveOpIndex, type CaptureContext } from './connectors/captureOpIndex.js';
 import { REGISTRY_BY_ID } from './connectors/registry.js';
 import { needsAclAcknowledgement, aclDisclosureFor } from './services/aclDisclosure.js';
@@ -2238,6 +2240,47 @@ async function execute(
             const boundBuild = await buildBoundToolSpecs(row.mapped!.ir, captureCtxFor(row.envUrl), {
               dataverseOrgUrl: row.envUrl ?? '',
             });
+
+            // CATALOG VERSION PINNING (connectors/catalogPinning.ts). A dynamic-catalog row
+            // has no version history — editing it overwrites it in place — so a retry of this
+            // same agent reading the catalog fresh could silently pick up a changed definition
+            // the ORIGINAL attempt never saw. Detected here, before a catalog-sourced spec can
+            // reach `scopedConnectors`: first use pins the version; a later run matching it
+            // proceeds exactly as before; a mismatch is refused and reported, never silently
+            // deployed with the newer definition.
+            const freshCatalogPins: Array<{ connectorId: string; sourceOperationId: string; catalogVersion: number }> = [];
+            for (const [connectorId, specs] of boundBuild.byConnector) {
+              const kept = specs.filter((spec) => {
+                if (spec.catalogVersion === undefined) return true; // not catalog-sourced — unaffected
+                const check = checkCatalogPin(row.connectorCatalogPins, connectorId, spec.operationId, spec.catalogVersion);
+                if (check.status === 'conflict') {
+                  result.fidelity.push({
+                    component: `connector:${connectorId}:${spec.operationId}`,
+                    status: 'needs-review',
+                    detail:
+                      `"${spec.toolName}" was resolved against catalog version ${check.pinnedVersion} when this ` +
+                      `agent was first staged, but the catalog now has version ${check.currentVersion} for this ` +
+                      'operation. To avoid silently deploying with a changed definition, this tool was NOT ' +
+                      'included — re-stage this agent to accept the new version.',
+                  });
+                  emitLog(
+                    'warn',
+                    `  ${row.name}: ${connectorId}.${spec.operationId} skipped — catalog version changed since ` +
+                      `staging (was ${check.pinnedVersion}, now ${check.currentVersion}).`,
+                  );
+                  return false;
+                }
+                freshCatalogPins.push({ connectorId, sourceOperationId: spec.operationId, catalogVersion: spec.catalogVersion });
+                return true;
+              });
+              boundBuild.byConnector.set(connectorId, kept);
+            }
+            if (freshCatalogPins.length) {
+              await markStaged(runId, row.sourceId, {
+                connectorCatalogPins: withCatalogPins(row.connectorCatalogPins, freshCatalogPins),
+              });
+            }
+
             const boundConnectorIds = new Set(boundBuild.byConnector.keys());
             const unsupportedForThisAgent = [...usedConnectorIds].filter(
               (id) => !REGISTRY_BY_ID.has(id) && !boundConnectorIds.has(id),
@@ -2386,7 +2429,7 @@ async function execute(
                   // The caller map rides on the connector because that is what the container
                   // sees; without it a per-user tool cannot turn "who asked" into an account
                   // in the source tenant, and refuses for everyone.
-                  ? { ...applyPerUserAuth(c), callerIdentityMap }
+                  ? { ...applyPerUserAuth(c), callerIdentityMap, appUserId, consentServerOrigin: config.SERVER_ORIGIN }
                   : c,
               );
             }
@@ -2469,7 +2512,7 @@ async function execute(
               if (invokerConnectorIds.has(msConnectorId)) {
                 scopedConnectors = scopedConnectors.map((c) =>
                   c.id === target.targetConnectorId
-                    ? { ...applyPerUserAuth(c), callerIdentityMap }
+                    ? { ...applyPerUserAuth(c), callerIdentityMap, appUserId, consentServerOrigin: config.SERVER_ORIGIN }
                     : c,
                 );
               }

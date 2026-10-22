@@ -280,6 +280,128 @@ def _secret_safe(part: str) -> str:
     return re.sub(r"[^a-zA-Z0-9-]", "-", part).lower()
 
 
+# ── Dedicated-module supersession: how a hand-written connector_tools/*.py file becomes
+# dead code, one operation at a time, instead of in one risky cutover ───────────────────
+#
+# Added 2026-10-22 for the Google Drive/Gmail/Calendar/Contacts catalog pilot. The goal
+# (explicitly requested) is that the hand-written files stop being the long-term answer —
+# but a wholesale switch the day the catalog gains data would have replaced several
+# currently-working, customer-facing tools with a flatter, riskier generic equivalent
+# overnight. Instead: a dedicated module's own tool is retired ONLY when (a) its matching
+# catalog operation has reached `lifecycle.status: 'approved'` (never 'candidate' — see
+# catalogBinding.ts) AND (b) it is listed below as a genuinely safe, no-regression
+# replacement. Nothing is in this map by default just because a catalog row exists for it.
+#
+# Each entry was checked by hand against the dedicated file's REAL behaviour, not assumed:
+#   - google_drive.py's `delete_file` does a RECOVERABLE trash, not Drive's real permanent
+#     DELETE — the catalog's literal `DeleteFile` operation is NOT an equivalent, it is a
+#     more dangerous call wearing the same name.
+#   - `list_files`/`list_folder`-style reads in google_drive.py, calendar.py and contacts.py
+#     already auto-paginate internally; the catalog's generic executor does not yet support
+#     Google's token-style pagination (see the catalog seed script's own docstring) — so
+#     using the catalog version instead would silently cap results on a large folder/
+#     mailbox/account.
+#   - Gmail's send/reply/search tools take clean, named parameters; their catalog
+#     equivalents require the MODEL to construct a raw base64url MIME message, or return
+#     message ids only instead of full details — both objectively worse.
+#
+# EXPLICIT, USER-REQUESTED EXCEPTION, 2026-10-22: for a live test, the customer asked to run
+# these four connectors on ONLY the database-driven tools — not alongside the dedicated
+# ones — accepting that every dedicated-only capability listed above (Drive: create file/
+# folder, find-by-path, search-by-name, update file, extract archive; Gmail: labels, drafts,
+# forward, star, mark-read, attachments, reply; Calendar: current time, check availability,
+# RSVP; Contacts: get one contact, list groups, update) is UNAVAILABLE during this test,
+# because the catalog has no equivalent for any of them. `FULL_CATALOG_REPLACEMENT` is the
+# literal flag for that choice — flip it back to `False` to return to "catalog adds
+# alongside the dedicated tools, nothing lost" once this test is done.
+FULL_CATALOG_REPLACEMENT = True
+
+# Dedicated functions kept ALIVE even under full replacement, because the catalog STILL has
+# no equivalent for them — confirmed one by one, not assumed. This list has shrunk twice
+# tonight as real catalog/chain/always-on equivalents got built for things it used to
+# protect (google_drive_create_file/_update_file/_find_by_path on 2026-10-22; then
+# google_drive_create_folder/_search_by_name, all ten gmail.py bonus functions, calendar's
+# check_availability/respond_to_event, and all three contacts.py bonus functions, same day,
+# once the "always-on operation" mechanism and the new chain capabilities — header
+# extraction, MIME assembly, list-entry updates — existed to express them). What remains
+# below is what is GENUINELY impossible, not merely unbuilt yet:
+#   - google_drive_create_file_by_path: would need "create this folder if the search finds
+#     none" woven into the path-resolution loop, which does not exist yet — a real, still-
+#     open piece of work, not a permanent wall like the two below.
+#   - google_drive_extract_archive: CONFIRMED 2026-10-22 — Google's own Drive API docs carry
+#     no extract/unzip endpoint at all (every real implementation, including whatever
+#     Microsoft's connector does internally, is this same download-unzip-reupload
+#     workaround) — there is no declarative operation this could ever become.
+#   - calendar_get_current_datetime: not an API operation at all — it is local computation
+#     ("what time is it right now"), so there is no HTTP call for any catalog row to
+#     describe in the first place. This architecture only expresses HTTP operations.
+FULL_REPLACEMENT_KEEP_LIST: dict[str, list[str]] = {
+    "googledrive": [
+        "google_drive_create_file_by_path",
+        "google_drive_extract_archive",
+    ],
+    "gmail": [],
+    "googlecalendar": [
+        "calendar_get_current_datetime",
+    ],
+    "googlecontacts": [],
+}
+# calendar.py/contacts.py dispatch under either name (adk_deploy.py accepts "calendar" as a
+# synonym for "googlecalendar", "contacts" for "googlecontacts") — same aliasing the lookup
+# needs, mirrored from how CATALOG_SUPERSESSION used to do this before it was retired.
+FULL_REPLACEMENT_KEEP_LIST["calendar"] = FULL_REPLACEMENT_KEEP_LIST["googlecalendar"]
+FULL_REPLACEMENT_KEEP_LIST["contacts"] = FULL_REPLACEMENT_KEEP_LIST["googlecontacts"]
+
+
+def _supersede_dedicated_tools(dedicated_tools, conn: dict, secret, mint_token, auth_header, fill, caller=None):
+    """Build the live tool list for a connector that has BOTH a dedicated Python module and
+    catalog data. Two modes:
+
+    FULL_CATALOG_REPLACEMENT = False (the default, no-regression mode): every approved bound
+    operation is ADDED alongside the dedicated tools; nothing is ever removed on its own say-
+    so. Byte-identical to `dedicated_tools` whenever nothing is approved for this connector.
+
+    FULL_CATALOG_REPLACEMENT = True (an explicit, requested exception — see the comment
+    above): whenever this connector has ANY approved bound operation, every dedicated tool
+    THAT THE CATALOG CAN REPLACE is dropped, and only the catalog-driven ones take its place.
+    Dedicated tools in FULL_REPLACEMENT_KEEP_LIST survive regardless — they cover real
+    capabilities the catalog has no way to express at all, so dropping them would be a pure
+    capability loss with nothing gained, not a cutover.
+    """
+    bound_ops = conn.get("boundOperations") or []
+    if not bound_ops:
+        return dedicated_tools
+
+    from connector_tools.generic_rest import build_tools as _build_generic
+    override_conn = dict(conn)
+    override_conn["boundOperations"] = bound_ops
+    extra = _build_generic(override_conn, secret, mint_token, auth_header, fill, caller=caller)
+    if not isinstance(extra, list):
+        extra = [extra]
+    added_only = [getattr(fn, "__name__", "?") for fn in extra]
+
+    if FULL_CATALOG_REPLACEMENT:
+        kind_key = (conn.get("kind") or "").lower()
+        keep_names = set(FULL_REPLACEMENT_KEEP_LIST.get(kind_key) or [])
+        kept = [fn for fn in dedicated_tools if getattr(fn, "__name__", None) in keep_names]
+        dropped = [fn for fn in dedicated_tools if getattr(fn, "__name__", None) not in keep_names]
+        print(
+            f"[catalog-override] {conn.get('name')}: FULL REPLACEMENT — dedicated tools "
+            f"{[getattr(fn, '__name__', '?') for fn in dropped]} replaced by the catalog-driven "
+            f"tools {added_only}; {[getattr(fn, '__name__', '?') for fn in kept]} kept alive "
+            f"(no catalog equivalent exists for them)",
+            flush=True,
+        )
+        return kept + extra
+
+    print(
+        f"[catalog-override] {conn.get('name')}: {len(extra)} catalog-driven tool(s) added "
+        f"alongside the dedicated module: {added_only}",
+        flush=True,
+    )
+    return dedicated_tools + extra
+
+
 def _build_live_connector_tool(conn: dict, project: str):
     """Return a callable ADK function tool (or list of tools) for one live
     connector. Dispatches to connector_tools/<kind>.py — each module owns its own
@@ -319,6 +441,39 @@ def _build_live_connector_tool(conn: dict, project: str):
     # its empty `perUserFields` as "no per-user sign-in" makes every call fail closed for
     # everyone -- which is exactly what a live two-caller test caught.
     impersonating = bool(conn.get("perUser")) and conn.get("perUserMode") == "impersonate"
+    # Both server-populated ONLY on per-user specs (orchestrator.ts, alongside
+    # callerIdentityMap) -- see LiveConnectorSpec.appUserId / .consentServerOrigin.
+    app_user_id = conn.get("appUserId")
+    consent_server_origin = conn.get("consentServerOrigin")
+
+    def _request_consent_url(caller: str) -> str | None:
+        """Ask this tool's own server for a real Microsoft/Google sign-in link for `caller`.
+
+        Turns "there is no stored connection for you yet" from a dead end into something the
+        model can actually relay: a real, clickable URL. Returns None on any failure -- the
+        caller falls back to the plain refusal rather than surface a broken partial message.
+        """
+        if not app_user_id or not consent_server_origin:
+            return None
+        try:
+            import json as _json
+            import urllib.request
+            req = urllib.request.Request(
+                f"{consent_server_origin}/api/auth/connector-consent/start-deployed",
+                data=_json.dumps({
+                    "appUserId": app_user_id,
+                    "project": project,
+                    "connectorId": conn.get("id"),
+                    "userKey": caller,
+                }).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return _json.loads(resp.read().decode("utf-8")).get("authorizeUrl")
+        except Exception as e:  # noqa: BLE001
+            print(f"[consent] {conn_name}: could not obtain a consent URL for {caller!r}: {e!r}")
+            return None
 
     def _secret(field: str) -> str:
         """Read one credential field from Secret Manager (latest version).
@@ -361,6 +516,12 @@ def _build_live_connector_tool(conn: dict, project: str):
                     "could not be identified, so it cannot pick their credential. "
                     "(The ADK build in this container may not support tool_context.)"
                 )
+            # Translate the GEMINI identity to the MICROSOFT one BEFORE picking a per-user
+            # secret -- the whole reason the identity map exists. Live-confirmed gap without
+            # this: admin@migrationn.com mapped to erik@filefuze.co, Erik completes Microsoft
+            # sign-in, and admin@migrationn.com's chat STILL gets "no stored connection for
+            # you yet" -- because the lookup used the raw Gemini caller untranslated.
+            caller = (conn.get("callerIdentityMap") or {}).get(caller.lower(), caller)
             secret_id = f"{secret_id}-u-{_secret_safe(caller.lower())}"
         elif per_user and not impersonating:
             # perUser with no delegated fields means the server found no per-user flow for
@@ -393,6 +554,19 @@ def _build_live_connector_tool(conn: dict, project: str):
             # turns a raw 404 in the model's context into an instruction it can relay.
             status = getattr(e, "code", None)
             if per_user and not impersonating and field in per_user_fields and status in (403, 404):
+                # Same translation as the lookup above -- the sign-in link offered here must
+                # be for the MAPPED Microsoft person, not whichever Gemini identity happened
+                # to ask, or a mapped user who has genuinely never connected gets sent to
+                # "sign in" as themselves rather than as the person the map says they really are.
+                caller = _caller_var().get("")
+                caller = (conn.get("callerIdentityMap") or {}).get(caller.lower(), caller) if caller else caller
+                consent_url = _request_consent_url(caller) if caller else None
+                if consent_url:
+                    raise RuntimeError(
+                        f"{conn_name}: this tool uses your own Microsoft account, and you "
+                        f"have not connected it yet. Sign in here to connect it, then ask "
+                        f"again: {consent_url}"
+                    ) from None
                 raise RuntimeError(
                     f"{conn_name}: this tool uses each person's own account, and there is "
                     "no stored connection for you yet. Connect your account in CloudFuze "
@@ -616,7 +790,10 @@ def _build_live_connector_tool(conn: dict, project: str):
 
     if kind == "googledrive":
         from connector_tools.google_drive import build_tools as _build
-        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+        return _supersede_dedicated_tools(
+            _build(conn, _secret, _mint_token, _auth_header, _fill),
+            conn, _secret, _mint_token, _auth_header, _fill,
+        )
 
     # Cross-vendor: a Copilot agent that read Outlook mail migrates to one that reads Gmail.
     # Requires scope=gmail.modify (read AND write — send, drafts, labels, star) and, for a
@@ -628,7 +805,10 @@ def _build_live_connector_tool(conn: dict, project: str):
     # stars) this mapping cannot avoid.
     if kind == "gmail":
         from connector_tools.gmail import build_tools as _build
-        return _build(conn, _secret, _mint_token, _auth_header, _fill, caller=_caller)
+        return _supersede_dedicated_tools(
+            _build(conn, _secret, _mint_token, _auth_header, _fill, caller=_caller),
+            conn, _secret, _mint_token, _auth_header, _fill, caller=_caller,
+        )
 
     # CROSS-VENDOR, third of three (after gmail, googlechat): Copilot's Office 365 Outlook
     # Calendar operations -> Google Calendar. Requires calendar scope + an
@@ -637,7 +817,10 @@ def _build_live_connector_tool(conn: dict, project: str):
     # this mapping cannot avoid.
     if kind in ("googlecalendar", "calendar"):
         from connector_tools.calendar import build_tools as _build
-        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+        return _supersede_dedicated_tools(
+            _build(conn, _secret, _mint_token, _auth_header, _fill),
+            conn, _secret, _mint_token, _auth_header, _fill,
+        )
 
     # CROSS-VENDOR, fourth: Copilot's Office 365 Outlook Contacts operations -> Google
     # Contacts (People API). Requires the `contacts` scope + an `impersonate_email`
@@ -648,7 +831,10 @@ def _build_live_connector_tool(conn: dict, project: str):
     # db/repos/agentSurfaceChoice.ts's 'shared_office365:contacts' entry.
     if kind in ("googlecontacts", "contacts"):
         from connector_tools.contacts import build_tools as _build
-        return _build(conn, _secret, _mint_token, _auth_header, _fill)
+        return _supersede_dedicated_tools(
+            _build(conn, _secret, _mint_token, _auth_header, _fill),
+            conn, _secret, _mint_token, _auth_header, _fill,
+        )
 
     # Mail that STAYS in Microsoft: the agent moves to Gemini, Graph still serves its mail.
     # Requires app-only ms_graph credentials plus Mail.ReadWrite / Mail.Send APPLICATION
