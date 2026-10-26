@@ -41,11 +41,12 @@ def fake_tool(name):
 drive_tools = [fake_tool(n) for n in (
     "google_drive_list_files", "google_drive_read_file", "google_drive_get_metadata",
     "google_drive_copy_file", "google_drive_delete_file",
-    # Has a catalog replacement for NOTHING — must survive full replacement either way.
-    # (google_drive_create_file_by_path: would need a "create if missing" loop that does not
-    # exist yet — a real open gap, not permanent; google_drive_extract_archive: confirmed no
-    # Drive API endpoint exists for this at all, a true permanent exception.)
-    "google_drive_create_file_by_path", "google_drive_extract_archive",
+    # create_file_by_path now HAS a catalog equivalent too (the generic "createIfMissing"
+    # chain capability, added 2026-10-26) -- it moved out of the survives-forever group.
+    "google_drive_create_file_by_path",
+    # Has a catalog replacement for NOTHING, and never will -- confirmed no Drive API
+    # endpoint exists for archive extraction at all. Must survive full replacement either way.
+    "google_drive_extract_archive",
 )]
 
 NOOP_SECRET = lambda name: "x"  # noqa: E731
@@ -90,12 +91,12 @@ result_full = _supersede_dedicated_tools(
 )
 names_full = {getattr(fn, "__name__", "?") for fn in result_full}
 REPLACED = {"google_drive_list_files", "google_drive_read_file", "google_drive_get_metadata",
-            "google_drive_copy_file", "google_drive_delete_file"}
-KEPT_NO_EQUIVALENT = {"google_drive_create_file_by_path", "google_drive_extract_archive"}
+            "google_drive_copy_file", "google_drive_delete_file", "google_drive_create_file_by_path"}
+KEPT_NO_EQUIVALENT = {"google_drive_extract_archive"}
 check("full-replacement mode: tools WITH a catalog equivalent are dropped", not (REPLACED & names_full))
 check("full-replacement mode: tools with NO catalog equivalent survive", KEPT_NO_EQUIVALENT <= names_full)
 check("full-replacement mode: the catalog tool is present", "get_file_metadata_using_id" in names_full)
-check("full-replacement mode: total is kept(2) + catalog(1)", len(result_full) == 3)
+check("full-replacement mode: total is kept(1) + catalog(1)", len(result_full) == 2)
 
 # ── Gmail/Calendar/Contacts keep-lists, added 2026-10-22, shrunk the same day once real
 #    catalog/always-on equivalents existed for what they used to protect ──────────────────
@@ -115,8 +116,9 @@ calendar_result = _supersede_dedicated_tools(calendar_tools, calendar_conn, NOOP
 calendar_names = {getattr(fn, "__name__", "?") for fn in calendar_result}
 check("calendar keep-list: check-availability now HAS a catalog equivalent, so it is dropped",
       "calendar_check_availability" not in calendar_names)
-check("calendar keep-list: get_current_datetime is not an API call at all, so it still survives",
-      "calendar_get_current_datetime" in calendar_names)
+check("calendar keep-list is now empty: get_current_datetime now HAS a localCompute catalog "
+      "equivalent too, so it is dropped",
+      "calendar_get_current_datetime" not in calendar_names)
 
 contacts_tools = [fake_tool(n) for n in ("contacts_list_contacts", "contacts_update_contact")]
 contacts_conn = {"kind": "googlecontacts", "name": "Google Contacts", "authKind": "google-service-account",
