@@ -325,12 +325,11 @@ export interface BoundOperation {
  * One step of a `BoundOperation.chain`. See the field comment there for why this exists.
  */
 export interface ChainStep {
-  /** Omit only for an `updateListEntry` or `localCompute` step — a local transform, not an
-   *  HTTP call. */
+  /** Omit only for an `updateListEntry` step — a local transform, not an HTTP call. */
   method?: string;
   /** May reference `{name}` for any fixed/model argument or a context value bound by an
    *  earlier step (see `bindAs`), plus `{segment}` inside a repeating step (see
-   *  `repeatOverParam`). Omit only for an `updateListEntry` or `localCompute` step. */
+   *  `repeatOverParam`). Omit only for an `updateListEntry` step. */
   urlTemplate?: string;
   /**
    * Dot-path into this step's JSON response (numeric segments index an array, e.g.
@@ -362,29 +361,8 @@ export interface ChainStep {
    */
   repeatOverParam?: string;
   /** Seed value for `{<bindAs>}` before a repeating step's first iteration (e.g. Drive's
-   *  "root" as the starting parent folder). Also what a repeating step binds as its result
-   *  when the named argument has zero segments (e.g. an omitted/empty optional parent path)
-   *  — "nothing to resolve" binds the seed and moves on, rather than refusing, which is what
-   *  makes an optional parent path actually optional. */
+   *  "root" as the starting parent folder). */
   initialValue?: string;
-  /**
-   * Only inside a repeating step (`repeatOverParam`): when a segment's search comes back
-   * with ZERO matches, create it instead of refusing with "not found" — e.g. Drive has no
-   * "create this folder if missing" call of its own, so resolving "Reports/2026/Q1" for a
-   * brand-new file has to create any folder segment that does not already exist. `{segment}`
-   * (the name being resolved) and `{<bindAs>}` (the current parent, i.e. this iteration's
-   * value so far) are both available to `urlTemplate`/`bodyTemplate`, same placeholder rules
-   * as everywhere else. The created item's id (read via `itemIdField`, defaulting to this
-   * step's own) becomes `current` for the next segment, exactly as a found match would.
-   */
-  createIfMissing?: {
-    method?: string;
-    urlTemplate: string;
-    bodyTemplate?: Record<string, unknown>;
-    /** Field to read the new item's id from. Defaults to the parent step's own
-     *  `itemIdField`, or "id" if that is unset too. */
-    itemIdField?: string;
-  };
   /** Singular noun for this step's target, used only in "not found"/"ambiguous" error text
    *  (e.g. "folder", "file"). Defaults to "item". */
   itemNoun?: string;
@@ -460,25 +438,6 @@ export interface ChainStep {
     /** New value for that field (may contain `{placeholders}`). */
     setValue: string;
     /** Bind the whole modified list under this name. */
-    bindAs: string;
-  };
-  /**
-   * A LOCAL COMPUTATION step — no HTTP call, no vendor endpoint, because some real
-   * capabilities simply are not API calls at all (e.g. "what time is it right now"). Exists
-   * so an operation like that can still be a database row executed by the generic engine,
-   * instead of needing hand-written Python just because it happens not to touch the network.
-   * When set, this step has no `method`/`urlTemplate` at all.
-   */
-  localCompute?: {
-    /** Only `'current_datetime'` exists today: binds the current moment, ISO 8601 /
-     *  RFC 3339 formatted (the shape Google's own calendar/event fields expect), in UTC
-     *  unless `timezoneParam` resolves to a valid IANA zone name — falls back to UTC rather
-     *  than fail a trivial "what time is it" call over a bad/unknown zone name. */
-    kind: 'current_datetime';
-    /** Name of a fixed/model argument holding an IANA timezone name (e.g. "Asia/Kolkata"). */
-    timezoneParam?: string;
-    /** Bind the computed value under this name, for a later step — or, as this chain's only
-     *  step, it IS the tool's returned result. */
     bindAs: string;
   };
   /** For a step whose body is raw text/bytes rather than JSON (e.g. uploading a file's

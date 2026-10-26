@@ -630,52 +630,16 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                     values[upd["bindAs"]] = new_list
                     continue
 
-                # A LOCAL COMPUTATION, not an HTTP call -- some real capabilities (e.g. "what
-                # time is it right now") are not API calls at all, so there is no vendor
-                # endpoint for any catalog row to describe. Lets a connector express these
-                # too, so nothing needs hand-written Python just because it is not a network
-                # call. Only 'current_datetime' exists today; unknown kinds refuse clearly
-                # rather than silently doing nothing.
-                local = step.get("localCompute")
-                if local:
-                    kind_ = local.get("kind")
-                    if kind_ != "current_datetime":
-                        return {"error": "unknown localCompute kind '" + str(kind_) + "'"}
-                    import datetime as _datetime
-
-                    now = _datetime.datetime.now(_datetime.timezone.utc)
-                    tz_param = local.get("timezoneParam")
-                    tz_name = values.get(tz_param) if tz_param else None
-                    if tz_name:
-                        try:
-                            from zoneinfo import ZoneInfo
-
-                            now = now.astimezone(ZoneInfo(str(tz_name)))
-                        except Exception:  # noqa: BLE001
-                            pass  # unknown/bad zone name -- UTC is a correct answer, not an error
-                    computed = {"datetime": now.isoformat(), "timezone": str(now.tzinfo)}
-                    last_body = computed
-                    bind_as_local = local.get("bindAs")
-                    if bind_as_local:
-                        values[bind_as_local] = now.isoformat()
-                    continue
-
                 method_s = (step.get("method") or "GET").upper()
                 repeat_param = step.get("repeatOverParam")
                 if repeat_param:
                     raw_val = values.get(repeat_param, "")
                     segments = [s for s in str(raw_val).strip("/").split("/") if s]
+                    if not segments:
+                        return {"error": "'" + repeat_param + "' must name at least one segment"}
                     bind_as = step.get("bindAs") or "prev"
                     noun = step.get("itemNoun") or "item"
                     current = step.get("initialValue", "")
-                    create_spec = step.get("createIfMissing")
-                    if not segments:
-                        # Nothing to resolve -- e.g. an omitted/empty optional parent path for
-                        # "create this file in my Drive root". Binding the seed value and
-                        # moving on is what makes an optional path actually optional, instead
-                        # of refusing a legitimate no-folder case.
-                        values[bind_as] = current
-                        continue
                     for i, seg in enumerate(segments):
                         url = _fill_url(step["urlTemplate"], {bind_as: current, "segment": seg})
                         missing_in_url = _unresolved_names(url)
@@ -694,33 +658,6 @@ def build_tools(conn, secret, mint_token, auth_header, fill, caller=None):
                             matches = [] if matches is None else [matches]
                         seen_so_far = "/".join(segments[:i]) or "root"
                         if len(matches) == 0:
-                            if create_spec:
-                                create_method = (create_spec.get("method") or "POST").upper()
-                                create_url = _fill_url(create_spec["urlTemplate"], {bind_as: current, "segment": seg})
-                                missing_in_create_url = _unresolved_names(create_url)
-                                if missing_in_create_url:
-                                    return {"error": "missing required value(s) for " + ", ".join(missing_in_create_url)}
-                                create_body = _fill_template(
-                                    create_spec.get("bodyTemplate") or {},
-                                    {**values, bind_as: current, "segment": seg},
-                                )
-                                create_body_bytes = _json.dumps(create_body).encode("utf-8")
-                                missing_in_create_body = _unresolved_names(create_body_bytes.decode("utf-8", errors="ignore"))
-                                if missing_in_create_body:
-                                    return {"error": "missing required value(s) for " + ", ".join(missing_in_create_body)}
-                                try:
-                                    created = _call(create_method, create_url, create_body_bytes, "application/json")
-                                except Exception as e:  # noqa: BLE001
-                                    try:
-                                        detail = e.read().decode("utf-8")[:300]  # type: ignore[attr-defined]
-                                    except Exception:  # noqa: BLE001
-                                        detail = str(e)
-                                    return {"error": "could not create '" + seg + "' under '" + seen_so_far + "': " + detail}
-                                id_field = create_spec.get("itemIdField") or step.get("itemIdField") or "id"
-                                current = created.get(id_field) if isinstance(created, dict) else None
-                                if current is None:
-                                    return {"error": "create response for '" + seg + "' had no '" + str(id_field) + "'"}
-                                continue
                             return {"error": "'" + seg + "' not found under '" + seen_so_far + "'"}
                         if len(matches) > 1:
                             return {

@@ -317,35 +317,33 @@ def _secret_safe(part: str) -> str:
 FULL_CATALOG_REPLACEMENT = True
 
 # Dedicated functions kept ALIVE even under full replacement, because the catalog STILL has
-# no equivalent for them — confirmed one by one, not assumed. This list shrank repeatedly as
-# real catalog/chain/always-on equivalents got built for things it used to protect
-# (google_drive_create_file/_update_file/_find_by_path, google_drive_create_folder/
-# _search_by_name, all ten gmail.py bonus functions, calendar's check_availability/
-# respond_to_event, all three contacts.py bonus functions — all on 2026-10-22, once the
-# "always-on operation" mechanism and the chain capabilities — header extraction, MIME
-# assembly, list-entry updates — existed to express them).
-#
-# 2026-10-26: the last two REAL gaps closed too, with two new generic chain capabilities
-# (ChainStep.createIfMissing, ChainStep.localCompute — see operationBinding.ts):
-#   - google_drive_create_file_by_path: now a real chain operation. `createIfMissing` lets
-#     the path-resolution loop CREATE a folder segment instead of refusing when it is not
-#     found, closing the one thing that was a genuinely open gap, not a permanent wall.
-#   - calendar_get_current_datetime: not an API operation at all ("what time is it right
-#     now" has no vendor endpoint), so `localCompute` lets a catalog row express it as a
-#     pure local computation instead — no HTTP call, same generic engine as everything else.
-#
-# Only google_drive_extract_archive remains, and it always will: CONFIRMED 2026-10-22 —
-# Google's own Drive API docs carry no extract/unzip endpoint at all (every real
-# implementation, including whatever Microsoft's connector does internally, is this same
-# download-unzip-reupload workaround) — there is no declarative operation this could ever
-# become. Accepting its loss (rather than keeping a one-function fallback file) was an
-# explicit, informed user decision — see the conversation this was decided in.
+# no equivalent for them — confirmed one by one, not assumed. This list has shrunk twice
+# tonight as real catalog/chain/always-on equivalents got built for things it used to
+# protect (google_drive_create_file/_update_file/_find_by_path on 2026-10-22; then
+# google_drive_create_folder/_search_by_name, all ten gmail.py bonus functions, calendar's
+# check_availability/respond_to_event, and all three contacts.py bonus functions, same day,
+# once the "always-on operation" mechanism and the new chain capabilities — header
+# extraction, MIME assembly, list-entry updates — existed to express them). What remains
+# below is what is GENUINELY impossible, not merely unbuilt yet:
+#   - google_drive_create_file_by_path: would need "create this folder if the search finds
+#     none" woven into the path-resolution loop, which does not exist yet — a real, still-
+#     open piece of work, not a permanent wall like the two below.
+#   - google_drive_extract_archive: CONFIRMED 2026-10-22 — Google's own Drive API docs carry
+#     no extract/unzip endpoint at all (every real implementation, including whatever
+#     Microsoft's connector does internally, is this same download-unzip-reupload
+#     workaround) — there is no declarative operation this could ever become.
+#   - calendar_get_current_datetime: not an API operation at all — it is local computation
+#     ("what time is it right now"), so there is no HTTP call for any catalog row to
+#     describe in the first place. This architecture only expresses HTTP operations.
 FULL_REPLACEMENT_KEEP_LIST: dict[str, list[str]] = {
     "googledrive": [
+        "google_drive_create_file_by_path",
         "google_drive_extract_archive",
     ],
     "gmail": [],
-    "googlecalendar": [],
+    "googlecalendar": [
+        "calendar_get_current_datetime",
+    ],
     "googlecontacts": [],
 }
 # calendar.py/contacts.py dispatch under either name (adk_deploy.py accepts "calendar" as a
@@ -353,31 +351,6 @@ FULL_REPLACEMENT_KEEP_LIST: dict[str, list[str]] = {
 # needs, mirrored from how CATALOG_SUPERSESSION used to do this before it was retired.
 FULL_REPLACEMENT_KEEP_LIST["calendar"] = FULL_REPLACEMENT_KEEP_LIST["googlecalendar"]
 FULL_REPLACEMENT_KEEP_LIST["contacts"] = FULL_REPLACEMENT_KEEP_LIST["googlecontacts"]
-
-
-def _build_catalog_only_tools(conn: dict, secret, mint_token, auth_header, fill, caller=None):
-    """Build a connector's ENTIRE tool list from the database catalog, with no dedicated
-    Python module imported or called at all.
-
-    Used once FULL_REPLACEMENT_KEEP_LIST has nothing left for this connector's kind — i.e.
-    every capability its old hand-written file used to provide now has a real database
-    equivalent. At that point the hand-written file is not just superseded, it is genuinely
-    unnecessary: this function never touches it, so deleting the file changes nothing.
-    """
-    bound_ops = conn.get("boundOperations") or []
-    from connector_tools.generic_rest import build_tools as _build_generic
-    override_conn = dict(conn)
-    override_conn["boundOperations"] = bound_ops
-    tools = _build_generic(override_conn, secret, mint_token, auth_header, fill, caller=caller)
-    if not isinstance(tools, list):
-        tools = [tools]
-    print(
-        f"[catalog-only] {conn.get('name')}: {len(tools)} tool(s) built entirely from the "
-        f"database catalog — no dedicated module imported: "
-        f"{[getattr(fn, '__name__', '?') for fn in tools]}",
-        flush=True,
-    )
-    return tools
 
 
 def _supersede_dedicated_tools(dedicated_tools, conn: dict, secret, mint_token, auth_header, fill, caller=None):
@@ -816,13 +789,6 @@ def _build_live_connector_tool(conn: dict, project: str):
         return _build(conn, _secret, _mint_token, _auth_header, _fill)
 
     if kind == "googledrive":
-        # Only google_drive_create_file_by_path and google_drive_extract_archive have no
-        # database equivalent (see FULL_REPLACEMENT_KEEP_LIST's comment) — until those close,
-        # the dedicated file is still imported for those two, everything else comes from the
-        # catalog. Once the keep-list for this kind is empty, this branch stops importing the
-        # file at all, same as gmail/contacts below.
-        if not FULL_REPLACEMENT_KEEP_LIST.get(kind):
-            return _build_catalog_only_tools(conn, _secret, _mint_token, _auth_header, _fill)
         from connector_tools.google_drive import build_tools as _build
         return _supersede_dedicated_tools(
             _build(conn, _secret, _mint_token, _auth_header, _fill),
@@ -838,11 +804,11 @@ def _build_live_connector_tool(conn: dict, project: str):
     # connector_tools/gmail.py for the fidelity divergences (folders vs labels, flags vs
     # stars) this mapping cannot avoid.
     if kind == "gmail":
-        # connector_tools/gmail.py was DELETED 2026-10-26 — every operation it used to
-        # hand-write now has a real database/chain equivalent (labels, drafts, forward,
-        # star, mark-read, attachments, reply, send). Built entirely from the catalog; there
-        # is no dedicated module to fall back to any more.
-        return _build_catalog_only_tools(conn, _secret, _mint_token, _auth_header, _fill, caller=_caller)
+        from connector_tools.gmail import build_tools as _build
+        return _supersede_dedicated_tools(
+            _build(conn, _secret, _mint_token, _auth_header, _fill, caller=_caller),
+            conn, _secret, _mint_token, _auth_header, _fill, caller=_caller,
+        )
 
     # CROSS-VENDOR, third of three (after gmail, googlechat): Copilot's Office 365 Outlook
     # Calendar operations -> Google Calendar. Requires calendar scope + an
@@ -850,10 +816,11 @@ def _build_live_connector_tool(conn: dict, project: str):
     # for the fidelity divergences (Show As -> transparency, single primary calendar only)
     # this mapping cannot avoid.
     if kind in ("googlecalendar", "calendar"):
-        # connector_tools/calendar.py was DELETED 2026-10-26 — get_current_datetime (the
-        # last thing it alone could do) now runs as a `localCompute` chain step instead.
-        # Built entirely from the catalog; there is no dedicated module to fall back to.
-        return _build_catalog_only_tools(conn, _secret, _mint_token, _auth_header, _fill)
+        from connector_tools.calendar import build_tools as _build
+        return _supersede_dedicated_tools(
+            _build(conn, _secret, _mint_token, _auth_header, _fill),
+            conn, _secret, _mint_token, _auth_header, _fill,
+        )
 
     # CROSS-VENDOR, fourth: Copilot's Office 365 Outlook Contacts operations -> Google
     # Contacts (People API). Requires the `contacts` scope + an `impersonate_email`
@@ -863,10 +830,11 @@ def _build_live_connector_tool(conn: dict, project: str):
     # connectors/equivalence.ts's mcp_ContactsManagement row and
     # db/repos/agentSurfaceChoice.ts's 'shared_office365:contacts' entry.
     if kind in ("googlecontacts", "contacts"):
-        # connector_tools/contacts.py was DELETED 2026-10-26 — get-one/list-groups/
-        # update-contact all now have real database/chain equivalents. Built entirely from
-        # the catalog; there is no dedicated module to fall back to any more.
-        return _build_catalog_only_tools(conn, _secret, _mint_token, _auth_header, _fill)
+        from connector_tools.contacts import build_tools as _build
+        return _supersede_dedicated_tools(
+            _build(conn, _secret, _mint_token, _auth_header, _fill),
+            conn, _secret, _mint_token, _auth_header, _fill,
+        )
 
     # Mail that STAYS in Microsoft: the agent moves to Gemini, Graph still serves its mail.
     # Requires app-only ms_graph credentials plus Mail.ReadWrite / Mail.Send APPLICATION
