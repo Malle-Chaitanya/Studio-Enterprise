@@ -31,6 +31,27 @@ function agentBase(d: GeminiDestination): string {
   return `${assistantBase(d)}/agents`;
 }
 
+/**
+ * Standard headers for every Discovery Engine call made with a bearer token (service
+ * account, DWD-impersonated, or the admin's own OAuth token). ALWAYS sets
+ * `X-Goog-User-Project` to the project the call is actually ABOUT — never omit this.
+ *
+ * CONFIRMED LIVE BUG, 2026-10-26: every call in this file used to send only
+ * `Authorization: Bearer <token>`, with no quota-project header. Google does not then
+ * default to the project named in the URL — it bills/quota-checks the call against
+ * whatever project the TOKEN's own credential belongs to (the service account's home
+ * project, or the OAuth client's project for a plain user token). That meant this app's
+ * entire Gemini pipeline — create, publish, share, license, IAM grants, reachability,
+ * everything in this file — would silently fail with a "billing must be enabled" 403 the
+ * moment CloudFuze's OWN project had any billing problem, for EVERY customer, regardless
+ * of how healthy that customer's own project billing was. Reproduced and fixed by testing
+ * the exact same call with and without this header against a real tenant: without it,
+ * 403 naming CloudFuze's project; with it, 200 with the real data.
+ */
+function googleHeaders(token: string, project: string, extra?: Record<string, string>): Record<string, string> {
+  return { Authorization: `Bearer ${token}`, 'X-Goog-User-Project': project, ...extra };
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -146,7 +167,7 @@ export async function createAgent(
   const res = await withBackoff(() =>
     fetch(agentBase(dest), {
       method: 'POST',
-      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      headers: googleHeaders(saToken, dest.project, { 'Content-Type': 'application/json' }),
       body: JSON.stringify(buildCreateBody(agent)),
     }),
   );
@@ -165,7 +186,7 @@ export async function publishAgent(dest: GeminiDestination, saToken: string, age
   const res = await withBackoff(() =>
     fetch(`${agentBase(dest)}/${agentId}:publish`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      headers: googleHeaders(saToken, dest.project, { 'Content-Type': 'application/json' }),
       body: '{}',
     }),
   );
@@ -176,7 +197,7 @@ export async function shareAgent(dest: GeminiDestination, saToken: string, agent
   const res = await withBackoff(() =>
     fetch(`${agentBase(dest)}/${agentId}?updateMask=sharingConfig`, {
       method: 'PATCH',
-      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      headers: googleHeaders(saToken, dest.project, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ sharingConfig: { scope: 'ALL_USERS' } }),
     }),
   );
@@ -194,7 +215,7 @@ export async function deleteAgent(dest: GeminiDestination, saToken: string, agen
   const res = await withBackoff(() =>
     fetch(`${agentBase(dest)}/${agentId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${saToken}` },
+      headers: googleHeaders(saToken, dest.project),
     }),
   );
   if (res.ok || res.status === 404) return { ok: true };
@@ -233,7 +254,7 @@ export async function grantAgentAccess(
   // nothing), which is what made an earlier probe wrongly conclude no IAM
   // policy exists on agents at all. GET returns the real policy every time.
   const getRes = await withBackoff(() =>
-    fetch(`${agentPath}:getIamPolicy`, { method: 'GET', headers: { Authorization: `Bearer ${saToken}` } }),
+    fetch(`${agentPath}:getIamPolicy`, { method: 'GET', headers: googleHeaders(saToken, dest.project) }),
   );
   if (!getRes.ok && getRes.status !== 404) {
     const error = `getIamPolicy ${getRes.status}: ${(await getRes.text()).slice(0, 200)}`;
@@ -254,7 +275,7 @@ export async function grantAgentAccess(
   const setRes = await withBackoff(() =>
     fetch(`${agentPath}:setIamPolicy`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      headers: googleHeaders(saToken, dest.project, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ policy: { bindings, etag: existing.etag } }),
     }),
   );
@@ -318,7 +339,7 @@ export type LicenseState = 'licensed' | 'unlicensed' | 'unknown';
 export async function checkUserLicense(dest: GeminiDestination, saToken: string, email: string): Promise<LicenseState> {
   try {
     const res = await fetch(`${userStoreBase(dest)}/userLicenses?pageSize=1000`, {
-      headers: { Authorization: `Bearer ${saToken}` },
+      headers: googleHeaders(saToken, dest.project),
     });
     if (!res.ok) {
       logger.warn(`checkUserLicense ${res.status} for ${email} — userStore id unverified, treating as unknown`);
@@ -363,7 +384,7 @@ export async function listLicensedPrincipals(
       if (pageToken) params.set('pageToken', pageToken);
       const r = await fetchTextTransient(
         `${userStoreBase(dest)}/userLicenses?${params}`,
-        { headers: { Authorization: `Bearer ${saToken}` } },
+        { headers: googleHeaders(saToken, dest.project) },
         { label: 'gemini: listUserLicenses' },
       );
       if (!r.ok) {
@@ -434,7 +455,7 @@ export async function assignUserLicense(
   try {
     const res = await fetch(`${userStoreBase(dest)}:batchUpdateUserLicenses`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      headers: googleHeaders(saToken, dest.project, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         inlineSource: {
           userLicenses: [{ userPrincipal: email.toLowerCase(), licenseAssignmentState: 'ASSIGNED' }],
@@ -472,7 +493,7 @@ export async function grantEngineUserRole(
 
   const enginePath = engineBase(dest);
   const getRes = await withBackoff(() =>
-    fetch(`${enginePath}:getIamPolicy`, { method: 'GET', headers: { Authorization: `Bearer ${saToken}` } }),
+    fetch(`${enginePath}:getIamPolicy`, { method: 'GET', headers: googleHeaders(saToken, dest.project) }),
   );
   if (!getRes.ok && getRes.status !== 404) {
     const error = `getIamPolicy ${getRes.status}: ${(await getRes.text()).slice(0, 200)}`;
@@ -494,7 +515,7 @@ export async function grantEngineUserRole(
   const setRes = await withBackoff(() =>
     fetch(`${enginePath}:setIamPolicy`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${saToken}`, 'Content-Type': 'application/json' },
+      headers: googleHeaders(saToken, dest.project, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ policy: { bindings, etag: existing.etag } }),
     }),
   );
@@ -576,7 +597,7 @@ export async function ensureAgentAccess(
 export async function engineReachable(dest: GeminiDestination, saToken: string): Promise<boolean> {
   try {
     const res = await fetch(agentBase(dest), {
-      headers: { Authorization: `Bearer ${saToken}` },
+      headers: googleHeaders(saToken, dest.project),
     });
     return res.ok;
   } catch {
@@ -611,7 +632,7 @@ export async function projectReachable(project: string, token: string): Promise<
     `https://discoveryengine.googleapis.com/v1alpha/projects/${project}` +
     `/locations/${LOCATION}/collections/default_collection/engines`;
   try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(url, { headers: googleHeaders(token, project) });
     return res.ok;
   } catch {
     return false;
@@ -624,7 +645,7 @@ export async function discoverEngines(project: string, saToken: string): Promise
     `https://discoveryengine.googleapis.com/v1alpha/projects/${project}` +
     `/locations/${LOCATION}/collections/default_collection/engines`;
   try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${saToken}` } });
+    const res = await fetch(url, { headers: googleHeaders(saToken, project) });
     if (!res.ok) return [];
     const engines = ((await res.json()) as { engines?: Record<string, unknown>[] }).engines ?? [];
     return engines.map((e) => ({
@@ -724,7 +745,7 @@ async function assistantExists(
       `https://discoveryengine.googleapis.com/v1alpha/projects/${project}` +
         `/locations/${LOCATION}/collections/default_collection` +
         `/engines/${engine}/assistants/${assistant}`,
-      { headers: { Authorization: `Bearer ${saToken}` } },
+      { headers: googleHeaders(saToken, project) },
     );
     const ok = res.ok;
     assistantProbeCache.set(key, ok);

@@ -180,7 +180,17 @@ destinationRouter.get('/projects', async (req, res) => {
   // Say so plainly. The alternative - an empty list plus "falling back to manual entry" -
   // told the admin their permissions were wrong when in fact their sign-in had expired.
   if (reauthRequired) return void res.status(401).json({ error: 'google_reauth_required' });
-  const projects = await listProjects(userToken);
+  // SA first (same identity as the migration writes and the /engines route below) —
+  // DWD impersonation of this admin may see engines the admin's own OAuth grant does not
+  // (or vice versa), so both are tried; projectHasEngine falls back to userToken alone if
+  // minting this fails (e.g. DWD not authorized for this admin yet).
+  let saToken: string | undefined;
+  try {
+    saToken = await getSaToken(session.gEmail);
+  } catch (err) {
+    logger.warn(`projects: SA token mint failed for ${session.gEmail}: ${(err as Error).message}`);
+  }
+  const projects = await listProjects(userToken, saToken);
   // Always surface the currently-connected/discovered project so the customer has
   // at least one selectable destination even without OAuth project enumeration.
   const current = session.geminiProject;

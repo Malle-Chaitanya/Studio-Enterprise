@@ -48,17 +48,43 @@ interface RawProject {
 }
 
 /** Does this project already have a Discovery Engine (Gemini) app? Best-effort —
- *  a 403/error (admin can't see that project's engines) just means "not a target". */
-async function projectHasEngine(projectNumber: string, userToken: string): Promise<boolean> {
-  try {
+ *  a 403/error (admin can't see that project's engines) just means "not a target".
+ *
+ *  PREFERS the service-account token (the same identity that performs the migration
+ *  writes) — this file's own module docstring has always said engines are discovered
+ *  this way, but the code only ever used the admin's OAuth token, a real drift between
+ *  documented design and behaviour (caught 2026-10-26, confirmed against a live tenant:
+ *  the OAuth-only version reported zero engines on a project that genuinely has one).
+ *  Falls back to the OAuth token when no SA token is available/working — e.g. the admin's
+ *  own project, which the SA was never granted or delegated for, but the signed-in admin
+ *  can see directly; matches the same SA-then-OAuth order the /engines route already uses. */
+async function projectHasEngine(projectNumber: string, userToken: string, saToken?: string): Promise<boolean> {
+  // `X-Goog-User-Project` MUST be set on every call here: a plain OAuth/SA token with no
+  // quota project header gets billed against the project that owns THIS APP'S OWN OAuth
+  // client, not the project being probed — confirmed live 2026-10-26 (see
+  // auth/google.ts's discoverGeminiProject, found and fixed there first). Without this,
+  // every customer's project list silently shows "no Gemini app" the moment CloudFuze's
+  // own project has any billing hiccup, regardless of the customer's own project being
+  // perfectly healthy.
+  const probe = async (token: string): Promise<boolean> => {
     const res = await fetch(
       `https://discoveryengine.googleapis.com/v1alpha/projects/${projectNumber}` +
         `/locations/${LOCATION}/collections/default_collection/engines`,
-      { headers: { Authorization: `Bearer ${userToken}` } },
+      { headers: { Authorization: `Bearer ${token}`, 'X-Goog-User-Project': projectNumber } },
     );
     if (!res.ok) return false;
     const engines = ((await res.json()) as { engines?: unknown[] }).engines ?? [];
     return engines.length > 0;
+  };
+  if (saToken) {
+    try {
+      if (await probe(saToken)) return true;
+    } catch {
+      /* fall through to the OAuth attempt below */
+    }
+  }
+  try {
+    return await probe(userToken);
   } catch {
     return false;
   }
@@ -93,7 +119,7 @@ async function resolveOrgDomains(orgIds: string[], userToken: string): Promise<M
  * org lookups run bounded-parallel — one sequential pass here was the slow bit.
  * Returns [] when no user token is available — the UI then falls back to manual entry.
  */
-export async function listProjects(userToken: string | undefined): Promise<ProjectRef[]> {
+export async function listProjects(userToken: string | undefined, saToken?: string): Promise<ProjectRef[]> {
   if (!userToken) return [];
   try {
     const res = await fetch('https://cloudresourcemanager.googleapis.com/v1/projects', {
@@ -114,7 +140,7 @@ export async function listProjects(userToken: string | undefined): Promise<Proje
       ...new Set(active.filter((p) => p.parent?.type === 'organization' && p.parent.id).map((p) => p.parent!.id!)),
     ];
     const [hasEngine, orgDomains] = await Promise.all([
-      mapPoolCollect(active, PROBE_CONCURRENCY, (p) => projectHasEngine(p.projectNumber, userToken)),
+      mapPoolCollect(active, PROBE_CONCURRENCY, (p) => projectHasEngine(p.projectNumber, userToken, saToken)),
       resolveOrgDomains(orgIds, userToken),
     ]);
 
@@ -148,7 +174,13 @@ export async function listEnginesResult(project: string, token: string): Promise
     `https://discoveryengine.googleapis.com/v1alpha/projects/${project}` +
     `/locations/${LOCATION}/collections/default_collection/engines`;
   try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    // `X-Goog-User-Project` set to the project being queried — see projectHasEngine's
+    // comment above for why. Harmless and correct for the SA-token call site too (it is
+    // already querying this exact project), and protects the OAuth fallback call site
+    // from the same billing-misattribution bug.
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, 'X-Goog-User-Project': project },
+    });
     if (!res.ok) {
       let detail = '';
       try {

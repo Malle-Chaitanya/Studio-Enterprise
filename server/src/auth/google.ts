@@ -668,12 +668,22 @@ export async function discoverGeminiProject(gToken: string): Promise<string> {
     // Client-agnostic: LIST engines per project (don't assume any engine id —
     // client apps have arbitrary ids like "gemini-enterprise-…"). Probe all
     // projects concurrently; failed/empty probes just don't qualify.
+    //
+    // `X-Goog-User-Project` MUST be set here. A plain OAuth user token with no quota
+    // project header gets billed/quota-checked against the project that owns THIS APP'S
+    // OWN OAuth client (i.e. CloudFuze's, not the customer's) — confirmed live 2026-10-26:
+    // every single probe failed with "billing must be enabled on project #<CloudFuze's
+    // own project>", even for a project (agentmigrations) with a real, working engine and
+    // perfectly healthy billing of its own. Without this header, EVERY customer's
+    // discovery silently breaks the moment CloudFuze's own project has any billing hiccup
+    // — confirmed the fix by replaying the exact same call with this header added, which
+    // returned the real engine instead of a billing error.
     const probes = await mapPoolCollect(active, DISCOVERY_CONCURRENCY, async (p) => {
       try {
         const listRes = await fetch(
           `https://discoveryengine.googleapis.com/v1alpha/projects/${p.projectNumber}` +
             `/locations/global/collections/default_collection/engines`,
-          { headers: { Authorization: `Bearer ${gToken}` } },
+          { headers: { Authorization: `Bearer ${gToken}`, 'X-Goog-User-Project': p.projectNumber } },
         );
         if (!listRes.ok) return { ref: projectRef(p), hasChat: false, hasAny: false };
         const engines = ((await listRes.json()) as { engines?: { solutionType?: string }[] }).engines ?? [];
