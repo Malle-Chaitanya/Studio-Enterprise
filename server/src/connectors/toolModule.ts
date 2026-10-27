@@ -38,10 +38,13 @@ const KIND_ALIASES: Record<string, string> = {
   onedrive: 'sharepoint',
   googlechat: 'chat',
   chat: 'chat',
-  // Both kinds dispatch to calendar.py in adk_deploy.py ("googlecalendar" is the one an
-  // AdkSpec.liveConnectors entry actually uses; "calendar" is accepted as a synonym).
+  // calendar.py/contacts.py were DELETED 2026-10-26 (every operation they hand-wrote now has
+  // a real database/chain equivalent — see toolModule.test.ts's exemption note), so these
+  // aliases now resolve to nothing and hasDedicatedToolModule correctly returns false for
+  // both kinds. Left in place rather than removed: if a genuinely irreducible gap ever
+  // brings one of these files back (the way google_drive.py still exists for
+  // extract_archive), the alias is already correct and nothing here needs to change.
   googlecalendar: 'calendar',
-  // Same pattern as googlecalendar above, for contacts.py.
   googlecontacts: 'contacts',
   // The file name is not always the kind: `googledrive` is served by google_drive.py. A
   // <kind>.py check missed it, and the drift test caught it immediately — which is the

@@ -33,7 +33,17 @@ describe('tool-module detection tracks the Python dispatch', () => {
     // unnoticed, which is the single failure mode this test exists for.
     for (const m of PY.matchAll(/if kind\.startswith\("([a-z0-9_]+)"\):/g)) kinds.add(m[1]);
     expect(kinds.size, 'no kinds parsed out of adk_deploy.py — the regex has gone stale').toBeGreaterThan(4);
+    // gmail/googlecalendar/googlecontacts are dispatched but DELIBERATELY have no dedicated
+    // module any more (connector_tools/gmail.py, calendar.py, contacts.py were deleted
+    // 2026-10-26 — every operation they used to hand-write now has a real database/chain
+    // equivalent, built entirely by generic_rest.py from boundOperations). This is not the
+    // drift this test exists to catch: that failure mode is a HIDDEN module silently
+    // ignoring bound operations while the pipeline claims otherwise. These three kinds have
+    // no module to hide one — bound operations are unconditionally honoured for them, which
+    // is exactly what the assertion below would otherwise wrongly flag as broken.
+    const catalogOnlyNow = new Set(['gmail', 'googlecalendar', 'calendar', 'googlecontacts', 'contacts']);
     for (const kind of kinds) {
+      if (catalogOnlyNow.has(kind)) continue;
       expect(hasDedicatedToolModule(kind), `adk_deploy.py dispatches "${kind}" but no module resolves`).toBe(true);
     }
   });
